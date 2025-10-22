@@ -104,8 +104,7 @@ def main(args):
     # # NOTE: eval does not have any offpolicyness control
     # eval_rollout.config.max_head_offpolicyness = int(1e12)
     # eval_rollout.initialize()
-    #
-    # actor.initialize(None, ft_spec)
+
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref_engine = FSDPPPOActor(config=config.ref)

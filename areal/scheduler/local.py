@@ -31,6 +31,7 @@ class LocalScheduler(Scheduler):
         self.launcher = LocalLauncher(
             config.experiment_name, config.trial_name, config.cluster.fileroot
         )
+        self.config = config
 
     def create_workers(self, job: Job, *args, **kwargs) -> None:
         config = kwargs.get("config")
@@ -44,8 +45,13 @@ class LocalScheduler(Scheduler):
         for index in range(replicas):
             for task in job.tasks:
                 ports = find_free_ports(task.port_count, port_range=(10000, 50000))
-                envs = task.env_vars if task.env_vars else {}
-                envs["PORT_LIST"] = ",".join(map(str, ports))
+                envs = get_env_vars(
+                    self.config.cluster.cluster_name,
+                )
+                extra_envs = task.env_vars if task.env_vars else {}
+                extra_envs["PORT_LIST"] = ",".join(map(str, ports))
+                envs.update(extra_envs)
+
                 if job.role != "rollout":
                     envs.update(
                         {
@@ -59,8 +65,8 @@ class LocalScheduler(Scheduler):
                         }
                     )
                 self.launcher.submit(
-                    job_name="llm_server",
-                    cmd=task.cmd,
+                    job_name=f"{job.role}_worker",
+                    cmd=f"{task.cmd} --role {job.role} --index {index}",
                     gpu=task.gpu,
                     env_vars=envs,
                 )
@@ -130,13 +136,17 @@ class LocalScheduler(Scheduler):
             if task is not None:
                 for i in range(job.replicas):
                     ports = find_free_ports(task.port_count, port_range=(10000, 50000))
-                    envs = task.env_vars if task.env_vars else {}
-                    envs["PORT_LIST"] = ",".join(map(str, ports))
-                    envs["AREAL_LLM_SERVER_ADDRS"] = ",".join(server_addrs)
-                    envs["AREAL_RECOVER_RUN"] = str(int(is_recover_run))
+                    envs = get_env_vars(
+                        config.cluster.cluster_name,
+                    )
+                    extra_envs = task.env_vars if task.env_vars else {}
+                    extra_envs["PORT_LIST"] = ",".join(map(str, ports))
+                    extra_envs["AREAL_LLM_SERVER_ADDRS"] = ",".join(server_addrs)
+                    extra_envs["AREAL_RECOVER_RUN"] = str(int(is_recover_run))
+                    envs.update(extra_envs)
                     self.launcher.submit(
                         job_name="rollout_worker",
-                        cmd=task.cmd,
+                        cmd=f"{task.cmd} --role {job.role} --index {i}",
                         gpu=task.gpu,
                         env_vars=envs,
                     )
