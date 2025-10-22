@@ -140,8 +140,7 @@ dependencies = [
 dev = [
     "pytest",
     "ipython",
-    "black==25.1.0",
-    "isort==6.0.1",
+    "ruff==0.14.1",
     "clang-format==19.1.7",
     "sh~=2.2",
     "mdformat==0.7.17",
@@ -175,17 +174,22 @@ where = ["."]
 include = ["areal*"]
 exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*"]
 
-[tool.isort]
-profile = "black"
-
 [tool.pytest.ini_options]
 pythonpath = ["."]
 
-[tool.black]
+[tool.ruff]
 line-length = 88
+target-version = "py310"
 
-[tool.autoflake]
-in-place = true
-recursive = true
-remove-all-unused-imports = true
-remove-unused-variables = true
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "UP", # pyupgrade
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["areal"]

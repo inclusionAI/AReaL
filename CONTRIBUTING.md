@@ -55,8 +55,6 @@ helping with code reviews. This guide will help you get started.
    ```bash
    pip install pre-commit
    pre-commit install
-   # Run over all files if you have previous commits:
-   pre-commit run --all-files
    # Subsequent commits will automatically format your files:
    git commit -a -m 'my change'
    ```

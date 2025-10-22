@@ -35,35 +35,19 @@ repos:
           - mdformat-frontmatter
         exclude: ^docs/algorithms/.*\.md$
 
-  - repo: https://github.com/pycqa/autoflake
-    rev: v2.3.1
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.14.1
     hooks:
-      - id: autoflake
-        args:
-          - -i
-          - -r
-          - --remove-all-unused-imports
-          - --remove-unused-variables
-        files: ^(areal/|examples/).*\.py$
-
-  - repo: https://github.com/pycqa/isort
-    rev: 6.0.1
-    hooks:
-      - id: isort
-        args:
-          - --profile=black
-          - --multi-line=3
-          - --line-length=88
-        files: \.py$
-
-  - repo: https://github.com/psf/black/
-    rev: 25.1.0
-    hooks:
-      - id: black
-        language_version: python3
-        args:
-          - --line-length=88
-        files: \.py$
+      - id: ruff # Run the linter.
+        name: Run Linter Check (Ruff)
+        types_or: [ python, pyi, jupyter ]
+        args: [ --fix ]
+        files: ^(areal/|examples/)/
+      - id: ruff-format # Run the formatter.
+        name: Run Formatter (Ruff)
+        types_or: [ python, pyi, jupyter ]
+        files: ^(areal/|examples/)/
 
   # Clean notebook outputs and metadata
   - repo: https://github.com/kynan/nbstripout
@@ -72,22 +56,6 @@ repos:
       - id: nbstripout
         name: nbstripout - Strip notebook output
         description: Strip output from Jupyter notebooks
-
-  # Format notebooks with nbqa + black
-  - repo: https://github.com/nbQA-dev/nbQA
-    rev: 1.7.1
-    hooks:
-      - id: nbqa-black
-        name: nbqa-black - Format notebook code
-        description: Format Python code in notebooks with black
-        additional_dependencies: [black==25.1.0]
-        args: [--line-length=88]
-
-      - id: nbqa-isort
-        name: nbqa-isort - Sort imports in notebooks
-        description: Sort imports in notebook cells
-        additional_dependencies: [isort==6.0.1]
-        args: [--profile=black]
 
   # Generate CLI documentation
   - repo: local
