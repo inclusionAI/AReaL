@@ -3,6 +3,8 @@ import gzip
 import inspect
 import os
 import traceback
+from asyncio import Future
+from concurrent import futures
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, AnyStr, Dict, List
@@ -114,10 +116,14 @@ def process_output_to_distributed_batch(result):
         return DistributedBatchMemory.from_dict(result)
     elif isinstance(result, TensorDict):
         return DistributedBatchMemory.from_dict(result.to_dict())
-    elif isinstance(result, (list, tuple)):
-        return DistributedBatchMemory.from_list(list(result))
-    else:
-        return result
+    elif isinstance(result, list):
+        if all(isinstance(item, dict) for item in result) or all(
+            isinstance(item, TensorDict) for item in result
+        ):
+            return DistributedBatchMemory.from_list(result)
+    elif isinstance(result, (Future, futures.Future)):
+        return result.result()
+    return result
 
 
 class EngineRPCServer(BaseHTTPRequestHandler):
@@ -191,7 +197,9 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                     == "method"
                 ):
                     result = method(*args, **kwargs)
+                    logger.info(f"before Processing output structure: {result}")
                     result = process_output_to_distributed_batch(result)
+                    logger.info(f"after Processing output structure: {result}")
                 else:
                     result = method
                 self.send_response(HTTPStatus.OK)

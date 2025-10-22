@@ -31,6 +31,8 @@ from areal.utils.scheduler import scheduling_specs_to_schedulings
 
 RID_CACHE_SIZE = 128
 
+logger = logging.getLogger(__name__)
+
 
 class RemoteSGLangEngine(InferenceEngine):
 
@@ -493,6 +495,7 @@ def update_weights_from_distributed(
     ]
 
     async def _fn():
+        logger.info(f"init_weights_update_group, addr: {addresses}")
         if init_group:
             await asyncio.gather(
                 *[
@@ -551,4 +554,5 @@ async def ainit_weights_update_group(
         max_retries=1,
         timeout=request_timeout,
     )
+    logger.info(f"init_weights_update_group done, {res}")
     assert res["success"]

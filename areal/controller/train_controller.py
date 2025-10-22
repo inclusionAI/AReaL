@@ -111,6 +111,7 @@ class DistributedTrainController(TrainController):
         ret: List[List[List[ParamSpec]]] = self.custom_function_call(
             "get_param_specs", weight_chunked_mem_mb
         )
+        logger.info(f"debug: type ret: {type(ret)}, ret: {ret}")
         return ret[0]
 
     def set_version(self, version: int):

@@ -54,6 +54,8 @@ class LocalScheduler(Scheduler):
                             "WORLD_SIZE": replicas,
                             "MASTER_ADDR": "localhost",
                             "MASTER_PORT": master_port,
+                            "NCCL_CUMEM_ENABLE": "0",
+                            "NCCL_NVLS_ENABLE": "0",
                         }
                     )
                 self.launcher.submit(

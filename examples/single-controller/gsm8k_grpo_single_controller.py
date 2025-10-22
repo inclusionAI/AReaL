@@ -123,6 +123,7 @@ def main(args):
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
 
     param_specs = actor.get_param_specs()
+    logger.info(f"param_specs: {param_specs}, type: {type(param_specs)}")
     weight_update_meta = WeightUpdateMeta(
         type="nccl",
         alloc_mode=allocation_mode,
@@ -277,58 +278,58 @@ def main(args):
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
             # eval_rollout.set_version(global_step + 1)
-    #
-    #     with stats_tracker.record_timing("save"):
-    #         saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
-    #
-    #     with stats_tracker.record_timing("checkpoint_for_recover"):
-    #         recover_handler.dump(
-    #             actor,
-    #             step_info,
-    #             saver,
-    #             evaluator,
-    #             stats_logger,
-    #             train_dataloader,
-    #             tokenizer=tokenizer,
-    #         )
-    #
-    #     dist.barrier(device_ids=[actor.device.index])
-    #     current_platform.synchronize()
-    #
-    #     with stats_tracker.record_timing("eval"):
-    #
-    #         def evaluate_fn():
-    #             if actor.is_data_parallel_head():
-    #                 cnt = 0
-    #                 for data in valid_dataloader:
-    #                     for item in data:
-    #                         eval_rollout.submit(item, eval_workflow)
-    #                         cnt += 1
-    #                 eval_rollout.wait(cnt, timeout=None)
-    #             dist.barrier(device_ids=[actor.device.index])
-    #             current_platform.synchronize()
-    #
-    #         evaluator.evaluate(
-    #             evaluate_fn,
-    #             epoch,
-    #             step,
-    #             global_step,
-    #         )
-    #
-    #     dist.barrier(device_ids=[actor.device.index])
-    #     current_platform.synchronize()
-    #
-    #     # Upload statistics to the logger (e.g., wandb)
-    #     stats[0].update(
-    #         stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-    #     )
-    #     stats_logger.commit(epoch, step, global_step, stats)
-    #
-    #     dist.barrier(device_ids=[actor.device.index])
-    #     current_platform.synchronize()
-    #
-    #     # Resume rollout
-    #     rollout.resume()
+        #
+        #     with stats_tracker.record_timing("save"):
+        #         saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
+        #
+        #     with stats_tracker.record_timing("checkpoint_for_recover"):
+        #         recover_handler.dump(
+        #             actor,
+        #             step_info,
+        #             saver,
+        #             evaluator,
+        #             stats_logger,
+        #             train_dataloader,
+        #             tokenizer=tokenizer,
+        #         )
+        #
+        #     dist.barrier(device_ids=[actor.device.index])
+        #     current_platform.synchronize()
+        #
+        #     with stats_tracker.record_timing("eval"):
+        #
+        #         def evaluate_fn():
+        #             if actor.is_data_parallel_head():
+        #                 cnt = 0
+        #                 for data in valid_dataloader:
+        #                     for item in data:
+        #                         eval_rollout.submit(item, eval_workflow)
+        #                         cnt += 1
+        #                 eval_rollout.wait(cnt, timeout=None)
+        #             dist.barrier(device_ids=[actor.device.index])
+        #             current_platform.synchronize()
+        #
+        #         evaluator.evaluate(
+        #             evaluate_fn,
+        #             epoch,
+        #             step,
+        #             global_step,
+        #         )
+        #
+        #     dist.barrier(device_ids=[actor.device.index])
+        #     current_platform.synchronize()
+        #
+        #     # Upload statistics to the logger (e.g., wandb)
+        #     stats[0].update(
+        #         stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+        #     )
+        #     stats_logger.commit(epoch, step, global_step, stats)
+        #
+        #     dist.barrier(device_ids=[actor.device.index])
+        #     current_platform.synchronize()
+        #
+        # Resume rollout
+        rollout.resume()
     #
     # stats_logger.close()
     # eval_rollout.destroy()
