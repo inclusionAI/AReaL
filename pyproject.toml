@@ -201,8 +201,8 @@ ignore = []
 [tool.ruff.lint.isort]
 known-first-party = ["areal"]
 
-# Remain the following tools as legacy
-# We actually use `ruff` instead
+# The following tools are remained as legacy.
+# We will use `ruff` instead in future development
 [tool.isort]
 profile = "black"
 
