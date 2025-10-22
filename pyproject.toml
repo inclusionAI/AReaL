@@ -68,7 +68,7 @@ dependencies = [
     "orjson>=3.10.16",
     "pydantic",
     "PyYAML",
-    "hydra-core==1.4.0.dev1",
+    "hydra-core==1.3.2",
     "packaging",
     "lark",
     "tabulate",
