@@ -215,8 +215,8 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, vllm_server):
     engine.model_version = 100
 
     # setup name resolve
-    from areal.api.cli_args import NameResolveConfig
     import areal.utils.name_resolve as name_resolve
+    from areal.api.cli_args import NameResolveConfig
 
     nfs_record_root = tmp_path_factory.mktemp("nfs_record_path")
     name_resolve_config = NameResolveConfig(type="nfs", nfs_record_root=nfs_record_root)

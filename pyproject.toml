@@ -199,7 +199,7 @@ select = [
 ignore = []
 
 [tool.ruff.lint.isort]
-from-first = true
+from-first = false
 known-first-party = ["areal"]
 force-sort-within-sections = false
 split-on-trailing-comma = true
