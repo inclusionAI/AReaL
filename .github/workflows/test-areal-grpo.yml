@@ -1,23 +1,219 @@
 name: GRPO Integration Tests
 
 on:
-  pull_request:
-    branches:
-      - main
+  # pull_request:
+  #   branches:
+  #     - main
   workflow_dispatch:
 
 concurrency:
   group: areal-grpo-tests-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  RUNNER_LABELS: gcp-a2-highgpu-2g
+  RUNNER_VERSION: '2.317.0'
+
 jobs:
+  provision-runner:
+    name: Provision GCP runner with 2 A100 GPUs
+    runs-on: ubuntu-latest
+    outputs:
+      instance_name: ${{ steps.vars.outputs.instance_name }}
+      instance_zone: ${{ steps.create-instance.outputs.zone }}
+    steps:
+      - name: Set instance variables
+        id: vars
+        run: |
+          echo "instance_name=gcp-runner-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Fetch GitHub runner token
+        id: runner-token
+        uses: actions/github-script@v7
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const pat = process.env.GH_PAT;
+            if (!pat) {
+              core.setFailed('GH_PAT secret is not configured.');
+              return;
+            }
+
+            const tokenResponse = await github.rest.actions.createRegistrationTokenForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              request: {
+                headers: {
+                  authorization: `token ${pat}`,
+                },
+              },
+            });
+
+            core.setOutput('token', tokenResponse.data.token);
+
+      - name: Render startup script and metadata files
+        env:
+          RUNNER_VERSION: ${{ env.RUNNER_VERSION }}
+          TOKEN: ${{ steps.runner-token.outputs.token }}
+        run: |
+          cat <<'EOF' > startup-script.template
+          #!/bin/bash
+          set -euo pipefail
+
+          exec > >(tee /var/log/github-runner-startup.log) 2>&1
+
+          apt-get update
+          apt-get install -y curl jq git python3 python3-venv python3-pip sudo
+
+          RUNNER_VERSION="__RUNNER_VERSION__"
+          RUNNER_DIR="/opt/actions-runner"
+
+          if ! id runner >/dev/null 2>&1; then
+            useradd --home-dir "$RUNNER_DIR" --create-home --shell /bin/bash runner
+          fi
+
+          cd "$RUNNER_DIR"
+
+          curl -sSLO "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
+          tar xzf "actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
+          chown -R runner:runner "$RUNNER_DIR"
+
+          REPO=$(curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/repo")
+          TOKEN=$(curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/runner_token")
+          LABELS=$(curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/runner_labels")
+
+          sudo -u runner ./config.sh \
+            --url "https://github.com/${REPO}" \
+            --token "$TOKEN" \
+            --labels "$LABELS" \
+            --unattended \
+            --ephemeral
+
+          cat <<'SERVICE' >/etc/systemd/system/actions-runner.service
+          [Unit]
+          Description=GitHub Actions Runner
+          After=network.target
+
+          [Service]
+          WorkingDirectory=/opt/actions-runner
+          ExecStart=/bin/su - runner -c '/opt/actions-runner/run.sh'
+          Restart=always
+          RestartSec=5s
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          systemctl daemon-reload
+          systemctl enable actions-runner
+          systemctl restart actions-runner
+          EOF
+
+          sed "s/__RUNNER_VERSION__/${RUNNER_VERSION}/" startup-script.template > startup-script.sh
+          rm startup-script.template
+
+          printf '%s' "$TOKEN" > runner-token.txt
+
+      - name: Create runner instance
+        id: create-instance
+        env:
+          INSTANCE_NAME: ${{ steps.vars.outputs.instance_name }}
+        run: |
+          set -euo pipefail
+          zones=$(gcloud compute zones list --project "$GCP_PROJECT_ID" --filter="status=UP" --format="value(name)")
+          if [ -z "$zones" ]; then
+            echo "No available zones found." >&2
+            exit 1
+          fi
+
+          for zone in $zones; do
+            echo "Attempting to create instance in $zone..."
+            if gcloud compute instances create-with-container "$INSTANCE_NAME" \
+              --project "$GCP_PROJECT_ID" \
+              --zone "$zone" \
+              --machine-type "a2-highgpu-2g" \
+              --container-image "ghcr.io/inclusionai/areal-runtime:v0.3.4" \
+              --boot-disk-size "100GB" \
+              --scopes "https://www.googleapis.com/auth/cloud-platform" \
+              --metadata repo=${{ github.repository }},runner_labels=${RUNNER_LABELS} \
+              --metadata-from-file startup-script=startup-script.sh,runner_token=runner-token.txt
+            then
+              echo "Successfully created instance in $zone."
+              echo "zone=$zone" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Failed to create instance in $zone, trying next zone." >&2
+          done
+
+          echo "Unable to create instance in any available zone." >&2
+          exit 1
+
+      - name: Remove local runner artifacts
+        if: always()
+        run: rm -f startup-script.sh runner-token.txt
+
+      - name: Wait for runner to register
+        uses: actions/github-script@v7
+        env:
+          INSTANCE_NAME: ${{ steps.vars.outputs.instance_name }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const instanceName = process.env.INSTANCE_NAME;
+            const maxAttempts = 20;
+            const delayMs = 15000;
+
+            const pat = process.env.GH_PAT;
+            if (!pat) {
+              core.setFailed('GH_PAT secret is not configured.');
+              return;
+            }
+
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+              const response = await github.rest.actions.listSelfHostedRunnersForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+                request: {
+                  headers: {
+                    authorization: `token ${pat}`,
+                  },
+                },
+              });
+
+              const found = response.data.runners.find((runner) => runner.name === instanceName);
+              if (found && found.status === 'online') {
+                core.info(`Runner ${instanceName} is online.`);
+                return;
+              }
+
+              core.info(`Runner ${instanceName} not ready yet (attempt ${attempt}/${maxAttempts}).`);
+              await wait(delayMs);
+            }
+
+            throw new Error(`Timed out waiting for runner ${instanceName} to come online.`);
+
   grpo-integration-tests:
     environment:
       name: AReaL-unittests
     permissions:
       contents: read
-    runs-on: gpu
-    timeout-minutes: 7200
+    runs-on: [self-hosted, gcp-a2-highgpu-2g]
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -25,21 +221,53 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: |
-          source examples/env/setup-pip-deps.sh
+      # - run: |
+      #     source examples/env/setup-pip-deps.sh
 
-      - name: Wait for 2 free GPUs
-        timeout-minutes: 7200
-        run: |
-          until [[ $(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l) -ge 2 ]]; do
-            CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
-            sleep 1
-          done
+      # - name: Wait for 2 free GPUs
+      #   timeout-minutes: 7200
+      #   run: |
+      #     until [[ $(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l) -ge 2 ]]; do
+      #       CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
+      #       sleep 1
+      #     done
 
-          echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
+      #     echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
 
       - name: Run GRPO integration tests
         env:
           CI: true
         run: |
           TOKENIZERS_PARALLELISM=false HF_ENDPOINT=https://hf-mirror.com pytest -s -vv areal/tests/grpo/
+
+  cleanup:
+    name: Tear down GCP runner
+    needs:
+      - sft-integration-tests
+      - provision-runner
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      INSTANCE_NAME: ${{ needs.provision-runner.outputs.instance_name }}
+      INSTANCE_ZONE: ${{ needs.provision-runner.outputs.instance_zone }}
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Delete runner instance
+        run: |
+          if [ -z "$INSTANCE_NAME" ] || [ -z "$INSTANCE_ZONE" ]; then
+            echo "No instance details recorded; skipping cleanup."
+            exit 0
+          fi
+
+          if gcloud compute instances describe "$INSTANCE_NAME" --project "$GCP_PROJECT_ID" --zone "$INSTANCE_ZONE" >/dev/null 2>&1; then
+            gcloud compute instances delete "$INSTANCE_NAME" --project "$GCP_PROJECT_ID" --zone "$INSTANCE_ZONE" --quiet
+          else
+            echo "Instance $INSTANCE_NAME already removed."
+          fi
