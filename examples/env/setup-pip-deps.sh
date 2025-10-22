@@ -3,28 +3,28 @@
 pip install uv
 uv pip install -U pip
 uv pip uninstall pynvml cugraph-dgl dask-cuda cugraph-service-server raft-dask cugraph cuml cugraph-pyg
-uv pip install -U transformers==4.56.1
+uv pip install transformers==4.56.1
 python3 -c "from transformers import AutoProcessor"
-uv pip install -U torch==2.8.0 torchaudio torchvision "deepspeed>=0.17.2" pynvml
+uv pip install torch==2.8.0 torchaudio torchvision "deepspeed>=0.17.2" pynvml
 python3 -c "from transformers import AutoProcessor"
-uv pip install -U flashinfer-python==0.3.1 --no-build-isolation
+uv pip install flashinfer-python==0.3.1 --no-build-isolation
 python3 -c "from transformers import AutoProcessor"
-uv pip install -U "sglang[all]==0.5.2"
+uv pip install "sglang[all]==0.5.2"
 python3 -c "from transformers import AutoProcessor"
-uv pip install -U megatron-core==0.13.1 nvidia-ml-py
+uv pip install megatron-core==0.13.1 nvidia-ml-py
 python3 -c "from transformers import AutoProcessor"
 # NOTE: To use megatron training backend with transformers engine, 
 # you need to install flash-attn<=2.8.1, which requires compilation with torch==2.8.0.
-uv pip install -U "flash-attn==2.8.3" --no-build-isolation
+uv pip install "flash-attn==2.8.3" --no-build-isolation
 python3 -c "from transformers import AutoProcessor"
-uv pip install -U vllm==0.10.2
+uv pip install vllm==0.10.2
 python3 -c "from transformers import AutoProcessor"
 
 # Package used for calculating math reward
-uv pip install -U -e evaluation/latex2sympy
+uv pip install -e evaluation/latex2sympy
 python3 -c "from transformers import AutoProcessor"
 # Install AReaL in upgrade mode to ensure package version dependencies are met. 
-uv pip install -U -e .[dev]
+uv pip install -e .[dev]
 python3 -c "from transformers import AutoProcessor"
 
 # uv pip install -U sphinx-nefertiti
