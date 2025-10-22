@@ -21,7 +21,6 @@ from typing import Generic, TypeVar
 
 import uvloop
 
-
 # Type variable for generic result types
 T = TypeVar("T")
 

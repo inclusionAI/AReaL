@@ -12,7 +12,6 @@ from .workflow_executor import (
     check_trajectory_format,
 )
 
-
 __all__ = [
     "RemoteInfBackendProtocol",
     "RemoteInfEngine",

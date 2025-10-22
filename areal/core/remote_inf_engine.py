@@ -36,7 +36,6 @@ from areal.utils.launcher import wait_llm_server_addrs
 
 from .workflow_executor import WorkflowExecutor
 
-
 RID_CACHE_SIZE = 128
 
 

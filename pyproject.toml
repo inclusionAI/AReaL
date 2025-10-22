@@ -205,7 +205,7 @@ force-sort-within-sections = false
 split-on-trailing-comma = true
 combine-as-imports = false
 force-wrap-aliases = false
-lines-after-imports = 2
+lines-after-imports = 1
 required-imports = ["from __future__ import annotations"]
 
 # The following tools are remained as legacy.

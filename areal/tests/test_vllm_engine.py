@@ -19,7 +19,6 @@ from areal.utils.data import get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.pkg_version import is_available
 
-
 EXPR_NAME = "test_vllm_engine"
 TRIAL_NAME = "trial_0"
 MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
