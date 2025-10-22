@@ -19,7 +19,6 @@ from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
-from areal.experimental.openai.agent_patch import AReaLOpenAIClientContext
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
@@ -63,18 +62,16 @@ class MathAgent:
             model_provider=OpenAIProvider(openai_client=client),
             tracing_disabled=True,
         )
-        async with AReaLOpenAIClientContext(run_config):
-            result = await OpenAIRunner.run(
-                agent, input=data["messages"][-1]["content"]
-            )
-            # print(f"result: {result.final_output}")
+        result = await OpenAIRunner.run(
+            agent, input=data["messages"][-1]["content"], run_config=run_config
+        )
 
-            reward = await self.async_reward_fn(
-                result=result.final_output, answer=data["answer"]
-            )
-            client.set_final_reward(reward)
+        reward = await self.async_reward_fn(
+            result=result.final_output, answer=data["answer"]
+        )
+        client.set_final_reward(reward)
 
-            return reward
+        return reward
 
 
 class RLVRAgentWorkflow(RolloutWorkflow):

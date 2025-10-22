@@ -20,7 +20,6 @@ from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
-from areal.experimental.openai.agent_patch import AReaLOpenAIClientContext
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
@@ -80,38 +79,35 @@ class MultiturnMathAgent:
 
     async def run_agent(self, data, client: ArealOpenAI):
         num_turns_left = self.max_turns
-        base_run_config = RunConfig(
+        run_config = RunConfig(
             model_provider=OpenAIProvider(openai_client=client),
             tracing_disabled=True,
+            model_settings=ModelSettings(
+                temperature=1.0,
+                extra_args={"max_completion_tokens": self.max_tokens_per_turn},
+            ),
         )
         agent = OpenAIAgent(
             name="RLVR",
         )
         session = SQLiteSession("math")
-        async with AReaLOpenAIClientContext(base_run_config):
-            content = data["messages"][-1]["content"]
-            reward = 0
-            while num_turns_left > 0:
-                run_config = RunConfig(
-                    model_settings=ModelSettings(
-                        temperature=1.0,
-                        extra_args={"max_completion_tokens": self.max_tokens_per_turn},
-                    )
-                )
-                result = await OpenAIRunner.run(
-                    agent, input=content, session=session, run_config=run_config
-                )
-                reward = await self.async_reward_fn(
-                    result=result.final_output, answer=data["answer"]
-                )
-                client.set_final_reward(reward)
-                if reward == 1:
-                    break
-                else:
-                    content = "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
-                    "Please carefully read the original question, check the preivous errors, and try to answer it again."
-                num_turns_left -= 1
-            return reward
+        content = data["messages"][-1]["content"]
+        reward = 0
+        while num_turns_left > 0:
+            result = await OpenAIRunner.run(
+                agent, input=content, session=session, run_config=run_config
+            )
+            reward = await self.async_reward_fn(
+                result=result.final_output, answer=data["answer"]
+            )
+            client.set_final_reward(reward)
+            if reward == 1:
+                break
+            else:
+                content = "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
+                "Please carefully read the original question, check the preivous errors, and try to answer it again."
+            num_turns_left -= 1
+        return reward
 
 
 class MultiturnRLVRAgentWorkflow(RolloutWorkflow):
