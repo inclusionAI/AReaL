@@ -199,13 +199,13 @@ select = [
 ignore = []
 
 [tool.ruff.lint.isort]
+from-first = true
 known-first-party = ["areal"]
 force-sort-within-sections = false
 split-on-trailing-comma = true
 combine-as-imports = false
 force-wrap-aliases = false
 lines-after-imports = 2
-from-first = true
 required-imports = ["from __future__ import annotations"]
 
 # The following tools are remained as legacy.
