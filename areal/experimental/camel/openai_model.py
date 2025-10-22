@@ -51,17 +51,11 @@ class AReaLTokenCounter(BaseTokenCounter):
             num_tokens += self.tokens_per_message
             for key, value in message.items():
                 if not isinstance(value, list):
-                    num_tokens += len(
-                        self.tokenizer.encode(str(value), disallowed_special=())
-                    )
+                    num_tokens += len(self.tokenizer.encode(str(value)))
                 else:
                     for item in value:
                         if item["type"] == "text":
-                            num_tokens += len(
-                                self.tokenizer.encode(
-                                    str(item["text"]), disallowed_special=()
-                                )
-                            )
+                            num_tokens += len(self.tokenizer.encode(str(item["text"])))
                         else:
                             raise ValueError(f"Unsupported item type: {item['type']}")
         num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>

@@ -70,10 +70,11 @@ class CamelMathAgent:
         agent = ChatAgent(
             model=AReaLOpenAICompatibleModel(
                 openai_client=client, tokenizer=self.tokenizer, model_type="areal"
-            )
+            ),
+            token_limit=self.max_total_tokens,
         )
-        response = await agent.astep(messages)
-        content = response.msg
+        response = await agent.astep(messages[-1]["content"])
+        content = response.msg.content
         reward = await self.async_reward_fn(result=content, answer=data["answer"])
         client.set_final_reward(reward)
         return reward
@@ -108,7 +109,7 @@ class CamelRLVRWorkflow(RolloutWorkflow):
 
     async def arun_episode(self, engine, data):
         clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+            ArealOpenAI(engine=engine, tokenizer=self.tokenizer, use_responses=False)
             for _ in range(self.n_trajs)
         ]
 
