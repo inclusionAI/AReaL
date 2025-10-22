@@ -236,9 +236,7 @@ class TestAsyncTaskRunnerConcurrency:
         total_time = time.time() - start
 
         # If concurrent, should take ~0.2s. If sequential, would take ~1.0s
-        assert total_time < 0.8, (
-            f"Tasks appear to be running sequentially ({total_time}s)"
-        )
+        assert total_time < 0.8, f"Tasks run sequentially ({total_time}s)"
         assert len(results) == 5
 
         runner.destroy()
