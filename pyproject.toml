@@ -42,6 +42,9 @@ classifiers = [
 dependencies = [
     # Core ML/AI libraries
     "torch==2.8.0",
+    "torchaudio",
+    "torchvision",
+
     "huggingface_hub",
     "datasets",
     "accelerate",
@@ -93,6 +96,7 @@ dependencies = [
     "colorlog",
     "psutil",
     "pynvml",
+    "nvidia-ml-py",
     "swanboard==0.1.9b1",
     "swanlab[dashboard]==0.6.12",
 
