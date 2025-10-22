@@ -41,7 +41,7 @@ classifiers = [
 
 dependencies = [
     # Core ML/AI libraries
-    "torch>2.0.0",
+    "torch==2.8.0",
     "huggingface_hub",
     "datasets",
     "accelerate",
