@@ -350,11 +350,12 @@ class AsyncTaskRunner(Generic[T]):
                         # This is a critical error that should stop the runner.
                         # Re-add task so it can be cancelled in finally.
                         running_tasks[tid] = task_obj
-                        self.logger.critical(
-                            f"Output queue is full. Task ID: {tid}. "
-                            f"Please increase max_queue_size.",
-                            exc_info=True,
-                        )
+                        if self.logger:
+                            self.logger.critical(
+                                f"Output queue is full. Task ID: {tid}. "
+                                f"Please increase max_queue_size.",
+                                exc_info=True,
+                            )
                         raise TaskQueueFullError(
                             "Output queue full. Please increase max_queue_size."
                         )
