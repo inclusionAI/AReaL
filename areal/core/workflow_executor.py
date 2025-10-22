@@ -3,9 +3,9 @@ from __future__ import annotations  # noqa
 import queue
 import random
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from collections.abc import Awaitable, Callable
 
 import torch
 import torch.distributed as dist
