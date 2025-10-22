@@ -205,7 +205,6 @@ force-sort-within-sections = false
 split-on-trailing-comma = true
 combine-as-imports = false
 force-wrap-aliases = false
-lines-after-imports = 2
 
 # The following tools are remained as legacy.
 # We will use `ruff` instead in future development
