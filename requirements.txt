@@ -19,7 +19,7 @@ blosc
 colorama
 colorlog
 einops
-hydra-core==1.4.0.dev1
+hydra-core==1.3.2
 matplotlib
 numba
 packaging
