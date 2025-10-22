@@ -183,6 +183,11 @@ where = ["."]
 include = ["areal*"]
 exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*"]
 
+[tool.uv]
+override-dependencies=[
+    "sglang; sys_platform == 'never'"
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 filterwarnings = [
