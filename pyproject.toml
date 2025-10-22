@@ -200,3 +200,17 @@ ignore = []
 
 [tool.ruff.lint.isort]
 known-first-party = ["areal"]
+
+# Remain the following tools as legacy
+# We actually use `ruff` instead
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 88
+
+[tool.autoflake]
+in-place = true
+recursive = true
+remove-all-unused-imports = true
+remove-unused-variables = true
