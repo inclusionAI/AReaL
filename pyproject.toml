@@ -176,6 +176,13 @@ exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::UserWarning:torch.*",
+    "ignore::UserWarning:transformers.*",
+]
 
 [tool.ruff]
 line-length = 88
