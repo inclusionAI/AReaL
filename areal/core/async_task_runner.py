@@ -314,24 +314,39 @@ class AsyncTaskRunner(Generic[T]):
 
                 # Process completed tasks
                 for async_task in done:
-                    result = await async_task
                     tid = async_task.get_name()
                     task_obj = running_tasks.pop(tid)
-
-                    # Place result in output queue
                     try:
+                        result = await async_task
+                    except asyncio.CancelledError:
+                        if self.logger:
+                            self.logger.warning(f"Task {tid} was cancelled.")
+                        result = None
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.error(
+                                f"AsyncTaskRunner: Task {tid} "
+                                f"failed with exception: {e}",
+                                exc_info=True,
+                            )
+                        result = None
+
+                    try:
+                        # Place result in output queue
                         self.output_queue.put_nowait(
                             _TimedResult(create_time=task_obj.create_time, data=result)
                         )
+                        if self.enable_tracing and self.logger:
+                            self.logger.info(
+                                f"AsyncTaskRunner: Completed task {tid}. "
+                                f"Running: {len(running_tasks)}"
+                            )
                     except queue.Full:
+                        # This is a critical error that should stop the runner.
+                        # Re-add task so it can be cancelled in finally.
+                        running_tasks[tid] = task_obj
                         raise RuntimeError(
                             "Output queue full. Please increase max_queue_size."
-                        )
-
-                    if self.enable_tracing and self.logger:
-                        self.logger.info(
-                            f"AsyncTaskRunner: Completed task {tid}. "
-                            f"Running: {len(running_tasks)}"
                         )
 
                 # Small yield to allow other async operations

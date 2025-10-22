@@ -287,7 +287,7 @@ class TestAsyncTaskRunnerErrorHandling:
         runner.destroy()
 
     def test_task_exception_handling(self):
-        """Test that task exceptions are properly handled."""
+        """Test that task exceptions are properly handled and don't stop the runner."""
         runner = AsyncTaskRunner[int](max_queue_size=10)
         runner.initialize()
 
@@ -296,17 +296,20 @@ class TestAsyncTaskRunnerErrorHandling:
             raise ValueError("Task failed!")
 
         async def working_task() -> int:
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.02)
             return 42
 
         # Submit a failing task and a working task
         runner.submit(failing_task)
         runner.submit(working_task)
 
-        # The working task should still complete
-        # Note: failing task will raise in the background thread but shouldn't
-        # crash the runner
-        time.sleep(0.5)  # Give time for tasks to complete
+        # The working task should still complete and its result should be retrievable.
+        # The failing task will be logged but won't crash the runner.
+        results = runner.wait(count=1, timeout=1.0)
+        assert results == [42]
+
+        # Check that the runner thread is still alive
+        runner._check_thread_health()
 
         runner.destroy()
 
