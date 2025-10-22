@@ -46,7 +46,7 @@ paramiko
 megatron-core==0.13.1
 mbridge==0.13.0
 # To eliminate security risks
-torch>2.0.0
+torch==2.8.0
 ruff==0.14.1
 cookiecutter>2.1.1
 asyncio
