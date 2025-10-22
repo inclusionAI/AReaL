@@ -114,7 +114,7 @@ def get_response_cost(response: ModelResponse) -> float:
 
 
 def get_response_usage(response: ModelResponse) -> Optional[dict]:
-    usage: Optional[Usage] = response.get("usage")
+    usage: Optional[Usage] = getattr(response, "usage", None)
     if usage is None:
         return None
     return {
