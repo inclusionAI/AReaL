@@ -108,9 +108,9 @@ class UserSimulator(BaseUser):
         """
         if message_history is None:
             message_history = []
-        assert all(
-            is_valid_user_history_message(m) for m in message_history
-        ), "Invalid user message history. User messages must be of type UserMessage, AssistantMessage, or ToolMessage to User."
+        assert all(is_valid_user_history_message(m) for m in message_history), (
+            "Invalid user message history. User messages must be of type UserMessage, AssistantMessage, or ToolMessage to User."
+        )
 
         user_state = UserState(
             system_messages=[SystemMessage(role="system", content=self.system_prompt)],
