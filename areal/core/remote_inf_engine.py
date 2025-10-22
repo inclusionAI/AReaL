@@ -1,19 +1,20 @@
 import asyncio
+from collections.abc import Callable
+from concurrent.futures import Future, ProcessPoolExecutor
+from datetime import datetime
 import os
 import random
 import shutil
-import time
-import uuid
-from concurrent.futures import Future, ProcessPoolExecutor
-from datetime import datetime
 from threading import Lock
-from typing import Any, Callable, Dict, List, Optional, Protocol
+import time
+from typing import Any, Optional, Protocol
+import uuid
 
 import aiohttp
 import requests
 import torch.distributed as dist
-import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
+import uvloop
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.io_struct import (
@@ -70,7 +71,7 @@ class RemoteInfBackendProtocol(Protocol):
         ...
 
     def parse_generation_response(
-        self, response: Dict[str, Any]
+        self, response: dict[str, Any]
     ) -> HttpGenerationResult:
         """Parse generation response into standard format.
 
@@ -96,7 +97,9 @@ class RemoteInfBackendProtocol(Protocol):
         meta : WeightUpdateMeta
             Metadata containing path and configuration
         lora_initialized : bool
-            Whether LoRA has been initialized in the server. If so, we need to unload the previous LoRA before uploading a new one.
+            Whether LoRA has been initialized in the server.
+            If so, we need to unload the previous LoRA before
+            uploading a new one.
 
         Returns
         -------
@@ -106,7 +109,7 @@ class RemoteInfBackendProtocol(Protocol):
         ...
 
     def build_distributed_weight_update_requests(
-        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> WeightUpdateRequests:
         """Build requests for distributed weight update via NCCL/XCCL.
 
@@ -127,7 +130,7 @@ class RemoteInfBackendProtocol(Protocol):
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
-        """Build request to initialize weight update communication group.
+        """Build request to initialize weight update xccl group.
 
         Parameters
         ----------
@@ -250,8 +253,8 @@ class RemoteInfEngine:
 
     def initialize(
         self,
-        engine_id: Optional[str] = None,
-        addr: str | List[str] | None = None,
+        engine_id: str | None = None,
+        addr: str | list[str] | None = None,
         train_data_parallel_size: int | None = None,
     ):
         """Initialize the engine by discovering and connecting to servers.
@@ -275,7 +278,7 @@ class RemoteInfEngine:
 
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
-            self.logger.info(f"Get server addresses from the `addr` argument.")
+            self.logger.info("Get server addresses from the `addr` argument.")
         else:
             if (
                 self.config.experiment_name is not None
@@ -287,18 +290,20 @@ class RemoteInfEngine:
                         trial_name=self.config.trial_name,
                         timeout=1,
                     )
-                    self.logger.info(f"Get server addresses from name_resolve.")
+                    self.logger.info("Get server addresses from name_resolve.")
                 except (TimeoutError, RuntimeError):
                     # RuntimeError happens when name_resolve is not properly configured.
                     pass
         if not self.addresses and os.getenv("AREAL_LLM_SERVER_ADDRS"):
             # When addr is not provided, fallback to reading addrs from env var
             self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
-            self.logger.info(f"Get server addresses from environment variable.")
+            self.logger.info("Get server addresses from environment variable.")
         if not self.addresses:
             raise RuntimeError(
-                "No configured inference servers. Please pass in server addresses by arguments "
-                "for `initialize` or environment variable `AREAL_LLM_SERVER_ADDRS`."
+                "No configured inference servers. "
+                "Please pass in server addresses by arguments "
+                "for `initialize` or environment "
+                "variable `AREAL_LLM_SERVER_ADDRS`."
             )
 
         self.logger.info("Waiting for server ready...")
@@ -418,7 +423,6 @@ class RemoteInfEngine:
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         ) as session:
-
             # Deal with rollout interruption
             stop_reason = None
             while (
@@ -427,7 +431,7 @@ class RemoteInfEngine:
             ):
                 # Request is interrupted, wait for some time to avoid interfering
                 # with update weights requests
-                while self.workflow_executor.paused.is_set():
+                while self.workflow_executor.is_paused():
                     await asyncio.sleep(0.5)
 
                 # Build request using backend
@@ -505,9 +509,9 @@ class RemoteInfEngine:
             A future object representing the asynchronous initialization operation
         """
         assert meta.type == current_platform.communication_backend
-        assert (
-            not self.distributed_weight_update_initialized
-        ), "Weight update group already initialized."
+        assert not self.distributed_weight_update_initialized, (
+            "Weight update group already initialized."
+        )
 
         fut = self.executor.submit(
             _init_weights_update_group_remote,
@@ -529,7 +533,7 @@ class RemoteInfEngine:
         return fut
 
     def update_weights_from_distributed(
-        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> Future[None]:
         """Update weights in the inference engine from distributed memory.
 
@@ -578,7 +582,7 @@ class RemoteInfEngine:
         # Use ProcessPool to bypass python GIL for running async coroutines
         if self.config.experiment_name is None or self.config.trial_name is None:
             raise RuntimeError(
-                f"Experiment and trial names must be set for disk-based weight updates."
+                "Experiment and trial names must be set for disk-based weight updates."
             )
 
         fut = self.executor.submit(
@@ -597,7 +601,8 @@ class RemoteInfEngine:
         def callback(fut):
             respond_time = fut.result()
             self.logger.info(
-                f"Loading weights from disk done in {(time.perf_counter() - tik):.2f}s. "
+                f"Loading weights from disk done "
+                f"in {(time.perf_counter() - tik):.2f}s. "
                 f"Respond time: {respond_time:.2f}s."
             )
             # Update LoRA state if this was a LoRA update
@@ -611,9 +616,9 @@ class RemoteInfEngine:
 
     def submit(
         self,
-        data: Dict[str, Any],
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
+        data: dict[str, Any],
+        workflow: RolloutWorkflow | None = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
@@ -636,7 +641,7 @@ class RemoteInfEngine:
             should_accept=should_accept,
         )
 
-    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
+    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
         """Wait for a specified number of requests to complete.
 
         Parameters
@@ -655,11 +660,11 @@ class RemoteInfEngine:
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
         Parameters
@@ -688,8 +693,8 @@ class RemoteInfEngine:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow: RolloutWorkflow | None = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready.
@@ -748,7 +753,9 @@ class RemoteInfEngine:
             self.logger.warning("Backend does not support resume operation")
 
     def pause(self):
-        """Pause request submission for async rollout. Used during evaluation to prevent data over generation."""
+        """Pause request submission for async rollout.
+        Used during evaluation to prevent data over generation.
+        """
         return self.workflow_executor.pause()
 
     def resume(self):
@@ -765,7 +772,7 @@ def _update_weights_from_disk(
     experiment_name: str,
     trial_name: str,
     model_version: int,
-    addresses: List[str],
+    addresses: list[str],
     meta: WeightUpdateMeta,
     request_retries: int,
     request_timeout: float,
@@ -811,7 +818,7 @@ def _update_weights_from_disk(
 def _init_weights_update_group_remote(
     backend: RemoteInfBackendProtocol,
     meta: WeightUpdateMeta,
-    addresses: List[str],
+    addresses: list[str],
     request_timeout: float,
 ):
     """Helper to initialize weight update group in a separate process."""
@@ -844,8 +851,8 @@ def _init_weights_update_group_remote(
 def _update_weights_from_distributed(
     backend: RemoteInfBackendProtocol,
     meta: WeightUpdateMeta,
-    param_specs: List[ParamSpec],
-    addresses: List[str],
+    param_specs: list[ParamSpec],
+    addresses: list[str],
     request_timeout: float,
 ):
     """Helper to update weights from distributed memory in a separate process."""

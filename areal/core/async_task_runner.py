@@ -26,7 +26,7 @@ T = TypeVar("T")
 
 # Polling configuration
 DEFAULT_POLL_WAIT_TIME = 0.05  # 50ms
-DEFAULT_POLL_SLEEP_TIME = 1.0  # 1 second
+DEFAULT_POLL_SLEEP_TIME = 0.5  # 1 second
 
 
 class TaskQueueFullError(RuntimeError):
@@ -314,9 +314,6 @@ class AsyncTaskRunner(Generic[T]):
                         timeout=self.poll_wait_time,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
-                else:
-                    # No running tasks, sleep briefly to avoid busy waiting
-                    await asyncio.sleep(self.poll_sleep_time)
 
                 # Process completed tasks
                 for async_task in done:
@@ -326,13 +323,15 @@ class AsyncTaskRunner(Generic[T]):
                         result = await async_task
                     except asyncio.CancelledError:
                         if self.logger:
-                            self.logger.warning(f"Task {tid} was cancelled.")
+                            self.logger.warning(
+                                f"Task {tid} was cancelled. None will be returned"
+                            )
                         result = None
                     except Exception as e:
                         if self.logger:
                             self.logger.error(
                                 f"AsyncTaskRunner: Task {tid} "
-                                f"failed with exception: {e}",
+                                f"failed with exception: {e} ",
                                 exc_info=True,
                             )
                         result = None
@@ -354,11 +353,7 @@ class AsyncTaskRunner(Generic[T]):
                         raise TaskQueueFullError(
                             "Output queue full. Please increase max_queue_size."
                         )
-
-                # Small yield to allow other async operations
-                if running_tasks:
-                    await asyncio.sleep(0)
-
+                await asyncio.sleep(self.poll_sleep_time)
         finally:
             # Cancel all remaining tasks on shutdown
             pending_tasks = [
@@ -476,7 +471,7 @@ class AsyncTaskRunner(Generic[T]):
                 break
 
             # Sleep briefly to avoid busy waiting
-            time.sleep(self.poll_wait_time)
+            time.sleep(self.poll_sleep_time)
 
         # Check exit conditions
         if self.exiting.is_set():

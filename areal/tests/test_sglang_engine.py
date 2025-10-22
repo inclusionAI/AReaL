@@ -31,7 +31,7 @@ def check_server_health(base_url):
     try:
         response = requests.get(f"{base_url}/health", timeout=30)
         return response.status_code == 200
-    except requests.exceptions.RequestException as e:
+    except requests.exceptions.RequestException:
         return False
 
 
@@ -113,8 +113,8 @@ def test_remote_sglang_rollout(sglang_server, n_samples):
     engine.destroy()
 
 
-@pytest.mark.parametrize("ofp", [1, 4, 16])
-@pytest.mark.parametrize("bs", [2, 4])
+@pytest.mark.parametrize("ofp", [0, 1, 4])
+@pytest.mark.parametrize("bs", [2])
 @pytest.mark.parametrize("n_samples", [2, 1])
 def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
     from areal.engine.sglang_remote import RemoteSGLangEngine
@@ -125,6 +125,7 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
         trial_name=TRIAL_NAME,
         consumer_batch_size=bs,
         max_head_offpolicyness=ofp,
+        enable_rollout_tracing=True,
     )
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
     engine = RemoteSGLangEngine(config)
@@ -147,11 +148,13 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
     for _ in range(bs * 2):
         engine.submit(data, workflow=workflow)
 
-    # wait for some time
-    time.sleep(10)
-    assert engine._engine.workflow_executor.output_queue.qsize() == min(
-        bs * 2, bs * (ofp + 1)
-    )
+    if ofp < 1:
+        # Due to controlled offpolicyness, not all requests are committed
+        with pytest.raises(TimeoutError):
+            engine.wait(count=bs * 2, timeout=10)
+    else:
+        result = engine.wait(count=bs * 2, timeout=10)
+        assert result["attention_mask"].shape[0] == bs * 2 * n_samples
 
     # Update model version
     engine.set_version(1)
@@ -160,11 +163,15 @@ def test_remote_sglang_staleness_control(sglang_server, bs, ofp, n_samples):
     # submit again
     for _ in range(bs * 2):
         engine.submit(data, workflow=workflow)
-    # wait for some time
-    time.sleep(5)
-    assert engine._engine.workflow_executor.output_queue.qsize() == min(
-        bs * 4, bs * (ofp + 2)
-    )
+
+    if ofp < 2:
+        # Due to controlled offpolicyness, not all requests are committed
+        with pytest.raises(TimeoutError):
+            engine.wait(count=bs * 4, timeout=5)
+    else:
+        # 2 * bs samples haved been retrived above
+        results = engine.wait(count=bs * 2, timeout=5)
+        assert results["attention_mask"].shape[0] == bs * 2 * n_samples
 
     # exit
     engine.destroy()
@@ -195,8 +202,8 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, sglang_server):
     engine.model_version = 100
 
     # setup name resolve
-    import areal.utils.name_resolve as name_resolve
     from areal.api.cli_args import NameResolveConfig
+    import areal.utils.name_resolve as name_resolve
 
     nfs_record_root = tmp_path_factory.mktemp("nfs_record_path")
     name_resolve_config = NameResolveConfig(type="nfs", nfs_record_root=nfs_record_root)

@@ -277,8 +277,9 @@ class WorkflowExecutor:
         # For trajectory format checking
         self._expected_trajectory_keys: set | None = None
 
-        # Cache for tracking accepted/rejected results
+        # Cache for tracking inputs and accepted/rejected results
         self._pending_results: list[dict[str, Any]] = []
+        self._pending_inputs: list[_RolloutTaskInput] = []
 
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start the async task runner.
@@ -436,23 +437,19 @@ class WorkflowExecutor:
         See :meth:`~areal.api.engine_api.InferenceEngine.submit` for detailed
         documentation.
         """
-        # Check capacity before submitting - raise queue.Full if capacity exceeded
-        capacity = self.get_capacity()
-        if capacity <= 0:
-            raise queue.Full(
-                f"Capacity exhausted (capacity={capacity}). "
-                f"Cannot submit more rollouts."
-            )
-
         # Create workflow if builder provided
         if workflow is None:
             workflow = workflow_builder()
-
-        # Wrap in rollout-specific task input
-        task_input = _RolloutTaskInput(
-            data=data, workflow=workflow, should_accept=should_accept
+        self._pending_inputs.append(
+            _RolloutTaskInput(
+                data=data,
+                workflow=workflow,
+                should_accept=should_accept,
+            )
         )
 
+    def _commit_one_to_runner(self):
+        task_input = self._pending_inputs.pop(0)
         # Create the async workflow execution function and submit to runner
         workflow_fn = self._create_workflow_task(task_input)
         try:
@@ -486,7 +483,19 @@ class WorkflowExecutor:
         # (non-None) results. Use short timeout (1 second) for each wait call
         # to allow periodic checking. This matches original behavior where
         # wait() would poll and allow prepare_batch() to continue
-        while len(self._pending_results) < count:
+        while True:
+            # Submit pending inputs
+            # Check capacity before submitting
+            capacity = self.get_capacity()
+            # Submit pending tasks
+            for _ in range(capacity):
+                if len(self._pending_inputs) == 0:
+                    break
+                self._commit_one_to_runner()
+
+            if len(self._pending_results) >= count:
+                break
+
             elapsed = time.perf_counter() - start_time
             remaining_timeout = timeout - elapsed
 
@@ -504,7 +513,7 @@ class WorkflowExecutor:
                 # Use short timeout to allow periodic returns (matches original
                 # polling behavior)
                 batch = self.runner.wait(
-                    count=needed, timeout=min(1.0, remaining_timeout)
+                    count=needed, timeout=min(0.1, remaining_timeout)
                 )
 
                 # Filter out None results (rejected trajectories)
@@ -513,7 +522,7 @@ class WorkflowExecutor:
                 accepted = [result for result in batch if result is not None]
                 self._pending_results.extend(accepted)
             except TimeoutError:
-                continue
+                pass
 
         if self.config.enable_rollout_tracing:
             self.logger.info("Rollout results are ready!")
@@ -603,3 +612,6 @@ class WorkflowExecutor:
         documentation.
         """
         self.runner.resume()
+
+    def is_paused(self):
+        return self.runner.paused.is_set()
