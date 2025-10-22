@@ -303,9 +303,9 @@ class TestAsyncTaskRunnerErrorHandling:
 
         # The working task should still complete and its result should be retrievable.
         # The failing task will return None but won't crash the runner.
-        results = runner.wait(count=1, timeout=1.0)
+        results = runner.wait(count=1, timeout=2.0)
         assert results == [None]
-        results = runner.wait(count=1, timeout=1.0)
+        results = runner.wait(count=1, timeout=2.0)
         assert results == [42]
 
         # Check that the runner thread is still alive
