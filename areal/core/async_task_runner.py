@@ -11,15 +11,16 @@ that processes tasks from an input queue and places results in an output queue.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 import queue
 import random
 import threading
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Generic, TypeVar
 
 import uvloop
+
 
 # Type variable for generic result types
 T = TypeVar("T")
@@ -31,8 +32,6 @@ DEFAULT_POLL_SLEEP_TIME = 0.5  # 1 second
 
 class TaskQueueFullError(RuntimeError):
     """Raised when an AsyncTaskRunner queue is full."""
-
-    pass
 
 
 @dataclass
