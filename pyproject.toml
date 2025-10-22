@@ -186,7 +186,8 @@ exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*
 
 [tool.uv]
 override-dependencies=[
-    "openai==1.99.6"
+    "openai==1.99.6",
+    "xgrammar==0.1.24",
 ]
 
 [tool.pytest.ini_options]
