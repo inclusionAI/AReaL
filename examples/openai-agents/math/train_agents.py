@@ -163,10 +163,6 @@ def main(args):
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
-    eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
-    # NOTE: eval does not have any offpolicyness control
-    eval_rollout.config.max_head_offpolicyness = int(1e12)
-    eval_rollout.initialize()
 
     weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
 
