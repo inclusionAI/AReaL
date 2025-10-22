@@ -291,12 +291,14 @@ class Tau2Workflow(RolloutWorkflow):
         responses: list[ModelResponse] = []
 
         async def acompletion_areal(
-            client: ArealOpenAI,
+            model: str,
             messages: list[dict],
             tools: list | None = None,
             tool_choice: str | dict | None = None,
+            num_retries: int | None = None,
             **kwargs: Any,
         ):
+            # ignore `model` and `num_retries` due to this client does not need them
             response = await client.chat.completions.create(
                 messages=messages,
                 tools=tools,
@@ -308,6 +310,7 @@ class Tau2Workflow(RolloutWorkflow):
                 frequency_penalty=self.gconfig.frequency_penalty,
                 **kwargs,
             )
+            response.model = f"areal/{self.actor_model_name}"
             responses.append(response)
             return response
 
