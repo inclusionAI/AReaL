@@ -12,14 +12,20 @@ import colorama
 import torch
 import torch.distributed as dist
 from datasets import Dataset
+from litellm import ModelResponse
 from loguru import logger
+from tau2.agent.llm_agent import LLMAgent, LLMSoloAgent
 from tau2.data_model.message import AssistantMessage as Tau2AssistantMessage
 from tau2.data_model.tasks import Task
+from tau2.environment.environment import Environment
 from tau2.environment.tool import Tool
-from tau2.gym.gym_agent import AgentGymEnv
+from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
+from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.registry import registry
-from tau2.utils.tools import parse_action_string
-from tensordict import TensorDict
+from tau2.user.user_simulator import DummyUser, UserSimulator
+
+# from tau2.utils.tools import parse_action_string
+# from tensordict import TensorDict
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
@@ -227,12 +233,26 @@ def to_dict(message: Tau2AssistantMessage) -> dict:
     return data
 
 
+def get_tool_call_parser_name(model_name: str) -> str:
+    if "qwen" in model_name.lower():
+        return "qwen25"
+    elif "llama" in model_name.lower():
+        return "llama"
+    elif "gemma" in model_name.lower():
+        return "gemma"
+    elif "deepseek" in model_name.lower():
+        return "deepseek"
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+
+
 class Tau2Workflow(RolloutWorkflow):
     def __init__(
         self,
         econfig: Tau2EnvConfig,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
+        actor_model_name: str,
         dump_dir: str | None = None,
         rollout_stat_scope: str = "rollout",
         n_samples: int = 1,
@@ -242,6 +262,8 @@ class Tau2Workflow(RolloutWorkflow):
         self.econfig = econfig
         self.gconfig = gconfig
         self.tokenizer = tokenizer
+        self.actor_model_name = actor_model_name
+        self.tool_call_parser_name = get_tool_call_parser_name(actor_model_name)
         self.dump_dir = dump_dir
         self.max_total_tokens = max_total_tokens
         self.rollout_stat_scope = rollout_stat_scope
@@ -249,58 +271,120 @@ class Tau2Workflow(RolloutWorkflow):
             os.makedirs(self.dump_dir, exist_ok=True)
 
     async def _run_one_episode(self, client: ArealOpenAI, data: Dict[str, Any]):
+        domain = self.econfig.domain
+        solo_mode = self.econfig.solo_mode
+
         task_id = data["task_id"]
-        env = AgentGymEnv(
-            domain=self.econfig.domain,
-            task_id=task_id,
-            max_steps=self.econfig.max_steps,
-            solo_mode=self.econfig.solo_mode,
-            user_llm=self.econfig.user_llm,
-            user_llm_args=self.econfig.user_llm_args,
-        )
-        obs, info = env.reset()
-        task: Task = info["task"]
-        tools: list[Tool] = info["tools"]
-        tools_schema = [tool.openai_schema for tool in tools]
-        agent_policy_doc = info["policy"]
 
-        system_prompt = get_tau2_system_prompt(
-            agent_policy_doc, task.ticket if self.econfig.solo_mode else None
-        )
-        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-        if obs:
-            messages.append({"role": "user", "content": obs})
+        def _get_task(task_id: str) -> Task:
+            tasks = registry.get_tasks_loader(domain)()
+            for task in tasks:
+                if task.id == task_id:
+                    return task
+            raise ValueError(f"No task found with id {task_id} for domain {domain}")
 
-        completions = []
-        for step in range(self.econfig.max_steps):
+        task = _get_task(task_id)
+        logger.info(
+            f"STARTING SIMULATION: Domain: {domain}, Task: {task.id}, Solo Mode: {solo_mode}"
+        )
+
+        responses: list[ModelResponse] = []
+
+        async def acompletion_areal(
+            client: ArealOpenAI,
+            messages: list[dict],
+            tools: list | None = None,
+            tool_choice: str | dict | None = None,
+            **kwargs: Any,
+        ):
             response = await client.chat.completions.create(
                 messages=messages,
-                tools=tools_schema,
+                tools=tools,
+                tool_choice=tool_choice,
                 temperature=self.gconfig.temperature,
                 max_completion_tokens=self.gconfig.max_new_tokens,
                 top_p=self.gconfig.top_p,
                 stop=self.gconfig.stop,
-                stop_token_ids=self.gconfig.stop_token_ids,
                 frequency_penalty=self.gconfig.frequency_penalty,
+                **kwargs,
             )
-            completions.append(response)
-            content = response.choices[0].message.content
-            action = parse_action_string(content)
-            obs, reward, done, _, _ = env.step(content)
-            messages.append({"role": "assistant", "content": content})
-            if obs:
-                new_msg_role = "tool" if action.tool_calls is not None else "user"
-                new_msg = {"role": new_msg_role, "content": obs}
-                messages.append(new_msg)
-            client.set_reward(response.id, reward)
-            if done:
-                break
+            responses.append(response)
+            return response
 
-        return messages, completions, reward, done
+        environment_constructor = registry.get_env_constructor(domain)
+        environment: Environment = environment_constructor(solo_mode=solo_mode)
+        agent_policy_doc = environment.get_policy()
+        tools: list[Tool] = environment.get_tools()
+        try:
+            user_tools = environment.get_user_tools()
+        except Exception:
+            user_tools = []
+
+        if solo_mode:
+            agent = LLMSoloAgent(
+                tools=tools + user_tools,
+                domain_policy=agent_policy_doc,
+                llm=self.actor_model_name,
+                llm_args={},
+                task=task,
+                completion_fn=acompletion_areal,
+            )
+            user = DummyUser()
+        else:
+            agent = LLMAgent(
+                tools=tools,
+                domain_policy=agent_policy_doc,
+                llm=self.actor_model_name,
+                llm_args={},
+                completion_fn=acompletion_areal,
+            )
+            user = UserSimulator(
+                tools=user_tools,
+                instructions=str(task.user_scenario),
+                llm=self.econfig.user_llm,
+                llm_args=self.econfig.user_llm_args,
+            )
+
+        orchestrator = Orchestrator(
+            domain=domain,
+            agent=agent,
+            user=user,
+            environment=environment,
+            task=task,
+            max_steps=self.econfig.max_steps,
+            # max_errors=self.econfig.max_errors,
+            # seed=self.econfig.seed,
+            solo_mode=solo_mode,
+        )
+        simulation = await orchestrator.arun()
+
+        reward_info = evaluate_simulation(
+            domain=domain,
+            task=task,
+            simulation=simulation,
+            evaluation_type=EvaluationType.ALL,
+            solo_mode=solo_mode,
+        )
+
+        simulation.reward_info = reward_info
+        for i, response in enumerate(responses):
+            if i + 1 < len(responses):
+                client.set_reward(response.id, 0)
+            else:
+                client.set_reward(response.id, reward_info.reward)
+
+        logger.info(
+            f"FINISHED SIMULATION: Domain: {domain}, Task: {task.id}, Agent: {agent.__class__.__name__}, User: {user.__class__.__name__}. Reward: {reward_info.reward}"
+        )
+        return simulation.messages, responses, reward_info.reward
 
     async def arun_episode(self, engine: InferenceEngine, data: Dict[str, Any]):
         clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+            ArealOpenAI(
+                engine=engine,
+                tokenizer=self.tokenizer,
+                tool_call_parser=self.tool_call_parser_name,
+            )
             for _ in range(self.gconfig.n_samples)
         ]
 
@@ -312,10 +396,12 @@ class Tau2Workflow(RolloutWorkflow):
             ]
         )
         for result in results:
-            messages, completions, reward, done = result
+            messages, responses, reward = result
             stats_tracker.get(self.rollout_stat_scope).scalar(
-                reward=reward, num_steps=len(completions), done=float(done)
+                reward=reward, num_steps=len(responses)
             )
+            for msg in messages:
+                logger.info(f"Role: {msg['role']}, Content: {msg['content']}")
 
         completions_with_reward = {}
         for client in clients:
@@ -408,7 +494,7 @@ def main(args):
         econfig=config.econfig,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
-        # enable_thinking=False,
+        actor_model_name=config.actor.path.split("/")[-1],
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
@@ -417,7 +503,7 @@ def main(args):
         econfig=config.econfig,
         gconfig=config.gconfig.new(temperature=0.6),
         tokenizer=tokenizer,
-        # enable_thinking=False,
+        actor_model_name=config.actor.path.split("/")[-1],
         rollout_stat_scope="eval-rollout",
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated-eval"
