@@ -167,7 +167,7 @@ def main(args):
 
     # Run training.
     Saver(config.saver, ft_spec)
-    StatsLogger(config, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     # evaluator = Evaluator(config.evaluator, ft_spec)
 
     RecoverHandler(config.recover, ft_spec)
@@ -216,6 +216,7 @@ def main(args):
                     batch,
                     workflow=workflow,
                 )
+                logger.info(f"rollout_batch result: {batch}")
             # batch = tensor_container_to(batch, actor.device)
 
             # batch = broadcast_tensor_container(
@@ -249,8 +250,11 @@ def main(args):
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
         ):
-            actor.ppo_update(batch)
-            # stats = actor.ppo_update(batch)
+            stats = actor.ppo_update(batch)
+            logger.info(f"ppo_update result: {stats}")
+            for item in stats:
+                logger.info(f"ppo_update item result: {item.to_list()}")
+            stats = stats[0].to_list()
             actor.step_lr_scheduler()
             # log_gpu_stats("ppo update")
 
@@ -277,52 +281,53 @@ def main(args):
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
             # eval_rollout.set_version(global_step + 1)
-        #
-        #     with stats_tracker.record_timing("save"):
-        #         saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
-        #
-        #     with stats_tracker.record_timing("checkpoint_for_recover"):
-        #         recover_handler.dump(
-        #             actor,
-        #             step_info,
-        #             saver,
-        #             evaluator,
-        #             stats_logger,
-        #             train_dataloader,
-        #             tokenizer=tokenizer,
-        #         )
-        #
-        #     dist.barrier(device_ids=[actor.device.index])
-        #     current_platform.synchronize()
-        #
-        #     with stats_tracker.record_timing("eval"):
-        #
-        #         def evaluate_fn():
-        #             if actor.is_data_parallel_head():
-        #                 cnt = 0
-        #                 for data in valid_dataloader:
-        #                     for item in data:
-        #                         eval_rollout.submit(item, eval_workflow)
-        #                         cnt += 1
-        #                 eval_rollout.wait(cnt, timeout=None)
-        #             dist.barrier(device_ids=[actor.device.index])
-        #             current_platform.synchronize()
-        #
-        #         evaluator.evaluate(
-        #             evaluate_fn,
-        #             epoch,
-        #             step,
-        #             global_step,
-        #         )
-        #
-        #     dist.barrier(device_ids=[actor.device.index])
-        #     current_platform.synchronize()
-        #
-        #     # Upload statistics to the logger (e.g., wandb)
-        #     stats[0].update(
-        #         stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-        #     )
-        #     stats_logger.commit(epoch, step, global_step, stats)
+            #
+            #     with stats_tracker.record_timing("save"):
+            #         saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
+            #
+            #     with stats_tracker.record_timing("checkpoint_for_recover"):
+            #         recover_handler.dump(
+            #             actor,
+            #             step_info,
+            #             saver,
+            #             evaluator,
+            #             stats_logger,
+            #             train_dataloader,
+            #             tokenizer=tokenizer,
+            #         )
+            #
+            #     dist.barrier(device_ids=[actor.device.index])
+            #     current_platform.synchronize()
+            #
+            #     with stats_tracker.record_timing("eval"):
+            #
+            #         def evaluate_fn():
+            #             if actor.is_data_parallel_head():
+            #                 cnt = 0
+            #                 for data in valid_dataloader:
+            #                     for item in data:
+            #                         eval_rollout.submit(item, eval_workflow)
+            #                         cnt += 1
+            #                 eval_rollout.wait(cnt, timeout=None)
+            #             dist.barrier(device_ids=[actor.device.index])
+            #             current_platform.synchronize()
+            #
+            #         evaluator.evaluate(
+            #             evaluate_fn,
+            #             epoch,
+            #             step,
+            #             global_step,
+            #         )
+            #
+            #     dist.barrier(device_ids=[actor.device.index])
+            #     current_platform.synchronize()
+            #
+            #     # Upload statistics to the logger (e.g., wandb)
+            #     stats[0].update(
+            #         stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+            #     )
+            stats.append(stats_tracker.export_all())
+            stats_logger.commit(epoch, step, global_step, stats)
         #
         #     dist.barrier(device_ids=[actor.device.index])
         #     current_platform.synchronize()
