@@ -3,14 +3,11 @@ from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 import torch
-from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import InferenceEngineConfig, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import (
-    ModelRequest,
-    ModelResponse,
     ParamSpec,
     SaveLoadMeta,
     WeightUpdateMeta,
@@ -315,7 +312,7 @@ class TrainController(abc.ABC):
         """
         raise NotImplementedError()
 
-    def get_version(self) -> List[int]:
+    def get_version(self) -> int:
         """Get the current weight version in the training engine.
 
         Returns
@@ -359,7 +356,7 @@ class TrainController(abc.ABC):
         input_: DistributedBatch,
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> List[Dict[str, float]]:
+    ) -> Dict[str, float]:
         """Update the model with a batch of data and a loss function.
 
         Note
@@ -382,7 +379,7 @@ class TrainController(abc.ABC):
 
         Returns
         -------
-        List[Dict[str, float]]
+        Dict[str, float]
             Scalar statistics after training, e.g., the current learning rate,
             gradient norm, etc.
         """
@@ -394,7 +391,7 @@ class TrainController(abc.ABC):
         input_: DistributedBatch,
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> List[torch.Tensor]:
+    ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function.
 
         Note
@@ -457,6 +454,7 @@ class TrainController(abc.ABC):
             The result produced by `post_hook` and `aggregate_fn`.
         """
         raise NotImplementedError()
+
 
 class RolloutController(abc.ABC):
     """A centralized controller that manages multiple distributed InferenceEngine workers for rollout generation.

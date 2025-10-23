@@ -116,8 +116,9 @@ class DistributedTrainController(TrainController):
     def set_version(self, version: int):
         return self.custom_function_call("set_version", version)
 
-    def get_version(self) -> List[int]:
-        return self.custom_function_call("get_version")
+    def get_version(self) -> int:
+        results = self.custom_function_call("get_version")
+        return results[0]
 
     def save(self, meta: SaveLoadMeta):
         self.custom_function_call("save", meta)
@@ -150,7 +151,7 @@ class DistributedTrainController(TrainController):
         input_: DistributedBatch,
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> List[Dict[str, float]]:
+    ) -> Dict[str, float]:
 
         batches = self._align_batches_with_dp(input_, True)
         train_stats = rpc_call(
@@ -162,7 +163,7 @@ class DistributedTrainController(TrainController):
             loss_weight_fn,
         )
 
-        return train_stats
+        return train_stats[0]
 
     def ppo_update(
         self,
@@ -184,14 +185,14 @@ class DistributedTrainController(TrainController):
         input_: DistributedBatch,
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> List[torch.Tensor]:
+    ) -> torch.Tensor | None:
 
         batches = self._align_batches_with_dp(input_, True)
         eval_stats = rpc_call(
             self.scheduler, self.workers, "eval_batch", batches, loss_fn, loss_weight_fn
         )
 
-        return eval_stats
+        return eval_stats[0]
 
     def compute_logp(
         self,
@@ -208,7 +209,6 @@ class DistributedTrainController(TrainController):
             *args,
             **kwargs,
         )
-        logger.info(f"debug: type logps: {type(logps)}")
         return logps
 
     def compute_advantages(

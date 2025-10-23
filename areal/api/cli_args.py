@@ -323,7 +323,7 @@ class TrainEngineConfig:
     )
     scheduling_specs: List[SchedulingSpec] = field(
         default_factory=list,
-        metadata={"help": "inference engine schedule specs"},
+        metadata={"help": "train engine schedule specs"},
     )
 
 
