@@ -22,7 +22,6 @@ from areal.utils.data import (
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
-from areal.utils.functional import filter_batch_fn_DAPO_per_group
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
@@ -163,84 +162,81 @@ def main(args):
         # Initialize batch collection
 
         with stats_tracker.record_timing("rollout"):
-            if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept=(
-                            filter_batch_fn_DAPO_per_group
-                            if config.actor.dynamic_sampling
-                            else None
-                        ),
-                    )
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept=(
-                            filter_batch_fn_DAPO_per_group
-                            if config.actor.dynamic_sampling
-                            else None
-                        ),
-                    )
-                new_batch = tensor_container_to(new_batch, actor.device)
-            batch = broadcast_tensor_container(
-                new_batch,
-                src_rank=actor.current_data_parallel_head(),
-                group=actor.context_and_model_parallel_group,
+            collected_batches = []
+            while True:
+                if actor.is_data_parallel_head():
+                    if config.async_training:
+                        new_batch = rollout.prepare_batch(
+                            train_dataloader,
+                            workflow=workflow,
+                            # TODO: refactor API in future
+                            should_accept=None,
+                        )
+                    else:
+                        new_batch = rollout.rollout_batch(
+                            next(data_generator),
+                            workflow=workflow,
+                            should_accept=None,
+                        )
+                    new_batch = tensor_container_to(new_batch, actor.device)
+                new_batch = broadcast_tensor_container(
+                    new_batch,
+                    src_rank=actor.current_data_parallel_head(),
+                    group=actor.context_and_model_parallel_group,
+                )
+
+            # Create barrier to synchronize all rollout processes.
+            dist.barrier(device_ids=[actor.device.index])
+            current_platform.synchronize()
+            # record nums of group acceptance
+            stats_logger.commit(
+                dataclasses.asdict(rollout.workflow_executor.rollout_stat)
             )
 
-        # Create barrier to synchronize all rollout processes.
-        dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
-        # record nums of group acceptance
-        stats_logger.commit(dataclasses.asdict(rollout.workflow_executor.rollout_stat))
+            with stats_tracker.record_timing("compute_advantage"):
+                actor.compute_advantages(new_batch)
+                log_gpu_stats("compute advantages")
 
-        with stats_tracker.record_timing("compute_advantage"):
-            actor.compute_advantages(new_batch)
-            log_gpu_stats("compute advantages")
-
-            # Collect the batch and process it immediately
-            if config.actor.dynamic_sampling in ["static", "dynamic"]:
-                # Filter the current batch by groups
-                filtered_batch, sampling_stat = filter_batch(
-                    filter_batch_fn_DAPO, new_batch, config.actor.group_size
-                )
-                sampling_stats.append(sampling_stat)
-
-                if config.actor.dynamic_sampling == "static":
-                    # Statistic sampling: No need to refill for static sampling, result in smaller(variant) batch size
-                    batch = filtered_batch
-                    # Log sampling statistics for static sampling
-                    log_sampling_stats(
-                        sampling_stats, epoch, step, global_step, stats_logger
+                # Collect the batch and process it immediately
+                if config.actor.dynamic_sampling in ["static", "dynamic"]:
+                    # Filter the current batch by groups
+                    filtered_batch, sampling_stat = filter_batch(
+                        filter_batch_fn_DAPO, new_batch, config.actor.group_size
                     )
-                    break
-                else:
-                    # Dynamic sampling: keep collecting batches until we reach the target batch size
-                    # Add filtered batch to collection
-                    collected_batches.append(filtered_batch)
+                    sampling_stats.append(sampling_stat)
 
-                    # Aggregate all filter/clean batches
-                    aggregated_batch = concat_padded_tensors(collected_batches)
-                    expected_batch_size = get_batch_size(new_batch)
-                    aggregated_batch_size = get_batch_size(aggregated_batch)
-                    # Check if we have collected enough samples
-                    if aggregated_batch_size >= expected_batch_size:
-                        # Log sampling statistics for dynamic sampling
+                    if config.actor.dynamic_sampling == "static":
+                        # Statistic sampling: No need to refill for static sampling, result in smaller(variant) batch size
+                        batch = filtered_batch
+                        # Log sampling statistics for static sampling
                         log_sampling_stats(
                             sampling_stats, epoch, step, global_step, stats_logger
                         )
-                        # Truncate batch to train_batch_size
-                        batch = truncate_dict_to_batch_size(
-                            data=aggregated_batch, batch_size=expected_batch_size
-                        )
                         break
-            else:
-                # For non-dynamic sampling, just use the current batch
-                batch = new_batch
-                break
+                    elif config.actor.dynamic_sampling == "dynamic":
+                        # Dynamic sampling: keep collecting batches until we reach the target batch size
+                        # Add filtered batch to collection
+                        collected_batches.append(filtered_batch)
+
+                        # Aggregate all filter/clean batches
+                        aggregated_batch = concat_padded_tensors(collected_batches)
+                        expected_batch_size = get_batch_size(new_batch)
+                        aggregated_batch_size = get_batch_size(aggregated_batch)
+                        # Check if we have collected enough samples
+                        if aggregated_batch_size >= expected_batch_size:
+                            # Log sampling statistics for dynamic sampling
+                            log_sampling_stats(
+                                sampling_stats, epoch, step, global_step, stats_logger
+                            )
+                            # Truncate batch to train_batch_size
+                            batch = truncate_dict_to_batch_size(
+                                data=aggregated_batch, batch_size=expected_batch_size
+                            )
+                            break
+                else:
+                    # For non-dynamic sampling, just use the current batch
+                    batch = new_batch
+                    break
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
