@@ -107,10 +107,10 @@ def main(args):
 
     device = torch.device(int(os.environ["LOCAL_RANK"]))
     train_dataset_len = len(train_dataloader)
-    dateset_len_tensor = torch.tensor(
+    dataset_len_tensor = torch.tensor(
         [train_dataset_len], dtype=torch.long, device=device
     )
-    train_dataset_len = int(dateset_len_tensor.item())
+    train_dataset_len = int(dataset_len_tensor.item())
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=train_dataset_len * config.train_dataset.batch_size,
