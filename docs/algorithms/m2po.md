@@ -34,7 +34,7 @@ For more details:
 
 - AReal Detail: [Paper of AReal](https://arxiv.org/abs/2505.24298)
 
-- GRPO Detail: [Paper of M2PO](https://arxiv.org/abs/2510.01161)
+- M2PO Detail: [Paper of M2PO](https://arxiv.org/abs/2510.01161)
 
 ## Algorithm Core Parameters
 
