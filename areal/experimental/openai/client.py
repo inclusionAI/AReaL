@@ -436,14 +436,12 @@ class ArealOpenAI(AsyncOpenAI):
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
-        use_responses: bool = True,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
-        self.use_responses = use_responses
 
         # Use an ordered dict to maintain insertion order of completions/responses
         self._cache: OrderedDict[str, InteractionWithTokenLogpReward] = OrderedDict()
