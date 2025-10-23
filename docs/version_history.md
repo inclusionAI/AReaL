@@ -56,7 +56,7 @@ workflows, opening new possibilities for complex reasoning applications.
 
 ## AReaL v0.2 (March 2025): Engineering Excellence Meets SOTA Performance
 
-*📖 [Full Blog Post](/https://github.com/inclusionAI/AReaL/blob/main/blog/AReaL_v0_2.md)*
+*📖 [Full Blog Post](https://github.com/inclusionAI/AReaL/blob/main/blog/AReaL_v0_2.md)*
 
 The second major release focused on transforming AReaL from a promising research
 prototype into a production-ready system. At the heart of v0.2 was the transition from
