@@ -140,7 +140,7 @@ class LocalLauncher:
                 + " stdbuf -oL "
                 + cmd[i]
             )
-            c = f"{c} > {self.log_path_of(job_name)} 2>&1"
+            c = f"{c} 2>&1 | tee -a {self.log_path_of(job_name)}"
             logger.info("Starting local process with command: %s", c)
             process = subprocess.Popen(
                 c, shell=isinstance(c, str), stdout=sys.stdout, stderr=sys.stdout

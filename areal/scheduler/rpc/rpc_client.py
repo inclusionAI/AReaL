@@ -69,7 +69,7 @@ class RPCClient:
         return False
 
     def call_engine(
-        self, worker_id: str, method: str, max_retries: int, *args, **kwargs
+        self, worker_id: str, method: str, max_retries: int = 3, *args, **kwargs
     ) -> Any:
         """
         call the rpc server with method name and args, retry on failure
@@ -92,7 +92,6 @@ class RPCClient:
             the deserialized result from the rpc server
         """
         req = (method, args, kwargs)
-        logger.info(f"send call to {worker_id}, method={method}, req={req}")
         serialized_data = cloudpickle.dumps(req)
 
         return self._call_engine_with_serialized_data(
