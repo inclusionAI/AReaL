@@ -31,7 +31,7 @@ ROLLOUT_POLL_SLEEP_TIME = 1
 
 
 def check_trajectory_format(
-    data: (dict[str, Any] | None | dict[str, InteractionWithTokenLogpReward]),
+    data: dict[str, Any] | None | dict[str, InteractionWithTokenLogpReward],
     batch_size: int | None = None,
     expected_keys: set | None = None,
     logger: Any = None,
