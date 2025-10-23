@@ -26,7 +26,9 @@ jobs:
           autoflake --check -r examples/
 
       - name: Check Python formatting with ruff
-        run: ruff check --select I .
+        run: |
+          ruff check --select I areal/
+          ruff check --select I examples/
 
       - name: Check Python formatting with black
         run: black --check .
