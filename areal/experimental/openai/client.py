@@ -474,6 +474,18 @@ class ArealOpenAI(AsyncOpenAI):
         """Get completion/response with its reward from cache."""
         return self._cache.get(id)
 
+    def get_completion(self, id: str) -> InteractionWithTokenLogpReward | None:
+        logger.warning(
+            "get_completion is deprecated. Please use get_interaction instead."
+        )
+        return self.get_interaction(id)
+
+    def get_response(self, id: str) -> InteractionWithTokenLogpReward | None:
+        logger.warning(
+            "get_response is deprecated. Please use get_interaction instead."
+        )
+        return self.get_interaction(id)
+
     def set_reward(self, id: str, reward: float) -> None:
         """Set reward for a specific completion/response by its ID."""
         if id not in self._cache:
@@ -667,3 +679,19 @@ class ArealOpenAI(AsyncOpenAI):
             return dict(**cache)
         else:
             raise ValueError(f"Invalid export interactions style {style}")
+
+    def export_completions(
+        self, style: str = "concat"
+    ) -> dict[str, InteractionWithTokenLogpReward]:
+        logger.warning(
+            "export_completions is deprecated. Please use export_interactions instead."
+        )
+        return self.export_interactions(style)
+
+    def export_responses(
+        self, style: str = "concat"
+    ) -> dict[str, InteractionWithTokenLogpReward]:
+        logger.warning(
+            "export_responses is deprecated. Please use export_interactions instead."
+        )
+        return self.export_interactions(style)
