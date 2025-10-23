@@ -1,23 +1,16 @@
-import asyncio
 import os
 import sys
 from dataclasses import dataclass, field
+from typing import Literal
 
 import torch.distributed as dist
-from agents import Agent as OpenAIAgent
-from agents import OpenAIProvider, RunConfig
-from agents import Runner as OpenAIRunner
-from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
+from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
-from areal.api.reward_api import AsyncRewardWrapper
-from areal.api.workflow_api import RolloutWorkflow
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import cycle_dataloader
@@ -32,90 +25,30 @@ from areal.utils.stats_logger import StatsLogger
 
 @dataclass
 class AgentRLConfig(GRPOConfig):
+    agent_type: Literal["math", "multi_turn_math"] = field(
+        default="math",
+        metadata={
+            "help": "Type of agent workflow to use. Options: 'math', 'multi_turn_math'"
+        },
+    )
     n_trajs: int = field(
         default=1,
         metadata={
             "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
         },
     )
-
-
-def gsm8k_reward_fn(result, answer):
-    from areal.reward.math_parser import process_results
-
-    return int(process_results(result, answer)[0])
-
-
-class MathAgent:
-    def __init__(self):
-        self.async_reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
-
-    async def run_agent(self, data, client: ArealOpenAI):
-        agent = OpenAIAgent(
-            name="RLVR",
-        )
-        run_config = RunConfig(
-            model_provider=OpenAIProvider(openai_client=client),
-            tracing_disabled=True,
-        )
-        result = await OpenAIRunner.run(
-            agent, input=data["messages"][-1]["content"], run_config=run_config
-        )
-
-        reward = await self.async_reward_fn(
-            result=result.final_output, answer=data["answer"]
-        )
-        client.set_final_reward(reward)
-
-        return reward
-
-
-class RLVRAgentWorkflow(RolloutWorkflow):
-    def __init__(
-        self,
-        gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
-        dump_dir: str | None = None,
-        rollout_stat_scope: str = "rollout",
-        n_trajs: int = 1,
-    ):
-        self.gconfig = gconfig
-        self.gconfig.n_samples = 1
-        self.tokenizer = tokenizer
-        self.dump_dir = dump_dir
-        self.rollout_stat_scope = rollout_stat_scope
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
-
-        # Search hyper-parameters
-        self.n_trajs = n_trajs
-        self.agent = MathAgent()
-
-    async def arun_episode(self, engine, data):
-        clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-            for _ in range(self.n_trajs)
-        ]
-
-        # Collect trajectories
-        rewards = await asyncio.gather(
-            *[
-                self.agent.run_agent(
-                    data=data,
-                    client=clients[i],
-                )
-                for i in range(self.n_trajs)
-            ]
-        )
-        for reward in rewards:
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
-
-        interactions_with_reward = {}
-        for client in clients:
-            client.apply_reward_discount(turn_discount=0.9)
-            interactions = client.export_interactions(style="individual")
-            interactions_with_reward.update(interactions)
-        return interactions_with_reward
+    max_turns: int = field(
+        default=8,
+        metadata={
+            "help": "Maximum number of turns per trajectory. By default max_turns=8."
+        },
+    )
+    max_tokens_per_trajectory: int = field(
+        default=32768,
+        metadata={
+            "help": "Maximum number of tokens per trajectory. By default max_tokens_per_trajectory=32768."
+        },
+    )
 
 
 def main(args):
@@ -160,19 +93,38 @@ def main(args):
     actor.initialize(None, ft_spec)
     actor.connect_engine(rollout, weight_update_meta)
 
-    # Create rollout workflow
+    # Create rollout workflow based on agent type
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    workflow = RLVRAgentWorkflow(
-        gconfig=config.gconfig,
-        tokenizer=tokenizer,
-        n_trajs=config.n_trajs,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
-    )
+
+    if config.agent_type == "math":
+        from .math_workflow import RLVRAgentWorkflow
+
+        workflow = RLVRAgentWorkflow(
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
+            n_trajs=config.n_trajs,
+            dump_dir=os.path.join(
+                StatsLogger.get_log_path(config.stats_logger), "generated"
+            ),
+        )
+    elif config.agent_type == "multi_turn_math":
+        from .multi_turn_math_workflow import MultiturnRLVRAgentWorkflow
+
+        workflow = MultiturnRLVRAgentWorkflow(
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
+            n_trajs=config.n_trajs,
+            max_tokens=config.max_tokens_per_trajectory,
+            max_turns=config.max_turns,
+            dump_dir=os.path.join(
+                StatsLogger.get_log_path(config.stats_logger), "generated"
+            ),
+        )
+    else:
+        raise ValueError(f"Unknown agent_type: {config.agent_type}.")
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
