@@ -40,7 +40,6 @@ matplotlib
 tabulate
 aiofiles
 pydantic
-isort==6.0.1
 clang-format==19.1.7
 ninja
 paramiko
@@ -48,7 +47,7 @@ megatron-core==0.13.1
 mbridge==0.13.0
 # To eliminate security risks
 torch>2.0.0
-black==25.1.0
+ruff==0.14.1
 cookiecutter>2.1.1
 asyncio
 aiohttp>=3.11.10

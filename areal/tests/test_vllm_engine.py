@@ -157,7 +157,9 @@ def test_remote_vllm_staleness_control(vllm_server, bs, ofp, n_samples):
 
     # wait for some time
     time.sleep(10)
-    assert engine.workflow_executor.output_queue.qsize() == min(bs * 2, bs * (ofp + 1))
+    assert engine._engine.workflow_executor.output_queue.qsize() == min(
+        bs * 2, bs * (ofp + 1)
+    )
 
     # Update model version
     engine.set_version(1)
@@ -168,7 +170,9 @@ def test_remote_vllm_staleness_control(vllm_server, bs, ofp, n_samples):
         engine.submit(data, workflow=workflow)
     # wait for some time
     time.sleep(5)
-    assert engine.workflow_executor.output_queue.qsize() == min(bs * 4, bs * (ofp + 2))
+    assert engine._engine.workflow_executor.output_queue.qsize() == min(
+        bs * 4, bs * (ofp + 2)
+    )
 
     # exit
     engine.destroy()
@@ -217,10 +221,10 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, vllm_server):
     inf_engine = RemotevLLMEngine(config)
     inf_engine.initialize()
     inf_engine.set_version(100)
+    # test update weights
+    path = tmp_path_factory.mktemp("areal_update_weights")
     update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))
     engine.connect_engine(inf_engine, update_weight_meta)
     engine.set_version(100)
-    # test update weights
-    tmp_path_factory.mktemp("areal_update_weights")
     engine.update_weights(update_weight_meta)
     inf_engine.destroy()

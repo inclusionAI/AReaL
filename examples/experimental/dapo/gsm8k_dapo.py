@@ -15,13 +15,16 @@ from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
+    concat_padded_tensors,
     cycle_dataloader,
     get_batch_size,
     tensor_container_to,
+    truncate_dict_to_batch_size,
 )
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
+from areal.utils.functional import filter_batch, filter_batch_fn_DAPO
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
@@ -162,13 +165,14 @@ def main(args):
         # Initialize batch collection
 
         with stats_tracker.record_timing("rollout"):
-            collected_batches = []
+            collected_batches, sampling_stats = [], []
             while True:
                 if actor.is_data_parallel_head():
                     if config.async_training:
                         new_batch = rollout.prepare_batch(
                             train_dataloader,
                             workflow=workflow,
+                            granularity=actor.config.group_size,
                             # TODO: refactor API in future
                             should_accept=None,
                         )
@@ -176,6 +180,7 @@ def main(args):
                         new_batch = rollout.rollout_batch(
                             next(data_generator),
                             workflow=workflow,
+                            granularity=actor.config.group_size,
                             should_accept=None,
                         )
                     new_batch = tensor_container_to(new_batch, actor.device)
