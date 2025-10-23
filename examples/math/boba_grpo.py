@@ -67,7 +67,7 @@ def get_boba_math_dataset(path, tokenizer):
 def boba_reward_fn(
     prompts, completions, prompt_ids, completion_ids, solutions, **kwargs
 ):
-    from realhf.impl.dataset.math_parser import process_results
+    from areal.reward.math_parser import process_results
 
     label = 0
     for sol in solutions:
@@ -92,9 +92,9 @@ def main(args):
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     world_size = actor.data_parallel_world_size
-    assert (
-        config.train_dataset.batch_size >= world_size
-    ), f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!"
+    assert config.train_dataset.batch_size >= world_size, (
+        f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!"
+    )
 
     # Create dataset and dataloaders
     train_dataset = get_boba_math_dataset(config.train_dataset.path, tokenizer)
@@ -110,7 +110,7 @@ def main(args):
     dateset_len_tensor = torch.tensor(
         [train_dataset_len], dtype=torch.long, device=device
     )
-    train_dataset_len = dateset_len_tensor.item()
+    train_dataset_len = int(dateset_len_tensor.item())
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=train_dataset_len * config.train_dataset.batch_size,
