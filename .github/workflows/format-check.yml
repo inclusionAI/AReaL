@@ -18,15 +18,15 @@ jobs:
       - name: Install Python dependencies
         run: |
           python3 -m pip install --upgrade pip
-          pip install isort==6.0.1 black==25.1.0 clang-format==19.1.7 autoflake==2.3.1
+          pip install ruff==0.14.1 black==25.1.0 clang-format==19.1.7 autoflake==2.3.1
 
       - name: Check autoflake formatting
         run: |
           autoflake --check -r areal/
           autoflake --check -r examples/
 
-      - name: Check Python formatting with isort
-        run: isort --check-only .
+      - name: Check Python formatting with ruff
+        run: ruff check --select I .
 
       - name: Check Python formatting with black
         run: black --check .

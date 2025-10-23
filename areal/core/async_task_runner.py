@@ -8,8 +8,6 @@ The AsyncTaskRunner manages a background thread running an asyncio event loop (u
 that processes tasks from an input queue and places results in an output queue.
 """
 
-from __future__ import annotations
-
 import asyncio
 import queue
 import random
