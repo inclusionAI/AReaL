@@ -425,13 +425,32 @@ def get_m2po_loss_mask(
     Get the mask for M2PO loss based on the second-momentum threshold.
     Mask the tokens whose second-momentum is the largest, until the average second-momentum is below the threshold.
     """
+    n = sorted_m2.numel()
+    if n == 0:
+        return torch.ones_like(sorted_m2, dtype=torch.bool)
+
+    # Suffix sums: S[i] = sum(sorted_m2[i:])
+    suffix_sums = sorted_m2.flip(0).cumsum(0).flip(0)
+
+    # Number of elements in suffix: N[i] = n - i
+    counts = torch.arange(n, 0, -1, device=sorted_m2.device, dtype=sorted_m2.dtype)
+
+    # Average of suffix: A[i] = S[i] / N[i]
+    avg_m2_suffix = suffix_sums / counts
+
+    # Find the first index `k` where the average of the rest is below threshold.
+    below_threshold_indices = torch.where(avg_m2_suffix < m2_threshold)[0]
+
+    if len(below_threshold_indices) > 0:
+        num_to_mask = below_threshold_indices[0].item()
+    else:
+        # All suffix averages are >= threshold. Mask all but one to satisfy assertion.
+        num_to_mask = n - 1
+
     loss_mask = torch.ones_like(sorted_m2, dtype=torch.bool)
-    current_avg = sorted_m2.mean()
-    for i in range(len(sorted_m2)):
-        if current_avg < m2_threshold:
-            break
-        loss_mask[i] = False
-        current_avg = sorted_m2[loss_mask].mean()
+    if num_to_mask > 0:
+        loss_mask[:num_to_mask] = False
+
     assert loss_mask.sum() > 0, (
         "All tokens are masked out when getting the m2po loss mask."
     )
