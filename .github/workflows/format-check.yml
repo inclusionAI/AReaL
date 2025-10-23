@@ -24,11 +24,13 @@ jobs:
         run: |
           autoflake --check -r areal/
           autoflake --check -r examples/
+          autoflake --check -r docs/
 
       - name: Check Python formatting with ruff
         run: |
           ruff check --select I areal/
           ruff check --select I examples/
+          ruff check --select I docs/
 
       - name: Check Python formatting with black
         run: black --check .
