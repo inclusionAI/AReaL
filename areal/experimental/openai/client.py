@@ -6,11 +6,6 @@ from collections.abc import Iterable
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
-from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import ModelRequest
-from areal.experimental.openai.tool_call_parser import process_tool_calls
-from areal.experimental.openai.types import InteractionWithTokenLogpReward
-from areal.utils import logging
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
 from openai.resources.chat.completions.completions import (
@@ -40,6 +35,12 @@ from openai.types.responses.response_usage import (
 )
 from openai.types.responses.tool_param import ToolParam
 from openai.types.shared_params.metadata import Metadata
+
+from areal.api.cli_args import GenerationHyperparameters
+from areal.api.io_struct import ModelRequest
+from areal.experimental.openai.tool_call_parser import process_tool_calls
+from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.utils import logging
 
 if TYPE_CHECKING:
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
