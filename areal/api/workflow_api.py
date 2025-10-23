@@ -1,25 +1,17 @@
 from __future__ import annotations  # noqa
 
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 
-from areal.experimental.openai.types import (
-    CompletionWithTokenLogpReward,
-    ResponseWithTokenLogpReward,
-)
+from areal.experimental.openai.types import InteractionWithTokenLogpReward
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
 
 
 class RolloutWorkflow:
-
     async def arun_episode(
-        self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> (
-        Dict[str, Any]
-        | None
-        | Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
-    ):
+        self, engine: InferenceEngine, data: dict[str, Any]
+    ) -> dict[str, Any] | None | dict[str, InteractionWithTokenLogpReward]:
         """Run a single episode of the workflow.
 
         Note
@@ -37,7 +29,7 @@ class RolloutWorkflow:
 
         Returns
         -------
-        Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
+        Dict[str, Any] | None | Dict[str, InteractionWithTokenLogpReward]
             The trajectory result, None if rejected, or a dictionary of completion results
         """
         raise NotImplementedError()

@@ -196,7 +196,7 @@ select = [
     "I",  # isort
     "UP", # pyupgrade
 ]
-ignore = []
+ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["areal"]

@@ -6,7 +6,8 @@ import random
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 
 import torch
 import torch.distributed as dist
@@ -17,10 +18,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.staleness_manager import StalenessManager
-from areal.experimental.openai.types import (
-    CompletionWithTokenLogpReward,
-    ResponseWithTokenLogpReward,
-)
+from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 
@@ -33,11 +31,7 @@ ROLLOUT_POLL_SLEEP_TIME = 1
 
 
 def check_trajectory_format(
-    data: (
-        Dict[str, Any]
-        | None
-        | Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
-    ),
+    data: (dict[str, Any] | None | dict[str, InteractionWithTokenLogpReward]),
     batch_size: int | None = None,
     expected_keys: set | None = None,
     logger: Any = None,
@@ -47,7 +41,7 @@ def check_trajectory_format(
     This function validates trajectory data to ensure it conforms to one of three expected formats:
 
     1. **None**: Indicates a rejected trajectory that will not be used for training
-    2. **Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]**: Completion/Response results from the workflow
+    2. **Dict[str, InteractionWithTokenLogpReward]**: Completion/Response results from the workflow
     3. **Dict[str, torch.Tensor]**: Tensor format with specific shape and key requirements
 
     For tensor format validation, the function ensures:
@@ -64,11 +58,11 @@ def check_trajectory_format(
 
     Parameters
     ----------
-    data : Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward | ResponseWithTokenLogpReward]
+    data : Dict[str, Any] | None | Dict[str, InteractionWithTokenLogpReward]
         The trajectory data to validate. Can be:
 
         - ``None`` for rejected trajectories
-        - Dictionary mapping strings to ``CompletionWithTokenLogpReward`` or ``ResponseWithTokenLogpReward`` objects
+        - Dictionary mapping strings to ``InteractionWithTokenLogpReward`` objects
         - Dictionary mapping strings to PyTorch tensors or other data types
 
     batch_size : int | None, optional
@@ -145,11 +139,8 @@ def check_trajectory_format(
     if len(data) == 0:
         raise ValueError("Data dict cannot be empty")
 
-    # Check if all values are CompletionWithTokenLogpReward or ResponseWithTokenLogpReward
-    if all(
-        isinstance(v, (CompletionWithTokenLogpReward, ResponseWithTokenLogpReward))
-        for v in data.values()
-    ):
+    # Check if all values are InteractionWithTokenLogpReward
+    if all(isinstance(v, InteractionWithTokenLogpReward) for v in data.values()):
         return True
 
     # Check required keys
@@ -215,12 +206,12 @@ def check_trajectory_format(
 @dataclass
 class _TimedResult:
     t: int
-    data: Dict[str, Any]
+    data: dict[str, Any]
 
 
 @dataclass
 class _RolloutTaskInput:
-    data: Dict[str, Any]
+    data: dict[str, Any]
     workflow: RolloutWorkflow
     should_accept: Callable | None = None
 
@@ -233,11 +224,10 @@ class _RolloutTask:
 
 
 class WorkflowExecutor:
-
     def __init__(
         self,
         config: InferenceEngineConfig,
-        inference_engine: "InferenceEngine",
+        inference_engine: InferenceEngine,
         staleness_manager: StalenessManager | None = None,
     ):
         self.max_concurrent_rollouts = (
@@ -258,7 +248,7 @@ class WorkflowExecutor:
         qsize = config.queue_size or self.max_concurrent_rollouts * 16
         self.input_queue = queue.Queue(maxsize=qsize)
         self.output_queue = queue.Queue(maxsize=qsize)
-        self.result_cache: List[_TimedResult] = []
+        self.result_cache: list[_TimedResult] = []
 
         # For trajectory format checking
         self._expected_trajectory_keys: set | None = None
@@ -341,7 +331,7 @@ class WorkflowExecutor:
             self.exiting.set()
 
     async def _rollout_thread_async(self):
-        rollout_tasks: Dict[str, _RolloutTask] = {}
+        rollout_tasks: dict[str, _RolloutTask] = {}
         rid = 0
         try:
             while not self.exiting.is_set():
@@ -403,13 +393,7 @@ class WorkflowExecutor:
                                 )
 
                     if isinstance(traj, dict) and all(
-                        isinstance(
-                            v,
-                            (
-                                CompletionWithTokenLogpReward,
-                                ResponseWithTokenLogpReward,
-                            ),
-                        )
+                        isinstance(v, InteractionWithTokenLogpReward)
                         for v in traj.values()
                     ):
                         traj = concat_padded_tensors(
@@ -473,8 +457,8 @@ class WorkflowExecutor:
 
     def submit(
         self,
-        data: Dict[str, Any],
-        workflow: "RolloutWorkflow" | None = None,
+        data: dict[str, Any],
+        workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ) -> None:
@@ -495,7 +479,7 @@ class WorkflowExecutor:
         except queue.Full:
             raise RuntimeError("Input queue full. Please increase queue_size.")
 
-    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
+    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
         """Wait for workflow results.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for detailed documentation.
@@ -527,7 +511,7 @@ class WorkflowExecutor:
                 f"Timed out waiting for {count} rollouts, only received {accepted}."
             )
         if self.config.enable_rollout_tracing:
-            self.logger.info(f"Rollout results are ready!")
+            self.logger.info("Rollout results are ready!")
         self.result_cache.sort(key=lambda x: x.t)
         results, self.result_cache = (
             self.result_cache[:count],
@@ -538,11 +522,11 @@ class WorkflowExecutor:
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
-        workflow: "RolloutWorkflow" | None = None,
+        data: list[dict[str, Any]],
+        workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.rollout_batch` for detailed documentation.
@@ -559,7 +543,7 @@ class WorkflowExecutor:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: "RolloutWorkflow" | None = None,
+        workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ):

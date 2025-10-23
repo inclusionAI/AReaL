@@ -5,9 +5,8 @@ from dataclasses import dataclass, field
 
 import torch.distributed as dist
 from agents import Agent as OpenAIAgent
-from agents import ModelSettings, OpenAIProvider, RunConfig
+from agents import ModelSettings, OpenAIProvider, RunConfig, SQLiteSession
 from agents import Runner as OpenAIRunner
-from agents import SQLiteSession
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
@@ -154,12 +153,12 @@ class MultiturnRLVRAgentWorkflow(RolloutWorkflow):
         for reward in rewards:
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        responses_with_reward = {}
+        interactions_with_reward = {}
         for client in clients:
             client.apply_reward_discount(turn_discount=0.9)
-            responses = client.export_responses(style="individual")
-            responses_with_reward.update(responses)
-        return responses_with_reward
+            interactions = client.export_interactions(style="individual")
+            interactions_with_reward.update(interactions)
+        return interactions_with_reward
 
 
 def main(args):
@@ -182,21 +181,12 @@ def main(args):
     train_dataset = get_custom_dataset(
         split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
-    valid_dataset = get_custom_dataset(
-        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
-    )
 
     train_dataloader = create_dataloader(
         train_dataset,
         rank=actor.data_parallel_rank,
         world_size=actor.data_parallel_world_size,
         dataset_config=config.train_dataset,
-    )
-    valid_dataloader = create_dataloader(
-        valid_dataset,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        dataset_config=config.valid_dataset,
     )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
