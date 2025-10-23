@@ -79,6 +79,54 @@ However, `flash-attn==2.8.3` is not compatible with Megatron training backend. I
 want to use Megatron training backend, please compile and install `flash-attn==2.8.1` in
 your custom environment, or use docker installation instead.
 
+## (Optional) Install SkyPilot
+
+SkyPilot helps you run AReaL easily on cloud or Kubernetes infrastructures. Below shows
+the minimal steps to setup skypilot on GCP or Kubernetes.
+
+### Install SkyPilot
+
+```bash
+# In your conda environment
+# NOTE: SkyPilot requires 3.7 <= python <= 3.13
+pip install -U "skypilot[gcp,kubernetes]"
+```
+
+### GCP setup
+
+```bash
+# Install Google Cloud SDK
+conda install -y -c conda-forge google-cloud-sdk
+
+# Initialize gcloud and select your account/project
+gcloud init
+
+# (Optional) choose a project explicitly
+gcloud config set project <PROJECT_ID>
+
+# Create Application Default Credentials
+gcloud auth application-default login
+```
+
+### Kubernetes setup
+
+Check
+[here](https://docs.skypilot.co/en/latest/reference/kubernetes/kubernetes-setup.html)
+for a comprehensive guide on how to set up a kubernetes cluster for SkyPilot.
+
+### Verify
+
+```bash
+sky check
+```
+
+If `GCP: enabled` or `Kubernetes: enabled` are shown, you're ready to use SkyPilot with
+AReaL. Check
+[here](https://github.com/inclusionAI/AReaL/blob/main/examples/skypilot/README.md) for a
+detailed example to run AReaL with SkyPilot. For more options and details for SkyPilot,
+see the official
+[SkyPilot installation guide](https://docs.skypilot.co/en/latest/getting-started/installation.html).
+
 ## (Optional) Launch Ray Cluster for Distributed Training
 
 On the first node, start the Ray Head:
