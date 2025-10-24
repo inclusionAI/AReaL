@@ -348,7 +348,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         output_text = self.tokenizer.decode(engine_resp.output_tokens)
 
         # Extract reasoning tokens from output
-        reasoning_token_count = self._count_reasoning_tokens(engine_resp.output_text)
+        reasoning_token_count = self._count_reasoning_tokens(output_text)
 
         # Build Responses API objects
         resp_id = f"resp-{uuid.uuid4().hex[:29]}"
