@@ -17,6 +17,13 @@ logger = logging.getLogger("InteractionWithTokenLogpReward")
 class InteractionWithTokenLogpReward:
     """Internal structure to store completions/responses with their rewards."""
 
+    # Common
+    model_response: ModelResponse
+    reward: float | None = None
+    parent: InteractionWithTokenLogpReward | None = None
+    chat_template_type: str = "hf"
+    _cache: dict[str, torch.Tensor] | None = None
+
     # Completion fields (optional for response)
     completion: ChatCompletion | None = None
     messages: list[dict] = field(default_factory=list)
@@ -24,13 +31,6 @@ class InteractionWithTokenLogpReward:
     # Response fields (optional for completion)
     response: Response | None = None
     input_data: str | ResponseInputParam = field(default_factory=lambda: "")
-
-    # Common
-    model_response: ModelResponse
-    reward: float | None = None
-    parent: InteractionWithTokenLogpReward | None = None
-    chat_template_type: str = "hf"
-    _cache: dict[str, torch.Tensor] | None = None
 
     @property
     def is_completion(self) -> bool:
