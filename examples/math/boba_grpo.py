@@ -92,9 +92,11 @@ def main(args):
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     world_size = actor.data_parallel_world_size
-    assert config.train_dataset.batch_size >= world_size, (
-        f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!"
-    )
+    if config.train_dataset.batch_size < world_size:
+        raise ValueError(
+            f"batch size({config.train_dataset.batch_size}) "
+            f"must larger or equal than world_size({world_size})!"
+        )
 
     # Create dataset and dataloaders
     train_dataset = get_boba_math_dataset(config.train_dataset.path, tokenizer)
