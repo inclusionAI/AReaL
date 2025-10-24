@@ -189,7 +189,6 @@ def main(args):
                         filter_batch_fn_DAPO, new_batch, config.actor.group_size
                     )
                     sampling_stats.append(sampling_stat)
-                    breakpoint()
 
                     if config.actor.dynamic_sampling_strategy == "static":
                         # Statistic sampling: No need to refill for static sampling, result in smaller(variant) batch size
@@ -222,7 +221,6 @@ def main(args):
                     # For non-dynamic sampling, just use the current batch
                     batch = new_batch
                     break
-        breakpoint()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
