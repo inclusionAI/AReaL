@@ -1,2 +1,2 @@
 from .client import ArealOpenAI  # noqa
-from .types import CompletionWithTokenLogpReward  # noqa
+from .types import InteractionWithTokenLogpReward  # noqa
