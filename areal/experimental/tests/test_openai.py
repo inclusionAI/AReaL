@@ -28,13 +28,12 @@ def check_server_health(base_url):
     try:
         response = requests.get(f"{base_url}/health", timeout=30)
         return response.status_code == 200
-    except requests.exceptions.RequestException as e:
+    except requests.exceptions.RequestException:
         return False
 
 
 @pytest.fixture(scope="module")
 def sglang_server():
-
     seeding.set_random_seed(1, EXPR_NAME)
     cmd = SGLangConfig.build_cmd(
         sglang_config=SGLangConfig(
@@ -456,8 +455,8 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
     # Verify conversation history
-    stored_messages_c2 = openai_client.get_completions(c2.id).messages
-    stored_messages_c3 = openai_client.get_completions(c3.id).messages
+    stored_messages_c2 = openai_client.get_completion(c2.id).messages
+    stored_messages_c3 = openai_client.get_completion(c3.id).messages
 
     # Verify thinking tags are stripped from assistant messages
     for msg_list in [stored_messages_c2, stored_messages_c3]:
@@ -537,8 +536,8 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
     c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
 
     # Verify conversation history
-    stored_messages_c2 = openai_client.get_completions(c2.id).messages
-    stored_messages_c3 = openai_client.get_completions(c3.id).messages
+    stored_messages_c2 = openai_client.get_completion(c2.id).messages
+    stored_messages_c3 = openai_client.get_completion(c3.id).messages
 
     # Verify thinking tags are stripped from assistant messages
     for msg_list in [stored_messages_c2, stored_messages_c3]:
@@ -554,9 +553,9 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
         if msg.get("role") == "tool":
             tool_messages_found = True
             break
-    assert (
-        tool_messages_found
-    ), "Tool messages should be preserved in conversation history"
+    assert tool_messages_found, (
+        "Tool messages should be preserved in conversation history"
+    )
 
     # Test reward system with thinking + tool calling
     openai_client.set_reward(c1.id, reward=1.0)

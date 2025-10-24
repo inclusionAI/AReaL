@@ -1,24 +1,15 @@
-import asyncio
 import os
 import sys
 from dataclasses import dataclass, field
 
 import torch.distributed as dist
-from agents import Agent as OpenAIAgent
-from agents import ModelSettings, OpenAIProvider, RunConfig
-from agents import Runner as OpenAIRunner
-from agents import SQLiteSession
-from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
+from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
-from areal.api.reward_api import AsyncRewardWrapper
-from areal.api.workflow_api import RolloutWorkflow
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import cycle_dataloader
@@ -33,6 +24,13 @@ from areal.utils.stats_logger import StatsLogger
 
 @dataclass
 class AgentRLConfig(GRPOConfig):
+    agent_type: str = field(
+        default="math",
+        metadata={
+            "help": "Type of agent workflow to use.",
+            "choices": ["math", "multi_turn_math"],
+        },
+    )
     n_trajs: int = field(
         default=1,
         metadata={
@@ -42,7 +40,7 @@ class AgentRLConfig(GRPOConfig):
     max_turns: int = field(
         default=8,
         metadata={
-            "help": "Maximum number of turns per trajectory. By default max_turns=32."
+            "help": "Maximum number of turns per trajectory. By default max_turns=8."
         },
     )
     max_tokens_per_trajectory: int = field(
@@ -51,115 +49,6 @@ class AgentRLConfig(GRPOConfig):
             "help": "Maximum number of tokens per trajectory. By default max_tokens_per_trajectory=32768."
         },
     )
-
-
-def gsm8k_reward_fn(result, answer):
-    from areal.reward.math_parser import process_results
-
-    return int(process_results(result, answer)[0])
-
-
-class MultiturnMathAgent:
-    def __init__(
-        self,
-        tokenizer: PreTrainedTokenizerFast,
-        max_tokens_per_turn: int = 1024,
-        max_turns: int = 8,
-        max_total_tokens: int = 32768,
-    ):
-        self.tokenizer = tokenizer
-        self.max_tokens_per_turn = max_tokens_per_turn
-        self.max_turns = max_turns
-        self.max_total_tokens = max_total_tokens
-        self.async_reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
-
-    async def run_agent(self, data, client: ArealOpenAI):
-        num_turns_left = self.max_turns
-        run_config = RunConfig(
-            model_provider=OpenAIProvider(openai_client=client),
-            tracing_disabled=True,
-            model_settings=ModelSettings(
-                temperature=1.0,
-                extra_args={"max_completion_tokens": self.max_tokens_per_turn},
-            ),
-        )
-        agent = OpenAIAgent(
-            name="RLVR",
-        )
-        session = SQLiteSession("math")
-        content = data["messages"][-1]["content"]
-        reward = 0
-        while num_turns_left > 0:
-            result = await OpenAIRunner.run(
-                agent, input=content, session=session, run_config=run_config
-            )
-            reward = await self.async_reward_fn(
-                result=result.final_output, answer=data["answer"]
-            )
-            client.set_final_reward(reward)
-            if reward == 1:
-                break
-            else:
-                content = "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
-                "Please carefully read the original question, check the preivous errors, and try to answer it again."
-            num_turns_left -= 1
-        return reward
-
-
-class MultiturnRLVRAgentWorkflow(RolloutWorkflow):
-    def __init__(
-        self,
-        gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
-        dump_dir: str | None = None,
-        rollout_stat_scope: str = "rollout",
-        n_trajs: int = 1,
-        max_tokens: int = 32768,
-        max_turns: int = 8,
-    ):
-        self.gconfig = gconfig
-        self.gconfig.n_samples = 1
-        self.tokenizer = tokenizer
-        self.dump_dir = dump_dir
-        self.max_tokens = max_tokens
-        self.rollout_stat_scope = rollout_stat_scope
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
-
-        # Search hyper-parameters
-        self.n_trajs = n_trajs
-        self.agent = MultiturnMathAgent(
-            tokenizer=self.tokenizer,
-            max_tokens_per_turn=self.gconfig.max_new_tokens,
-            max_turns=max_turns,
-            max_total_tokens=max_tokens,
-        )
-
-    async def arun_episode(self, engine, data):
-        clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-            for _ in range(self.n_trajs)
-        ]
-
-        # Collect trajectories
-        rewards = await asyncio.gather(
-            *[
-                self.agent.run_agent(
-                    data=data,
-                    client=clients[i],
-                )
-                for i in range(self.n_trajs)
-            ]
-        )
-        for reward in rewards:
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
-
-        responses_with_reward = {}
-        for client in clients:
-            client.apply_reward_discount(turn_discount=0.9)
-            responses = client.export_responses(style="individual")
-            responses_with_reward.update(responses)
-        return responses_with_reward
 
 
 def main(args):
@@ -182,21 +71,12 @@ def main(args):
     train_dataset = get_custom_dataset(
         split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
-    valid_dataset = get_custom_dataset(
-        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
-    )
 
     train_dataloader = create_dataloader(
         train_dataset,
         rank=actor.data_parallel_rank,
         world_size=actor.data_parallel_world_size,
         dataset_config=config.train_dataset,
-    )
-    valid_dataloader = create_dataloader(
-        valid_dataset,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        dataset_config=config.valid_dataset,
     )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
@@ -213,21 +93,38 @@ def main(args):
     actor.initialize(None, ft_spec)
     actor.connect_engine(rollout, weight_update_meta)
 
-    # Create rollout workflow
+    # Create rollout workflow based on agent type
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-    workflow = MultiturnRLVRAgentWorkflow(
-        gconfig=config.gconfig,
-        tokenizer=tokenizer,
-        n_trajs=config.n_trajs,
-        max_tokens=config.max_tokens_per_trajectory,
-        max_turns=config.max_turns,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
-    )
+
+    if config.agent_type == "math":
+        from math_workflow import RLVRAgentWorkflow
+
+        workflow = RLVRAgentWorkflow(
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
+            n_trajs=config.n_trajs,
+            dump_dir=os.path.join(
+                StatsLogger.get_log_path(config.stats_logger), "generated"
+            ),
+        )
+    elif config.agent_type == "multi_turn_math":
+        from multi_turn_math_workflow import MultiturnRLVRAgentWorkflow
+
+        workflow = MultiturnRLVRAgentWorkflow(
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
+            n_trajs=config.n_trajs,
+            max_tokens=config.max_tokens_per_trajectory,
+            max_turns=config.max_turns,
+            dump_dir=os.path.join(
+                StatsLogger.get_log_path(config.stats_logger), "generated"
+            ),
+        )
+    else:
+        raise ValueError(f"Unknown agent_type: {config.agent_type}.")
 
     # Run training.
     saver = Saver(config.saver, ft_spec)

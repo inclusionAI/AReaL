@@ -21,7 +21,8 @@ from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
-from examples.tir.tir_workflow import TIRGRPOConfig, TIRWorkflow
+
+from .tir_workflow import TIRGRPOConfig, TIRWorkflow
 
 logger = logging.getLogger("TIR Training")
 

@@ -196,16 +196,26 @@ select = [
     "I",  # isort
     "UP", # pyupgrade
 ]
-ignore = []
+ignore = [
+    "E501",  # E501 Line too long
+]
+
+[tool.ruff.lint.isort.sections]
+"areal" = ["areal"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["areal"]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "areal",
+    "local-folder",
+]
+from-first = false
 
 # The following tools are remained as legacy.
 # We will use `ruff` instead in future development
-[tool.isort]
-profile = "black"
-
 [tool.black]
 line-length = 88
 
