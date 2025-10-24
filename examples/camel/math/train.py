@@ -109,7 +109,7 @@ class CamelRLVRWorkflow(RolloutWorkflow):
 
     async def arun_episode(self, engine, data):
         clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer, use_responses=False)
+            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
             for _ in range(self.n_trajs)
         ]
 
