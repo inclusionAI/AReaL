@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import MicroBatchSpec, NormConfig
+from areal.api.cli_args import MicroBatchSpec, NormConfig, PPOActorConfig
 from areal.platforms import current_platform
 from areal.utils import datapack, logging
 
@@ -1070,6 +1070,7 @@ def cycle_dataloader(dataloader: StatefulDataLoader):
             g = iter(dataloader)
 
 
+# base native normalization implementation (for both reward and adv norm)
 class Normalization:
     """
     Adaptive normalization with different levels.
@@ -1108,7 +1109,11 @@ class Normalization:
         loss_mask: Optional[torch.Tensor] = None,
         high_precision: bool = True,
         reduce_group=None,
+        calculation_base: str = "deviation",
     ) -> torch.Tensor:
+
+        # x can be advantage or reward in shape [bs*self.group_size, max_tokens]
+
         bs = x.size(0)
         eps = self.eps
 
@@ -1200,8 +1205,15 @@ class Normalization:
             std = torch.ones_like(x)
             eps = 0.0
 
+        assert calculation_base in [
+            "mean",
+            "deviation",
+        ], "calculation_base must be either mean or deviation"
+        base = std if calculation_base == "deviation" else mean
+        # Ensure stability
+        base += eps
         # Normalize
-        return (x_centered / (std + eps)).float()
+        return (x_centered / base).float()
 
     @staticmethod
     def _compute_mean(
@@ -1362,3 +1374,116 @@ class KLEstimator:
         if apply_clamp:
             log_ratio = log_ratio.clamp(min=-10, max=10)
         return log_ratio
+
+
+# the mixed adv norm implementation to paper MAPO, derived from base native normalization implementation
+class MAPOAdvNorm(Normalization):
+    def __call__(self, advantages, loss_mask=None, **kwargs) -> torch.Tensor:
+        # Calculate the unique number of elements in advantages Tensor，exclude element of 0 (because 0 means adv over pad_token)
+
+        # deviation_base_norm shape [batch_size*group_size, max_token]
+        deviation_base_norm = super().__call__(
+            advantages, loss_mask=loss_mask, calculation_base="deviation", **kwargs
+        )
+
+        unique_elements = torch.unique(advantages[advantages != 0]).numel()
+
+        if unique_elements >= 3 or unique_elements <= 1:
+            # means all advantages are same but not 0
+            if unique_elements >= 3:
+                logger.warning(
+                    msg=f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
+                    f"1. the definition of reward_fun: return the binary number "
+                    f"2. overlong_reward_panalty set to false"
+                )
+            # means all advantages are same but not 0
+            else:
+                logger.info(
+                    (
+                        f"the advantage are all same in the batch, please check your reward function"
+                    )
+                )
+
+            logger.info((f"falling back to native advantage normalization"))
+            # fall back to native implementation is ok
+            return super().__call__(
+                advantages, loss_mask=loss_mask, calculation_base="deviation", **kwargs
+            )
+
+        # the 'unique_upper_value' means the reward of success trajectory
+        unique_upper_value, unique_lower_value = (
+            max(unique_elements).item(),
+            min(unique_elements).item(),
+        )
+
+        assert unique_elements <= 2, (
+            f"The MAPO only support reward modeling in a binary, but detected {unique_elements} unique elements in advantages Tensor. Please check: "
+            f"1. the definition of reward_fun: return the binary number "
+            f"2. overlong_reward_panalty set to false"
+        )
+
+        # mean_base_norm shape [batch_size*group_size, max_token]
+        mean_base_norm = super().__call__(
+            advantages, loss_mask=loss_mask, calculation_base="mean", **kwargs
+        )
+
+        bs, max_token = int(advantages.shape[0] / self.group_size), advantages.shape[-1]
+
+        # since the advantages is same within same trajectory, we can get the trajectory_level advantage from first token
+        # base on assumption that the advantage on last dim are totally same
+
+        advantages_ = advantages[:, 0]  # advantages shape [batch_size*group_size]
+
+        advantages_ = advantages_.reshape(
+            bs, self.group_size
+        )  # advantages shape [batch_size, group_size]
+
+        # the number of sucess trajectory within each group and batch
+        success_trajectory_nums_per_group = (advantages_ == unique_upper_value).sum(
+            dim=1
+        )  # success_trajectory_nums shape [batch_size]
+        # the number of total trajectory within each group
+        total_trajectory_nums_per_group = torch.tensor([self.group_size] * bs).to(
+            device=success_trajectory_nums_per_group.device,
+            dtype=success_trajectory_nums_per_group.dtype,
+        )  # total_trajectory_nums shape [batch_size]
+        # the probability of success trajectory within each group and batch
+        p = success_trajectory_nums_per_group / total_trajectory_nums_per_group
+
+        # trajectory_reweight shape [batch_size], represent the reweight of tragetories
+        # p==0: all trajectory are fail -> trajectory_reweight==1-> only use mean_base_norm
+        # p==1: all trajectory are success -> trajectory_reweight==1-> only use mean_base_norm
+        # p==0.5: half trajectory are success -> trajectory_reweight==0 ->only use deviation_base_norm
+        trajectory_reweight = 1 - (4 * p * (1 - p))
+
+        # trajectory_reweight shape to expand each_token of advantages
+        # trajectory_reweight [batch_size]->[batch_size*group_size]->[batch_size*group_size, max_token],each trajectory has same reweight for each token.
+        # i.e. trajectory_reweight granularity: group-level-> trajectory-level->token-level
+        trajectory_reweight = (
+            trajectory_reweight.repeat_interleave(self.group_size)
+            .unsqueeze(-1)
+            .expand(-1, max_token)
+        )
+        # in this case 'trajectory_reweight' & 'deviation_base_norm' & 'mean_base_norm' have the same granularity
+        # torch auto broadcasting will automatically expand the dimension to do the calculation
+        return (
+            1 - trajectory_reweight
+        ) * deviation_base_norm + trajectory_reweight * mean_base_norm
+
+
+def get_reward_norm(config: PPOActorConfig):
+    if config.reward_norm:
+        return Normalization(config.reward_norm)
+    else:
+        return None
+
+
+def get_adv_norm(config: PPOActorConfig):
+    if config.adv_norm:
+        if config.adv_norm.adv_norm_mode == "mix":
+            assert (
+                config.reward_bias == 0.0
+            ), "When using mixed adv norm (MAPO), reward_bias should be 0.0 to ensure binary reward."
+            return MAPOAdvNorm(config.adv_norm)
+        else:
+            return Normalization(config.adv_norm)
