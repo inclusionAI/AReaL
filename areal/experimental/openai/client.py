@@ -347,6 +347,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         engine_resp = await self.engine.agenerate(model_request)
         output_text = self.tokenizer.decode(engine_resp.output_tokens)
 
+        # Extract reasoning tokens from output
+        reasoning_token_count = self._count_reasoning_tokens(engine_resp.output_text)
+
         # Build Responses API objects
         resp_id = f"resp-{uuid.uuid4().hex[:29]}"
         msg_id = f"msg-{uuid.uuid4().hex[:29]}"
@@ -371,8 +374,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             input_tokens_details=InputTokensDetails(cached_tokens=0),
             output_tokens=len(engine_resp.output_tokens),
             output_tokens_details=OutputTokensDetails(
-                reasoning_tokens=0
-            ),  # TODO: fill reasoning tokens if needed
+                reasoning_tokens=reasoning_token_count
+            ),
             total_tokens=len(engine_resp.input_tokens) + len(engine_resp.output_tokens),
         )
 
@@ -420,6 +423,23 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         )
 
         return response
+
+    def _count_reasoning_tokens(
+        self,
+        output_text: str,
+        thinking_start_token: str = "<think>",
+        thinking_end_token: str = "</think>",
+    ) -> int:
+        """
+        Count reasoning tokens from output text by extracting content within thinking start and end tokens.
+        """
+
+        if thinking_start_token not in output_text:
+            return 0
+        processed_text = output_text.split(thinking_start_token, maxsplit=1)[1]
+        if thinking_end_token in processed_text:
+            processed_text = processed_text.split(thinking_end_token, maxsplit=1)[0]
+        return len(self.tokenizer.encode(processed_text, add_special_tokens=False))
 
 
 class ArealOpenAI(AsyncOpenAI):
