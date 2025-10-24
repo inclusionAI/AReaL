@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 
 import pytest
@@ -7,7 +5,6 @@ import pytest
 from areal.api.cli_args import GenerationHyperparameters, InferenceEngineConfig
 from areal.utils.data import get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
-
 
 EXPR_NAME = "test_local_vllm_engine"
 TRIAL_NAME = "trial_0"

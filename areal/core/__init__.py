@@ -1,7 +1,5 @@
 """Core components for AREAL."""
 
-from __future__ import annotations
-
 from .local_inf_engine import (
     LocalInfBackendProtocol,
     LocalInfEngine,
@@ -15,7 +13,6 @@ from .workflow_executor import (
     WorkflowExecutor,
     check_trajectory_format,
 )
-
 
 __all__ = [
     "LocalInfBackendProtocol",

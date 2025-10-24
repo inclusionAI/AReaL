@@ -39,9 +39,6 @@ repos:
     # Ruff version.
     rev: v0.14.1
     hooks:
-      - id: ruff-format # Run the formatter.
-        name: Run Formatter (Ruff)
-        types_or: [ python, pyi, jupyter ]
       - id: ruff # Run the linter.
         name: Run Linter Check (Ruff)
         types_or: [ python, pyi, jupyter ]
