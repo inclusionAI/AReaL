@@ -4,7 +4,7 @@ import uuid
 from collections import OrderedDict, defaultdict
 from collections.abc import Iterable
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
@@ -96,7 +96,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
-        **_: dict,
+        **kwargs: Any,
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
@@ -265,7 +265,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         temperature: float | None | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
-        **_: dict,
+        **kwargs: Any,
     ) -> Response:
         """Override create method to use AReaL engine"""
         if extra_body is None:
@@ -320,6 +320,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         # TODO: stop and frequency_penalty mapping if needed
         # TODO: For now, we do not support them in Responses API
+        stop = kwargs.get("stop", None)
+        frequency_penalty = kwargs.get("frequency_penalty", 0.0)
 
         # Create generation config and request
         gconfig = GenerationHyperparameters(
@@ -327,9 +329,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             temperature=temp,
             max_new_tokens=max_new_tokens,
             top_p=top_p_val,
-            stop=None,
+            stop=stop,
             greedy=temp == 0,
-            frequency_penalty=0.0,
+            frequency_penalty=frequency_penalty,
             stop_token_ids=list(
                 set([self.tokenizer.eos_token_id, self.tokenizer.pad_token_id])
             ),
