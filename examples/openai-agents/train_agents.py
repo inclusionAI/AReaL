@@ -100,7 +100,7 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
     if config.agent_type == "math":
-        from .math_workflow import RLVRAgentWorkflow
+        from math_workflow import RLVRAgentWorkflow
 
         workflow = RLVRAgentWorkflow(
             gconfig=config.gconfig,
@@ -111,7 +111,7 @@ def main(args):
             ),
         )
     elif config.agent_type == "multi_turn_math":
-        from .multi_turn_math_workflow import MultiturnRLVRAgentWorkflow
+        from multi_turn_math_workflow import MultiturnRLVRAgentWorkflow
 
         workflow = MultiturnRLVRAgentWorkflow(
             gconfig=config.gconfig,

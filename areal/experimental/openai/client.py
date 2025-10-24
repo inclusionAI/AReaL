@@ -339,7 +339,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             input_ids=prompt_token_ids,
             gconfig=gconfig,
             rid=str(uuid.uuid4()),
-            metadata=None if metadata is NOT_GIVEN else metadata,
+            metadata=metadata if metadata is not NOT_GIVEN else {},
             tokenizer=self.tokenizer,
         )
 
