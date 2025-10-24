@@ -1,7 +1,6 @@
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Literal
 
 import torch.distributed as dist
 
@@ -25,10 +24,11 @@ from areal.utils.stats_logger import StatsLogger
 
 @dataclass
 class AgentRLConfig(GRPOConfig):
-    agent_type: Literal["math", "multi_turn_math"] = field(
+    agent_type: str = field(
         default="math",
         metadata={
-            "help": "Type of agent workflow to use. Options: 'math', 'multi_turn_math'"
+            "help": "Type of agent workflow to use.",
+            "choices": ["math", "multi_turn_math"],
         },
     )
     n_trajs: int = field(
