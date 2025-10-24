@@ -40,7 +40,7 @@ class AEntPPOActor(PPOActor):
     def aent_ppo_update(
         self, data: TensorDict, global_step: int
     ) -> List[Dict[str, float]]:
-        if self.dynamic_sampling_strategy and len(data["rewards"]) % self.group_size == 0:
+        if self.config.dynamic_sampling_strategy != "none" and len(data["rewards"]) % self.group_size == 0:
             data, sampling_stat = filter_batch(
                 filter_batch_fn_DAPO, data, self.group_size
             )
