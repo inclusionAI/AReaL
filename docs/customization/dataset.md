@@ -138,7 +138,7 @@ def get_gsm8k_dataset(split, rank, world_size):
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     # "answer" is passed in through "**data"
-    from realhf.impl.dataset.math_parser import process_results
+    from areal.reward.math_parser import process_results
 
     return int(process_results(completions, answer)[0])
 ```

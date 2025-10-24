@@ -155,7 +155,8 @@ class vLLMServerWrapper:
                 return_code = process.poll()
                 if return_code is not None:
                     logger.info(
-                        f"vllm server {server_addresses[i]} exits, returncode={return_code}"
+                        f"vllm server {server_addresses[i]} exits, "
+                        f"returncode={return_code}"
                     )
                     all_alive = False
                     break
