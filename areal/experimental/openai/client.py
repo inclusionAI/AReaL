@@ -318,8 +318,6 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         if max_output_tokens is not NOT_GIVEN and max_output_tokens is not None:
             max_new_tokens = max_output_tokens
 
-        # TODO: stop and frequency_penalty mapping if needed
-        # TODO: For now, we do not support them in Responses API
         stop = kwargs.get("stop", None)
         frequency_penalty = kwargs.get("frequency_penalty", 0.0)
 
