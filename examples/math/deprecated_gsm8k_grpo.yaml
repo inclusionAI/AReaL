@@ -66,7 +66,7 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  dynamic_sampling: false
+  dynamic_sampling_strategy: none
   adv_norm: # Deprecated configuration, change to reward_norm and apply another adv norm
     mean_level: group
     std_level: group

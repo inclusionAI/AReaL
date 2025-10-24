@@ -13,15 +13,19 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
+    concat_padded_tensors,
     cycle_dataloader,
+    get_batch_size,
+    truncate_dict_to_batch_size,
 )
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
+from areal.utils.functional import filter_batch, filter_batch_fn_DAPO
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
-from areal.utils.stats_logger import StatsLogger
+from areal.utils.stats_logger import StatsLogger, log_sampling_stats
 from areal.workflow.rlvr import RLVRWorkflow
 
 
@@ -35,6 +39,7 @@ def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
 
+    assert config.actor.dynamic_sampling_strategy in ["none", "static", "dynamic"]
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
@@ -55,6 +60,10 @@ def main(args):
         split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
     )
 
+    # Create dataset and dataloaders
+    train_loader_batch_size = (
+        config.train_dataset.batch_size // actor.data_parallel_world_size
+    )
     train_dataloader = create_dataloader(
         train_dataset,
         rank=actor.data_parallel_rank,
@@ -117,7 +126,7 @@ def main(args):
         ),
     )
 
-    # Run training.
+    # Run training
     saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
@@ -143,6 +152,7 @@ def main(args):
     max_steps = total_epochs * steps_per_epoch
 
     data_generator = cycle_dataloader(train_dataloader)
+
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -152,22 +162,65 @@ def main(args):
             epoch_step=step,
             steps_per_epoch=steps_per_epoch,
         )
+        # Initialize batch collection
 
         with stats_tracker.record_timing("rollout"):
-            if config.async_training:
-                batch = actor.prepare_batch(
-                    train_dataloader,
-                    granularity=actor.config.group_size,
-                    workflow=workflow,
-                    should_accept=lambda sample: True,
-                )
-            else:
-                batch = actor.rollout_batch(
-                    next(data_generator),
-                    granularity=actor.config.group_size,
-                    workflow=workflow,
-                    should_accept=lambda sample: True,
-                )
+            collected_batches, sampling_stats, collected_batches_size = [], [], 0
+            while True:
+                if config.async_training:
+                    new_batch = actor.prepare_batch(
+                        train_dataloader,
+                        granularity=actor.config.group_size,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+                else:
+                    new_batch = actor.rollout_batch(
+                        next(data_generator),
+                        granularity=actor.config.group_size,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+
+                # Collect the batch and process it immediately
+                if config.actor.dynamic_sampling_strategy in ["static", "dynamic"]:
+                    # Filter the current batch by groups
+                    filtered_batch, sampling_stat = filter_batch(
+                        filter_batch_fn_DAPO, new_batch, config.actor.group_size
+                    )
+                    sampling_stats.append(sampling_stat)
+
+                    if config.actor.dynamic_sampling_strategy == "static":
+                        # Statistic sampling: No need to refill for static sampling, result in smaller(variant) batch size
+                        batch = filtered_batch
+                        # Log sampling statistics for static sampling
+                        log_sampling_stats(
+                            sampling_stats, epoch, step, global_step, stats_logger
+                        )
+                        break
+                    elif config.actor.dynamic_sampling_strategy == "dynamic":
+                        # Dynamic sampling: keep collecting batches until we reach the target batch size
+                        # Add filtered batch to collection
+                        collected_batches.append(filtered_batch)
+                        collected_batches_size += get_batch_size(filtered_batch)
+
+                        # Check if we have collected enough samples
+                        if collected_batches_size >= train_loader_batch_size:
+                            aggregated_batch = concat_padded_tensors(collected_batches)
+                            # Log sampling statistics for dynamic sampling
+                            log_sampling_stats(
+                                sampling_stats, epoch, step, global_step, stats_logger
+                            )
+                            # Truncate batch to train_batch_size
+                            batch = truncate_dict_to_batch_size(
+                                data=aggregated_batch,
+                                batch_size=train_loader_batch_size,
+                            )
+                            break
+                else:
+                    # For non-dynamic sampling, just use the current batch
+                    batch = new_batch
+                    break
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -223,8 +276,6 @@ def main(args):
 
             def evaluate_fn():
                 if actor.is_data_parallel_head():
-                    # Stats are logged in workflow
-                    # and will be exported later
                     cnt = 0
                     for data in valid_dataloader:
                         for item in data:
