@@ -494,15 +494,15 @@ class ArealOpenAI(AsyncOpenAI):
         """Get completion/response with its reward from cache."""
         return self._cache.get(id)
 
-    def get_completion(self, id: str) -> InteractionWithTokenLogpReward | None:
+    def get_completions(self, id: str) -> InteractionWithTokenLogpReward | None:
         logger.warning(
-            "get_completion is deprecated. Please use get_interaction instead."
+            "get_completions is deprecated. Please use get_interaction instead."
         )
         return self.get_interaction(id)
 
-    def get_response(self, id: str) -> InteractionWithTokenLogpReward | None:
+    def get_responses(self, id: str) -> InteractionWithTokenLogpReward | None:
         logger.warning(
-            "get_response is deprecated. Please use get_interaction instead."
+            "get_responses is deprecated. Please use get_interaction instead."
         )
         return self.get_interaction(id)
 

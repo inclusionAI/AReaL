@@ -67,7 +67,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
             )
             # _comp is an openai ChatCompletion object
             # but we also need to fetch the saved token IDs
-            comp = client.get_completion(_comp.id)
+            comp = client.get_completions(_comp.id)
             reward = await self.async_reward_fn(
                 self.tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
