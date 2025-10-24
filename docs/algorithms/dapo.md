@@ -43,7 +43,7 @@ We only list the different parameters from GRPO here:
 - `actor.overlong_penalty_factor`: The factor of overlong penalty.
 - `actor.eps_clip`: The lower bound of clipping, default is `0.2`.
 - `actor.eps_clip_higher`: The higher bound of clipping.
-- `actor.dynamic_sampling`: Define the dynamic sampling strategy, selected from `none`, `static` and `dynamic`.
+- `actor.dynamic_sampling_strategy`: Define the dynamic sampling strategy, selected from `none`, `static` and `dynamic`.
 
 ### Dynamic Sampling Strategy
 By default, a group will be filtered out if all tracjectorys in this group have the same reward. You can customize this by `filter_batch_fn_DAPO_per_group` within the `./areal/utils/functional.py`

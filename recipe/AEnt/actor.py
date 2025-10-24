@@ -11,11 +11,12 @@ from areal.engine.ppo.actor import PPOActor
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import (
-    dynamic_sampling,
+    filter_batch,
     gather_logprobs,
     gather_logprobs_entropy,
     ppo_actor_loss_fn,
     reward_overlong_penalty,
+    filter_batch_fn_DAPO
 )
 from recipe.AEnt.aent_args import AEntPPOActorConfig
 from recipe.AEnt.functional import gather_logprobs_clamped_entropy
@@ -39,8 +40,10 @@ class AEntPPOActor(PPOActor):
     def aent_ppo_update(
         self, data: TensorDict, global_step: int
     ) -> List[Dict[str, float]]:
-        if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
-            data, sampling_stat = dynamic_sampling(data, self.group_size)
+        if self.dynamic_sampling_strategy and len(data["rewards"]) % self.group_size == 0:
+            data, sampling_stat = filter_batch(
+                filter_batch_fn_DAPO, data, self.group_size
+            )
 
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]

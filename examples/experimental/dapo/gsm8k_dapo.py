@@ -1,4 +1,3 @@
-import dataclasses
 import os
 import sys
 from copy import deepcopy
@@ -14,11 +13,9 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
-    broadcast_tensor_container,
     concat_padded_tensors,
     cycle_dataloader,
     get_batch_size,
-    tensor_container_to,
     truncate_dict_to_batch_size,
 )
 from areal.utils.dataloader import create_dataloader
@@ -42,7 +39,7 @@ def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
 
-    assert config.actor.dynamic_sampling in ["none", "static", "dynamic"]
+    assert config.actor.dynamic_sampling_strategy in ["none", "static", "dynamic"]
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
@@ -64,6 +61,9 @@ def main(args):
     )
 
     # Create dataset and dataloaders
+    train_loader_batch_size = (
+        config.train_dataset.batch_size // actor.data_parallel_world_size
+    )
     train_dataloader = create_dataloader(
         train_dataset,
         rank=actor.data_parallel_rank,
@@ -126,7 +126,7 @@ def main(args):
         ),
     )
 
-    # Run training.
+    # Run training
     saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
@@ -165,52 +165,33 @@ def main(args):
         # Initialize batch collection
 
         with stats_tracker.record_timing("rollout"):
-            collected_batches, sampling_stats = [], []
+            collected_batches, sampling_stats, collected_batches_size = [], [], 0
             while True:
-                if actor.is_data_parallel_head():
-                    if config.async_training:
-                        new_batch = rollout.prepare_batch(
-                            train_dataloader,
-                            workflow=workflow,
-                            granularity=actor.config.group_size,
-                            # TODO: refactor API in future
-                            should_accept=None,
-                        )
-                    else:
-                        new_batch = rollout.rollout_batch(
-                            next(data_generator),
-                            workflow=workflow,
-                            granularity=actor.config.group_size,
-                            should_accept=None,
-                        )
-                    new_batch = tensor_container_to(new_batch, actor.device)
-                new_batch = broadcast_tensor_container(
-                    new_batch,
-                    src_rank=actor.current_data_parallel_head(),
-                    group=actor.context_and_model_parallel_group,
-                )
-
-            # Create barrier to synchronize all rollout processes.
-            dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
-            # record nums of group acceptance
-            stats_logger.commit(
-                dataclasses.asdict(rollout.workflow_executor.rollout_stat)
-            )
-
-            with stats_tracker.record_timing("compute_advantage"):
-                actor.compute_advantages(new_batch)
-                log_gpu_stats("compute advantages")
+                if config.async_training:
+                    new_batch = actor.prepare_batch(
+                        train_dataloader,
+                        granularity=actor.config.group_size,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
+                else:
+                    new_batch = actor.rollout_batch(
+                        next(data_generator),
+                        granularity=actor.config.group_size,
+                        workflow=workflow,
+                        should_accept=lambda sample: True,
+                    )
 
                 # Collect the batch and process it immediately
-                if config.actor.dynamic_sampling in ["static", "dynamic"]:
+                if config.actor.dynamic_sampling_strategy in ["static", "dynamic"]:
                     # Filter the current batch by groups
                     filtered_batch, sampling_stat = filter_batch(
                         filter_batch_fn_DAPO, new_batch, config.actor.group_size
                     )
                     sampling_stats.append(sampling_stat)
+                    breakpoint()
 
-                    if config.actor.dynamic_sampling == "static":
+                    if config.actor.dynamic_sampling_strategy == "static":
                         # Statistic sampling: No need to refill for static sampling, result in smaller(variant) batch size
                         batch = filtered_batch
                         # Log sampling statistics for static sampling
@@ -218,30 +199,30 @@ def main(args):
                             sampling_stats, epoch, step, global_step, stats_logger
                         )
                         break
-                    elif config.actor.dynamic_sampling == "dynamic":
+                    elif config.actor.dynamic_sampling_strategy == "dynamic":
                         # Dynamic sampling: keep collecting batches until we reach the target batch size
                         # Add filtered batch to collection
                         collected_batches.append(filtered_batch)
+                        collected_batches_size += get_batch_size(filtered_batch)
 
-                        # Aggregate all filter/clean batches
-                        aggregated_batch = concat_padded_tensors(collected_batches)
-                        expected_batch_size = get_batch_size(new_batch)
-                        aggregated_batch_size = get_batch_size(aggregated_batch)
                         # Check if we have collected enough samples
-                        if aggregated_batch_size >= expected_batch_size:
+                        if collected_batches_size >= train_loader_batch_size:
+                            aggregated_batch = concat_padded_tensors(collected_batches)
                             # Log sampling statistics for dynamic sampling
                             log_sampling_stats(
                                 sampling_stats, epoch, step, global_step, stats_logger
                             )
                             # Truncate batch to train_batch_size
                             batch = truncate_dict_to_batch_size(
-                                data=aggregated_batch, batch_size=expected_batch_size
+                                data=aggregated_batch,
+                                batch_size=train_loader_batch_size,
                             )
                             break
                 else:
                     # For non-dynamic sampling, just use the current batch
                     batch = new_batch
                     break
+        breakpoint()
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -253,6 +234,10 @@ def main(args):
             with stats_tracker.record_timing("ref_logp"):
                 batch["ref_logp"] = ref.compute_logp(batch)
                 log_gpu_stats("ref logp")
+
+        with stats_tracker.record_timing("compute_advantage"):
+            actor.compute_advantages(batch)
+            log_gpu_stats("compute advantages")
 
         with (
             stats_tracker.record_timing("train_step"),
@@ -293,8 +278,6 @@ def main(args):
 
             def evaluate_fn():
                 if actor.is_data_parallel_head():
-                    # Stats are logged in workflow
-                    # and will be exported later
                     cnt = 0
                     for data in valid_dataloader:
                         for item in data:

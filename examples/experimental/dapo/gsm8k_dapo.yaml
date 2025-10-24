@@ -4,7 +4,7 @@ trial_name: trial0
 seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
-async_training: true
+async_training: false
 
 cluster:
   n_nodes: 1
@@ -67,7 +67,7 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  dynamic_sampling: 'dynamic'
+  dynamic_sampling_strategy: dynamic
   reward_norm:
     mean_level: group
     std_level: group
@@ -102,7 +102,7 @@ sglang:
 
 # datasets
 train_dataset:
-  batch_size: 256
+  batch_size: 16
   shuffle: true
   pin_memory: true
   num_workers: 4
