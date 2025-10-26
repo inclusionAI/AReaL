@@ -330,14 +330,17 @@ class WorkflowExecutor:
         try:
             while not self.exiting.is_set():
                 # Check capacity
-                # capacity = self.get_capacity()
-                # self.logger.info(f"Current rollout capacity: {capacity}")
+                capacity = self.get_capacity()
                 # Create new rollout task
                 self.lock.acquire()
-                while not self.paused.is_set() and self.input_queue.qsize() > 0:
+                while (
+                    capacity > 0
+                    and not self.paused.is_set()
+                    and self.input_queue.qsize() > 0
+                ):
                     x = self.input_queue.get_nowait()
                     x: _RolloutTaskInput
-                    self.logger.info(f"Get data from puller: {x.data}, type: {type(x.data)}")
+                    self.logger.debug(f"Get data from puller: {x.data}")
                     task = asyncio.create_task(
                         x.workflow.arun_episode(self.inference_engine, x.data),
                         name=str(rid),
@@ -354,7 +357,7 @@ class WorkflowExecutor:
                             f"running: {self.rollout_stat.running}, "
                             f"accepted: {self.rollout_stat.accepted}."
                         )
-                    # capacity -= 1
+                    capacity -= 1
                     rid += 1
                 tasks = [x.task for x in rollout_tasks.values()]
                 self.lock.release()
@@ -536,13 +539,12 @@ class WorkflowExecutor:
                 self.data_generator = cycle_dataloader(dataloader)
             assert dataloader.batch_size is not None
             batch_size = dataloader.batch_size
-            
+
             while True:
                 # Submit at least two batches to allow maximum overlap
                 if (
                     self.get_capacity() + batch_size > 0
-                    and self.input_queue.qsize() + batch_size
-                    < self.input_queue.maxsize
+                    and self.input_queue.qsize() + batch_size < self.input_queue.maxsize
                 ):
                     data = next(self.data_generator)
                     for item in data:
@@ -558,24 +560,23 @@ class WorkflowExecutor:
                     pass
         else:
             self.data_list_index = 0
-            
+
             # 对于List类型，使用固定的batch_size=1
             batch_size = 1
-            
+
             while True:
                 # Submit at least two batches to allow maximum overlap
                 if (
                     self.get_capacity() + batch_size > 0
-                    and self.input_queue.qsize() + batch_size
-                    < self.input_queue.maxsize
+                    and self.input_queue.qsize() + batch_size < self.input_queue.maxsize
                 ):
                     # 从List中获取数据，支持循环访问
                     if self.data_list_index >= len(dataloader):
                         self.data_list_index = 0  # 循环访问
-                    
+
                     item = dataloader[self.data_list_index]
                     self.data_list_index += 1
-                    
+
                     self.submit(
                         item,
                         workflow=workflow,

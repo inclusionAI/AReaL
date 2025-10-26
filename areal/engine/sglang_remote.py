@@ -495,7 +495,6 @@ def update_weights_from_distributed(
     ]
 
     async def _fn():
-        logger.info(f"init_weights_update_group, addr: {addresses}")
         if init_group:
             await asyncio.gather(
                 *[
@@ -554,5 +553,4 @@ async def ainit_weights_update_group(
         max_retries=1,
         timeout=request_timeout,
     )
-    logger.info(f"init_weights_update_group done, {res}")
     assert res["success"]

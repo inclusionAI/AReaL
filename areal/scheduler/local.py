@@ -4,6 +4,7 @@ from typing import Dict, List
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
+    BaseExperimentConfig,
     ClusterSpecConfig,
     LauncherConfig,
     RecoverConfig,
@@ -22,7 +23,7 @@ logger = logging.getLogger("LocalScheduler")
 
 
 class LocalScheduler(Scheduler):
-    def __init__(self, config):
+    def __init__(self, config: BaseExperimentConfig):
         self.procs = []  # Store subprocess objects
         self.engine_workers: Dict[str, List[str]] = defaultdict(
             list
@@ -53,6 +54,7 @@ class LocalScheduler(Scheduler):
                 envs.update(extra_envs)
 
                 if job.role != "rollout":
+                    # For non-rollout workers, set RANK and WORLD_SIZE
                     envs.update(
                         {
                             "RANK": index,
