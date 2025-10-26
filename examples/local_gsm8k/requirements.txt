@@ -1,0 +1,7 @@
+torch>=2.0.0
+transformers>=4.56.1
+datasets>=2.14.0
+accelerate>=0.20.0
+tqdm>=4.65.0
+wandb>=0.15.0
+

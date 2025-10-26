@@ -187,5 +187,18 @@ api_key.json
 .vscode/
 wandb/
 outputs/
+models/
 sympy/
 !/docs/figures/*
+
+# Model files
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+*.ckpt
+
+# Hugging Face cache
+.hf_cache/
+huggingface/
