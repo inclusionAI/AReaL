@@ -16,8 +16,7 @@ from areal.controller.batch import DistributedBatchMemory
 from areal.scheduler.rpc.rpc_client import RPCClient
 from areal.scheduler.rpc.rpc_server import (
     EngineRPCServer,
-    get_server_ports,
-    process_input_to_distributed_batch,
+    get_server_port,
     process_output_to_distributed_batch,
     start_rpc_server,
 )
@@ -29,6 +28,7 @@ class MockEngine:
     def __init__(self):
         self.initialized = False
         self.call_count = 0
+        self.device = "cpu"  # 添加device属性
 
     def initialize(self, config):
         self.initialized = True
@@ -51,54 +51,6 @@ class MockEngine:
 
     def return_origin_batch(self, batch):
         return batch
-
-
-# Test RPC data processing functions
-
-
-def test_process_input_to_distributed_batch_with_memory_batch():
-    """Test processing input parameters containing DistributedBatchMemory"""
-    # Create DistributedBatchMemory instance
-    data = {
-        "input_ids": torch.tensor([1, 2, 3, 4]),
-        "labels": torch.tensor([5, 6, 7, 8]),
-        "metadata": ["text1", "text2", "text3", "text4"],
-    }
-    batch = DistributedBatchMemory.from_dict(data)
-
-    # Test args and kwargs containing DistributedBatchMemory
-    args = (batch, "other_arg")
-    kwargs = {"batch_param": batch, "other_param": "value"}
-
-    processed_args, processed_kwargs = process_input_to_distributed_batch(
-        *args, **kwargs
-    )
-
-    # Verify DistributedBatchMemory is converted to dictionary
-    assert isinstance(processed_args[0], dict)
-    assert processed_args[1] == "other_arg"
-    assert isinstance(processed_kwargs["batch_param"], dict)
-    assert processed_kwargs["other_param"] == "value"
-
-    # Verify converted dictionary contains original data
-    converted_data = processed_args[0]
-    torch.testing.assert_close(converted_data["input_ids"], data["input_ids"])
-    torch.testing.assert_close(converted_data["labels"], data["labels"])
-    assert converted_data["metadata"] == data["metadata"]
-
-
-def test_process_input_no_distributed_batch():
-    """Test processing input that does not contain DistributedBatch"""
-    args = ("arg1", "arg2", torch.tensor([1, 2, 3]))
-    kwargs = {"param1": "value1", "param2": torch.tensor([4, 5, 6])}
-
-    processed_args, processed_kwargs = process_input_to_distributed_batch(
-        *args, **kwargs
-    )
-
-    # Should remain unchanged
-    assert processed_args == args
-    assert processed_kwargs == kwargs
 
 
 def test_process_output_to_distributed_batch_dict():
@@ -175,53 +127,18 @@ def test_process_output_to_distributed_batch_other_types():
 def test_get_serve_port_from_args():
     """Test getting port from command line arguments"""
     mock_args = Mock()
-    mock_args.rpc_port = "8080"
+    mock_args.rpc_port = 8080
 
     with patch.dict("os.environ", {}, clear=True):
-        port = get_server_ports(mock_args.rpc_port)
+        port = get_server_port(mock_args.rpc_port)
         assert port == 8080
 
 
 def test_get_server_ports_default_from_multi_ports():
     """Test getting single port from PORT_LIST environment variable"""
-    mock_args = Mock()
-    mock_args.rpc_port = "8080,8081,8082,8083"
-
-    with patch.dict("os.environ", {}, clear=True):
-        port = get_server_ports(mock_args.rpc_port)
+    with patch.dict("os.environ", {"PORT_LIST": "8080,8081,8082,8083"}, clear=True):
+        port = get_server_port(0)
         assert port == 8080
-
-
-def test_get_serve_port_from_multi_ports():
-    """Test getting single port from PORT_LIST environment variable"""
-    mock_args = Mock()
-    mock_args.rpc_port = "8080,8081,8082,8083"
-
-    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "0"}):
-        port = get_server_ports(mock_args.rpc_port)
-        assert port == 8080
-
-    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "1"}):
-        port = get_server_ports(mock_args.rpc_port)
-        assert port == 8081
-
-    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "2"}):
-        port = get_server_ports(mock_args.rpc_port)
-        assert port == 8082
-
-    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "3"}):
-        port = get_server_ports(mock_args.rpc_port)
-        assert port == 8083
-
-
-def test_get_serve_port_not_enough_ports():
-    """Test error when not enough ports for WORLD_SIZE"""
-    mock_args = Mock()
-    mock_args.rpc_port = "8080,8081"
-
-    with patch.dict("os.environ", {"WORLD_SIZE": "4", "RANK": "0"}):
-        with pytest.raises(ValueError, match="Not enough ports for the world size"):
-            get_server_ports(mock_args.rpc_port)
 
 
 # RPC client and server integration tests
