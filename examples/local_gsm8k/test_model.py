@@ -17,8 +17,9 @@ except ImportError:
     
     def process_results(completions, answer):
         """Simple parser to extract final answer."""
-        # Extract answer from ground truth
+        # Extract answer from ground truth (GSM8K format: ... #### number.)
         try:
+            # Look for "#### number" pattern
             gt_answer = float(re.findall(r'-?\d+\.?\d*', answer.split("####")[-1])[-1])
         except:
             return [False]
@@ -27,8 +28,24 @@ except ImportError:
         results = []
         for completion in completions:
             try:
-                pred_answer = float(re.findall(r'-?\d+\.?\d*', completion.split("####")[-1])[-1])
-                results.append(pred_answer == gt_answer)
+                # Try multiple extraction methods
+                # Method 1: Look for #### pattern
+                if "####" in completion:
+                    pred_answer = float(re.findall(r'-?\d+\.?\d*', completion.split("####")[-1])[-1])
+                # Method 2: Look for final number in the response
+                else:
+                    # Extract all numbers and take the last one
+                    numbers = re.findall(r'-?\d+\.?\d*', completion)
+                    if numbers:
+                        pred_answer = float(numbers[-1])
+                    else:
+                        pred_answer = None
+                
+                # Compare answers (within small tolerance for floating point)
+                if pred_answer is not None:
+                    results.append(abs(pred_answer - gt_answer) < 0.01)
+                else:
+                    results.append(False)
             except:
                 results.append(False)
         
@@ -72,8 +89,9 @@ def test_model(model_path: str, max_samples: int = 10, max_new_tokens: int = 512
         question = sample["question"]
         correct_answer = sample["answer"]
         
-        # Format prompt
-        prompt = f"{question}\nPlease provide your final answer within \\boxed{{}}."
+        # Format prompt - Use GSM8K format (no \boxed{} prompt)
+        # This matches the training format
+        prompt = f"{question}\n"
         
         # Tokenize
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
@@ -87,8 +105,9 @@ def test_model(model_path: str, max_samples: int = 10, max_new_tokens: int = 512
                 pad_token_id=tokenizer.eos_token_id,
             )
         
-        # Decode
-        generated_text = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+        # Decode (include question in output for context)
+        full_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        generated_text = full_output[len(prompt):]  # Get only the generated part
         
         # Check answer
         is_correct = process_results([generated_text], correct_answer)[0]

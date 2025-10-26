@@ -28,16 +28,14 @@ def load_model_and_tokenizer(model_path: str, device: str = "auto"):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    # Determine device
-    if device == "auto":
-        if torch.backends.mps.is_available():
-            device = "mps"
-        elif torch.cuda.is_available():
-            device = "cuda"
-        else:
-            device = "cpu"
+    # Force CPU usage - MPS has memory issues
+    device = "cpu"
+    # Disable MPS
+    import os
+    os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+    torch.backends.mps.is_available = lambda: False
     
-    print(f"Using device: {device}")
+    print(f"Using device: {device} (MPS disabled)")
     
     # For MPS, use float32
     if device == "mps":
@@ -70,29 +68,29 @@ def prepare_dataset(tokenizer, max_length=512, max_samples=None):
     
     def process_function(sample):
         """Format question and answer for training."""
-        # Format as: question + answer + eos
-        text = f"{sample['question']}{sample['answer']}"
-        
         # Tokenize question and full text
         question_text = sample['question']
         full_text = sample['question'] + sample['answer']
         
-        question_tokens = tokenizer.encode(question_text, add_special_tokens=False)
-        full_tokens = tokenizer.encode(full_text, add_special_tokens=False)
+        question_tokens = tokenizer.encode(question_text, add_special_tokens=False, max_length=max_length, truncation=True)
+        full_tokens = tokenizer.encode(full_text, add_special_tokens=False, max_length=max_length, truncation=True)
         
-        # Add EOS token
-        full_tokens.append(tokenizer.eos_token_id)
+        # Add EOS token to full_tokens
+        if len(full_tokens) < max_length:
+            full_tokens.append(tokenizer.eos_token_id)
+        elif full_tokens[-1] != tokenizer.eos_token_id:
+            # Replace last token with EOS if we truncated
+            full_tokens[-1] = tokenizer.eos_token_id
         
-        # Truncate if needed
-        if len(full_tokens) > max_length:
-            full_tokens = full_tokens[:max_length]
-        
-        # Create labels: -100 for question tokens (to ignore in loss), actual token IDs for answer
-        # The labels should be shifted for next-token prediction: labels[i] is the target for input_ids[i]
+        # Create labels: -100 for question tokens, actual token IDs for answer
+        # Make sure labels length matches full_tokens length
         labels = [-100] * len(question_tokens) + full_tokens[len(question_tokens):]
         
-        # Ensure labels match input_ids length
-        assert len(labels) == len(full_tokens), f"Length mismatch: {len(labels)} vs {len(full_tokens)}"
+        # Ensure labels length matches input_ids
+        if len(labels) != len(full_tokens):
+            # This can happen if question was truncated
+            labels = [-100] * min(len(question_tokens), len(full_tokens)) + full_tokens[len(question_tokens):]
+            labels = labels[:len(full_tokens)]
         
         return {
             "input_ids": full_tokens,

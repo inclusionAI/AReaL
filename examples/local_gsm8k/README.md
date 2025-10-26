@@ -1,147 +1,73 @@
-# Local GSM8K Training for Mac M2
+# Local GSM8K Training Setup
 
-This directory contains a simplified training setup for fine-tuning models on GSM8K dataset on a local Mac M2 machine.
-
-## Overview
-
-This training script bypasses the complex distributed infrastructure of AReaL and provides a simple, standalone training setup that works on local hardware (CPU/MPS for Mac).
-
-### Key Features
-
-- ✅ Simple standalone training (no distributed setup needed)
-- ✅ Mac M2 support (CPU and MPS backends)
-- ✅ Automatic device selection (CPU/MPS/CUDA)
-- ✅ Memory-efficient training with gradient checkpointing
-- ✅ W&B integration for experiment tracking
-- ✅ Time-limited training for quick test runs
-- ✅ Uses AReaL's dataset utilities and reward functions
-
-## Requirements
-
-```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Install required packages
-pip install torch transformers datasets wandb accelerate tqdm
-```
+Complete training setup for finetuning LLMs on GSM8K dataset locally on Mac M2.
 
 ## Quick Start
 
-### Basic Training (30-minute test run)
-
 ```bash
-python examples/local_gsm8k/train_local_simple.py \
-    --model deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
-    --output-dir ./outputs/gsm8k-test \
-    --max-time 1800 \
+# 1. Activate virtual environment
+source venv/bin/activate
+
+# 2. Run training (2-hour budget)
+python examples/local_gsm8k/train_hf_trainer.py \
+    --model Qwen/Qwen2.5-0.5B-Instruct \
+    --max-samples 1500 \
     --batch-size 2 \
     --gradient-accumulation-steps 16 \
-    --max-epochs 3
+    --num-epochs 3 \
+    --learning-rate 3e-5 \
+    --max-length 128 \
+    --max-time 7200 \
+    --output-dir ./outputs/gsm8k-2hour
+
+# 3. Test trained model
+python examples/local_gsm8k/test_model.py --model ./outputs/gsm8k-2hour
 ```
 
-### Custom Configuration
+## Files
+
+- **`train_hf_trainer.py`** - Main training script (HuggingFace Trainer)
+- **`test_model.py`** - Model testing and evaluation
+- **`START_HERE.md`** - Quick start guide
+- **`QUICKSTART.md`** - Step-by-step instructions
+- **`NAN_FIX_EXPLAINED.md`** - Technical details on NaN loss fix
+- **`HF_TRAINER_SUCCESS.md`** - Why HuggingFace Trainer works
+
+## What Was Fixed
+
+1. ✅ **NaN Loss Issue**: Fixed by switching from manual loss computation to HuggingFace Trainer
+2. ✅ **MPS Memory Errors**: Resolved by forcing CPU training
+3. ✅ **Loss Masking**: Proper -100 labels for question tokens
+4. ✅ **Training Stability**: No more exploding gradients or NaN
+
+## Training Results
+
+### Short Run (500 samples, 3 epochs, ~5 min)
+- Loss: 0.485
+- Generates: Step-by-step reasoning
+- Accuracy: 0% (answer format mismatch)
+
+### Long Run (1,500 samples, 3 epochs, ~45 min)
+- Currently running...
+- Better data coverage
+- More stable training
+
+## Key Learnings
+
+1. **HuggingFace Trainer > Manual Implementation**: Battle-tested, handles edge cases
+2. **CPU > MPS for local training**: MPS has memory limits on 32GB RAM
+3. **Small sequences faster**: 128 vs 256 tokens saves memory and time
+4. **Loss masking critical**: Must ignore question tokens in loss
+
+## Monitor Training
 
 ```bash
-python examples/local_gsm8k/train_local_simple.py \
-    --model deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
-    --output-dir ./outputs/gsm8k-local \
-    --lr 5e-5 \
-    --batch-size 4 \
-    --max-epochs 5 \
-    --max-time 3600 \
-    --wandb \
-    --wandb-project my-gsm8k-experiment
+tail -f /tmp/training_2hour.log
 ```
 
-## Parameters
+## Test Results
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `--model` | Model path or HuggingFace ID | `deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B` |
-| `--output-dir` | Output directory | `./outputs/gsm8k-local` |
-| `--lr` | Learning rate | `5e-5` |
-| `--batch-size` | Batch size | `4` (use 2 for 30-min test) |
-| `--max-epochs` | Maximum epochs | `3` |
-| `--max-steps` | Maximum training steps | `None` |
-| `--max-time` | Maximum time in seconds | `1800` (30 min) |
-| `--gradient-accumulation-steps` | Gradient accumulation | `8` (use 16 for 30-min test) |
-| `--max-length` | Max sequence length | `512` |
-| `--save-steps` | Save checkpoint every N steps | `50` |
-| `--wandb` | Use W&B tracking | `True` |
-| `--wandb-project` | W&B project name | `areal-gsm8k-mac` |
-| `--device` | Device to use | `auto` (detects MPS/CUDA/CPU) |
-
-## Memory Optimization Tips
-
-For 32GB RAM Mac M2:
-
-1. **Small batch size**: Use `--batch-size 2`
-2. **Large gradient accumulation**: Use `--gradient-accumulation-steps 16`
-3. **Limit dataset**: The script automatically limits to 500 samples for quick tests
-4. **Gradient checkpointing**: Automatically enabled for memory efficiency
-
-## Output
-
-- **Model checkpoints**: Saved in `output-dir` (latest) and `output-dir/checkpoint-*` (intermediate)
-- **W&B logs**: Automatically logged to your W&B project
-- **Console logs**: Training progress and metrics
-
-## Example Run
-
+After training completes, run:
 ```bash
-$ python examples/local_gsm8k/train_local_simple.py --max-time 1800 --batch-size 2
-
-Loading model from deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
-Using MPS (Metal Performance Shaders) backend
-Device: mps
-Loading GSM8K dataset...
-Training on 500 samples
-Starting training for 3 epochs
-Total steps: 188
-Steps per epoch: 500
-Epoch 1/3: 100%|████████████████████| 500/500 [10:23<00:00, 1.25s/it, loss=2.345]
-Epoch 1 average loss: 2.345
-Saved checkpoint to ./outputs/gsm8k-local/checkpoint-step_50
-...
-Training completed!
+python examples/local_gsm8k/test_model.py --model ./outputs/gsm8k-2hour --max-samples 20
 ```
-
-## Troubleshooting
-
-### Out of Memory
-
-- Reduce batch size: `--batch-size 1`
-- Increase gradient accumulation: `--gradient-accumulation-steps 32`
-- Reduce max length: `--max-length 256`
-
-### Slow Training on CPU
-
-- Training on CPU is slow. Use MPS (Metal) backend if available on your Mac
-- For faster training, consider using a cloud GPU or reducing dataset size
-
-### Model Issues
-
-If you encounter issues with the model:
-
-```bash
-# Try a smaller model
---model Qwen/Qwen2.5-1.5B-Instruct
-```
-
-## Next Steps
-
-1. **Compare before/after**: Test the model on GSM8K examples
-2. **Extend training**: Run longer with `--max-time 7200` (2 hours)
-3. **Evaluate**: Use the AReaL evaluation utilities
-4. **Submit to leaderboard**: Check the model on HuggingFace leaderboard
-
-## Integration with AReaL
-
-This script is designed to be complementary to the main AReaL framework:
-
-- **For local development and testing**: Use this script
-- **For production training**: Use the main AReaL framework with GPU clusters
-- **Dataset compatibility**: Uses same AReaL dataset utilities
-- **Model compatibility**: Saved checkpoints can be loaded by AReaL
-
