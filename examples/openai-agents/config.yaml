@@ -146,6 +146,7 @@ stats_logger:
 n_trajs: 2
 max_turns: 8
 max_tokens_per_trajectory: 8192
+agent_type: math
 
 launcher:
   inference_server_cpus_per_gpu: 4
