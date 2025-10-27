@@ -1,0 +1,151 @@
+{
+  "parallel_thinking": {
+    "file_name": "parallel_thinking_train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
+  },
+  "thread_dialogue": {
+    "file_name": "thread_dialogue_train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
+  },
+  "mixed": {
+    "file_name": "mixed_dataset.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
+  },
+  "mixed_new_with_answer": {
+    "file_name": "mixed_dataset_7_1.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
+  },
+  "mixed_new_data_clean": {
+    "file_name": "/storage/openpsi/users/zzy/parallel_thinking/fixed_parallel_thinking_new.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "system_tag": "system"
+    }
+  },
+  "mixed_new_data_clean_large": {
+    "file_name": "/storage/openpsi/users/zzy/parallel_thinking/parallel-thinking-main/data_processing/xml_output_new_no_first_step_parallel_large_conclusion_copy/converted_data_new_cleaned_with_parallel_tags_with_planning_conclusion_main_mixed_add_okay.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "system_tag": "system"
+    }
+  },
+  "mixed_dataset_self_template": {
+    "file_name": "/home/zhangzy/parallel-thinking/SFT/LLaMA-Factory/data/mixed_dataset_end_token_force_added_self_template.jsonl",
+    "formatting": "alpaca",
+    "columns": {
+      "prompt": "instruction",
+      "response": "output"
+    }
+  },
+  "original_cot": {
+    "file_name": "/storage/openpsi/users/zzy/parallel_thinking/first6000problems_sharegpt.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
+  },
+  "eval_origin": {
+    "file_name": "/storage/openpsi/users/zzy/parallel_thinking/last300problems_sharegpt.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
+  },
+  "original_cot_first_6300": {
+    "file_name": "/home/zhangzy/parallel-thinking/data_processing/first6300problems_sharegpt.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
+  },
+  "eval_set": {
+    "file_name": "/home/zhangzy/parallel-thinking/data_processing/new_dataset/val_set_raw_instruct.jsonl",
+    "formatting": "alpaca",
+    "columns": {
+      "prompt": "instruction",
+      "response": "output"
+    }
+  },
+  "eval_set_new": {
+    "file_name": "/storage/openpsi/users/zzy/parallel_thinking/val_set.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "system_tag": "system"
+    }
+  }
+}

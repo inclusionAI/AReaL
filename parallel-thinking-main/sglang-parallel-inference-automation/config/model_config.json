@@ -1,0 +1,8 @@
+{
+    "model_path": "/path/to/your/model",
+    "max_tokens": 16384,
+    "temperature": 0.2,
+    "top_p": 0.9,
+    "timeout_seconds": 300,
+    "output_directory": "/path/to/output/directory"
+}

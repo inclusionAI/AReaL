@@ -1,0 +1,27 @@
+Question: xxx
+
+Assistant: 
+<reasoning_process>
+ 
+<think type="">
+... // e.g. Initial problem understanding and decomposition
+</think>
+
+<think type="planning">
+  ... // e.g. [Outline main approach, potential methods, and decomposition strategy]
+</think>
+
+
+<thread id="1">
+  <task>Line IB Parametrization</task>
+  <objective>Establish parametric equations for line IB</objective>
+</thread>
+
+<thread_processing id="1">
+// thread 1 starts generation here.
+ ... // processing the task
+<\thread>
+
+<thread_result id="1">
+   // a short sentence/formula representing result of thread 1
+</thread_result>

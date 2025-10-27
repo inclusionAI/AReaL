@@ -1,0 +1,55 @@
+Question: xxx
+
+Assistant: 
+<reasoning_process>
+ 
+<think type="">
+... // e.g. Initial problem understanding and decomposition
+</think>
+
+<think type="planning">
+  ... // e.g. [Outline main approach, potential methods, and decomposition strategy]
+</think>
+
+<parallel_processing>
+  <launch_threads>
+    <thread id="1">
+      <task>Line IB Parametrization</task>
+      <objective>Establish parametric equations for line IB</objective>
+    </thread>
+    
+    <thread id="2">
+      <task>Line AP Parametrization</task>
+      <objective>Determine coordinates for line AP intersection</objective>
+    </thread>
+  </launch_threads>
+
+  // here both threads start to handle the scheduled tasks. the main thread continues when both tasks finish.
+
+  <thread_resolution>
+    <thread_result id="1">
+      ... // a short sentence/formula representing result of thread 1
+    </thread_result>
+
+    <thread_result id="2">
+      ... // a short sentence/formula representing result of thread 2
+    </thread_result>
+  </thread_resolution>
+</parallel_processing>
+
+<think type="">
+  ... // e.g.  summarize the thread results
+</think>
+
+<think type="planning">
+  ... // e.g. [Outline main approach, potential methods, and decomposition strategy]
+</think>
+
+...
+
+</reasoning_process>
+
+<answer>
+// summarize the solution and put the final answer within \\boxed{}
+</answer>
+

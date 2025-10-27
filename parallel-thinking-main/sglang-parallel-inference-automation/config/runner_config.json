@@ -1,0 +1,5 @@
+{
+    "iterations": 8,
+    "output_directory": "results/",
+    "timestamp_format": "%Y%m%d_%H%M%S"
+}

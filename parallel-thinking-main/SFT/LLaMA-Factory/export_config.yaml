@@ -1,0 +1,8 @@
+adapter_name_or_path: saves_20250621_210441/deepseek-parallel-thinking
+export_device: cuda
+export_dir: /nvme0n1/zzy_model/exported_models/deepseek-parallel-thinking-merged_20250621_223404
+export_legacy_format: false
+export_size: 2
+finetuning_type: lora
+model_name_or_path: /home/zhangzy/.cache/huggingface/hub/models--deepseek-ai--DeepSeek-R1-Distill-Qwen-7B/snapshots/916b56a44061fd5cd7d6a8fb632557ed4f724f60
+template: qwen

@@ -1,0 +1,8 @@
+*.safetensors
+SFT/data
+SFT/exported_model
+exported_model
+models--deepseek-ai--DeepSeek-R1-Distill-Qwen-7B
+model
+new_model
+*saves*
