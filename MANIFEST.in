@@ -1,1 +1,1 @@
-recursive-include csrc *.cu *.cuh *.hpp *.cpp
+recursive-include evaluation/latex2sympy *

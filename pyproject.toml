@@ -41,13 +41,20 @@ classifiers = [
 
 dependencies = [
     # Core ML/AI libraries
-    "torch>2.0.0",
+    "torch==2.8.0",
+    "torchaudio",
+    "torchvision",
+
     "huggingface_hub",
     "datasets",
     "accelerate",
     "transformers==4.56.1",
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
+    "flashinfer-python==0.3.1",
+    "sglang[all]==0.5.2",
+    "flash-attn==2.8.3",
+    "vllm==0.10.2",
     "peft",
     "qwen_agent",
 
@@ -68,6 +75,7 @@ dependencies = [
     "orjson>=3.10.16",
     "pydantic",
     "PyYAML",
+    "omegaconf==2.4.0.dev2",
     "hydra-core==1.4.0.dev1",
     "packaging",
     "lark",
@@ -78,6 +86,7 @@ dependencies = [
     "tensordict",
     "pybase64",
     "msgspec",
+    "latex2sympy2",
     "openai==1.99.6",
     "dotenv",
     "json5",
@@ -89,7 +98,9 @@ dependencies = [
     "colorlog",
     "psutil",
     "pynvml",
-    "swanlab[dashboard]",
+    "nvidia-ml-py",
+    "swanboard==0.1.9b1",
+    "swanlab[dashboard]==0.6.12",
 
     # Performance and compression
     "ninja",
@@ -140,8 +151,7 @@ dependencies = [
 dev = [
     "pytest",
     "ipython",
-    "black==25.1.0",
-    "isort==6.0.1",
+    "ruff==0.14.1",
     "clang-format==19.1.7",
     "sh~=2.2",
     "mdformat==0.7.17",
@@ -175,12 +185,61 @@ where = ["."]
 include = ["areal*"]
 exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*"]
 
-[tool.isort]
-profile = "black"
+[tool.uv]
+override-dependencies=[
+    "openai==1.99.6",
+    "xgrammar==0.1.24",
+    "outlines-core==0.1.26",
+]
+
+[tool.uv.sources]
+latex2sympy2 = { path = "./evaluation/latex2sympy" }
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch==2.8.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::UserWarning:torch.*",
+    "ignore::UserWarning:transformers.*",
+]
 
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # E501 Line too long
+]
+
+[tool.ruff.lint.isort.sections]
+"areal" = ["areal"]
+
+[tool.ruff.lint.isort]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "areal",
+    "local-folder",
+]
+from-first = false
+
+# The following tools are remained as legacy.
+# We will use `ruff` instead in future development
 [tool.black]
 line-length = 88
 
