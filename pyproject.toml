@@ -86,7 +86,7 @@ dependencies = [
     "tensordict",
     "pybase64",
     "msgspec",
-    "latex2sympy2 @ ./evaluation/latex2sympy",
+    "latex2sympy2 @ file:./evaluation/latex2sympy",
     "openai==1.99.6",
     "dotenv",
     "json5",
