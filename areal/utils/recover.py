@@ -9,6 +9,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import RecoverConfig
+from areal.api.controller_api import TrainController
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
 from areal.platforms import current_platform
@@ -304,7 +305,7 @@ class RecoverHandler:
 
     def _load_checkpoint(
         self,
-        engine: TrainEngine,
+        engine: TrainEngine | TrainController,
         name: str = "default",
         tokenizer: PreTrainedTokenizerFast | None = None,
         base_model_path: str | None = None,

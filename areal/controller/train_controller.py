@@ -132,6 +132,24 @@ class DistributedTrainController(TrainController):
     def custom_function_call(self, method: str, *args, **kwargs):
         return rpc_call(self.scheduler, self.workers, method, None, *args, **kwargs)
 
+    def custom_function_call_with_data(
+        self, method: str, input_: DistributedBatch, strict_order=False, *args, **kwargs
+    ):
+        if strict_order:
+            batches = self._align_batches_with_dp(input_, False)
+        else:
+            batches = self._align_batches_with_dp(input_, True)
+
+        stats = rpc_call(
+            self.scheduler,
+            self.workers,
+            method,
+            batches,
+            *args,
+            **kwargs,
+        )
+        return stats
+
     def _align_batches_with_dp(
         self, input_: DistributedBatch, rebalance=True
     ) -> List[DistributedBatch]:
@@ -152,33 +170,19 @@ class DistributedTrainController(TrainController):
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> Dict[str, float]:
-
-        batches = self._align_batches_with_dp(input_, True)
-        train_stats = rpc_call(
-            self.scheduler,
-            self.workers,
-            "train_batch",
-            batches,
-            loss_fn,
-            loss_weight_fn,
+        stats = self.custom_function_call_with_data(
+            "train_batch", input_, False, loss_fn, loss_weight_fn
         )
 
-        return train_stats[0]
+        return stats[0]
 
     def ppo_update(
         self,
         input_: DistributedBatch,
-    ) -> List[Dict[str, float]]:
+    ) -> Dict[str, float]:
+        stats = self.custom_function_call_with_data("ppo_update", input_, False)
 
-        batches = self._align_batches_with_dp(input_, True)
-        train_stats = rpc_call(
-            self.scheduler,
-            self.workers,
-            "ppo_update",
-            batches,
-        )
-
-        return train_stats
+        return stats[0]
 
     def eval_batch(
         self,
@@ -186,13 +190,11 @@ class DistributedTrainController(TrainController):
         loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
-
-        batches = self._align_batches_with_dp(input_, True)
-        eval_stats = rpc_call(
-            self.scheduler, self.workers, "eval_batch", batches, loss_fn, loss_weight_fn
+        stats = self.custom_function_call_with_data(
+            "eval_batch", input_, False, loss_fn, loss_weight_fn
         )
 
-        return eval_stats[0]
+        return stats[0]
 
     def compute_logp(
         self,
@@ -200,6 +202,7 @@ class DistributedTrainController(TrainController):
         *args,
         **kwargs,
     ):
+
         batches = self._align_batches_with_dp(input_, False)
         logps = rpc_call(
             self.scheduler,
@@ -233,34 +236,23 @@ class DistributedTrainController(TrainController):
         input_: DistributedBatch,
         *args,
         **kwargs,
-    ) -> List[Dict[str, float]]:
-        batches = self._align_batches_with_dp(input_, True)
-        stats = rpc_call(
-            self.scheduler,
-            self.workers,
-            "train_lm",
-            batches,
-            *args,
-            **kwargs,
+    ) -> Dict[str, float]:
+        stats = self.custom_function_call_with_data(
+            "train_lm", input_, False, *args, **kwargs
         )
-        return stats
+
+        return stats[0]
 
     def evaluate_lm(
         self,
         input_: DistributedBatch,
         *args,
         **kwargs,
-    ) -> List[Dict[str, float]]:
-        batches = self._align_batches_with_dp(input_, True)
-        stats = rpc_call(
-            self.scheduler,
-            self.workers,
-            "evaluate_lm",
-            batches,
-            *args,
-            **kwargs,
+    ) -> torch.Tensor | None:
+        stats = self.custom_function_call_with_data(
+            "evaluate_lm", input_, False, *args, **kwargs
         )
-        return stats
+        return stats[0]
 
     def forward(
         self,
@@ -269,15 +261,7 @@ class DistributedTrainController(TrainController):
         post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> List[Any]:
-        batches = self._align_batches_with_dp(input_, False)
-        forward_stats = rpc_call(
-            self.scheduler,
-            self.workers,
-            "forward",
-            batches,
-            output_seqlens,
-            post_hook,
-            aggregate_fn,
+        stats = self.custom_function_call_with_data(
+            "forward", input_, True, output_seqlens, post_hook, aggregate_fn
         )
-
-        return forward_stats
+        return stats[0]

@@ -1,20 +1,18 @@
 import sys
 
-import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.api.scheduler_api import ScheduleStrategy
+from areal.controller.batch import DistributedBatchMemory
 from areal.controller.train_controller import DistributedTrainController
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
-from areal.platforms import current_platform
 from areal.scheduler.local import LocalScheduler
-from areal.utils import stats_tracker
+from areal.utils import logging, stats_tracker
 from areal.utils.data import (
-    broadcast_tensor_container,
     pad_sequences_to_tensors,
     tensor_container_to,
 )
@@ -24,6 +22,8 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
+logger = logging.getLogger("Trainer")
+
 
 def main(args):
     config, _ = load_expr_config(args, SFTConfig)
@@ -32,8 +32,7 @@ def main(args):
     # rank = int(os.getenv("RANK"))
     #
     # seeding.set_random_seed(config.seed, f"trainer{rank}")
-    allocation_mode = AllocationMode.from_str(config.allocation_mode)
-    allocation_mode.train
+    AllocationMode.from_str(config.allocation_mode)
 
     engine = FSDPLMEngine(config=config.model)
     # engine.create_process_group(parallel_strategy=parallel_strategy)
@@ -61,7 +60,7 @@ def main(args):
     # Create dataset and dataloaders
     train_dataloader = StatefulDataLoader(
         train_dataset,
-        batch_size=config.train_dataset.batch_size // engine.data_parallel_world_size,
+        batch_size=config.train_dataset.batch_size,
         shuffle=config.train_dataset.shuffle,
         num_workers=config.train_dataset.num_workers,
         collate_fn=pad_sequences_to_tensors,
@@ -69,7 +68,7 @@ def main(args):
     )
     valid_dataloader = StatefulDataLoader(
         valid_dataset,
-        batch_size=config.valid_dataset.batch_size // engine.data_parallel_world_size,
+        batch_size=config.valid_dataset.batch_size,
         shuffle=config.valid_dataset.shuffle,
         num_workers=config.valid_dataset.num_workers,
         collate_fn=pad_sequences_to_tensors,
@@ -82,6 +81,7 @@ def main(args):
         dataset_size=len(train_dataloader),
         train_batch_size=config.train_dataset.batch_size,
     )
+    logger.info(f"FinetuneSpec: {ft_spec}")
     # Initialize scheduler
     scheduler = LocalScheduler(config)
     # Initialize train controller
@@ -127,18 +127,21 @@ def main(args):
             )
 
             with stats_tracker.record_timing("to_device"):
-                data = tensor_container_to(data, current_platform.current_device())
+                data = tensor_container_to(data, "cpu")
+                data = DistributedBatchMemory.from_dict(data)
 
             with (
                 stats_tracker.record_timing("train_step"),
                 stats_tracker.scope("sft"),
             ):
-                stats = train_controller.train_lm(data)
+                stat = train_controller.train_lm(data)
                 train_controller.step_lr_scheduler()
-                stats_tracker.scalar(**stats)
+                logger.info(f"train stat: {stat}")
 
             with stats_tracker.record_timing("save"):
-                saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
+                saver.save(
+                    train_controller, epoch, step, global_step, tokenizer=tokenizer
+                )
 
             with stats_tracker.record_timing("checkpoint_for_recover"):
                 recover_handler.dump(
@@ -152,20 +155,13 @@ def main(args):
                 )
 
             with stats_tracker.record_timing("eval"):
-                # No need to log anything. Logging will be handled outside
-                # via stats_tracker.export().
+
                 def evaluate_fn():
                     with stats_tracker.scope("sft-eval"):
                         for data in valid_dataloader:
-                            data = tensor_container_to(
-                                data, current_platform.current_device()
-                            )
-                            data = broadcast_tensor_container(
-                                data,
-                                src_rank=engine.current_data_parallel_head(),
-                                group=engine.context_and_model_parallel_group,
-                            )
-                            engine.evaluate_lm(data)
+                            data = tensor_container_to(data, "cpu")
+                            data = DistributedBatchMemory.from_dict(data)
+                            train_controller.evaluate_lm(data)
 
                 evaluator.evaluate(
                     evaluate_fn,
@@ -174,19 +170,20 @@ def main(args):
                     global_step,
                 )
 
-            dist.barrier(device_ids=[engine.device.index])
-            current_platform.synchronize()
-
+            stats = list()
+            # todo: gather stats from all ranks
+            stats.append(stat)
+            stats.append(stats_tracker.export_all())
             stats_logger.commit(
                 epoch,
                 step,
                 global_step,
-                stats_tracker.export(reduce_group=engine.data_parallel_group),
+                stats,
             )
             global_step += 1
 
     stats_logger.close()
-    tarin_controller.destroy()
+    train_controller.destroy()
 
 
 if __name__ == "__main__":

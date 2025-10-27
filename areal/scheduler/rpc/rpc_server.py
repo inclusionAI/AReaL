@@ -88,7 +88,6 @@ def process_input_to_distributed_batch(to_device, method, *args, **kwargs):
     # Process args
     new_args = list(args)
     for i, arg in enumerate(new_args):
-        logger.info(f"Processing arg {i}: {arg}")
         if isinstance(arg, DistributedBatch):
             # Try to get parameter name for positional arguments
             param_names = list(parameters.keys())
@@ -112,17 +111,32 @@ def process_input_to_distributed_batch(to_device, method, *args, **kwargs):
 
 def process_output_to_distributed_batch(result):
     result = tensor_container_to_safe(result, "cpu")
-    if isinstance(result, dict):
-        return DistributedBatchMemory.from_dict(result)
-    elif isinstance(result, TensorDict):
+
+    if isinstance(result, TensorDict):
         return DistributedBatchMemory.from_dict(result.to_dict())
-    elif isinstance(result, list):
-        if all(isinstance(item, dict) for item in result) or all(
-            isinstance(item, TensorDict) for item in result
-        ):
-            return DistributedBatchMemory.from_list(result)
-    elif isinstance(result, (Future, futures.Future)):
+
+    if isinstance(result, (Future, futures.Future)):
         return result.result()
+
+    if isinstance(result, list) and result:
+        if all(isinstance(item, dict) for item in result):
+            is_list_of_dict_str_tensor = True
+            for item in result:
+                for key, value in item.items():
+                    if not isinstance(key, str) or not isinstance(value, torch.Tensor):
+                        is_list_of_dict_str_tensor = False
+                        break
+                if is_list_of_dict_str_tensor:
+                    DistributedBatchMemory.from_list(result)
+
+    if isinstance(result, dict) and result:
+        is_dict_of_tensor = all(
+            isinstance(key, str) and isinstance(value, torch.Tensor)
+            for key, value in result.items()
+        )
+        if is_dict_of_tensor:
+            return DistributedBatchMemory.from_dict(result)
+
     return result
 
 
@@ -191,15 +205,12 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 args, kwargs = process_input_to_distributed_batch(
                     device, method, *args, **kwargs
                 )
-                logger.info(f"Processing call args structure: {args}, {kwargs}")
                 if (
                     check_attribute_type(type(EngineRPCServer.engine), action)
                     == "method"
                 ):
                     result = method(*args, **kwargs)
-                    logger.info(f"before Processing output structure: {result}")
                     result = process_output_to_distributed_batch(result)
-                    logger.info(f"after Processing output structure: {result}")
                 else:
                     result = method
                 self.send_response(HTTPStatus.OK)
