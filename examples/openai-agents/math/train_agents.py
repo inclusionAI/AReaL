@@ -56,9 +56,7 @@ class MathAgent:
         self.async_reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
 
     async def run_agent(self, data, client: ArealOpenAI):
-        agent = OpenAIAgent(
-            name="RLVR",
-        )
+        agent = OpenAIAgent(name="RLVR")
         run_config = RunConfig(
             model_provider=OpenAIProvider(openai_client=client, use_responses=False),
             tracing_disabled=True,

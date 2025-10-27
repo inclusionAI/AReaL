@@ -72,6 +72,25 @@ def find_free_ports(
     return sorted(free_ports)
 
 
+def find_free_port_and_bind() -> socket.socket:
+    """
+    Find a free port and bind it.
+    This is useful when calling this method in multi threaded scenarios.
+    Returns:
+        A socket object bound to a free port, you can use sock.getsockname()[1] to get the port number.
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", 0))
+        return sock
+    except Exception as e:
+        # 如果出现问题，确保关闭socket
+        if "sock" in locals() and sock:
+            sock.close()
+        raise e
+
+
 def is_port_free(port: int) -> bool:
     """
     Check if a port is free by attempting to bind to it.

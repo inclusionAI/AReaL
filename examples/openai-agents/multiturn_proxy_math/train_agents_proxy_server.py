@@ -1,8 +1,12 @@
 import asyncio
+import json
 import os
 import sys
+import threading
+import uuid
 from dataclasses import dataclass, field
 
+import httpx
 import torch.distributed as dist
 from agents import Agent as OpenAIAgent
 from agents import ModelSettings, OpenAIProvider, RunConfig
@@ -21,8 +25,9 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
 from areal.experimental.openai.agent_patch import AReaLOpenAIClientContext
+from areal.experimental.openai.proxy import ProxyServer
 from areal.platforms import current_platform
-from areal.utils import seeding, stats_tracker
+from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
     cycle_dataloader,
@@ -31,9 +36,12 @@ from areal.utils.data import (
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.network import find_free_port_and_bind
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+
+logger = logging.getLogger("Agent Train")
 
 
 @dataclass
@@ -54,6 +62,12 @@ class AgentRLConfig(GRPOConfig):
         default=32768,
         metadata={
             "help": "Maximum number of tokens per trajectory. By default max_tokens_per_trajectory=32768."
+        },
+    )
+    agent_path: str = field(
+        default="",
+        metadata={
+            "help": "Path to the agent definition file.",
         },
     )
 
@@ -124,6 +138,8 @@ class MultiturnRLVRAgentWorkflow(RolloutWorkflow):
         n_trajs: int = 1,
         max_tokens: int = 32768,
         max_turns: int = 8,
+        agent_path: str = "",
+        tool_call_parser: str | None = None,
     ):
         self.gconfig = gconfig
         self.gconfig.n_samples = 1
@@ -131,47 +147,89 @@ class MultiturnRLVRAgentWorkflow(RolloutWorkflow):
         self.dump_dir = dump_dir
         self.max_tokens = max_tokens
         self.rollout_stat_scope = rollout_stat_scope
+        self.tool_call_parser = tool_call_parser
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
         # Search hyper-parameters
         self.n_trajs = n_trajs
-        self.agent = MultiturnMathAgent(
-            tokenizer=self.tokenizer,
-            max_tokens_per_turn=self.gconfig.max_new_tokens,
-            max_turns=max_turns,
-            max_total_tokens=max_tokens,
-        )
+        self.agent_path = agent_path
+
+        self.proxy_server: ProxyServer = None
 
     async def arun_episode(self, engine, data):
-        clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-            for _ in range(self.n_trajs)
-        ]
+        if self.proxy_server is None:
+            self.proxy_server = ProxyServer(
+                engine=engine,
+                tokenizer=self.tokenizer,
+                config_max_tokens=self.max_tokens,
+                tool_call_parser=self.tool_call_parser,
+                # TODO: (wht) move to __init__
+                chat_template_type="hf",
+                messages_delimiter_start="<|im_start|>",
+                messages_delimiter_end="<|im_end|>",
+            )
+            sock = find_free_port_and_bind()
+            port = sock.getsockname()[1]
+            proxy_thread = threading.Thread(
+                target=self.proxy_server.run, args=(sock,), daemon=True
+            )
+            logger.info(f"[wht debug] Starting proxy server on port {port}")
+            proxy_thread.start()
+            # wait for server to start
+            while True:
+                try:
+                    # async call health check
+                    response = await httpx.get(f"http://127.0.0.1:{port}/health")
+                    logger.info(
+                        f"[wht debug] Health check on port {port} response: {response.status_code}"
+                    )
+                    if response.status_code == 200:
+                        break
+                except Exception:
+                    await asyncio.sleep(1)
 
-        # Collect trajectories
-        rewards = await asyncio.gather(
-            *[
-                self.agent.run_agent(
-                    data=data,
-                    client=clients[i],
+        async def run_task(task_id: str):
+            # run agents in sub process
+            env = {
+                "OPENAI_BASE_URL": f"http://127.0.0.1:{self.proxy_server.port}/v1/{task_id}",
+                "OPENAI_API_KEY": "test-api-key",
+                "OPENAI_AGENTS_DISABLE_TRACING": "1",
+            }
+            cmd = ["python", self.agent_path]
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                env=env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await process.communicate(input=json.dumps(data).encode())
+            if process.returncode != 0:
+                logger.warning(
+                    f"Error occurred while running task {task_id}, return code: {process.returncode}"
                 )
-                for i in range(self.n_trajs)
-            ]
-        )
-        for reward in rewards:
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            if stdout:
+                logger.info(f"[Task {task_id} stdout]\n{stdout.decode()}")
+            if stderr:
+                logger.warning(f"[Task {task_id} stderr]\n{stderr.decode()}")
+
+        tasks = [uuid.uuid4().hex for _ in range(self.n_trajs)]
+
+        await asyncio.gather(*[run_task(task_id) for task_id in tasks])
 
         completions_with_reward = {}
-        for client in clients:
-            client.apply_reward_discount(turn_discount=0.9)
-            completions = client.export_completions(style="individual")
+        for task_id in tasks:
+            reward = self.proxy_server.get_final_reward(task_id)
+            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            self.proxy_server.apply_reward_discount(task_id=task_id, turn_discount=0.9)
+            completions = self.proxy_server.export_completions(
+                style="individual", task_id=task_id
+            )
             completions_with_reward.update(completions)
 
         # print(f"[wht debug] completions_with_reward: {completions_with_reward}")
-        # import torch
-        # import uuid
-        # torch.save(completions_with_reward, f"/storage/openpsi/codes/wht125/project/github_areal/data_dump/completions_{uuid.uuid4().hex}.pt")
         return completions_with_reward
 
 
@@ -240,6 +298,7 @@ def main(args):
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
+        agent_path=config.agent_path,
     )
 
     # Run training.

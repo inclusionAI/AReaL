@@ -92,7 +92,12 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         if extra_body is None:
             extra_body = {}
         # Convert messages to prompt format
+
+        from openai import omit
+
+        NOT_GIVEN = omit
         tools = tools if tools is not NOT_GIVEN else None
+
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,

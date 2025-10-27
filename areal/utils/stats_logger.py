@@ -37,14 +37,15 @@ class StatsLogger:
             return
 
         self.start_time = time.perf_counter()
-        # wandb init, connect to remote wandb host
-        if self.config.wandb.mode != "disabled":
-            wandb.login()
 
         if self.config.wandb.wandb_base_url:
             os.environ["WANDB_API_KEY"] = self.config.wandb.wandb_api_key
         if self.config.wandb.wandb_api_key:
             os.environ["WANDB_BASE_URL"] = self.config.wandb.wandb_base_url
+
+        # wandb init, connect to remote wandb host
+        if self.config.wandb.mode != "disabled":
+            wandb.login()
 
         suffix = self.config.wandb.id_suffix
         if suffix == "timestamp":
