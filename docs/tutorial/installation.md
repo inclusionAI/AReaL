@@ -90,7 +90,7 @@ git clone https://github.com/garrett4wade/cugae
 uv pip install -e ./cugae --no-build-isolation
 ```
 
-1. Validate your AReaL installation:
+5. Validate your AReaL installation:
 
 We provide a script to validate AReaL installation. Simply run:
 
