@@ -1,0 +1,225 @@
+import json
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from areal.platforms import current_platform
+from areal.utils import perf_tracer
+from areal.utils.network import find_free_ports
+
+
+@pytest.mark.parametrize("use_rank_suffix", [None, 0])
+def test_perf_tracer_records_events_and_save(tmp_path, use_rank_suffix):
+    tracer = perf_tracer.PerfTracer(enabled=True)
+    output_file = tmp_path / "trace.json"
+    tracer.set_output(str(output_file), rank=use_rank_suffix)
+
+    with tracer.trace_scope("unit-block", category="unit", args={"step": 1}):
+        tracer.instant("inner-mark", args={"value": 42})
+    tracer.instant("outer-mark")
+
+    saved = tracer.save(reset=False)
+    assert saved is not None
+    saved_path = Path(saved)
+    expected_path = (
+        output_file
+        if use_rank_suffix is None
+        else output_file.with_name("trace.rank0.json")
+    )
+    assert saved_path == expected_path
+
+    payload = json.loads(saved_path.read_text())
+    event_names = {evt["name"] for evt in payload["traceEvents"] if evt["ph"] != "M"}
+    assert {"unit-block", "inner-mark", "outer-mark"}.issubset(event_names)
+
+    # Ensure reset clears cached events and re-bases timestamps
+    tracer.reset()
+    assert tracer._events == []  # noqa: SLF001
+
+
+def test_perf_tracer_aggregate_combines_ranks(tmp_path):
+    output_path = tmp_path / "trace.json"
+
+    tracer0 = perf_tracer.PerfTracer(enabled=True, rank=0, aggregate=True)
+    tracer0.set_output(str(output_path))
+    with tracer0.trace_scope("rank0-step", args={"rank": 0}):
+        pass
+    tracer0.instant("rank0-mark", args={"rank": 0})
+    tracer0.save()
+
+    tracer1 = perf_tracer.PerfTracer(enabled=True, rank=1, aggregate=True)
+    tracer1.set_output(str(output_path))
+    tracer1._pid = tracer0._pid + 1  # noqa: SLF001 - simulate distinct process id
+    tracer1_thread = getattr(tracer1, "_thread_meta_emitted", set())
+    tracer1_thread.clear()
+    tracer1.instant("rank1-mark", args={"rank": 1})
+    tracer1.save()
+
+    payload = json.loads(output_path.read_text())
+    event_names = {evt["name"] for evt in payload["traceEvents"] if evt["ph"] != "M"}
+    assert {"rank0-step", "rank0-mark", "rank1-mark"}.issubset(event_names)
+    pid_values = {evt["pid"] for evt in payload["traceEvents"] if evt["ph"] != "M"}
+    assert pid_values == {tracer0._pid, tracer1._pid}  # noqa: SLF001
+    rank_values = {
+        evt["args"].get("rank") for evt in payload["traceEvents"] if evt["ph"] != "M"
+    }
+    assert {0, 1}.issubset(rank_values)
+    meta_by_pid = {
+        (evt["pid"], evt["args"].get("name"))
+        for evt in payload["traceEvents"]
+        if evt["ph"] == "M" and evt["name"] == "process_name"
+    }
+    assert (
+        tracer0._pid,
+        "Rank 0, Process",
+    ) in meta_by_pid  # noqa: SLF001
+    assert (
+        tracer1._pid,
+        "Rank 1, Process",
+    ) in meta_by_pid  # noqa: SLF001
+    sort_meta = {
+        evt["pid"]: evt["args"].get("sort_index")
+        for evt in payload["traceEvents"]
+        if evt["ph"] == "M" and evt["name"] == "process_sort_index"
+    }
+    assert sort_meta[tracer0._pid] == 0  # noqa: SLF001
+    assert sort_meta[tracer1._pid] == 1  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_global_tracer_configure_roundtrip(tmp_path):
+    tracer = perf_tracer.get_tracer()
+
+    # Snapshot previous settings to restore after test
+    prev_enabled = tracer.enabled
+    prev_output = tracer._output_path  # noqa: SLF001
+    prev_rank = tracer._rank  # noqa: SLF001
+    prev_aggregate = tracer._aggregate  # noqa: SLF001
+
+    tracer.reset()
+    perf_tracer.configure(
+        enabled=True,
+        output_path=str(tmp_path / "global_trace.json"),
+        rank=1,
+    )
+
+    async with perf_tracer.atrace_scope(
+        "async-step", category="unit-test", args={"phase": "enter"}
+    ):
+        perf_tracer.instant("inside-async", args={"flag": True})
+
+    with perf_tracer.trace_scope("sync-step", category="unit-test"):
+        pass
+
+    saved = tracer.save(reset=True)
+    assert saved is not None
+    saved_path = Path(saved)
+    payload = json.loads(saved_path.read_text())
+    event_names = {evt["name"] for evt in payload["traceEvents"] if evt["ph"] != "M"}
+    assert {"async-step", "inside-async", "sync-step"}.issubset(event_names)
+
+    # Restore global tracer state to avoid leaking configuration to other tests
+    perf_tracer.configure(
+        enabled=prev_enabled,
+        rank=prev_rank,
+        aggregate=prev_aggregate,
+    )
+    tracer.reset()
+    if prev_output:
+        tracer.set_output(prev_output, rank=prev_rank)
+    else:
+        tracer._output_path = None  # noqa: SLF001
+
+
+def test_module_level_save_helper(tmp_path):
+    tracer = perf_tracer.get_tracer()
+
+    prev_enabled = tracer.enabled
+    prev_output = tracer._output_path  # noqa: SLF001
+    prev_rank = tracer._rank  # noqa: SLF001
+    prev_aggregate = tracer._aggregate  # noqa: SLF001
+
+    tracer.reset()
+    tracer._rank = None  # noqa: SLF001
+
+    try:
+        output_path = tmp_path / "module_trace.json"
+        perf_tracer.configure(
+            enabled=True,
+            output_path=str(output_path),
+            rank=None,
+            aggregate=False,
+        )
+        perf_tracer.instant("module-level-mark", args={"flag": True})
+
+        saved = perf_tracer.save(reset=True)
+        assert saved is not None
+        saved_path = Path(saved)
+        assert saved_path.exists()
+        payload = json.loads(saved_path.read_text())
+        event_names = {
+            evt["name"] for evt in payload["traceEvents"] if evt.get("ph") != "M"
+        }
+        assert "module-level-mark" in event_names
+    finally:
+        perf_tracer.configure(
+            enabled=prev_enabled,
+            rank=prev_rank,
+            aggregate=prev_aggregate,
+        )
+        tracer.reset()
+        if prev_output:
+            tracer.set_output(prev_output, rank=prev_rank)
+        else:
+            tracer._output_path = None  # noqa: SLF001
+
+
+def _run_perf_tracer_torchrun(tmp_path: Path, world_size: int) -> None:
+    port = find_free_ports(1)[0]
+    env = {
+        **os.environ,
+        "AREAL_PERF_TRACE_BASE": str(tmp_path),
+    }
+    subprocess.run(
+        [
+            "torchrun",
+            f"--nproc_per_node={world_size}",
+            "--nnodes=1",
+            "--master-addr=localhost",
+            f"--master_port={port}",
+            "areal/tests/torchrun/run_perf_tracer.py",
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.parametrize("world_size", [2])
+def test_perf_tracer_torchrun_multi_rank(tmp_path, world_size):
+    device_count_fn = getattr(current_platform, "device_count", None)
+    available_devices = device_count_fn() if callable(device_count_fn) else 0
+    if available_devices < world_size:
+        pytest.skip(f"This test requires {world_size} gpus")
+
+    _run_perf_tracer_torchrun(tmp_path, world_size)
+
+    trace_path = tmp_path / "trace.json"
+    assert trace_path.exists()
+    payload = json.loads(trace_path.read_text())
+    ranks_seen = {
+        evt["args"].get("rank")
+        for evt in payload["traceEvents"]
+        if evt["name"] == "torchrun-step"
+    }
+    assert ranks_seen == set(range(world_size))
+    mark_ranks = {
+        evt["args"].get("rank")
+        for evt in payload["traceEvents"]
+        if evt["name"] == "torchrun-mark"
+    }
+    assert mark_ranks == set(range(world_size))
