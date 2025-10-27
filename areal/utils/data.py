@@ -221,6 +221,42 @@ def concat_padded_tensors(
     return result
 
 
+def truncate_dict_to_batch_size(
+    data: Dict[str, Any], batch_size: int
+) -> Dict[str, Any]:
+    """Truncate a dictionary containing tensors and numeric values to specified batch size.
+
+    This function handles different value types:
+    - Tensors: take first batch_size elements along the first dimension
+    - Numeric values: keep as is (no truncation)
+    - Other types: keep as is (no truncation)
+
+    Args:
+        data: Dictionary to truncate
+        batch_size: Target batch size for truncation
+
+    Returns:
+        Truncated dictionary
+    """
+    if not data:
+        return {}
+
+    result = {}
+
+    for key, value in data.items():
+        if torch.is_tensor(value) and len(value.shape) > 0:
+            # For tensors, take first batch_size elements along first dimension
+            if value.shape[0] > batch_size:
+                result[key] = value[:batch_size]
+            else:
+                result[key] = value
+        else:
+            # For numeric values and other types, keep as is
+            result[key] = value
+
+    return result
+
+
 def unpack_sequence(
     x: torch.Tensor,
     cu_seqlens: Optional[torch.Tensor] = None,

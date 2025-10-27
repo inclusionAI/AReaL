@@ -839,6 +839,7 @@ class _LLMParallelParser:
             AllocationValidationError: When validation rules are violated
             ValueError: When parsing fails
         """
+
         try:
             tree = self.parser.parse(expression)
             transformer = _ParallelStrategyTransformer()

@@ -1,6 +1,6 @@
 from __future__ import annotations  # noqa
 
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 
 from areal.experimental.openai.types import CompletionWithTokenLogpReward
 
@@ -9,10 +9,9 @@ if TYPE_CHECKING:
 
 
 class RolloutWorkflow:
-
     async def arun_episode(
-        self, engine: "InferenceEngine", data: Dict[str, Any]
-    ) -> Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward]:
+        self, engine: InferenceEngine, data: dict[str, Any]
+    ) -> dict[str, Any] | None | dict[str, CompletionWithTokenLogpReward]:
         """Run a single episode of the workflow.
 
         Note

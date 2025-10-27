@@ -1,6 +1,6 @@
 import functools
 import warnings
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import torch
@@ -130,7 +130,7 @@ def gather_logprobs_entropy(
 @torch.no_grad()
 def masked_normalization(
     x: torch.Tensor,
-    mask: Optional[torch.Tensor] = None,
+    mask: torch.Tensor | None = None,
     dim=None,
     unbiased=False,
     eps=1e-5,
@@ -175,10 +175,10 @@ def ppo_actor_loss_fn(
     advantages: torch.Tensor,
     eps_clip: float,
     loss_mask: torch.Tensor,
-    eps_clip_higher: Optional[float] = None,
-    c_clip: Optional[float] = None,
-    behav_imp_weight_cap: Optional[float] = None,
-) -> Tuple[torch.Tensor, Dict]:
+    eps_clip_higher: float | None = None,
+    c_clip: float | None = None,
+    behav_imp_weight_cap: float | None = None,
+) -> tuple[torch.Tensor, dict]:
     """
     When decoupled loss is disabled:
     1. if recompute logp, both old_logprobs and proximal_logprobs are recomputed logp;
@@ -249,9 +249,9 @@ def ppo_critic_loss_fn(
     old_value: torch.FloatTensor,
     target_value: torch.FloatTensor,
     value_eps_clip: float,
-    loss_mask: Optional[torch.Tensor] = None,
+    loss_mask: torch.Tensor | None = None,
     loss_fn_type: str = "mse",
-) -> Tuple[torch.Tensor, Dict]:
+) -> tuple[torch.Tensor, dict]:
     """Compute PPO critic loss function given padded batch inputs.
 
     There is no shape requirements for the inputs, but they must have the same shape.
@@ -311,9 +311,13 @@ def ppo_critic_loss_fn(
     return value_loss, stat
 
 
-def dynamic_sampling(
-    data: Dict[str, Any], group_size: int
-) -> Tuple[Dict[str, Any], Dict[str, int]]:
+def filter_batch(filter_batch_fn, data: dict[str, Any], group_size: int):
+    return filter_batch_fn(data, group_size)
+
+
+def filter_batch_fn_DAPO(
+    data: dict[str, Any], group_size: int
+) -> tuple[dict[str, Any], dict[str, int]]:
     """Filter samples by group when all rewards in a group are equal.
 
     Assumes samples of the same group are adjacent in the batch.
@@ -354,15 +358,16 @@ def dynamic_sampling(
     # Expand the group mask to individual samples
     mask = valid_groups.repeat_interleave(group_size)
 
-    # In case all group is filtered out, return the original data (although not gradient in this case)
+    # In case all groups are filtered out, keep the first group to prevent an infinite loop in the data collection process (though this group will not contribute to the gradient).
     if not mask.any():
-        return data, dict(n_group_kept=0, n_group_filtered=num_groups)
+        mask[:group_size] = True
+        valid_groups[0] = True
 
     n_group_kept = int(valid_groups.sum().item())
     n_group_filtered = int(num_groups - n_group_kept)
 
     # Apply mask row-wise across tensors that share the same batch dimension
-    filtered: Dict[str, Any] = {}
+    filtered: dict[str, Any] = {}
     for k, v in data.items():
         if torch.is_tensor(v) and v.shape[:1] == (batch_size,):
             filtered[k] = v[mask]
@@ -374,11 +379,11 @@ def dynamic_sampling(
 
 # code modified from VERL: https://github.com/volcengine/verl/blob/main/verl/workers/reward_manager/dapo.py
 def reward_overlong_penalty(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     overlong_tokens: int,
     overlong_penalty_factor: float,
     max_response_length: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     reward_score = data["rewards"]
     input_ids = data["input_ids"]
     response_lengths = (data["loss_mask"].sum(dim=-1)).long()
