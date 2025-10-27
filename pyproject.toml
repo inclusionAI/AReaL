@@ -196,7 +196,7 @@ override-dependencies=[
 latex2sympy2 = { path = "./evaluation/latex2sympy" }
 
 [tool.uv.extra-build-dependencies]
-flash-attn = ["torch"]
+flash-attn = ["torch==2.8.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
