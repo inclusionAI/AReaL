@@ -77,4 +77,5 @@ repos:
       # Compile requirements
       - id: pip-compile
         name: Compile requirements.txt using uv
+        files: ^requirements\.txt|pyproject\.toml$
         args: [pyproject.toml, -o, requirements.txt]
