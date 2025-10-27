@@ -334,13 +334,13 @@ def main(args):
         #
         # Resume rollout
         rollout.resume()
-    #
-    # stats_logger.close()
+
+    stats_logger.close()
     # eval_rollout.destroy()
-    # rollout.destroy()
-    # if ref is not None:
-    #     ref.destroy()
-    # actor.destroy()
+    rollout.destroy()
+    if ref is not None:
+        ref.destroy()
+    actor.destroy()
 
 
 if __name__ == "__main__":
