@@ -149,9 +149,8 @@ class FSDPEngine(BaseHFEngine):
         # Initialize distributed enviroments and load model.
         assert addr is None, "FSDPEngine does not support remote initialization."
         assert ft_spec is not None, "FSDPEngine requires FinetuneSpec to initialize."
-        assert pkg_version.is_version_greater_or_equal("torch", "2.4.0"), (
-            "areal only supports FSDP2, which requires torch>=2.4.0"
-        )
+        if pkg_version.is_version_less("torch", "2.4.0"):
+            raise RuntimeError("areal only supports FSDP2, which requires torch>=2.4.0")
 
         # Create device model
         self.create_device_model()
@@ -821,7 +820,8 @@ class FSDPEngine(BaseHFEngine):
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
                 eps=eps,
-                fused=not self.is_vision_model or not self.parallel_helper.tp_enabled,
+                # VLM with tensor parallelism is incompatible with fused AdamW
+                fused=not (self.is_vision_model and self.parallel_helper.tp_enabled),
             )
         elif self.optimizer_config.type == "adam_bf16":
             self.optimizer = AnyPrecisionAdamW(
