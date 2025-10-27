@@ -3,12 +3,12 @@ import random
 
 import pytest
 import torch
+from tensordict import TensorDict
 from torch.testing import assert_close
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.engine.base_hf_engine import BaseHFEngine
-from areal.platforms import current_platform
-from areal.utils.data import concat_padded_tensors, tensor_container_to
+from areal.utils.data import concat_padded_tensors
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.network import find_free_ports
 
@@ -35,16 +35,14 @@ def mock_padded_llm_data():
             loss_mask=torch.tensor([0] * prompt_len + [1] * ans_len).unsqueeze(0),
             attention_mask=torch.tensor([1] * (prompt_len + ans_len)).unsqueeze(0),
         )
-        all_data.append(seq)
+        all_data.append(TensorDict(seq, batch_size=[1]))
 
-    return tensor_container_to(
-        concat_padded_tensors(all_data), current_platform.device_type
-    )
+    return concat_padded_tensors(all_data).cuda()
 
 
-QWEN3_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
+QWEN3_PATH = "/storage/testing/models/Qwen__Qwen3-1.7B/"
 if not os.path.exists(QWEN3_PATH):
-    QWEN3_PATH = "Qwen/Qwen3-0.6B"
+    QWEN3_PATH = "Qwen/Qwen3-1.7B"
 QWEN25_PATH = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B/"
 if not os.path.exists(QWEN25_PATH):
     QWEN25_PATH = "Qwen/Qwen2.5-1.5B"
@@ -75,51 +73,42 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
     engine.create_device_model()
     engine.initialized = True
 
-    try:
-        # Prepare padded input
-        padded_input = mock_padded_llm_data
+    # Prepare padded input
+    padded_input = mock_padded_llm_data.clone()
 
-        # Get packed input using prepare_mb_list
-        mb_list = engine.prepare_mb_list(padded_input)
-        assert len(mb_list.mbs) == 1
+    # Get packed input using prepare_mb_list
+    mb_list = engine.prepare_mb_list(padded_input)
+    assert len(mb_list.mbs) == 1
 
-        with torch.no_grad():
-            padded_logits = engine.model(
-                input_ids=padded_input["input_ids"],
-                attention_mask=padded_input["attention_mask"],
-            ).logits
-            seqlens = padded_input["attention_mask"].sum(1)
-            x1 = []
-            for i, s in enumerate(seqlens):
-                x1.append(padded_logits[i, :s])
-            x1 = torch.cat(x1)
+    with torch.no_grad():
+        padded_logits = engine.model(
+            input_ids=padded_input["input_ids"],
+            attention_mask=padded_input["attention_mask"],
+            position_ids=padded_input["position_ids"],
+        ).logits
+        seqlens = padded_input["attention_mask"].sum(1)
+        x1 = []
+        for i, s in enumerate(seqlens):
+            x1.append(padded_logits[i, :s])
+        x1 = torch.cat(x1)
 
-            mb = mb_list.padded_mbs[0]
-            pad_len = mb_list.padding_lengths[0]
-            x2 = engine.model(**mb).logits.squeeze(0)[:-pad_len]
+        mb = mb_list.padded_mbs[0]
+        pad_len = mb_list.padding_lengths[0]
+        x2 = engine.model(**mb).logits.squeeze(0)[:-pad_len]
 
-            assert x1.shape == x2.shape, (x1.shape, x2.shape)
+        assert x1.shape == x2.shape, (x1.shape, x2.shape)
 
-            assert_close(x1, x2, atol=2e-1, rtol=2e-1)
-    finally:
-        engine.destroy()
+        assert_close(x1, x2, atol=2e-1, rtol=2e-1)
 
 
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
 if not os.path.exists(QWEN25_VL_PATH):
     QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-3B-Instruct"
-GEMMA3_PATH = "/storage/openpsi/models/google__gemma-3-4b-it/"
-if not os.path.exists(GEMMA3_PATH):
-    GEMMA3_PATH = "google/gemma-3-4b-it"
 
 
-def mock_padded_vlm_data(model_path):
-    if model_path == GEMMA3_PATH:
-        model_type = "gemma3"
-    elif model_path == QWEN25_VL_PATH:
-        model_type = "qwen25"
-    else:
-        raise NotImplementedError()
+@pytest.fixture(params=[QWEN25_VL_PATH])
+def mock_padded_vlm_data(request):
+    model_path = request.param
     # TODO: create mock vlm image data
     prompt_lens = torch.randint(1, MAX_PROMPT_LEN, size=(BS,))
     answer_lens = torch.randint(1, MAX_ANSWER_LEN, size=(BS,))
@@ -140,11 +129,7 @@ def mock_padded_vlm_data(model_path):
 
             image = torch.randint(0, 255, size=(3, VISION_H, VISION_W)).float() / 255.0
             images.append(image)
-            if model_type == "qwen25":
-                image_tokens.append("<|vision_start|><|image_pad|><|vision_end|>")
-            else:
-                assert model_type == "gemma3"
-                image_tokens.append(processor.boi_token)
+            image_tokens.append("<|vision_start|><|image_pad|><|vision_end|>")
 
         combined_image_token = "".join(image_tokens)
 
@@ -178,36 +163,30 @@ def mock_padded_vlm_data(model_path):
             multi_modal_input=[
                 {
                     "pixel_values": processed_input["pixel_values"],
+                    "image_grid_thw": processed_input["image_grid_thw"],
                 }
             ],
         )
 
-        if "image_grid_thw" in processed_input:
-            seq["multi_modal_input"][0]["image_grid_thw"] = processed_input[
-                "image_grid_thw"
-            ]
-
-        td = seq
+        td = TensorDict(seq, batch_size=[1])
 
         all_data.append(td)
 
-    padded_data = tensor_container_to(
-        concat_padded_tensors(all_data), current_platform.device_type
-    )
+    padded_data = concat_padded_tensors(all_data).cuda()
     if "multi_modal_input" in padded_data:
         for item in padded_data["multi_modal_input"]:
             if isinstance(item, dict):
                 for k, v in item.items():
                     if torch.is_tensor(v):
-                        item[k] = v.to(current_platform.device_type)
+                        item[k] = v.cuda()
     return padded_data
 
 
 @pytest.mark.parametrize(
     "model_path",
-    [QWEN25_VL_PATH, GEMMA3_PATH],
+    [QWEN25_VL_PATH],
 )
-def test_vlm_consistency(model_path):
+def test_vlm_consistency(model_path, mock_padded_vlm_data):
     os.environ["RANK"] = str(0)
     os.environ["WORLD_SIZE"] = str(1)
     os.environ["MASTER_ADDR"] = "localhost"
@@ -229,47 +208,43 @@ def test_vlm_consistency(model_path):
     engine.create_device_model()
     engine.initialized = True
 
-    padded_input = mock_padded_vlm_data(model_path)
+    # Convert padded_input to dict because tensordict requires same batch size for pixelvalues and image_grid_thw
+    padded_input = dict(mock_padded_vlm_data.clone())
 
-    try:
-        # Get packed input
-        mb_list = engine.prepare_mb_list(padded_input)
-        assert len(mb_list.mbs) == 1
+    # Get packed input
+    mb_list = engine.prepare_mb_list(padded_input)
+    assert len(mb_list.mbs) == 1
 
-        with torch.no_grad():
-            # Padded logits
-            if "multi_modal_input" in padded_input:
-                image_grid_thw_list = [
-                    item["image_grid_thw"]
-                    for item in padded_input["multi_modal_input"]
-                    if "image_grid_thw" in item
-                ]
-                if image_grid_thw_list:
-                    padded_input["image_grid_thw"] = torch.cat(
-                        image_grid_thw_list, dim=0
-                    )
-                pixel_values_list = [
-                    item["pixel_values"]
-                    for item in padded_input["multi_modal_input"]
-                    if "pixel_values" in item
-                ]
-                if pixel_values_list:
-                    padded_input["pixel_values"] = torch.cat(pixel_values_list, dim=0)
-            padded_logits = engine.model(**padded_input).logits
+    with torch.no_grad():
+        # Padded logits
+        if "multi_modal_input" in padded_input:
+            image_grid_thw_list = [
+                item["image_grid_thw"]
+                for item in padded_input["multi_modal_input"]
+                if "image_grid_thw" in item
+            ]
+            if image_grid_thw_list:
+                padded_input["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+            pixel_values_list = [
+                item["pixel_values"]
+                for item in padded_input["multi_modal_input"]
+                if "pixel_values" in item
+            ]
+            if pixel_values_list:
+                padded_input["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+        padded_logits = engine.model(**padded_input).logits
 
-            # Extract valid sequence logits
-            seqlens = padded_input["attention_mask"].sum(1)
-            x1 = []
-            for i, s in enumerate(seqlens):
-                x1.append(padded_logits[i, :s])
-            x1 = torch.cat(x1)
+        # Extract valid sequence logits
+        seqlens = padded_input["attention_mask"].sum(1)
+        x1 = []
+        for i, s in enumerate(seqlens):
+            x1.append(padded_logits[i, :s])
+        x1 = torch.cat(x1)
 
-            # Packed logits
-            mb = mb_list.padded_mbs[0]
-            pad_len = mb_list.padding_lengths[0]
-            x2 = engine.model(**mb).logits.squeeze(0)[:-pad_len]
+        # Packed logits
+        mb = mb_list.padded_mbs[0]
+        pad_len = mb_list.padding_lengths[0]
+        x2 = engine.model(**mb).logits.squeeze(0)[:-pad_len]
 
-            assert x1.shape == x2.shape, f"Shape mismatch: {x1.shape} vs {x2.shape}"
-            assert_close(x1, x2, atol=2e-1, rtol=2e-1)
-    finally:
-        engine.destroy()
+        assert x1.shape == x2.shape, f"Shape mismatch: {x1.shape} vs {x2.shape}"
+        assert_close(x1, x2, atol=2e-1, rtol=2e-1)

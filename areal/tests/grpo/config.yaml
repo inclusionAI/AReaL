@@ -13,7 +13,6 @@ train_dataset:
   path: openai/gsm8k
   batch_size: 64
   max_length: 512
-  type: rl
 saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}

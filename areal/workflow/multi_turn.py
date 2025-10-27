@@ -6,6 +6,7 @@ import aiofiles
 import aiofiles.os
 import colorama
 import torch
+from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
@@ -71,7 +72,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         # Run multi-turn rollout until correct
         t = reward = 0
         discount = 1
-        while reward == 0 and t < self.max_turns:
+        while reward == 0 and t < self.max_turns and len(seq) < :
             # Send generate request to get the response.
             req = ModelRequest(
                 rid=rid,
@@ -127,7 +128,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         )
         res = {k: v.unsqueeze(0) for k, v in res.items()}
         return (
-            res,
+            TensorDict(res, batch_size=[1]),
             prompt_str,
             completions_str,
             reward,

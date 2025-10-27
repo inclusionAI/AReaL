@@ -34,11 +34,11 @@ def test_colocate():
             pipeline_parallel_size=2,
             context_parallel_size=4,
             expert_parallel_size=2,
-            expert_tensor_parallel_size=1,
+            expert_tensor_parallel_size=4,
         ),
     )
     assert train_ps.world_size == 64, alloc_mode_str
-    assert train_ps.expert_data_parallel_size == 16, alloc_mode_str
+    assert train_ps.expert_data_parallel_size == 4, alloc_mode_str
 
     # Test with and without parentheses
     alloc_mode_str = "attn:d4p2t2c2|ffn:d2p2t4e2"

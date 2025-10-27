@@ -3,10 +3,6 @@ from typing import Optional, Tuple
 
 import transformers
 
-import areal.utils.logging as logging
-
-logger = logging.getLogger("HF Utility")
-
 
 @lru_cache(maxsize=8)
 def load_hf_tokenizer(
@@ -34,16 +30,13 @@ def load_hf_processor_and_tokenizer(
     model_name_or_path: str,
     fast_tokenizer=True,
     padding_side: Optional[str] = None,
-) -> Tuple["transformers.ProcessorMixin | None", transformers.PreTrainedTokenizerFast]:
+) -> Tuple["transformers.ProcessorMixin", transformers.PreTrainedTokenizerFast]:
     """Load a tokenizer and processor from Hugging Face."""
     # NOTE: use the raw type annoation will trigger cuda initialization
     tokenizer = load_hf_tokenizer(model_name_or_path, fast_tokenizer, padding_side)
     try:
         processor = transformers.AutoProcessor.from_pretrained(
-            model_name_or_path,
-            trust_remote_code=True,
-            force_download=True,
-            use_fast=True,
+            model_name_or_path, trust_remote_code=True, force_download=True
         )
     except Exception:
         processor = None

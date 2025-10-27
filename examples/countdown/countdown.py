@@ -1,4 +1,3 @@
-import argparse
 import itertools
 import pathlib
 import random
@@ -298,13 +297,12 @@ class CountDown(object):
         start_size=[2, 3, 4],
         min_target=10,
         start_probs=[0.0, 0.4, 0.6],
-        tokenizer_path: str = "Qwen/Qwen2.5-3B-Instruct",
     ):
         self.max_target = max_target
         self.min_target = min_target
         self.start_size = start_size
         self.start_probs = start_probs
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct")
         self.existing_problems = get_existing_problems()
 
     def is_duplicate(self, nums):
@@ -395,15 +393,10 @@ def create_countdown_datasets(
     seed=42,
     num_samples=500000,
     eval_size=1000,
-    tokenizer_path="Qwen/Qwen2.5-3B-Instruct",
 ):
     random.seed(seed)
-    countdown = CountDown(
-        start_probs=[0.1, 0.4, 0.5],
-        max_target=25,
-        min_target=10,
-        tokenizer_path=tokenizer_path,
-    )
+    countdown = CountDown(start_probs=[0.1, 0.4, 0.5], max_target=25, min_target=10)
+    # countdown = CountDown(start_probs=[0., 0., 1.], max_target=50, min_target=10)
 
     train_data = []
     val_data = []
@@ -424,28 +417,7 @@ def create_countdown_datasets(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--num_samples",
-        type=int,
-        default=500000,
-        help="Number of training samples to generate",
-    )
-    parser.add_argument(
-        "--eval_size",
-        type=int,
-        default=1000,
-        help="Number of validation/test samples to generate",
-    )
-    parser.add_argument(
-        "--tokenizer_path",
-        type=str,
-        default="Qwen/Qwen2.5-3B-Instruct",
-        help="The path or HF identifier of the tokenizer",
-    )
-    args = parser.parse_args()
-
-    countdown = CountDown(tokenizer_path=args.tokenizer_path)
+    countdown = CountDown()
     task = countdown.get_task(apply_chat_template=True)
     print(task["query"])
     #     # get answer
@@ -461,11 +433,7 @@ if __name__ == "__main__":
     #  Step 2: 12 + 2 = 14
     # """
     #     print(countdown.verify_answer(14, q, answer))
-    train_data, val_data, test_data = create_countdown_datasets(
-        num_samples=args.num_samples,
-        eval_size=args.eval_size,
-        tokenizer_path=args.tokenizer_path,
-    )
+    train_data, val_data, test_data = create_countdown_datasets()
     print(len(train_data), len(val_data), len(test_data))
     # save to each to jsonl file
     import json
@@ -473,7 +441,7 @@ if __name__ == "__main__":
     with open("./data/countdown/qwen/train_e.jsonl", "w") as f:
         for item in train_data:
             f.write(json.dumps(item) + "\n")
-    with open("./data/countdown/qwen/valid_e.jsonl", "w") as f:
+    with open("./data/countdown/qwen/val_e.jsonl", "w") as f:
         for item in val_data:
             f.write(json.dumps(item) + "\n")
     with open("./data/countdown/qwen/test_e.jsonl", "w") as f:

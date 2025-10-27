@@ -8,7 +8,6 @@ from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import SaveLoadMeta, WeightUpdateMeta
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.base_hf_engine import BaseHFEngine
-from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.save_load import (
@@ -34,7 +33,7 @@ class DeepSpeedAutoTPEngine(BaseHFEngine):
 
         world_size = int(os.environ.get("WORLD_SIZE"))
         deepspeed.init_distributed(
-            dist_backend=current_platform.communication_backend,
+            dist_backend="nccl",
             world_size=world_size,
             timeout=NCCL_DEFAULT_TIMEOUT,
         )
@@ -127,5 +126,5 @@ class DeepSpeedAutoTPEngine(BaseHFEngine):
         if meta.with_optim:
             self.load_optimizer_state(meta.path)
 
-    def update_weights(self, meta: WeightUpdateMeta):
+    def upload_weights(self, meta: WeightUpdateMeta):
         raise ValueError(f"update weight not implemented {meta.type}")

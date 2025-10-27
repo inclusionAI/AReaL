@@ -115,15 +115,13 @@ class AsyncRewardWrapper:
 
             loop = asyncio.get_event_loop()
             try:
-                future = loop.run_in_executor(
-                    executor,
-                    partial(self.reward_fn, *args, **kwargs),
-                )
-                reward = await asyncio.wait_for(
-                    future,
+                return await asyncio.wait_for(
+                    loop.run_in_executor(
+                        executor,
+                        partial(self.reward_fn, *args, **kwargs),
+                    ),
                     timeout=self.timeout_seconds,
                 )
-                return reward
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Computing reward timeout after {self.timeout_seconds}s. Set reward to 0."

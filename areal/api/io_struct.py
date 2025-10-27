@@ -10,11 +10,12 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters
-from areal.platforms import current_platform
 from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
     from transformers import AutoProcessor
+
+    from areal.api.engine_api import TrainEngine
 
 
 @dataclass
@@ -31,17 +32,6 @@ class ModelRequest:
     # vlm
     image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
-
-    def copy(self):
-        return ModelRequest(
-            rid=self.rid,
-            input_ids=self.input_ids.copy(),
-            gconfig=self.gconfig.new(),
-            metadata=self.metadata.copy(),
-            tokenizer=self.tokenizer,
-            image_data=self.image_data.copy() if self.image_data is not None else None,
-            processor=self.processor,
-        )
 
 
 @dataclass
@@ -109,10 +99,8 @@ class WeightUpdateMeta:
 
     nccl_master_address: str = "127.0.0.1"
     nccl_master_port: int = 29500
+    nccl_param_specs: List[List[ParamSpec]] = field(default_factory=list)
     nccl_group_name: str = "update_weight_group"
-    weight_chunked_mem_mb: int = 1024
-
-    use_lora: bool = False
 
     @classmethod
     def from_disk(
@@ -121,7 +109,6 @@ class WeightUpdateMeta:
         trial_name: str,
         file_root: str,
         name: str = "default",
-        use_lora: bool = False,
     ) -> "WeightUpdateMeta":
         from areal.utils.saver import Saver
 
@@ -132,65 +119,25 @@ class WeightUpdateMeta:
         return cls(
             type="disk",
             path=path,
-            use_lora=use_lora,
         )
 
     @classmethod
-    def from_megatron_xccl(
+    def from_fsdp_nccl(
         cls,
         allocation_mode: AllocationMode,
+        fsdp_engine: "TrainEngine",
         nccl_group_name: str = "update_weight_group",
         weight_chunked_mem_mb: int = 1024,
     ):
+        param_specs = fsdp_engine.get_param_specs(weight_chunked_mem_mb)
         return cls(
-            type=current_platform.communication_backend,
+            type="nccl",
             alloc_mode=allocation_mode,
             nccl_master_address=gethostip(),
             nccl_master_port=find_free_ports(1)[0],
+            nccl_param_specs=param_specs,
             nccl_group_name=nccl_group_name,
-            weight_chunked_mem_mb=weight_chunked_mem_mb,
         )
-
-    @classmethod
-    def from_fsdp_xccl(
-        cls,
-        allocation_mode: AllocationMode,
-        nccl_group_name: str = "update_weight_group",
-        weight_chunked_mem_mb: int = 1024,
-    ):
-        return cls(
-            type=current_platform.communication_backend,
-            alloc_mode=allocation_mode,
-            nccl_master_address=gethostip(),
-            nccl_master_port=find_free_ports(1)[0],
-            nccl_group_name=nccl_group_name,
-            weight_chunked_mem_mb=weight_chunked_mem_mb,
-        )
-
-
-@dataclass
-class HttpRequest:
-    """Represents an HTTP request to be sent to a remote inference server."""
-
-    endpoint: str
-    payload: Dict[str, Any]
-    method: str = "POST"
-
-
-@dataclass
-class HttpGenerationResult:
-    """Parsed result from a generation response."""
-
-    output_tokens: List[int]
-    output_logprobs: List[float]
-    stop_reason: str
-
-
-@dataclass
-class WeightUpdateRequests:
-    """Collection of HTTP requests needed for a weight update operation."""
-
-    requests: List[HttpRequest]
 
 
 @dataclass

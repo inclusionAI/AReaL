@@ -83,7 +83,8 @@ def gather_heads_scatter_seq(
     if dim_size % sp_world != 0:
         padding_size = sp_world - (dim_size % sp_world)
         x = _pad_tensor(x, seq_dim, padding_size)
-    return SeqAllToAll.apply(group, x, seq_dim, head_dim, False)
+    res = SeqAllToAll.apply(group, x, seq_dim, head_dim, False)
+    return res
 
 
 def _pad_tensor(x: Tensor, dim: int, padding_size: int) -> Tensor:
@@ -100,7 +101,7 @@ def _unpad_tensor(x: Tensor, dim: int, padding_size: int) -> Tensor:
         return x
     slc = [slice(None)] * len(x.shape)
     slc[dim] = slice(0, -padding_size)
-    return x[tuple(slc)]
+    return x[slc]
 
 
 def slice_input_tensor(
@@ -118,7 +119,7 @@ def slice_input_tensor(
     parts = x.size(dim) // sp_world_size
     slc = [slice(None)] * len(x.shape)
     slc[dim] = slice(sp_rank * parts, (sp_rank + 1) * parts)
-    return x[tuple(slc)].contiguous()
+    return x[slc].contiguous()
 
 
 def all_to_all_tensor(
@@ -140,10 +141,12 @@ def all_to_all_tensor(
 
         def wait():
             comm.wait()
-            return torch.cat(output_list, dim=gather_dim).contiguous()
+            res = torch.cat(output_list, dim=gather_dim).contiguous()
+            return res
 
         return wait
-    return torch.cat(output_list, dim=gather_dim).contiguous()
+    res = torch.cat(output_list, dim=gather_dim).contiguous()
+    return res
 
 
 class SeqAllToAll(torch.autograd.Function):
@@ -223,45 +226,3 @@ def ulysses_pad_and_slice_inputs(
             position_ids_rmpad, dim=1, padding=False
         )
     return input_ids_rmpad, position_ids_rmpad, pad_size
-
-
-def ulysses_prepare_inputs(
-    padded_mb_input,
-    ulysses_input_ids,
-    ulysses_position_ids,
-    sp_world_size,
-):
-    # init inputs with padded_mb_input and ulysses_inputs
-    inputs = padded_mb_input.copy()
-    inputs["input_ids"] = ulysses_input_ids
-    if ulysses_position_ids is not None:
-        inputs["position_ids"] = ulysses_position_ids
-
-    # Pad and slice the loss inputs
-    padded_input_ids = padded_mb_input["input_ids"]
-
-    for key, value in list(inputs.items()):
-        if key in {"input_ids", "position_ids"}:
-            continue
-        if not torch.is_tensor(value):
-            continue
-
-        if value.dim() >= 2 and value.shape[:2] == padded_input_ids.shape[:2]:
-            # Please refer to ppo_loss_fn() in areal/engine/ppo/critic.py
-            if key in {"values", "returns", "loss_mask"}:
-                # For loss_mask, also keep the full version for loss function
-                if key == "loss_mask":
-                    inputs["full_loss_mask"] = value.squeeze(0)
-
-                sliced_value = slice_input_tensor(value, dim=1, padding=True)
-                inputs[key] = sliced_value.squeeze(0)
-            else:
-                inputs[key] = value.squeeze(0)
-
-    # Roll and slice the full input_ids as the labels in Ulysses SP.
-    rolled_input_ids = torch.roll(padded_input_ids, shifts=-1, dims=-1)
-    rolled_input_ids, _, _ = ulysses_pad_and_slice_inputs(
-        rolled_input_ids, sp_size=sp_world_size
-    )
-    inputs["rolled_input_ids"] = rolled_input_ids.squeeze(0)
-    return inputs

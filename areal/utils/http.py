@@ -1,5 +1,4 @@
 import asyncio
-from http import HTTPStatus
 from typing import Any, Dict, Optional
 
 import aiohttp
@@ -62,6 +61,7 @@ async def arequest_with_retry(
                 ctx = _session.delete(url, timeout=timeo)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
+
             async with ctx as response:
                 if verbose:
                     logger.info("http requests return")
@@ -78,21 +78,15 @@ async def arequest_with_retry(
             asyncio.TimeoutError,
         ) as e:
             last_exception = e
+            print(f"[Debug]: Error {e}")
             if attempt < max_retries - 1:
                 await asyncio.sleep(retry_delay)
             continue
     if session is None:
         await _session.close()
+
     raise RuntimeError(
         f"Failed after {max_retries} retries each. "
         f"Payload: {payload}. Addr: {addr}. Endpoint: {endpoint}. "
-        f"Last error: {repr(last_exception)}"
+        f"Last error: {last_exception}"
     )
-
-
-def response_ok(http_code: int) -> bool:
-    return http_code == HTTPStatus.OK
-
-
-def response_retryable(http_code: int) -> bool:
-    return http_code == HTTPStatus.REQUEST_TIMEOUT

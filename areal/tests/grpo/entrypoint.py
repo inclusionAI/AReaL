@@ -16,10 +16,9 @@ from areal.api.cli_args import GRPOConfig
 from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.platforms import current_platform
 from areal.reward.math_parser import process_results
 from areal.utils import seeding
-from areal.utils.data import broadcast_tensor_container, tensor_container_to
+from areal.utils.data import broadcast_tensor_container
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -38,7 +37,6 @@ def main() -> None:
     seeding.set_random_seed(config.seed, str(rank))
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
-    assert parallel_strategy is not None
 
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
@@ -71,14 +69,19 @@ def main() -> None:
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
-    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
-
     actor.initialize(None, ft_spec)
-    actor.connect_engine(rollout, weight_update_meta)
 
     ref = FSDPPPOActor(config=config.ref)
     ref.create_process_group(parallel_strategy=parallel_strategy)
     ref.initialize(None, ft_spec)
+
+    weight_update_meta = [
+        WeightUpdateMeta.from_fsdp_nccl(
+            AllocationMode.from_str(config.allocation_mode), actor
+        )
+    ]
+    dist.broadcast_object_list(weight_update_meta, src=0)
+    weight_update_meta = weight_update_meta[0]
 
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(cast(int, tokenizer.pad_token_id))
@@ -108,7 +111,7 @@ def main() -> None:
             batch = None
             if actor.is_data_parallel_head():
                 batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-                batch = tensor_container_to(batch, actor.device)
+                batch = batch.to(actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
@@ -116,7 +119,7 @@ def main() -> None:
             )
 
             dist.barrier(device_ids=[actor.device.index])
-            current_platform.synchronize()
+            torch.cuda.synchronize()
 
             batch["ref_logp"] = ref.compute_logp(batch)
 
@@ -126,7 +129,15 @@ def main() -> None:
             actor.step_lr_scheduler()
 
             rollout.pause()
-            actor.update_weights(weight_update_meta)
+            if dist.get_rank() == 0:
+                future = rollout.update_weights(weight_update_meta)
+            else:
+                future = None
+            actor.upload_weights(weight_update_meta)
+            if future is not None:
+                future.result()
+            dist.barrier(device_ids=[actor.device.index])
+            torch.cuda.synchronize()
             rollout.resume()
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)

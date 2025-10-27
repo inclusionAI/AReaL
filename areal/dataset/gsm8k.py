@@ -1,12 +1,15 @@
 from typing import Optional
 
 from datasets import load_dataset
+from datasets.distributed import split_dataset_by_node
 
 
 def get_gsm8k_sft_dataset(
     path: str,
     split: str,
     tokenizer,
+    rank: int,
+    world_size: int,
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, name="main", split=split)
@@ -25,6 +28,7 @@ def get_gsm8k_sft_dataset(
         # Filter out sequences longer than max_length
         dataset = dataset.filter(lambda x: len(x["input_ids"]) <= max_length)
 
+    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset
 
 
@@ -32,6 +36,8 @@ def get_gsm8k_rl_dataset(
     path: str,
     split: str,
     tokenizer,
+    rank: int,
+    world_size: int,
     max_length: Optional[int] = None,
 ):
     dataset = load_dataset(path=path, name="main", split=split)
@@ -59,4 +65,5 @@ def get_gsm8k_rl_dataset(
 
         dataset = dataset.filter(filter_length)
 
+    dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
     return dataset

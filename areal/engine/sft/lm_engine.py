@@ -1,11 +1,10 @@
-from typing import Any, Dict
-
 import torch
+import torch.utils.data
+from tensordict import TensorDict
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
-from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import stats_tracker
 from areal.utils.functional import gather_logprobs
 
@@ -14,7 +13,7 @@ class LMEngine:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
-    def train_lm(self, data: Dict[str, Any]):
+    def train_lm(self, data: TensorDict):
         self.engine.train()
         return self.engine.train_batch(
             input_=data,
@@ -24,7 +23,7 @@ class LMEngine:
 
     def evaluate_lm(self, data):
         self.engine.eval()
-        return self.engine.eval_batch(
+        self.engine.eval_batch(
             input_=data,
             loss_fn=compute_packed_sft_loss,
             loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
@@ -43,57 +42,31 @@ class FSDPLMEngine(FSDPEngine):
         return self.lm_engine.evaluate_lm(data)
 
 
-class MegatronLMEngine(MegatronEngine):
-    def __init__(self, config: TrainEngineConfig):
-        super().__init__(config)
-        self.lm_engine = LMEngine(self)
-
-    def train_lm(self, data):
-        return self.lm_engine.train_lm(data)
-
-    def evaluate_lm(self, data):
-        return self.lm_engine.evaluate_lm(data)
-
-
-def compute_packed_sft_loss(
-    logits: torch.Tensor, input_: Dict[str, Any]
-) -> torch.Tensor:
-    # Use rolled input_ids. Ulysses SP will roll input_ids in ulysses_prepare_inputs().
-    labels: torch.Tensor = input_.get(
-        "rolled_input_ids",
-        torch.roll(input_["input_ids"], shifts=-1, dims=-1),
-    )
+def compute_packed_sft_loss(logits: torch.Tensor, input_: TensorDict) -> torch.Tensor:
+    packed_input_ids: torch.Tensor = input_["input_ids"]
     cu_seqlens: torch.Tensor = input_["cu_seqlens"]
-    # Use full loss_mask. Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
-    loss_mask = input_.get("full_loss_mask", input_["loss_mask"]).bool()
+    loss_mask = input_["loss_mask"].bool()
 
-    logprobs = gather_logprobs(logits, labels)
+    logprobs = gather_logprobs(logits, torch.roll(packed_input_ids, shifts=-1, dims=-1))
     loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
     logprobs = torch.where(loss_mask, logprobs, 0)
 
-    device = logits.device
     loss = -logprobs.sum() / loss_mask.count_nonzero()
     with torch.no_grad():
-        batch_size = cu_seqlens.shape[0] - 1
-        seqlogp = torch.zeros(batch_size, dtype=torch.float64, device=device)
-        n_seqs = torch.zeros(batch_size, dtype=torch.bool, device=device)
-        for i in range(batch_size):
+        seqlogp = torch.zeros(
+            cu_seqlens.shape[0] - 1, device=logits.device, dtype=torch.float64
+        )
+        for i in range(cu_seqlens.shape[0] - 1):
             m = loss_mask[cu_seqlens[i] : cu_seqlens[i + 1]]
             logp = logprobs[cu_seqlens[i] : cu_seqlens[i + 1]]
-            valid_tokens = int(m.count_nonzero().item())
-            if valid_tokens == 0:
-                # This is a padded dummy sequence created in `padded_mb_input`.
-                # When Ulysses SP is enabled, padded inputs are passed into the loss function.
-                # So we skip it.
-                continue
-
-            n_seqs[i] = True
-            seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / valid_tokens
+            seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / (m.count_nonzero())
 
     ## Loggin stats
     stats_tracker.denominator(
-        n_seqs=n_seqs,
-        n_tokens=torch.ones(logits.shape[0], dtype=torch.bool, device=device),
+        n_seqs=torch.ones(
+            cu_seqlens.shape[0] - 1, dtype=torch.bool, device=logprobs.device
+        ),
+        n_tokens=torch.ones(logits.shape[0], dtype=torch.bool, device=logits.device),
         n_valid_tokens=loss_mask,
         prompt_tokens=loss_mask.logical_not(),
     )

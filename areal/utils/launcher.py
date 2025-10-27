@@ -3,15 +3,11 @@ import enum
 import getpass
 import os
 import pathlib
-import shutil
-import subprocess
-import sys
 import time
-from pathlib import Path
 from typing import Dict, Optional
 
 from areal.api.alloc_mode import AllocationMode, AllocationType
-from areal.utils import logging, name_resolve, names, pkg_version
+from areal.utils import logging, name_resolve, names
 
 logger = logging.getLogger("Launcher Utils")
 
@@ -19,27 +15,15 @@ LOCAL_CACHE_DIR = "/tmp/areal"
 PYTORCH_KERNEL_CACHE_PATH = (
     f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/torch/kernels/"
 )
-VLLM_CACHE_ROOT = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/vllm/"
 TRITON_CACHE_PATH = f"{LOCAL_CACHE_DIR}/.cache/{getpass.getuser()}/triton/"
-PYTHONPATH = os.pathsep.join(
-    filter(
-        None,
-        [
-            os.getenv("PYTHONPATH", None),
-            str(pathlib.Path(__file__).resolve().parent.parent.parent),
-        ],
-    )
-)
 os.makedirs(PYTORCH_KERNEL_CACHE_PATH, exist_ok=True)
-os.makedirs(VLLM_CACHE_ROOT, exist_ok=True)
 os.makedirs(TRITON_CACHE_PATH, exist_ok=True)
 BASE_ENVIRONS = {
     "TOKENIZERS_PARALLELISM": "true",
     "PYTORCH_KERNEL_CACHE_PATH": PYTORCH_KERNEL_CACHE_PATH,
     "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
-    "VLLM_CACHE_ROOT": VLLM_CACHE_ROOT,
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-    "PYTHONPATH": PYTHONPATH,
+    "PYTHONPATH": str(pathlib.Path(__file__).resolve().parent.parent.parent),
 }
 NA132_ENVIRONS = {
     "NCCL_SOCKET_IFNAME": "bond0",
@@ -55,6 +39,7 @@ NA132_ENVIRONS = {
     "NCCL_DEBUG": "WARN",
     "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
+SGLANG_SERVER_WAIT_TIMEOUT_SECONDS = 360
 
 
 def get_env_vars(
@@ -106,30 +91,34 @@ class JobInfo:
     slurm_id: Optional[int] = None  # Slurm only. The Slurm id of the job.
 
 
-def wait_llm_server_addrs(
+def wait_sglang_server_addrs(
     experiment_name: str,
     trial_name: str,
-    n_rollout_servers: int = 1,
-    timeout: int | None = 360,
+    n_sglang_servers: int,
 ):
-    # Get rollout nodes, find the hosts
+    # Get SGLang slurm nodes, find the hosts
     name = names.gen_servers(experiment_name, trial_name)
+    print (f"[Debug] name_server: {name}")
     start = time.perf_counter()
+    print (f"[Debug] start time: {start}")
     while True:
-        rollout_addrs = name_resolve.get_subtree(name)
-        if len(rollout_addrs) >= n_rollout_servers:
+        sglang_addrs = name_resolve.get_subtree(name)
+        print (f"[Debug] sglang_address_inside: {sglang_addrs}")
+        print (f"[Debug] len_sglang_addr: {len(sglang_addrs)}, n_sglang_servers {n_sglang_servers}")
+        if len(sglang_addrs) >= n_sglang_servers:
             logger.info(
-                f"Found {len(rollout_addrs)} rollout servers: {', '.join(rollout_addrs)}"
+                f"Found {len(sglang_addrs)} SGLang servers: {', '.join(sglang_addrs)}"
             )
+            print (f"Found {len(sglang_addrs)} SGLang servers: {', '.join(sglang_addrs)}")
             break
 
         time.sleep(1)
-        if timeout is not None and time.perf_counter() - start > timeout:
+        if time.perf_counter() - start > SGLANG_SERVER_WAIT_TIMEOUT_SECONDS:
             raise TimeoutError(
-                f"Timeout waiting for rollout servers to be ready. "
-                f"Expected {n_rollout_servers} servers, found {len(rollout_addrs)}."
+                f"Timeout waiting for SGLang servers to be ready. "
+                f"Expected {n_sglang_servers} servers, found {len(sglang_addrs)}."
             )
-    return rollout_addrs
+    return sglang_addrs
 
 
 def validate_config_for_distributed_launcher(config):
@@ -150,74 +139,3 @@ def validate_config_for_distributed_launcher(config):
         assert (
             allocation_mode.gen.pp_size == 1
         ), "Pipeline generation in SGLang is not supported for now."
-    elif allocation_mode.gen_backend == "vllm":
-        # Launcher should launch vLLM servers according to allocation mode.
-        assert (
-            allocation_mode.gen.pp_size == 1
-        ), "Pipeline generation in vLLM is not supported for now."
-        assert (
-            allocation_mode.gen.tp_size <= config.cluster.n_gpus_per_node
-        ), "Currently only support vLLM TP size less <= #GPUs per node."
-
-
-def apply_sglang_patch():
-    p = Path(os.path.dirname(__file__))
-    patch_path = str(
-        p.parent.parent
-        / "patch"
-        / "sglang"
-        / f"v{pkg_version.get_version('sglang')}.patch"
-    )
-    target_path = None
-    sglang_meta = subprocess.check_output(
-        [sys.executable, "-m", "pip", "show", "sglang"]
-    ).decode("utf-8")
-    # Prioritize editable install location, since pip show lists both locations
-    # if installed in editable mode.
-    for line in sglang_meta.split("\n"):
-        line = line.strip()
-        if line.startswith("Editable project location: "):
-            target_path = str(Path(line.split(": ")[1]) / "sglang")
-            break
-    else:
-        for line in sglang_meta.split("\n"):
-            line = line.strip()
-            if line.startswith("Location: "):
-                target_path = str(Path(line.split(": ")[1]) / "sglang")
-                break
-
-    if not target_path or not os.path.exists(target_path):
-        raise RuntimeError("Could not determine the installation path of SGLang.")
-
-    patch_binary = shutil.which("patch")
-    if not patch_binary:
-        raise RuntimeError(
-            "Could not locate the `patch` command; SGLang patch application failed."
-        )
-    result = subprocess.run(
-        [patch_binary, "-p1", "-N", "-i", patch_path],
-        cwd=target_path,
-        capture_output=True,
-        text=True,
-    )
-
-    output = (result.stdout or "") + (result.stderr or "")
-    if result.returncode == 0:
-        logger.info(f"Applied SGLang patch {patch_path} to {target_path}")
-    elif (
-        "Reversed (or previously applied) patch detected" in output
-        or "Skipping patch." in output
-    ):
-        logger.warning(
-            f"SGLang patch {patch_path} appears to be already applied for {target_path}."
-        )
-    else:
-        logger.error(
-            "Failed to apply SGLang patch %s to %s. Output:\n%s",
-            patch_path,
-            target_path,
-            output.strip(),
-        )
-        raise RuntimeError(
-            f"SGLang patch {patch_path} failed with exit code {result.returncode}."
-        )

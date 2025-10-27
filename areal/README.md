@@ -189,7 +189,7 @@ def my_reward_fn(prompt, completion, prompt_ids, completion_ids, **kwargs):
 
 class MyRolloutWorkflow:
     async def arun_episode(self, engine: InferenceEngine,
-                           data: Dict[str, Any]) -> Dict[str, Any]:
+                           data: Dict[str, Any]) -> Dict[str, Tensor]:
         message = [
             {"role": "system", "message": ...},
             {"role": "user", "message": ...},
@@ -232,7 +232,9 @@ def main_grpo():
         stats = actor.ppo_update(batch)
 
         # Update inference engine weights (non-blocking to prevent NCCL blocking)
-        actor.update_weights(wcfg)
+        future = rollout.update_weights(wcfg)
+        actor.upload_weights(wcfg)
+        future.result()
 ```
 
 **Advantages:**
@@ -274,7 +276,7 @@ def main_grpo():
 
         # Broadcast data to all processes
         batch = dist.broadcast(batch_list, src=0, group=model_parallel_group)[0]
-        batch: Dict[str, Any]
+        batch: TensorDict
 
         # Prepare training inputs
         adv_batch = actor.compute_advantages_and_returns(batch)
@@ -284,7 +286,11 @@ def main_grpo():
         stats = actor.ppo_update(batch)
 
         # Update weights (coordinated across processes)
-        actor.update_weights(wcfg)
+        if rank == 0:
+            future = rollout.update_weights(wcfg)
+        actor.upload_weights(wcfg)
+        if rank == 0:
+            future.result()
 ```
 
 The SPMD pattern uses only concepts familiar to AI researchers, though it requires some
@@ -312,12 +318,8 @@ class TrainEngine(abc.ABC):
         """Clean up engine resources and release GPU memory."""
         pass
 
-    def update_weights(self, meta: WeightUpdateMeta):
-        """Update weights to inference engine (blocking operation)."""
-        raise NotImplementedError()
-
-    def connect_engine(self, engine: "InferenceEngine", meta: WeightUpdateMeta):
-        """Connect to an inference engine for online training."""
+    def upload_weights(self, meta: WeightUpdateMeta):
+        """Upload weights to inference engine (blocking operation)."""
         raise NotImplementedError()
 
     def save(self, meta: SaveLoadMeta):
@@ -330,9 +332,9 @@ class TrainEngine(abc.ABC):
 
     def train_batch(
         self,
-        input_: Dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], float],
+        input_: TensorDict,
+        loss_fn: Callable[[torch.Tensor, TensorDict], torch.Tensor],
+        loss_weight_fn: Callable[[TensorDict], float],
     ) -> Dict[str, float]:
         """Update model parameters using provided batch and loss function."""
         raise NotImplementedError()
@@ -340,9 +342,9 @@ class TrainEngine(abc.ABC):
     @torch.no_grad()
     def forward(
         self,
-        input_: Dict[str, Any],
+        input_: TensorDict,
         output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
+        post_hook: Callable[[torch.Tensor, TensorDict], Any] | None = None,
         aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Execute gradient-free forward pass for inference."""
@@ -367,7 +369,7 @@ class PPOActor:
     @torch.no_grad()
     def compute_logp(
         self,
-        data: Dict[str, Any],
+        data: TensorDict,
         temperature: Optional[float] = None,
     ) -> torch.Tensor | None:
 
@@ -383,12 +385,12 @@ class PPOActor:
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 
-    def compute_advantages(self, data: Dict[str, Any]) -> None:
+    def compute_advantages(self, data: TensorDict) -> None:
         """Compute advantages for PPO training."""
         # Implementation details...
         pass
 
-    def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
+    def ppo_update(self, data: TensorDict) -> List[Dict[str, float]]:
         """Execute PPO policy update."""
         # Implementation details...
         pass
@@ -475,7 +477,7 @@ class RLVRWorkflow(RolloutWorkflow):
                 **data,
             )
 
-            results.append(res)
+            results.append(TensorDict(res, batch_size=[1]))
 
         return concat_padded_tensors(results)
 ```
@@ -496,19 +498,20 @@ def submit(
     data: Dict[str, Any],
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
-    should_accept: Callable | None = None,
 ) -> None:
     try:
         if workflow is None:
             workflow = workflow_builder()
-        x = _RolloutTaskInput(
-            data=data, workflow=workflow, should_accept=should_accept
-        )
-        self.input_queue.put_nowait(x)
+        self.input_queue.put_nowait((data, workflow))
     except queue.Full:
         raise RuntimeError("Input queue full. Please increase queue_size.")
 
-def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
+def wait(
+    self,
+    count: int,
+    timeout: float | None = None,
+    should_accept: Callable | None = None,
+) -> TensorDict:
     """Wait for specified number of results with optional filtering."""
     # Implementation details...
     pass
@@ -519,7 +522,7 @@ def rollout_batch(
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
     should_accept: Callable | None = None,
-) -> Dict[str, Any]:
+) -> TensorDict:
     """Submit a batch of requests to the inference engine and wait for the results."""
     for item in data:
         self.submit(item, workflow, workflow_builder)

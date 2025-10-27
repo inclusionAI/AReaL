@@ -1,22 +1,13 @@
-import functools
 import warnings
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.distributed as dist
-import torch.distributed.nn.functional as dist_F
-from megatron.core import parallel_state as mpu
-from megatron.core import tensor_parallel
-
-from areal.platforms import is_npu_available
-from areal.utils.mcore.functional import _VocabParallelEntropy
-from areal.utils.ulysses import (
-    get_ulysses_sequence_parallel_group,
-    get_ulysses_sequence_parallel_world_size,
-)
+from tensordict import TensorDict
 
 
+@torch.compile
 def _gather_logprobs(
     logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
 ):
@@ -25,6 +16,7 @@ def _gather_logprobs(
     return log_probs_labels
 
 
+@torch.compile
 def _gather_logprobs_entropy(
     logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
 ):
@@ -34,30 +26,16 @@ def _gather_logprobs_entropy(
     return log_probs_labels, entropy
 
 
-# remove torch.compile due to npu problems
-if not is_npu_available:
-    _gather_logprobs = torch.compile(_gather_logprobs)
-    _gather_logprobs_entropy = torch.compile(_gather_logprobs_entropy)
-
-
 def gather_logprobs(
     logits: torch.Tensor,
     labels: torch.Tensor,
     temperature: float = 1.0,
     chunk_size: int = 1024,
 ):
-    # Megatron path
-    if mpu.is_initialized() and mpu.get_tensor_model_parallel_world_size() > 1:
-        # NOTE: When tensor parallelism is enabled, logits are parallelized across TP ranks.
-        # If we explicitly gather logits, it will significantly increase GPU memory usage.
-        # Therefore here we use a utility function from megatron to avoid this.
-        _logits = logits.float() / temperature
-        logprobs = -tensor_parallel.vocab_parallel_cross_entropy(
-            vocab_parallel_logits=_logits, target=labels
-        )
-        return logprobs
-
     batch_size = logits.shape[0]
+
+    if batch_size <= chunk_size:
+        return _gather_logprobs(logits, labels, temperature)
 
     log_probs_labels_list = []
 
@@ -70,15 +48,7 @@ def gather_logprobs(
 
         log_probs_labels_list.append(chunk_log_probs)
 
-    logprobs = torch.cat(log_probs_labels_list)
-
-    # Ulysses SP path
-    if get_ulysses_sequence_parallel_world_size() > 1:
-        sp_group = get_ulysses_sequence_parallel_group()
-        logprobs = dist_F.all_gather(logprobs, group=sp_group)
-        logprobs = torch.cat(logprobs, dim=-1)
-
-    return logprobs
+    return torch.cat(log_probs_labels_list)
 
 
 def gather_logprobs_entropy(
@@ -87,17 +57,11 @@ def gather_logprobs_entropy(
     temperature: float = 1.0,
     chunk_size: int = 1024,
 ):
-    # Megatron path
-    if mpu.is_initialized() and mpu.get_tensor_model_parallel_world_size() > 1:
-        # TODO: check GPU memory usage
-        _logits = logits.float() / temperature
-        entropy = _VocabParallelEntropy.apply(_logits)
-        logprobs = -tensor_parallel.vocab_parallel_cross_entropy(
-            vocab_parallel_logits=_logits, target=labels
-        )
-        return logprobs, entropy
-
     batch_size = logits.shape[0]
+
+    if batch_size <= chunk_size:
+        return _gather_logprobs_entropy(logits, labels, temperature)
+
     log_probs_labels_list = []
     entropy_list = []
 
@@ -113,18 +77,7 @@ def gather_logprobs_entropy(
         log_probs_labels_list.append(chunk_log_probs)
         entropy_list.append(chunk_entropy)
 
-    logprobs = torch.cat(log_probs_labels_list)
-    entropy = torch.cat(entropy_list)
-
-    # Ulysses SP path
-    if get_ulysses_sequence_parallel_world_size() > 1:
-        sp_group = get_ulysses_sequence_parallel_group()
-        logprobs = dist_F.all_gather(logprobs, group=sp_group)
-        logprobs = torch.cat(logprobs, dim=-1)
-        entropy = dist_F.all_gather(entropy, group=sp_group)
-        entropy = torch.cat(entropy, dim=-1)
-
-    return logprobs, entropy
+    return torch.cat(log_probs_labels_list), torch.cat(entropy_list)
 
 
 @torch.no_grad()
@@ -235,109 +188,19 @@ def ppo_actor_loss_fn(
     return pg_loss, stat
 
 
-def _huber_loss(x: torch.Tensor, y: torch.Tensor, delta: float):
-    diff = torch.abs(x - y)
-    return torch.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta))
+def dynamic_sampling(data: TensorDict, group_size: int) -> TensorDict:
+    # When calling, make sure the samples from same group are adjacent
 
-
-def _mse_loss(x: torch.Tensor, y: torch.Tensor):
-    return 0.5 * (x - y) ** 2
-
-
-def ppo_critic_loss_fn(
-    value: torch.FloatTensor,
-    old_value: torch.FloatTensor,
-    target_value: torch.FloatTensor,
-    value_eps_clip: float,
-    loss_mask: Optional[torch.Tensor] = None,
-    loss_fn_type: str = "mse",
-) -> Tuple[torch.Tensor, Dict]:
-    """Compute PPO critic loss function given padded batch inputs.
-
-    There is no shape requirements for the inputs, but they must have the same shape.
-    Either [bs, max_seqlen] for batch padded inputs or [tot_seqlen] for padded inputs.
-
-    Args:
-        value (torch.FloatTensor): Values. The position of the final token is not included.
-            (The whole generated sequence is not a state.)
-        old_value (torch.FloatTensor): Old values.
-        target_value (torch.FloatTensor): Returns computed by GAE.
-        value_eps_clip (float): Clip ratio.
-        loss_mask (Optional[torch.Tensor], optional): Mask for loss computation.
-            1 if valid else 0. Defaults to None.
-        loss_fn_type (str, optional): Type of loss function. Defaults to 'mse'.
-
-    Returns:
-        Tuple[torch.Tensor, Dict]: Scalar loss and statistics.
-    """
-    assert value.dtype == torch.float32
-    assert old_value.dtype == torch.float32
-    assert target_value.dtype == torch.float32
-
-    if loss_fn_type == "huber":
-        loss_fn = functools.partial(_huber_loss, delta=10.0)
-    elif loss_fn_type == "mse":
-        loss_fn = _mse_loss
-    else:
-        raise NotImplementedError(f"Unknown loss fn type: {loss_fn_type}")
-
-    if target_value.is_inference():
-        target_value = target_value.clone()  # clone a inference tensor
-
-    value_loss_original = loss_fn(value, target_value)
-
-    value_clipped = old_value + (value - old_value).clamp(
-        -value_eps_clip, value_eps_clip
-    )
-
-    value_loss_clipped = loss_fn(value_clipped, target_value)
-
-    value_loss = torch.max(value_loss_original, value_loss_clipped)
-
-    with torch.no_grad():
-        clip_mask = value_loss_clipped.detach() > value_loss_original.detach()
-        if loss_mask is not None:
-            clip_mask.logical_and_(loss_mask)
-
-        stat = dict(clip_mask=clip_mask, loss=value_loss.detach())
-
-    if loss_mask is not None:
-        value_loss = (
-            torch.where(loss_mask, value_loss, 0).sum() / loss_mask.count_nonzero()
-        )
-    else:
-        value_loss = value_loss.mean()
-
-    return value_loss, stat
-
-
-def dynamic_sampling(
-    data: Dict[str, Any], group_size: int
-) -> Tuple[Dict[str, Any], Dict[str, int]]:
-    """Filter samples by group when all rewards in a group are equal.
-
-    Assumes samples of the same group are adjacent in the batch.
-
-    Returns a new dict containing only kept samples (mask applied on batch dim
-    for all tensor values whose first dimension equals batch size), and a small
-    stats dict.
-    """
+    # Get the rewards tensor which has shape [batch_size]
     rewards = data["rewards"]
-    if not torch.is_tensor(rewards):
-        raise TypeError("data['rewards'] must be a torch.Tensor")
     batch_size = rewards.shape[0]
 
-    if group_size <= 0:
-        warnings.warn("group_size <= 0; returning original data")
-        return data, dict(n_group_kept=0, n_group_filtered=0)
-
+    # if the group size can not divisible by the group size
     if batch_size % group_size != 0:
         warnings.warn(
             "The group size is not divisible by the batch size. Return the original data"
         )
-        return data, dict(
-            n_group_kept=batch_size // max(group_size, 1), n_group_filtered=0
-        )
+        return data
 
     # Calculate number of groups (must be divisible)
     num_groups = batch_size // group_size
@@ -356,29 +219,27 @@ def dynamic_sampling(
 
     # In case all group is filtered out, return the original data (although not gradient in this case)
     if not mask.any():
-        return data, dict(n_group_kept=0, n_group_filtered=num_groups)
+        return data
 
-    n_group_kept = int(valid_groups.sum().item())
-    n_group_filtered = int(num_groups - n_group_kept)
+    # stat metric
+    n_group_keeped = valid_groups.sum().item()
+    n_group_filtered = num_groups - n_group_keeped
 
-    # Apply mask row-wise across tensors that share the same batch dimension
-    filtered: Dict[str, Any] = {}
-    for k, v in data.items():
-        if torch.is_tensor(v) and v.shape[:1] == (batch_size,):
-            filtered[k] = v[mask]
-        else:
-            # keep untouched (e.g., scalars, metadata); caller should ensure consistency
-            filtered[k] = v
-    return filtered, dict(n_group_kept=n_group_kept, n_group_filtered=n_group_filtered)
+    # Apply mask to the TensorDict to create a new filtered TensorDict
+    # TensorDict supports indexing operations that apply to all contained tensors
+    return data[mask], dict(
+        n_group_keeped=n_group_keeped,
+        n_group_filtered=n_group_filtered,
+    )
 
 
 # code modified from VERL: https://github.com/volcengine/verl/blob/main/verl/workers/reward_manager/dapo.py
 def reward_overlong_penalty(
-    data: Dict[str, Any],
+    data: TensorDict,
     overlong_tokens: int,
     overlong_penalty_factor: float,
     max_response_length: int,
-) -> Dict[str, Any]:
+) -> torch.Tensor:
     reward_score = data["rewards"]
     input_ids = data["input_ids"]
     response_lengths = (data["loss_mask"].sum(dim=-1)).long()

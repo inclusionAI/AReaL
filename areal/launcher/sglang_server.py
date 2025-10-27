@@ -6,7 +6,6 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
 from typing import Optional
 
 import psutil
@@ -20,9 +19,8 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
-from areal.utils.launcher import TRITON_CACHE_PATH, apply_sglang_patch
+from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
 
 logger = logging.getLogger("SGLangServer Wrapper")
@@ -130,9 +128,6 @@ class SGLangServerWrapper:
         self.server_process = None
         self.n_gpus_per_node = n_gpus_per_node
 
-        if self.config.enable_fast_load or self.config.enable_multithread_load:
-            apply_sglang_patch()
-
     def run(self):
         gpus_per_server = self.allocation_mode.gen_instance_size
         cross_nodes = False
@@ -152,8 +147,8 @@ class SGLangServerWrapper:
         n_servers_per_node = max(1, self.n_gpus_per_node // gpus_per_server)
         n_nodes_per_server = max(1, gpus_per_server // self.n_gpus_per_node)
 
-        if current_platform.device_control_env_var in os.environ:
-            visible = os.getenv(current_platform.device_control_env_var).split(",")
+        if "CUDA_VISIBLE_DEVICES" in os.environ:
+            visible = os.getenv("CUDA_VISIBLE_DEVICES").split(",")
             n_visible_devices = len(visible)
             n_servers_per_proc = max(1, n_visible_devices // gpus_per_server)
             server_idx_offset = min(list(map(int, visible))) // gpus_per_server
@@ -186,10 +181,9 @@ class SGLangServerWrapper:
             host_ip = gethostip()
 
             base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
-            config = deepcopy(self.config)
-            config.random_seed = base_random_seed + server_local_idx
+            self.config.random_seed = base_random_seed + server_local_idx
             cmd = SGLangConfig.build_cmd(
-                config,
+                self.config,
                 tp_size=self.allocation_mode.gen.tp_size,
                 base_gpu_id=base_gpu_id,
                 host=host_ip,
