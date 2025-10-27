@@ -114,9 +114,10 @@ Additional references:
 ## Distributed Experiments on Cloud or K8s with SkyPilot
 
 If you want to directly run an experiment on cloud or your own Kubernetes
-infrastructure, you could use SkyPilot. After installing and setting up SkyPilot (see
-[Install SkyPilot](installation.md#install-skypilot)), you could launch a distributed
-experiment based on our SkyPilot example (two 8xA100 GPU nodes) with one command line:
+infrastructure, we recommend you to use SkyPilot. After installing and setting up
+SkyPilot (see [Install SkyPilot](installation.md#install-skypilot)), you could launch a
+distributed experiment based on our SkyPilot example (two 8xA100 GPU nodes) with one
+command line:
 
 ```bash
 # Launch on GCP
