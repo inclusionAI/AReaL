@@ -154,7 +154,6 @@ For comprehensive setup instructions, see
 - [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
 - [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
 - [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
-- [Contributing](https://inclusionai.github.io/AReaL/contrib.html)
 
 ### Code Walkthrough
 
@@ -166,9 +165,43 @@ For comprehensive setup instructions, see
 - [Customize Agentic/RVLR rollout workflows with AReaL-lite](https://inclusionai.github.io/AReaL/customization/agent.html)
 - [Customize algorithms with AReaL-lite](https://inclusionai.github.io/AReaL/customization/algorithm.html)
 
+## 🤝 Contributing
+
+We warmly welcome contributions from the community! Whether you're fixing bugs, adding
+features, improving documentation, or helping others, your contribution is valued.
+Please check our **[Contributing Guide](CONTRIBUTING.md)** for detailed information.
+
+```bash
+# Fork and clone the repository
+git clone https://github.com/YOUR-USERNAME/AReaL
+cd AReaL
+
+# Install in development mode
+pip install -e ".[dev]"
+
+# Set up pre-commit hooks for automatic formatting
+pip install pre-commit
+pre-commit install
+
+# Make changes
+git checkout -b feat/gpt-o5
+git add .
+# `git commit` will automatically format your file
+git commit -m "Implement gpt-o5 training loop"
+git push
+```
+
+### 💬 Community & Support
+
+- **[GitHub Discussions](https://github.com/inclusionAI/AReaL/discussions)** - Ask
+  questions, share ideas, and connect with the community
+- **[WeChat Group](./assets/wechat_qrcode.png)** - Join our WeChat community (微信群)
+- **[Project Roadmap](ROADMAP.md)** - See what we're working on and what's planned
+
 ## 🗺️ Future Roadmap
 
-- [2025 Q3 Roadmap](https://github.com/inclusionAI/AReaL/issues/257)
+- **[Full Roadmap](ROADMAP.md)**
+- **[2025 Q3 Roadmap](https://github.com/inclusionAI/AReaL/issues/257)**
 
 AReaL is under active development with planned minor releases weekly and major releases
 monthly. We warmly welcome community engagement and contributions. We are also

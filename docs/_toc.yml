@@ -28,9 +28,6 @@ parts:
     - file: customization/dataset
     - file: customization/agent
     - file: customization/algorithm
-  - caption: Contributing
-    chapters:
-    - file: contrib
   - caption: References
     chapters:
     - file: references/benchmark

@@ -8,6 +8,7 @@ import torch.distributed as dist
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.core.dist_rollout import redistribute
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
@@ -25,7 +26,6 @@ from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
-from areal.utils.redistributor import redistribute
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -182,6 +182,10 @@ def main(args):
 
         with stats_tracker.record_timing("rollout"):
             batch = None
+            # NOTE: Currently, if we use multiple ranks for LoRA rollout,
+            # the algorithm performance will drop significantly. This may be
+            # due to some concurrency issues. Use a single rank for rollout
+            # as a temporary workaround.
             if dist.get_rank() == 0:
                 if config.async_training:
                     batch = rollout.prepare_batch(

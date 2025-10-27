@@ -5,7 +5,6 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from typing import Optional
 
 import requests
 
@@ -18,9 +17,9 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import AllocationMode
 from areal.platforms import current_platform
+from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
-from realhf.base import logging, name_resolve, names
 
 logger = logging.getLogger("vLLMServer Wrapper")
 
@@ -53,7 +52,7 @@ def launch_server_cmd(command: str, custom_env: dict | None = None) -> subproces
     )
 
 
-def wait_for_server(base_url: str, timeout: Optional[int] = None) -> None:
+def wait_for_server(base_url: str, timeout: int | None = None) -> None:
     """Wait for the server to be ready by polling the /v1/models endpoint.
 
     Args:
@@ -156,7 +155,8 @@ class vLLMServerWrapper:
                 return_code = process.poll()
                 if return_code is not None:
                     logger.info(
-                        f"vllm server {server_addresses[i]} exits, returncode={return_code}"
+                        f"vllm server {server_addresses[i]} exits, "
+                        f"returncode={return_code}"
                     )
                     all_alive = False
                     break

@@ -13,9 +13,7 @@ from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import (
-    broadcast_tensor_container,
     cycle_dataloader,
-    tensor_container_to,
 )
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
@@ -69,7 +67,7 @@ def get_boba_math_dataset(path, tokenizer):
 def boba_reward_fn(
     prompts, completions, prompt_ids, completion_ids, solutions, **kwargs
 ):
-    from realhf.impl.dataset.math_parser import process_results
+    from areal.reward.math_parser import process_results
 
     label = 0
     for sol in solutions:
@@ -94,9 +92,11 @@ def main(args):
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
     world_size = actor.data_parallel_world_size
-    assert (
-        config.train_dataset.batch_size >= world_size
-    ), f"batch size({config.train_dataset.batch_size}) must larger or equal than world_size({world_size})!"
+    if config.train_dataset.batch_size < world_size:
+        raise ValueError(
+            f"batch size({config.train_dataset.batch_size}) "
+            f"must larger or equal than world_size({world_size})!"
+        )
 
     # Create dataset and dataloaders
     train_dataset = get_boba_math_dataset(config.train_dataset.path, tokenizer)
@@ -109,10 +109,10 @@ def main(args):
 
     device = torch.device(int(os.environ["LOCAL_RANK"]))
     train_dataset_len = len(train_dataloader)
-    dateset_len_tensor = torch.tensor(
+    dataset_len_tensor = torch.tensor(
         [train_dataset_len], dtype=torch.long, device=device
     )
-    train_dataset_len = dateset_len_tensor.item()
+    train_dataset_len = int(dataset_len_tensor.item())
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=train_dataset_len * config.train_dataset.batch_size,
@@ -194,29 +194,20 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            batch = None
-            if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                batch = tensor_container_to(batch, actor.device)
-            batch = broadcast_tensor_container(
-                batch,
-                src_rank=actor.current_data_parallel_head(),
-                group=actor.context_and_model_parallel_group,
-            )
-        # Create barrier to synchronize all rollout processes.
-        dist.barrier(device_ids=[actor.device.index])
-        current_platform.synchronize()
+            if config.async_training:
+                batch = actor.prepare_batch(
+                    train_dataloader,
+                    granularity=actor.config.group_size,
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
+            else:
+                batch = actor.rollout_batch(
+                    next(data_generator),
+                    granularity=actor.config.group_size,
+                    workflow=workflow,
+                    should_accept=lambda sample: True,
+                )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):

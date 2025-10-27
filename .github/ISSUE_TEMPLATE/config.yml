@@ -1,0 +1,20 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 GitHub Discussions
+    url: https://github.com/inclusionAI/AReaL/discussions
+    about: Ask questions, share ideas, or discuss features before opening an issue
+  - name: 📖 Documentation
+    url: https://inclusionai.github.io/AReaL/
+    about: Check our comprehensive documentation for guides and tutorials
+  - name: 🚀 Quickstart Guide
+    url: https://inclusionai.github.io/AReaL/tutorial/quickstart.html
+    about: New to AReaL? Start here for installation and basic usage
+  - name: 🐛 Debugging Guide
+    url: https://inclusionai.github.io/AReaL/best_practices/debugging.html
+    about: Tips for debugging common issues
+  - name: 💾 Handling OOM Issues
+    url: https://inclusionai.github.io/AReaL/best_practices/handling_oom.html
+    about: Solutions for out-of-memory errors
+  - name: 💬 WeChat Community
+    url: https://github.com/inclusionAI/AReaL/blob/main/assets/wechat_qrcode.png
+    about: Join our WeChat group for community support (微信群)

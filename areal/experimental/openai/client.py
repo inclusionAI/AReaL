@@ -152,7 +152,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             input_ids=prompt_token_ids,
             gconfig=gconfig,
             rid=str(uuid.uuid4()),
-            metadata=metadata,
+            metadata=metadata if metadata is not NOT_GIVEN else {},
             tokenizer=self.tokenizer,
         )
 
