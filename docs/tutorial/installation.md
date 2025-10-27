@@ -80,16 +80,7 @@ not compatible with Megatron training backend. If you want to use Megatron train
 backend, please compile and install `flash-attn==2.8.1` in your custom environment, or
 use docker installation instead.
 
-4. (Optional) Install `cugae`:
-
-`cugae` is an accelerated CUDA implementation of Generalized Advantage Estimation (GAE)
-computation, which is used to accelerate RL training in AReaL.
-
-```bash
-uv pip install git+https://github.com/garrett4wade/cugae --no-build-isolation
-```
-
-5. Validate your AReaL installation:
+4. Validate your AReaL installation:
 
 We provide a script to validate AReaL installation. Simply run:
 
