@@ -6,6 +6,11 @@ total_train_epochs: 10
 tokenizer_path: ${actor.path}
 async_training: true
 
+n_trajs: 2
+max_turns: 8
+max_tokens_per_trajectory: 8192
+agent_type: math
+
 cluster:
   n_nodes: 1
   n_gpus_per_node: 8
@@ -142,11 +147,6 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
-
-n_trajs: 2
-max_turns: 8
-max_tokens_per_trajectory: 8192
-agent_type: math
 
 launcher:
   inference_server_cpus_per_gpu: 4
