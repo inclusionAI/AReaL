@@ -2,9 +2,10 @@ import dataclasses
 import math
 import os
 import time
+from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -148,9 +149,9 @@ class FSDPEngine(BaseHFEngine):
         # Initialize distributed enviroments and load model.
         assert addr is None, "FSDPEngine does not support remote initialization."
         assert ft_spec is not None, "FSDPEngine requires FinetuneSpec to initialize."
-        assert pkg_version.is_version_greater_or_equal(
-            "torch", "2.4.0"
-        ), f"areal only supports FSDP2, which requires torch>=2.4.0"
+        assert pkg_version.is_version_greater_or_equal("torch", "2.4.0"), (
+            "areal only supports FSDP2, which requires torch>=2.4.0"
+        )
 
         # Create device model
         self.create_device_model()
@@ -298,7 +299,7 @@ class FSDPEngine(BaseHFEngine):
     def _update_bucket_weights_from_distributed(
         self,
         meta: WeightUpdateMeta,
-        named_tensors: List[Tuple[str, nn.Parameter | torch.Tensor]],
+        named_tensors: list[tuple[str, nn.Parameter | torch.Tensor]],
     ):
         # Early exit when chunk size is relatively small
         if not named_tensors:
@@ -464,12 +465,12 @@ class FSDPEngine(BaseHFEngine):
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         granularity: int = 1,
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow: RolloutWorkflow | None = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
             data,
@@ -483,10 +484,10 @@ class FSDPEngine(BaseHFEngine):
         self,
         dataloader: StatefulDataLoader,
         granularity: int = 1,
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow: RolloutWorkflow | None = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
             dataloader,
@@ -498,10 +499,10 @@ class FSDPEngine(BaseHFEngine):
 
     def train_batch(
         self,
-        input_: Dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> Dict[str, float]:
+        input_: dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    ) -> dict[str, float]:
         """Train on a batch using gradient accumulation."""
         assert self.optimizer is not None
         assert self.optimizer_config is not None
@@ -608,9 +609,9 @@ class FSDPEngine(BaseHFEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: Dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
+        input_: dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
         if self.parallel_helper.sp_size > 1:
@@ -695,10 +696,10 @@ class FSDPEngine(BaseHFEngine):
     @torch.no_grad()
     def forward(
         self,
-        input_: Dict[str, Any],
-        output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
-        aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
+        input_: dict[str, Any],
+        output_seqlens: list[int] | None = None,
+        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
+        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
         if self.parallel_helper.sp_size > 1:
@@ -820,7 +821,7 @@ class FSDPEngine(BaseHFEngine):
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
                 eps=eps,
-                fused=True,
+                fused=not self.is_vision_model or not self.parallel_helper.tp_enabled,
             )
         elif self.optimizer_config.type == "adam_bf16":
             self.optimizer = AnyPrecisionAdamW(
