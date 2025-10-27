@@ -228,6 +228,40 @@ class DistributedTrainController(TrainController):
         )
         return DistributedBatchMemory.concat(advantages)
 
+    def train_lm(
+        self,
+        input_: DistributedBatch,
+        *args,
+        **kwargs,
+    ) -> List[Dict[str, float]]:
+        batches = self._align_batches_with_dp(input_, True)
+        stats = rpc_call(
+            self.scheduler,
+            self.workers,
+            "train_lm",
+            batches,
+            *args,
+            **kwargs,
+        )
+        return stats
+
+    def evaluate_lm(
+        self,
+        input_: DistributedBatch,
+        *args,
+        **kwargs,
+    ) -> List[Dict[str, float]]:
+        batches = self._align_batches_with_dp(input_, True)
+        stats = rpc_call(
+            self.scheduler,
+            self.workers,
+            "evaluate_lm",
+            batches,
+            *args,
+            **kwargs,
+        )
+        return stats
+
     def forward(
         self,
         input_: DistributedBatch,
