@@ -9,16 +9,12 @@ import os
 
 import requests
 
+######## 数据输入
 i = input()
 data = json.loads(i)
 
 
-def gsm8k_reward_fn(result, answer):
-    from areal.reward.math_parser import process_results
-
-    return int(process_results(result, answer)[0])
-
-
+######### 原有 agent 逻辑
 agent = OpenAIAgent(
     name="RLVR",
 )
@@ -29,14 +25,24 @@ reward = 0.0
 
 async def r():
     result = await OpenAIRunner.run(agent, input=content, session=session)
-    reward = gsm8k_reward_fn(result.final_output, data["answer"])
-    return reward
+
+    return result
 
 
 import asyncio
 
-reward = asyncio.run(r())
+result = asyncio.run(r())
 
-# give reward
+
+######## 奖励函数
+def gsm8k_reward_fn(result, answer):
+    from areal.reward.math_parser import process_results
+
+    return int(process_results(result, answer)[0])
+
+
+reward = gsm8k_reward_fn(result.final_output, data["answer"])
+
+########## 发送 reward
 base_url = os.environ.get("OPENAI_BASE_URL")
 response = requests.post(f"{base_url}/final_reward", json={"final_reward": reward})
