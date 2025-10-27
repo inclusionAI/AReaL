@@ -79,6 +79,8 @@ However, `flash-attn==2.8.3` is not compatible with Megatron training backend. I
 want to use Megatron training backend, please compile and install `flash-attn==2.8.1` in
 your custom environment, or use docker installation instead.
 
+(install-skypilot)=
+
 ## (Optional) Install SkyPilot
 
 SkyPilot helps you run AReaL easily on 17+ different cloud or your own Kubernetes
@@ -86,7 +88,7 @@ infrastructure. For more details about Skypilot, check
 [SkyPilot Documentation](https://docs.skypilot.co/en/latest/overview.html). Below shows
 the minimal steps to setup skypilot on GCP or Kubernetes.
 
-### Install SkyPilot
+### Install SkyPilot by pip
 
 ```bash
 # In your conda environment
