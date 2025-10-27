@@ -234,14 +234,6 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
     """Test engine staleness control mechanism."""
     from areal.workflow.rlvr import RLVRWorkflow
 
-    # Skip certain parameter combinations based on backend
-    if inference_engine["backend"] == "sglang" and bs == 4:
-        pytest.skip("SGLang only tests with bs=2")
-    if inference_engine["backend"] == "sglang" and ofp == 16:
-        pytest.skip("SGLang doesn't test with ofp=16")
-    if inference_engine["backend"] == "vllm" and ofp == 0:
-        pytest.skip("vLLM doesn't test with ofp=0")
-
     config = InferenceEngineConfig(
         experiment_name=inference_engine["expr_name"],
         trial_name=inference_engine["trial_name"],
@@ -309,9 +301,6 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
 
 def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine):
     """Test disk-based weight updates from FSDP engine to inference engine."""
-    # Skip weight update test for local vLLM (not supported)
-    if inference_engine["backend"] == "vllm" and inference_engine["mode"] == "local":
-        pytest.skip("Local vLLM doesn't support weight updates")
 
     # setup FSDP engine
     from areal.api.cli_args import OptimizerConfig, TrainEngineConfig
