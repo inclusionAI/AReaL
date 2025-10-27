@@ -166,15 +166,9 @@ docs = [
     "jupyter-book",
 ]
 
-eval = [
-    "antlr4-python3-runtime==4.11.1",
-    "sympy==1.12",
-]
-
 all = [
     "areal[dev]",
     "areal[docs]",
-    "areal[eval]",
 ]
 
 [project.urls]
