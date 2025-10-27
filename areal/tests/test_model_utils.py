@@ -23,8 +23,6 @@ from areal.utils.model import get_model_update_meta
 class InvalidConfig(BaseExperimentConfig):
     """Invalid config for testing - missing actor/model attribute."""
 
-    pass
-
 
 def _create_base_cluster_config(fileroot="/tmp/areal_test"):
     """Helper to create a cluster config with common test values."""
