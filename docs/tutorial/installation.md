@@ -86,8 +86,7 @@ use docker installation instead.
 computation, which is used to accelerate RL training in AReaL.
 
 ```bash
-git clone https://github.com/garrett4wade/cugae
-uv pip install -e ./cugae --no-build-isolation
+uv pip install git+https://github.com/garrett4wade/cugae --no-build-isolation
 ```
 
 5. Validate your AReaL installation:
