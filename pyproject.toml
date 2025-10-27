@@ -198,7 +198,7 @@ override-dependencies=[
     "outlines-core==0.1.26",
 ]
 
-[tool.uv.resources]
+[tool.uv.sources]
 latex2sympy2 = { path = "./evaluation/latex2sympy" }
 
 [tool.pytest.ini_options]
