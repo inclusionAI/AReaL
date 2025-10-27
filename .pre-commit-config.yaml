@@ -76,4 +76,5 @@ repos:
     hooks:
       # Compile requirements
       - id: pip-compile
+        name: Compile requirements.txt using uv
         args: [pyproject.toml, -o, requirements.txt]
