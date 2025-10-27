@@ -137,8 +137,8 @@ dependencies = [
     # System utilities
     "distro-info>=1.0",
     "python-debian>=0.1.49",
-    "func_timeout",
     "regex",
+    "func_timeout",
     "python_dateutil",
     "word2number",
     "Pebble",
