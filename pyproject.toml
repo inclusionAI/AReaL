@@ -86,6 +86,7 @@ dependencies = [
     "tensordict",
     "pybase64",
     "msgspec",
+    "latex2sympy2 @ ./evaluation/latex2sympy",
     "openai==1.99.6",
     "dotenv",
     "json5",
@@ -165,9 +166,15 @@ docs = [
     "jupyter-book",
 ]
 
+eval = [
+    "antlr4-python3-runtime==4.11.1",
+    "sympy==1.12",
+]
+
 all = [
     "areal[dev]",
     "areal[docs]",
+    "areal[eval]",
 ]
 
 [project.urls]
