@@ -20,7 +20,7 @@ def gsm8k_reward_fn(result, answer):
     return int(process_results(result, answer)[0])
 
 
-class MultiturnMathAgent:
+class MultiAgentMathAgent:
     def __init__(
         self,
         tokenizer: PreTrainedTokenizerFast,
@@ -186,7 +186,7 @@ class MultiturnMathAgent:
         return reward
 
 
-class MultiturnRLVRAgentWorkflow(RolloutWorkflow):
+class MultiAgentRLVRAgentWorkflow(RolloutWorkflow):
     def __init__(
         self,
         gconfig: GenerationHyperparameters,
@@ -208,7 +208,7 @@ class MultiturnRLVRAgentWorkflow(RolloutWorkflow):
 
         # Search hyper-parameters
         self.n_trajs = n_trajs
-        self.agent = MultiturnMathAgent(
+        self.agent = MultiAgentMathAgent(
             tokenizer=self.tokenizer,
             max_tokens_per_turn=self.gconfig.max_new_tokens,
             max_turns=max_turns,

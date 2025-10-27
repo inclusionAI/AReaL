@@ -751,7 +751,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
-@pytest.mark.parametrize("agent_type", ["math", "multi_turn_math"])
+@pytest.mark.parametrize("agent_type", ["math", "multi_agent_math"])
 def test_openai_agents(tmp_path_factory, agent_type):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
