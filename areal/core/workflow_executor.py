@@ -229,7 +229,7 @@ class WorkflowExecutor:
     - Staleness-aware capacity control via StalenessManager
     - Trajectory format validation
     - Result filtering via should_accept callbacks
-    - CompletionWithTokenLogpReward processing
+    - InteractionWithTokenLogpReward processing
 
     Parameters
     ----------
@@ -237,7 +237,7 @@ class WorkflowExecutor:
         Configuration for the inference engine including queue sizes,
         concurrency limits, and validation settings.
     inference_engine : InferenceEngine
-        The inference engine to use for generating completions.
+        The inference engine to use for generating completions/responses.
     staleness_manager : StalenessManager | None, optional
         Manager for staleness-aware capacity control. If None, a default manager
         will be created during initialization. Default is None.
