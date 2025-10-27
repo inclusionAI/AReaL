@@ -65,19 +65,30 @@ conda create -n areal python=3.12
 conda activate areal
 ```
 
-3. Install pip dependencies:
+3. Install pip dependencies using uv:
 
 ```bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
-bash examples/env/setup-pip-deps.sh
+pip install uv
+uv pip install -e .[all]
 ```
 
-**Note**: Installing with `examples/env/setup-pip-deps.sh` will install
-`flash-attn==2.8.3` since it does not require compilation with torch version 2.8.0.
-However, `flash-attn==2.8.3` is not compatible with Megatron training backend. If you
-want to use Megatron training backend, please compile and install `flash-attn==2.8.1` in
-your custom environment, or use docker installation instead.
+**Note**: Directly install with `uv` and `pip` will install `flash-attn==2.8.3` since it
+does not require compilation with torch version 2.8.0. However, `flash-attn==2.8.3` is
+not compatible with Megatron training backend. If you want to use Megatron training
+backend, please compile and install `flash-attn==2.8.1` in your custom environment, or
+use docker installation instead.
+
+4. Validate your AReaL installation:
+
+We provide a script to validate AReaL installation. Simply run:
+
+```bash
+python3 examples/env/validate_installation.py
+```
+
+After installation validation passed, you are good to go!
 
 ## (Optional) Launch Ray Cluster for Distributed Training
 
