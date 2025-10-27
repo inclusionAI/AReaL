@@ -86,7 +86,7 @@ dependencies = [
     "tensordict",
     "pybase64",
     "msgspec",
-    "latex2sympy2 @ file:./evaluation/latex2sympy",
+    "latex2sympy2",
     "openai==1.99.6",
     "dotenv",
     "json5",
@@ -197,6 +197,9 @@ override-dependencies=[
     "xgrammar==0.1.24",
     "outlines-core==0.1.26",
 ]
+
+[tool.uv.resources]
+latex2sympy2 = { path = "./evaluation/latex2sympy" }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
