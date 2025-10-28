@@ -743,9 +743,10 @@ def test_search_agent_deepresearch(tmp_path_factory):
             f"judge_engine.trial_name={llm_judge_trial_name}",
         )
     )
-    assert success, (
-        f"Search Agent DeepResearch example failed, return_code={return_code}"
-    )
+    if not success:
+        raise RuntimeError(
+            f"Search Agent DeepResearch example failed, return_code={return_code}"
+        )
     llm_judge_proc.terminate()
     llm_judge_proc.wait(5)
 
@@ -782,6 +783,7 @@ def test_openai_agents(tmp_path_factory, agent_type):
             "n_trajs=1",
         )
     )
-    assert success, (
-        f"OpenAI Agents {agent_type} example failed, return_code={return_code}"
-    )
+    if not success:
+        raise RuntimeError(
+            f"OpenAI Agents {agent_type} example failed, return_code={return_code}"
+        )

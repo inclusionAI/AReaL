@@ -553,9 +553,9 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
         if msg.get("role") == "tool":
             tool_messages_found = True
             break
-    assert tool_messages_found, (
-        "Tool messages should be preserved in conversation history"
-    )
+
+    if not tool_messages_found:
+        raise RuntimeError("Tool messages should be preserved in conversation history")
 
     # Test reward system with thinking + tool calling
     openai_client.set_reward(c1.id, reward=1.0)
