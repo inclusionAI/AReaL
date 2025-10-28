@@ -178,9 +178,15 @@ async def test_async_multi_request_cross_phase_trace(tmp_path):
         if offset:
             await asyncio.sleep(offset)
         loop = asyncio.get_running_loop()
-        async with perf_tracer.atrace_scope("request", args={"request_id": req_id}):
+        async with perf_tracer.atrace_scope(
+            "request", category=f"request.{req_id}", args={"request_id": req_id}
+        ):
             for phase, duration in phases:
-                with perf_tracer.trace_scope(phase, args={"request_id": req_id}):
+                with perf_tracer.trace_scope(
+                    phase,
+                    category=f"{phase}.{req_id}",
+                    args={"request_id": req_id},
+                ):
                     await loop.run_in_executor(None, time.sleep, duration)
 
     await asyncio.gather(
