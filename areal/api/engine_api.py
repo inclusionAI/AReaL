@@ -563,7 +563,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        Scheduling
-            The scheduling configuration for the engine
+        List[Scheduling]
+            A list of scheduling configurations for the engine
         """
         raise NotImplementedError()
