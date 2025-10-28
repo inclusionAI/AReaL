@@ -3,14 +3,10 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Any
 
 import uvloop
 import yaml
-
-from areal.utils.pkg_version import is_version_less
-
-uvloop.install()
 from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
@@ -18,6 +14,9 @@ from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.platforms import current_platform
 from areal.utils import name_resolve, pkg_version
+from areal.utils.pkg_version import is_version_less
+
+uvloop.install()
 
 
 @dataclass
@@ -129,11 +128,11 @@ class GenerationHyperparameters:
         default=1.0,
         metadata={"help": "Sampling temperature. Higher values increase diversity."},
     )
-    stop_token_ids: List[int] = field(
+    stop_token_ids: list[int] = field(
         default_factory=list,
         metadata={"help": "Stop generation when encountering these token IDs."},
     )
-    stop: List[str] | None = field(
+    stop: list[str] | None = field(
         default=None,
         metadata={
             "help": "One or multiple stop words. Generation will stop if one of these words is sampled."
@@ -232,7 +231,7 @@ class OptimizerConfig:
 class FSDPWrapPolicy:
     """Policy configuration for FSDP model layer wrapping. None defaults to wrapping transformer decoder layers defined by transformers."""
 
-    transformer_layer_cls_to_wrap: List[str] | None = field(
+    transformer_layer_cls_to_wrap: list[str] | None = field(
         default=None,
         metadata={"help": "A list of transformer layer names for FSDP to wrap."},
     )
@@ -310,7 +309,7 @@ class MegatronEngineConfig:
     recompute_method: str | None = "uniform"
     recompute_num_layers: int | None = 1
     distribute_saved_activations: bool | None = None
-    recompute_modules: List[str] | None = None
+    recompute_modules: list[str] | None = None
 
 
 @dataclass
@@ -378,7 +377,7 @@ class TrainEngineConfig:
     )
     lora_rank: int = field(default=32, metadata={"help": "lora rank"})
     lora_alpha: int = field(default=16, metadata={"help": "lora alpha"})
-    target_modules: List[str] = field(
+    target_modules: list[str] = field(
         default_factory=list,
         metadata={"help": "lora target_modules."},
     )
@@ -500,7 +499,7 @@ class PPOActorConfig(TrainEngineConfig):
         default=False,
         metadata={"help": "Log statistics for agent trajectories"},
     )
-    log_agent_stats_keys: List[str] = field(
+    log_agent_stats_keys: list[str] = field(
         default_factory=lambda: [],
         metadata={"help": "Keys for logging agent trajectory statistics"},
     )
@@ -574,7 +573,7 @@ class vLLMConfig:
         port,
         dist_init_addr: str | None = None,
     ):
-        args: Dict = conf_as_dict(vllm_config)
+        args: dict = conf_as_dict(vllm_config)
         args = dict(
             host=host,
             port=port,
@@ -586,6 +585,21 @@ class vLLMConfig:
             **args,
         )
         return args
+
+    @staticmethod
+    def build_cmd_from_args(args: dict[str, Any]):
+        # convert to flags
+        flags = []
+        for k, v in args.items():
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_', '-')}")
+            elif isinstance(v, list):
+                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
+            else:
+                flags.append(f"--{k.replace('_', '-')} {v}")
+        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
 
     @staticmethod
     def build_cmd(
@@ -602,18 +616,7 @@ class vLLMConfig:
             port=port,
             dist_init_addr=dist_init_addr,
         )
-        # convert to flags
-        flags = []
-        for k, v in args.items():
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_','-')}")
-            elif isinstance(v, list):
-                flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
-            else:
-                flags.append(f"--{k.replace('_','-')} {v}")
-        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
+        return vLLMConfig.build_cmd_from_args(args)
 
 
 @dataclass
@@ -638,7 +641,7 @@ class SGLangConfig:
     enable_torch_compile: bool = False
     torch_compile_max_bs: int = 32
     cuda_graph_max_bs: int | None = None
-    cuda_graph_bs: List[int] | None = None
+    cuda_graph_bs: list[int] | None = None
     torchao_config: str = ""
     enable_nan_detection: bool = False
     enable_p2p_check: bool = False
@@ -667,8 +670,8 @@ class SGLangConfig:
     # lora
     enable_lora: bool | None = None
     max_lora_rank: int | None = None
-    lora_target_modules: List[str] | None = None
-    lora_paths: List[str] | None = None
+    lora_target_modules: list[str] | None = None
+    lora_paths: list[str] | None = None
     max_loaded_loras: int = 1
     max_loras_per_batch: int = 1
     lora_backend: str = "triton"
@@ -711,6 +714,10 @@ class SGLangConfig:
             node_rank=node_rank,
         )
 
+        return SGLangConfig.build_cmd_from_args(args)
+
+    @staticmethod
+    def build_cmd_from_args(args: dict[str, Any]):
         # convert to flags
         flags = []
         for k, v in args.items():
@@ -719,11 +726,11 @@ class SGLangConfig:
             if v is None or v is False or v == "":
                 continue
             if v is True:
-                flags.append(f"--{k.replace('_','-')}")
+                flags.append(f"--{k.replace('_', '-')}")
             elif isinstance(v, list):
-                flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
+                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
             else:
-                flags.append(f"--{k.replace('_','-')} {v}")
+                flags.append(f"--{k.replace('_', '-')} {v}")
         return f"python3 -m sglang.launch_server {' '.join(flags)}"
 
     @staticmethod
@@ -737,21 +744,20 @@ class SGLangConfig:
         n_nodes: int = 1,
         node_rank: int = 0,
     ):
-        # Map "all-linear" to "all"
-        args: Dict = conf_as_dict(sglang_config)
+        args: dict = conf_as_dict(sglang_config)
         if sglang_config.enable_multithread_load or sglang_config.enable_fast_load:
-            assert pkg_version.is_version_equal(
-                "sglang", "0.5.2"
-            ), f"Customized model loading requires exact SGLang version 0.5.2"
+            assert pkg_version.is_version_equal("sglang", "0.5.2"), (
+                "Customized model loading requires exact SGLang version 0.5.2"
+            )
             model_loader_extra_config = dict(
                 enable_multithread_load=sglang_config.enable_multithread_load,
                 enable_fast_load=sglang_config.enable_fast_load,
             )
-            args.pop("enable_multithread_load", None)
-            args.pop("enable_fast_load", None)
             args["model_loader_extra_config"] = json.dumps(
                 model_loader_extra_config, separators=(",", ":")
             )
+        args.pop("enable_multithread_load", None)
+        args.pop("enable_fast_load", None)
         # Map "all-linear" to "all"
         if "lora_target_modules" in args and args["lora_target_modules"]:
             args["lora_target_modules"] = [
@@ -915,8 +921,8 @@ class WandBConfig:
     job_type: str | None = None
     group: str | None = None
     notes: str | None = None
-    tags: List[str] | None = None
-    config: Dict | None = None
+    tags: list[str] | None = None
+    config: dict | None = None
     id_suffix: str | None = "train"
 
 
@@ -926,7 +932,7 @@ class SwanlabConfig:
 
     project: str | None = None
     name: str | None = None
-    config: Dict | None = None
+    config: dict | None = None
     logdir: str | None = None
     mode: str | None = "disabled"
     api_key: str | None = os.getenv("SWANLAB_API_KEY", None)
@@ -1023,7 +1029,7 @@ class SchedulerConfig:
     endpoint: str = field(default="http://localhost:8081")
     deploy_mode: str = field(default="separation")
     functioncall_service_domain: str = field(default="http://localhost:8080")
-    reward_functioncall_config: Dict = field(default_factory=dict)
+    reward_functioncall_config: dict = field(default_factory=dict)
     reward_model_path: str = field(default="")
     reward_model_service_url: str = field(default="http://localhost:30000/classify")
 
@@ -1076,7 +1082,7 @@ class SlurmLauncherConfig:
         default="--mpi=pmi2 -K --chdir $PWD",
         metadata={"help": "Additional arguments to pass to the srun command."},
     )
-    additional_bash_cmds: List[str] | None = field(
+    additional_bash_cmds: list[str] | None = field(
         default=None,
         metadata={
             "help": "Additional bash commands to setup the container before running "
@@ -1244,7 +1250,7 @@ class PPOConfig(GRPOConfig):
     critic: PPOCriticConfig = field(default_factory=PPOCriticConfig)
 
 
-def parse_cli_args(argv: List[str]):
+def parse_cli_args(argv: list[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config", help="Path to the main configuration file", required=True
@@ -1277,7 +1283,7 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def load_expr_config(argv: List[str], config_cls):
+def load_expr_config(argv: list[str], config_cls):
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
@@ -1305,7 +1311,7 @@ def save_config(cfg, log_dir):
     os.makedirs(log_dir, exist_ok=True)
     config_save_path = os.path.join(log_dir, "config.yaml")
     with open(config_save_path, "w") as f:
-        config_dict: Dict = asdict(cfg)
+        config_dict: dict = asdict(cfg)
         yaml.dump(
             config_dict,
             f,

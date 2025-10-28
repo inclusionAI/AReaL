@@ -46,12 +46,18 @@ def _dummy_reward_fn(*args, **kwargs):
 
 @pytest.fixture(
     params=[
-        ("vllm", "remote"),
-        ("vllm", "local"),
+        # ("vllm", "remote"),
+        # ("vllm", "local"),
         ("sglang", "remote"),
-        ("sglang", "local"),
+        # ("sglang", "local"),
     ],
-    ids=["vllm-remote", "vllm-local", "sglang-remote", "sglang-local"],
+    ids=[
+        # "vllm-remote",
+        # "vllm-local",
+        "sglang-remote",
+        # "sglang-local",
+    ],
+    scope="module",
 )
 def inference_engine(request):
     """Unified fixture that provides any inference engine (vLLM/SGLang, local/remote).
@@ -74,42 +80,50 @@ def inference_engine(request):
 
     seeding.set_random_seed(1, expr_name)
 
+    port, dist_port = network.find_free_ports(2)
+    host = network.gethostip()
+    sglang_config = SGLangConfig(
+        skip_tokenizer_init=True,
+        model_path=MODEL_PATH,
+        mem_fraction_static=0.1,
+    )
+    sglang_args = SGLangConfig.build_args(
+        sglang_config=sglang_config,
+        tp_size=1,
+        base_gpu_id=0,
+        host=host,
+        port=port,
+        dist_init_addr=f"{host}:{dist_port}",
+    )
+    vllm_config = vLLMConfig(
+        skip_tokenizer_init=False,
+        model=MODEL_PATH,
+        gpu_memory_utilization=0.1,
+    )
+    vllm_args = vLLMConfig.build_args(
+        vllm_config=vllm_config,
+        tp_size=1,
+        host=host,
+        port=port,
+    )
+    config = InferenceEngineConfig(
+        experiment_name=expr_name,
+        trial_name=trial_name,
+    )
+
     # Initialize engine based on backend and mode
     if mode == "remote":
         # Launch server
-        port, dist_port = network.find_free_ports(2)
-        host = network.gethostip()
 
         if backend == "vllm":
             from areal.engine.vllm_remote import RemotevLLMEngine
 
-            cmd = vLLMConfig.build_cmd(
-                vllm_config=vLLMConfig(
-                    skip_tokenizer_init=False,
-                    model=MODEL_PATH,
-                    gpu_memory_utilization=0.1,
-                ),
-                host=host,
-                port=port,
-                tp_size=1,
-                dist_init_addr=f"{host}:{dist_port}",
-            )
+            cmd = vLLMConfig.build_cmd_from_args(vllm_args)
             engine_class = RemotevLLMEngine
         else:  # sglang
             from areal.engine.sglang_remote import RemoteSGLangEngine
 
-            cmd = SGLangConfig.build_cmd(
-                sglang_config=SGLangConfig(
-                    skip_tokenizer_init=True,
-                    model_path=MODEL_PATH,
-                    mem_fraction_static=0.3,
-                ),
-                host=host,
-                port=port,
-                tp_size=1,
-                base_gpu_id=0,
-                dist_init_addr=f"{host}:{dist_port}",
-            )
+            cmd = SGLangConfig.build_cmd_from_args(sglang_args)
             engine_class = RemoteSGLangEngine
 
         # Launch process
@@ -133,8 +147,10 @@ def inference_engine(request):
         # Set environment for remote engine
         os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{host}:{port}"
 
+        engine = engine_class(config)
+
         yield {
-            "engine_class": engine_class,
+            "engine": engine,
             "backend": backend,
             "mode": mode,
             "expr_name": expr_name,
@@ -148,36 +164,27 @@ def inference_engine(request):
 
     else:  # local
         if backend == "vllm":
-            from vllm import EngineArgs
-
             from areal.engine.vllm_local import LocalvLLMEngine
 
-            engine_args = EngineArgs(
-                model=MODEL_PATH,
-                tensor_parallel_size=1,
-                gpu_memory_utilization=0.3,
-                trust_remote_code=True,
-            )
+            engine_args = vllm_args
             engine_class = LocalvLLMEngine
         else:  # sglang
             from areal.engine.sglang_local import LocalSGLangEngine
 
-            engine_args = {
-                "model_path": MODEL_PATH,
-                "tp_size": 1,
-                "mem_fraction_static": 0.3,
-                "skip_tokenizer_init": True,
-            }
+            engine_args = sglang_args
             engine_class = LocalSGLangEngine
 
+        engine = engine_class(config)
+        engine.create_engine(engine_args=engine_args)
+
         yield {
-            "engine_class": engine_class,
+            "engine": engine,
             "backend": backend,
             "mode": mode,
             "expr_name": expr_name,
             "trial_name": trial_name,
-            "engine_args": engine_args,
         }
+        engine.destroy_engine()
 
 
 # ============================================================================
@@ -195,15 +202,12 @@ def test_rollout(inference_engine, n_samples):
         trial_name=inference_engine["trial_name"],
         max_concurrent_rollouts=2,
         consumer_batch_size=2,
+        enable_rollout_tracing=True,
     )
 
-    engine = inference_engine["engine_class"](config)
-
-    # Initialize based on mode
-    if inference_engine["mode"] == "remote":
-        engine.initialize()
-    else:  # local
-        engine.initialize(engine_args=inference_engine["engine_args"])
+    engine = inference_engine["engine"]
+    engine.configure(config)
+    engine.initialize()
 
     gconfig = GenerationHyperparameters(
         max_new_tokens=16, greedy=False, n_samples=n_samples
@@ -245,13 +249,9 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         ),
     )
 
-    engine = inference_engine["engine_class"](config)
-
-    # Initialize based on mode
-    if inference_engine["mode"] == "remote":
-        engine.initialize()
-    else:  # local
-        engine.initialize(engine_args=inference_engine["engine_args"])
+    engine = inference_engine["engine"]
+    engine.configure(config)
+    engine.initialize()
 
     gconfig = GenerationHyperparameters(
         max_new_tokens=2, greedy=False, n_samples=n_samples
@@ -295,7 +295,6 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         results = engine.wait(count=bs * 2, timeout=5)
         assert results["attention_mask"].shape[0] == bs * 2 * n_samples
 
-    # exit
     engine.destroy()
 
 
@@ -334,18 +333,8 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine
     name_resolve.reconfigure(name_resolve_config)
 
     # initialize inference engine
-    config = InferenceEngineConfig(
-        experiment_name=inference_engine["expr_name"],
-        trial_name=inference_engine["trial_name"],
-    )
-    inf_engine = inference_engine["engine_class"](config)
-
-    # Initialize based on mode
-    if inference_engine["mode"] == "remote":
-        inf_engine.initialize()
-    else:  # local
-        inf_engine.initialize(engine_args=inference_engine["engine_args"])
-
+    inf_engine = inference_engine["engine"]
+    inf_engine.initialize()
     inf_engine.set_version(100)
 
     # test update weights

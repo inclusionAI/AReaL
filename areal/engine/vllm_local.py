@@ -1,3 +1,4 @@
+import asyncio
 import time
 import uuid
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from areal.api.io_struct import (
 )
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.local_inf_engine import LocalInfEngine
+from areal.platforms import current_platform
 
 
 class VLLMLocalBackend:
@@ -37,9 +39,13 @@ class VLLMLocalBackend:
         Any
             The created vLLM AsyncLLMEngine instance
         """
-        from vllm.engine.async_llm_engine import AsyncLLMEngine
+        from vllm import AsyncEngineArgs, AsyncLLMEngine
 
-        engine = AsyncLLMEngine.from_engine_args(**engine_args)
+        engine_args.pop("host", None)
+        engine_args.pop("port", None)
+        engine_args.pop("uvicorn_log_level", None)
+
+        engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(**engine_args))
         return engine
 
     async def async_generation(self, engine: Any, req: ModelRequest) -> ModelResponse:
@@ -79,20 +85,21 @@ class VLLMLocalBackend:
         request_id = uuid.uuid4().hex
 
         # Call vLLM's generate method which returns an async generator
+        from vllm.inputs.data import TokensPrompt
+
         results_generator = engine.generate(
-            prompt=None,
+            prompt=TokensPrompt(prompt_token_ids=req.input_ids),
             sampling_params=sampling_params,
             request_id=request_id,
-            prompt_token_ids=req.input_ids,
         )
 
         # Iterate through the generator to get the final result
-        final_output = None
+        final_output = None  # RequestOutput
         async for request_output in results_generator:
             final_output = request_output
 
         # Parse response
-        if final_output is None or len(final_output.outputs) == 0:
+        if final_output is None:
             latency = time.perf_counter() - start_time
             return ModelResponse(
                 input_tokens=req.input_ids,
@@ -108,6 +115,7 @@ class VLLMLocalBackend:
             )
 
         # Extract first completion output
+        assert len(final_output.outputs) == 1
         completion_output = final_output.outputs[0]
         stop_reason = completion_output.finish_reason
 
@@ -116,16 +124,8 @@ class VLLMLocalBackend:
 
         # Extract logprobs - vLLM returns logprobs as a list of dicts
         output_logprobs = []
-        if completion_output.logprobs:
-            for token_logprobs in completion_output.logprobs:
-                if token_logprobs:
-                    # Get logprob for the actual selected token
-                    # token_logprobs is a dict mapping token_id to Logprob object
-                    # We need to find the logprob for the token that was selected
-                    max_logprob = max(token_logprobs.values(), key=lambda x: x.logprob)
-                    output_logprobs.append(max_logprob.logprob)
-                else:
-                    output_logprobs.append(0.0)
+        for token_logprobs, token_id in zip(completion_output.logprobs, output_tokens):
+            output_logprobs.append(token_logprobs[token_id].logprob)
 
         latency = time.perf_counter() - start_time
 
@@ -152,12 +152,11 @@ class VLLMLocalBackend:
         model_path : str
             Path to the model weights on disk
         """
-        # vLLM doesn't support updating weights from disk
-        # Typically requires creating a new engine
-        raise NotImplementedError(
-            "vLLM does not support updating weights from disk. "
-            "Please create a new engine instance with the new weights."
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(
+            engine.collective_rpc("areal_injected_update_weight", model_path)
         )
+        return None
 
     def update_weight_xccl(
         self,
@@ -176,11 +175,20 @@ class VLLMLocalBackend:
         param_specs : List[ParamSpec]
             Specifications for parameters to be updated
         """
-        # vLLM doesn't support distributed weight updates in the same way
-        raise NotImplementedError(
-            "vLLM does not support distributed weight updates via NCCL/XCCL. "
-            "Please use disk-based updates or create a new engine instance."
+        loop = asyncio.new_event_loop()
+        task = engine.collective_rpc(
+            "set_weight_meta",
+            args=(
+                [pspec.name for pspec in param_specs],
+                [pspec.dtype for pspec in param_specs],
+                [pspec.shape for pspec in param_specs],
+            ),
         )
+        loop.run_until_complete(task)
+        loop.run_until_complete(
+            engine.collective_rpc("areal_injected_update_weight_xccl")
+        )
+        return None
 
     def init_update_weight_group(
         self, engine: Any, meta: WeightUpdateMeta, rank_offset: int
@@ -196,10 +204,20 @@ class VLLMLocalBackend:
         rank_offset : int
             Rank offset for this engine in the communication group
         """
-        # vLLM doesn't support initializing weight update groups
-        raise NotImplementedError(
-            "vLLM does not support weight update communication groups."
+        task = engine.collective_rpc(
+            "init_update_weight_group",
+            args=(
+                meta.nccl_master_address,
+                str(meta.nccl_master_port),
+                rank_offset,
+                meta.alloc_mode.gen.world_size + 1,
+                current_platform.communication_backend,
+                meta.nccl_group_name,
+            ),
         )
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(task)
+        return None
 
     def destroy(self, engine: Any) -> None:
         """Destroy the engine and release resources.
@@ -213,6 +231,12 @@ class VLLMLocalBackend:
         # but we include this for consistency with the protocol
         if hasattr(engine, "shutdown"):
             engine.shutdown()
+
+    def pause_generation(self):
+        raise NotImplementedError()
+
+    def continue_generation(self):
+        raise NotImplementedError()
 
 
 class LocalvLLMEngine(InferenceEngine):
@@ -235,10 +259,19 @@ class LocalvLLMEngine(InferenceEngine):
         # Pure composition - create internal engine with vLLM backend
         self._engine = LocalInfEngine(config, VLLMLocalBackend())
 
+    def configure(self, config):
+        self.config = config
+        self._engine.configure(config)
+
+    def create_engine(self, engine_args):
+        return self._engine.create_engine(engine_args)
+
+    def destroy_engine(self):
+        self._engine.destroy_engine()
+
     def initialize(
         self,
         engine_id: str | None = None,
-        engine_args: dict[str, Any] | None = None,
         train_data_parallel_size: int | None = None,
     ):
         """Initialize the engine by creating the local vLLM engine.
@@ -252,7 +285,7 @@ class LocalvLLMEngine(InferenceEngine):
         train_data_parallel_size : int | None
             Data parallel size of the training engine
         """
-        return self._engine.initialize(engine_id, engine_args, train_data_parallel_size)
+        return self._engine.initialize(engine_id, train_data_parallel_size)
 
     def destroy(self):
         """Destroy the engine and clean up resources."""

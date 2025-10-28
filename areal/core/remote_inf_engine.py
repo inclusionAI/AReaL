@@ -229,6 +229,16 @@ class RemoteInfEngine:
 
         self.workflow_executor: WorkflowExecutor
 
+    def configure(self, config):
+        self.config = config
+
+    def create_engine(self, engine_args):
+        # remote inference engine does not need to create an engine
+        return
+
+    def destroy_engine(self):
+        return
+
     def _wait_for_server(self, address):
         """Wait for a server to become healthy."""
         base_url = f"http://{address}"
@@ -323,8 +333,12 @@ class RemoteInfEngine:
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
-        self.workflow_executor.destroy()
-        self.executor.shutdown()
+        if getattr(self, "workflow_executor"):
+            self.workflow_executor.destroy()
+            self.workflow_executor = None
+        if getattr(self, "executor"):
+            self.executor.shutdown()
+            self.executor = None
 
     def set_version(self, version):
         """Set the current weight version."""

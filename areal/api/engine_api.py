@@ -1,7 +1,8 @@
 import abc
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 import torch.distributed as dist
@@ -30,14 +31,16 @@ class Scheduling:
     partition: str | None = None
     container_image: str | None = None
     type: str | None = None
-    env_vars: Dict[str, str] = field(default_factory=dict)
+    env_vars: dict[str, str] = field(default_factory=dict)
     # time utils from "https://slurm.schedmd.com/sbatch.html"
-    time_limit: Optional[str] = None  # see  "--time" option for format
-    begin: Optional[str] = None  # see "--begin" option for format
-    deadline: Optional[str] = None  # see "--deadline" option for format
+    time_limit: str | None = None  # see  "--time" option for format
+    begin: str | None = None  # see "--begin" option for format
+    deadline: str | None = None  # see "--deadline" option for format
 
 
 class TrainEngine(abc.ABC):
+    def configure(self, config):
+        raise NotImplementedError()
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Initialize PyTorch distributed communication groups.
@@ -47,6 +50,9 @@ class TrainEngine(abc.ABC):
         parallel_strategy : ParallelStrategy, optional
             The parallel strategy configuration for distributed training, by default None
         """
+        raise NotImplementedError()
+
+    def destroy_process_group(self):
         raise NotImplementedError()
 
     def initialize(self, *args, **kwargs):
@@ -241,10 +247,10 @@ class TrainEngine(abc.ABC):
 
     def train_batch(
         self,
-        input_: Dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> Dict[str, float]:
+        input_: dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    ) -> dict[str, float]:
         """Update the model with a batch of data and a loss function.
 
         Note
@@ -276,9 +282,9 @@ class TrainEngine(abc.ABC):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: Dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
+        input_: dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function.
 
@@ -311,10 +317,10 @@ class TrainEngine(abc.ABC):
     @torch.no_grad()
     def forward(
         self,
-        input_: Dict[str, Any],
-        output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
-        aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
+        input_: dict[str, Any],
+        output_seqlens: list[int] | None = None,
+        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
+        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Run the forward pass or inference on the model.
 
@@ -345,6 +351,14 @@ class TrainEngine(abc.ABC):
 
 
 class InferenceEngine(abc.ABC):
+    def configure(self, config):
+        raise NotImplementedError()
+
+    def create_engine(self, engine_args: dict[str, Any]):
+        raise NotImplementedError()
+
+    def destroy_engine(self):
+        raise NotImplementedError()
 
     def initialize(self, *args, **kwargs):
         """Initialize environments and launch the background thread for asynchronous distributed inference.
@@ -405,7 +419,7 @@ class InferenceEngine(abc.ABC):
         raise NotImplementedError()
 
     def update_weights_from_distributed(
-        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> Future[None]:
         """Update weights in the inference engine in a non-blocking manner.
 
@@ -460,9 +474,9 @@ class InferenceEngine(abc.ABC):
 
     def submit(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
@@ -486,7 +500,7 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
+    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
         """Wait for a specified number of requests to complete, with a timeout.
 
         Should be used together with preceding `submit`.
@@ -512,11 +526,11 @@ class InferenceEngine(abc.ABC):
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Submit a batch of requests to the inference engine and wait for the results.
 
         See `workflow_api.py` for concrete implementation.
@@ -543,9 +557,9 @@ class InferenceEngine(abc.ABC):
         self,
         dataloader: StatefulDataLoader,
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.
 
         See `workflow_api.py` for concrete implementation.

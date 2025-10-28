@@ -223,10 +223,19 @@ class LocalSGLangEngine(InferenceEngine):
         # Pure composition - create internal engine with SGLang backend
         self._engine = LocalInfEngine(config, SGLangLocalBackend())
 
+    def configure(self, config):
+        self.config = config
+        self._engine.configure(config)
+
+    def create_engine(self, engine_args):
+        return self._engine.create_engine(engine_args)
+
+    def destroy_engine(self):
+        self._engine.destroy_engine()
+
     def initialize(
         self,
         engine_id: str | None = None,
-        engine_args: dict[str, Any] | None = None,
         train_data_parallel_size: int | None = None,
     ):
         """Initialize the engine by creating the local SGLang engine.
@@ -240,7 +249,7 @@ class LocalSGLangEngine(InferenceEngine):
         train_data_parallel_size : int | None
             Data parallel size of the training engine
         """
-        return self._engine.initialize(engine_id, engine_args, train_data_parallel_size)
+        return self._engine.initialize(engine_id, train_data_parallel_size)
 
     def destroy(self):
         """Destroy the engine and clean up resources."""

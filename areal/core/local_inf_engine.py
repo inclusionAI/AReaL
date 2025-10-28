@@ -125,6 +125,14 @@ class LocalInfBackendProtocol(Protocol):
         """
         ...
 
+    def pause_generation(self) -> None:
+        """Pause generation."""
+        ...
+
+    def continue_generation(self) -> None:
+        """Continue generation."""
+        ...
+
 
 class LocalInfEngine:
     """
@@ -157,10 +165,22 @@ class LocalInfEngine:
 
         self.workflow_executor: WorkflowExecutor
 
+    def configure(self, config):
+        self.config = config
+
+    def create_engine(self, engine_args: dict[str, Any] | None = None):
+        # Create the local engine via backend
+        engine_args = engine_args or {}
+        self.engine = self.backend.create_engine(engine_args)
+
+    def destroy_engine(self):
+        if self.engine is not None:
+            self.backend.destroy(self.engine)
+            self.engine = None
+
     def initialize(
         self,
         engine_id: str | None = None,
-        engine_args: dict[str, Any] | None = None,
         train_data_parallel_size: int | None = None,
     ):
         """Initialize the engine by creating the local inference engine.
@@ -182,12 +202,6 @@ class LocalInfEngine:
         self.engine_id = engine_id
         self.logger = logging.getLogger(f"[Local Inference Engine Rank {engine_id}]")
 
-        # Create the local engine via backend
-        engine_args = engine_args or {}
-        self.logger.info(f"Creating local inference engine with args: {engine_args}")
-        self.engine = self.backend.create_engine(engine_args)
-        self.logger.info("Local inference engine created successfully!")
-
         # Initialize thread pool for non-blocking weight updates
         self.executor = ThreadPoolExecutor(max_workers=1)
 
@@ -202,11 +216,12 @@ class LocalInfEngine:
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
-        self.workflow_executor.destroy()
-        if self.engine is not None:
-            self.backend.destroy(self.engine)
-            self.engine = None
-        self.executor.shutdown()
+        if getattr(self, "workflow_executor"):
+            self.workflow_executor.destroy()
+            self.workflow_executor = None
+        if getattr(self, "executor"):
+            self.executor.shutdown()
+            self.executor = None
 
     def set_version(self, version: int):
         """Set the current weight version."""
@@ -275,12 +290,11 @@ class LocalInfEngine:
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
             # Handle rollout interruption
-            while self.workflow_executor.paused.is_set():
+            while self.workflow_executor.is_paused():
                 await asyncio.sleep(0.5)
 
             # Call backend async_generation
             response = await self.backend.async_generation(self.engine, req)
-
             # Extract result
             output_tokens = response.output_tokens
             output_logprobs = response.output_logprobs
@@ -456,7 +470,7 @@ class LocalInfEngine:
         update_name = names.update_weights_from_disk(
             self.config.experiment_name,
             self.config.trial_name,
-            meta.model_version,
+            str(self.get_version()),
         )
         save_timestamp = float(name_resolve.wait(update_name, timeout=120))
         load_timestamp = time.time()
@@ -472,7 +486,6 @@ class LocalInfEngine:
         self.logger.info(
             f"Loading weights done in {(time.time() - load_timestamp) * 1000:.2f} ms"
         )
-        self.set_version(meta.model_version)
 
         return load_timestamp - save_timestamp
 
@@ -594,3 +607,21 @@ class LocalInfEngine:
     def resume(self):
         """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
+
+    def pause_generation(self):
+        """Pause request submission for async rollout."""
+        try:
+            self.backend.pause_generation()
+        except NotImplementedError:
+            self.logger.warning("Backend does not support pause operation")
+
+        # The above http request may require some time to be scheduled and executed.
+        # The following line waits until all requests are indeed dropped.
+        time.sleep(self.config.pause_grace_period)
+
+    def continue_generation(self):
+        """Resume request submission for async rollout."""
+        try:
+            self.backend.continue_generation()
+        except NotImplementedError:
+            self.logger.warning("Backend does not support resume operation")
