@@ -49,6 +49,7 @@ app = FastAPI(
     default_response_class=ORJSONResponse,
     lifespan=lifespan,
 )
+app._expected_trajectory_keys = None
 
 
 @app.get("/health")
@@ -211,6 +212,139 @@ async def call_engine_method(request: Request):
         raise
     except Exception as e:
         logger.error(f"Unexpected error in call: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.post("/run_workflow")
+async def run_workflow(request: Request):
+    """
+    Run a workflow's arun_episode method directly without using the engine.
+
+    Expected JSON payload:
+    {
+        "workflow": "areal.api.workflow_api.RolloutWorkflow",  # Import path
+        "workflow_kwargs": {...},  # Keyword arguments for workflow instantiation
+        "data": {...}  # Data to pass to arun_episode
+    }
+    """
+    try:
+        body = await request.body()
+        data = orjson.loads(body)
+
+        workflow_path = data.get("workflow")
+        workflow_kwargs = data.get("workflow_kwargs")
+        episode_data = data.get("data")
+        should_accept_path = data.get("should_accept_path", None)
+        check_trajectory_format = data.get("check_trajectory_format")
+
+        if not workflow_path:
+            raise HTTPException(
+                status_code=400, detail="Missing 'workflow' field in request"
+            )
+
+        if episode_data is None:
+            raise HTTPException(
+                status_code=400, detail="Missing 'data' field in request"
+            )
+
+        # Dynamic import workflow
+        try:
+            module_path, class_name = workflow_path.rsplit(".", 1)
+            module = importlib.import_module(module_path)
+            workflow_class = getattr(module, class_name)
+            logger.info(f"Imported workflow class: {workflow_path}")
+        except (ValueError, ImportError, AttributeError) as e:
+            logger.error(f"Failed to import workflow '{workflow_path}': {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to import workflow '{workflow_path}': {str(e)}",
+            )
+        # Instantiate workflow
+        try:
+            workflow = workflow_class(**workflow_kwargs)
+            logger.info(f"Workflow '{workflow_path}' instantiated successfully")
+        except Exception as e:
+            logger.error(
+                f"Failed to instantiate workflow: {e}\n{traceback.format_exc()}"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to instantiate workflow: {str(e)}",
+            )
+
+        should_accept = None
+        if should_accept_path is not None:
+            # Dynamic import filtering function
+            try:
+                module_path, fn_name = should_accept_path.rsplit(".", 1)
+                module = importlib.import_module(module_path)
+                should_accept = getattr(module, fn_name)
+                logger.info(f"Imported filtering function: {should_accept_path}")
+            except (ValueError, ImportError, AttributeError) as e:
+                logger.error(
+                    f"Failed to import filtering function '{should_accept_path}': {e}"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to import filtering function '{should_accept_path}': {str(e)}",
+                )
+
+        # Run episode
+        try:
+            traj = await workflow.arun_episode(episode_data)
+
+            global app
+            if check_trajectory_format and traj is not None:
+                from areal.core.workflow_executor import (
+                    check_trajectory_format as check_fn,
+                )
+
+                check_fn(
+                    traj,
+                    expected_keys=app._expected_trajectory_keys,
+                    logger=logger,
+                )
+                # Track expected keys for consistency checking
+                if isinstance(traj, dict) and "input_ids" in traj:
+                    if app._expected_trajectory_keys is None:
+                        app._expected_trajectory_keys = set(traj.keys())
+                        logger.info(
+                            f"Trajectory format check: tracking keys "
+                            f"{app._expected_trajectory_keys}"
+                        )
+
+            from areal.experimental.openai.types import InteractionWithTokenLogpReward
+            from areal.utils.data import concat_padded_tensors
+
+            # Convert InteractionWithTokenLogpReward to tensor dict if needed
+            if isinstance(traj, dict) and all(
+                isinstance(v, InteractionWithTokenLogpReward) for v in traj.values()
+            ):
+                traj = concat_padded_tensors(
+                    [v.to_tensor_dict() for v in traj.values()]
+                )
+
+            assert traj is None or isinstance(traj, dict), traj
+
+            # Apply should_accept filtering
+            accept_this = traj is not None and (
+                should_accept is None or should_accept(traj)
+            )
+            if accept_this:
+                return {"status": "success", "result": traj}
+            else:
+                return {"status": "success", "result": None}
+        except Exception as e:
+            logger.error(f"Workflow arun_episode failed: {e}\n{traceback.format_exc()}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Workflow arun_episode failed: {str(e)}",
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in run_workflow: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 

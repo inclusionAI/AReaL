@@ -832,16 +832,21 @@ class LocalScheduler(Scheduler):
         if worker_info is None:
             raise WorkerNotFoundError(worker_id)
 
-        # Build JSON payload
-        payload = {
-            "method": method,
-            "args": list(args),
-            "kwargs": kwargs,
-        }
-
-        # Retry logic with exponential backoff
+        # Route to different endpoint based on method
         port = int(worker_info.worker.ports[0])
-        url = f"http://{worker_info.worker.ip}:{port}/call"
+        if method == "run_workflow":
+            # Special routing for workflow execution
+            url = f"http://{worker_info.worker.ip}:{port}/run_workflow"
+            payload = kwargs
+        else:
+            # Standard engine method call
+            url = f"http://{worker_info.worker.ip}:{port}/call"
+            payload = {
+                "method": method,
+                "args": list(args),
+                "kwargs": kwargs,
+            }
+
         last_error = None
 
         for attempt in range(1, max_retries + 1):
