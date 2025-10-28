@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
+from typing import TYPE_CHECKING, Any
 
 from camel.logger import get_logger
 from camel.messages import OpenAIMessage
@@ -9,9 +9,7 @@ from camel.types import (
     ChatCompletionChunk,
     ModelType,
 )
-from camel.utils import (
-    BaseTokenCounter,
-)
+from camel.utils import BaseTokenCounter, OpenAITokenCounter
 from openai import AsyncOpenAI, AsyncStream, Stream
 from openai.lib.streaming.chat import (
     AsyncChatCompletionStreamManager,
@@ -38,34 +36,6 @@ else:
 
 
 logger = get_logger(__name__)
-
-
-class AReaLTokenCounter(BaseTokenCounter):
-    def __init__(self, tokenizer: "PreTrainedTokenizerFast", tokens_per_message: int):
-        self.tokenizer = tokenizer
-        self.tokens_per_message = tokens_per_message
-
-    def count_tokens_from_messages(self, messages: List[OpenAIMessage]) -> int:
-        num_tokens = 0
-        for message in messages:
-            num_tokens += self.tokens_per_message
-            for key, value in message.items():
-                if not isinstance(value, list):
-                    num_tokens += len(self.tokenizer.encode(str(value)))
-                else:
-                    for item in value:
-                        if item["type"] == "text":
-                            num_tokens += len(self.tokenizer.encode(str(item["text"])))
-                        else:
-                            raise ValueError(f"Unsupported item type: {item['type']}")
-        num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
-        return num_tokens
-
-    def encode(self, text: str) -> List[int]:
-        return self.tokenizer.encode(text)
-
-    def decode(self, token_ids: List[int]) -> str:
-        return self.tokenizer.decode(token_ids)
 
 
 class AReaLOpenAICompatibleModel(BaseModelBackend):
@@ -96,14 +66,14 @@ class AReaLOpenAICompatibleModel(BaseModelBackend):
 
     def __init__(
         self,
-        model_type: Union[ModelType, str],
+        model_type: ModelType | str,
         openai_client: AsyncOpenAI,
         tokenizer: "PreTrainedTokenizerFast",
-        model_config_dict: Optional[Dict[str, Any]] = None,
-        api_key: Optional[str] = None,
-        url: Optional[str] = None,
-        token_counter: Optional[BaseTokenCounter] = None,
-        timeout: Optional[float] = None,
+        model_config_dict: dict[str, Any] | None = None,
+        api_key: str | None = None,
+        url: str | None = None,
+        token_counter: BaseTokenCounter | None = None,
+        timeout: float | None = None,
         max_retries: int = 3,
         **kwargs: Any,
     ) -> None:
@@ -125,14 +95,14 @@ class AReaLOpenAICompatibleModel(BaseModelBackend):
     @observe()
     def _run(
         self,
-        messages: List[OpenAIMessage],
-        response_format: Optional[Type[BaseModel]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> Union[
-        ChatCompletion,
-        Stream[ChatCompletionChunk],
-        ChatCompletionStreamManager[BaseModel],
-    ]:
+        messages: list[OpenAIMessage],
+        response_format: type[BaseModel] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> (
+        ChatCompletion
+        | Stream[ChatCompletionChunk]
+        | ChatCompletionStreamManager[BaseModel]
+    ):
         r"""Runs inference of OpenAI chat completion.
 
         Args:
@@ -156,14 +126,14 @@ class AReaLOpenAICompatibleModel(BaseModelBackend):
     @observe()
     async def _arun(
         self,
-        messages: List[OpenAIMessage],
-        response_format: Optional[Type[BaseModel]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> Union[
-        ChatCompletion,
-        AsyncStream[ChatCompletionChunk],
-        AsyncChatCompletionStreamManager[BaseModel],
-    ]:
+        messages: list[OpenAIMessage],
+        response_format: type[BaseModel] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> (
+        ChatCompletion
+        | AsyncStream[ChatCompletionChunk]
+        | AsyncChatCompletionStreamManager[BaseModel]
+    ):
         r"""Runs inference of OpenAI chat completion in async mode.
 
         Args:
@@ -202,9 +172,7 @@ class AReaLOpenAICompatibleModel(BaseModelBackend):
         """
 
         if not self._token_counter:
-            self._token_counter = AReaLTokenCounter(
-                self.tokenizer, tokens_per_message=3
-            )
+            self._token_counter = OpenAITokenCounter(ModelType.GPT_4O_MINI)
         return self._token_counter
 
     @property
