@@ -112,7 +112,7 @@ jobs:
           LABELS=\$(curl -fsSL -H \"Metadata-Flavor: Google\" \"http://metadata.google.internal/computeMetadata/v1/instance/attributes/runner_labels\")
 
           if ! id runner >/dev/null 2>&1; then
-            useradd --homedir \"\${RUNNER_DIR}\" --create-home --shell /bin/bash runner
+            useradd --home-dir \"\${RUNNER_DIR}\" --create-home --shell /bin/bash runner
           fi
 
           cd \"\${RUNNER_DIR}\"
