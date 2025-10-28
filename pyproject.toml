@@ -197,6 +197,7 @@ latex2sympy2 = { path = "./evaluation/latex2sympy" }
 
 [tool.uv.extra-build-dependencies]
 flash-attn = ["torch==2.8.0"]
+areal = ["setuptools"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
