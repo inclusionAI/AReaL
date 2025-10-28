@@ -78,7 +78,7 @@ def main(args):
     # Initialize engine
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
-        dataset_size=len(train_dataloader),
+        dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
         train_batch_size=config.train_dataset.batch_size,
     )
     logger.info(f"FinetuneSpec: {ft_spec}")

@@ -78,7 +78,7 @@ def main(args):
     # )
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
-        dataset_size=len(train_dataloader),
+        dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
         train_batch_size=config.train_dataset.batch_size,
     )
 
@@ -251,10 +251,6 @@ def main(args):
             stats_tracker.scope("grpo_actor"),
         ):
             stats = actor.ppo_update(batch)
-            logger.info(f"ppo_update result: {stats}")
-            for item in stats:
-                logger.info(f"ppo_update item result: {item.to_list()}")
-            stats = stats[0].to_list()
             actor.step_lr_scheduler()
             # log_gpu_stats("ppo update")
 
