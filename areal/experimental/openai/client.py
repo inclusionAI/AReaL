@@ -277,26 +277,23 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             raise ValueError("input is required for Responses.create")
 
         def _build_messages_list(item: ResponseInputItemParam) -> list[dict]:
-            if isinstance(item, dict):
-                messages_list = []
-                if "content" in item:
-                    if isinstance(item["content"], str):
-                        messages_list.append(
-                            {"role": item["role"], "content": item["content"]},
-                        )
-                    elif isinstance(item["content"], Iterable):
-                        for content in item["content"]:
-                            if isinstance(content, dict):
-                                messages_list.append(content)
-                            else:
-                                raise ValueError("Unsupported content format")
-                    else:
-                        raise ValueError("Unsupported content format")
+            messages_list = []
+            if "content" in item:
+                if isinstance(item["content"], str):
+                    messages_list.append(
+                        {"role": item["role"], "content": item["content"]},
+                    )
+                elif isinstance(item["content"], Iterable):
+                    for content in item["content"]:
+                        if isinstance(content, dict):
+                            messages_list.append(deepcopy(content))
+                        else:
+                            raise ValueError("Unsupported content format")
                 else:
-                    messages_list.append(deepcopy(item))
-                return messages_list
+                    raise ValueError("Unsupported input item format")
             else:
-                raise ValueError("Unsupported input format")
+                messages_list.append(deepcopy(item))
+            return messages_list
 
         if isinstance(input, str):
             messages_list += [
