@@ -215,7 +215,7 @@ class RecoverHandler:
 
     def load(
         self,
-        engine: TrainEngine | Dict[str, TrainEngine],
+        engine: TrainEngine | Dict[str, TrainEngine] | TrainController,
         saver: Saver,
         evaluator: Evaluator,
         stats_logger: "StatsLogger",
@@ -233,7 +233,7 @@ class RecoverHandler:
                 weight_update_meta is not None
             ), "Inference engine requires weight update meta for recovery."
 
-        if isinstance(engine, TrainEngine):
+        if isinstance(engine, (TrainEngine, TrainController)):
             engine = {"default": engine}
 
         recover_info_path = self.recover_info_path(

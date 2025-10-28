@@ -171,7 +171,6 @@ class SGLangServerWrapper:
                 server_local_idx * ports_per_server + 10000,
                 (server_local_idx + 1) * ports_per_server + 10000,
             )
-
             server_port, dist_init_port = find_free_ports(2, port_range)
 
             if cross_nodes:
