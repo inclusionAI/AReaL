@@ -16,7 +16,7 @@ import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.engine_api import InferenceEngine, Scheduling
+from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
@@ -27,7 +27,6 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
-from areal.utils.scheduler import scheduling_specs_to_schedulings
 
 RID_CACHE_SIZE = 128
 
@@ -395,9 +394,6 @@ class RemotevLLMEngine(InferenceEngine):
     def resume(self):
         """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
-
-    def get_scheduling_config(self) -> List[Scheduling]:
-        return scheduling_specs_to_schedulings(self.config.scheduling_specs)
 
 
 def update_weights_from_disk(

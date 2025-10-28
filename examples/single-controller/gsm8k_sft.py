@@ -29,13 +29,9 @@ def main(args):
     config, _ = load_expr_config(args, SFTConfig)
     config: SFTConfig
 
-    # rank = int(os.getenv("RANK"))
-    #
-    # seeding.set_random_seed(config.seed, f"trainer{rank}")
     AllocationMode.from_str(config.allocation_mode)
 
     engine = FSDPLMEngine(config=config.model)
-    # engine.create_process_group(parallel_strategy=parallel_strategy)
 
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
     train_dataset = get_custom_dataset(
@@ -81,7 +77,6 @@ def main(args):
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
         train_batch_size=config.train_dataset.batch_size,
     )
-    logger.info(f"FinetuneSpec: {ft_spec}")
     # Initialize scheduler
     scheduler = LocalScheduler(config)
     # Initialize train controller

@@ -202,15 +202,8 @@ class DistributedTrainController(TrainController):
         *args,
         **kwargs,
     ):
-
-        batches = self._align_batches_with_dp(input_, False)
-        logps = rpc_call(
-            self.scheduler,
-            self.workers,
-            "compute_logp",
-            batches,
-            *args,
-            **kwargs,
+        logps = self.custom_function_call_with_data(
+            "compute_logp", input_, True, *args, **kwargs
         )
         return logps
 
@@ -220,15 +213,10 @@ class DistributedTrainController(TrainController):
         *args,
         **kwargs,
     ):
-        batches = self._align_batches_with_dp(input_, False)
-        advantages = rpc_call(
-            self.scheduler,
-            self.workers,
-            "compute_advantages",
-            batches,
-            *args,
-            **kwargs,
+        advantages = self.custom_function_call_with_data(
+            "compute_advantages", input_, True, *args, **kwargs
         )
+
         return DistributedBatchMemory.concat(advantages)
 
     def train_lm(

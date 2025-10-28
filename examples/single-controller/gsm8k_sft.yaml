@@ -79,7 +79,7 @@ evaluator:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
-  freq_steps: 1
+  freq_steps: null
   freq_secs: null
 
 stats_logger:
@@ -87,9 +87,7 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: "online"
-    wandb_base_url: "https://slurm.alipay.com"
-    wandb_api_key: "local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe"
+    mode: disabled
 
 launcher:
   inference_server_cpus_per_gpu: 4
