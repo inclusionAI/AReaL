@@ -1,6 +1,6 @@
 import asyncio
 from http import HTTPStatus
-from typing import Any, Dict, Optional
+from typing import Any
 
 import aiohttp
 
@@ -20,14 +20,14 @@ def get_default_connector():
 async def arequest_with_retry(
     addr: str,
     endpoint: str,
-    payload: Optional[Dict[str, Any]] = None,
+    payload: dict[str, Any] | None = None,
     session: aiohttp.ClientSession | None = None,
     method: str = "POST",
-    max_retries: Optional[int] = None,
-    timeout: Optional[float] = None,
+    max_retries: int | None = None,
+    timeout: float | None = None,
     retry_delay: float = 1.0,
     verbose=False,
-) -> Dict:
+) -> dict:
     timeout = timeout or DEFAULT_REQUEST_TIMEOUT
     last_exception = None
     max_retries = max_retries or DEFAULT_RETRIES
@@ -77,6 +77,25 @@ async def arequest_with_retry(
             aiohttp.ClientResponseError,
             asyncio.TimeoutError,
         ) as e:
+            if isinstance(e, asyncio.TimeoutError):
+                logger.warning(
+                    "HTTP request to %s%s timed out after %.2fs (attempt %d/%d)",
+                    addr,
+                    endpoint,
+                    timeout,
+                    attempt + 1,
+                    max_retries,
+                )
+            else:
+                logger.warning(
+                    "HTTP request to %s%s failed with %s: %s (attempt %d/%d)",
+                    addr,
+                    endpoint,
+                    e.__class__.__name__,
+                    str(e),
+                    attempt + 1,
+                    max_retries,
+                )
             last_exception = e
             if attempt < max_retries - 1:
                 await asyncio.sleep(retry_delay)

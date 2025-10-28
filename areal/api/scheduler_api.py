@@ -1,13 +1,12 @@
 import abc
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 
 @dataclass
 class Worker:
     id: str
     ip: str
-    ports: List[str] = field(default_factory=list)
+    ports: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -17,7 +16,7 @@ class ContainerSpec:
     mem: int = 0
     container_image: str = ""
     cmd: str = ""
-    env_vars: Dict[str, str] = field(default_factory=dict)
+    env_vars: dict[str, str] = field(default_factory=dict)
     port_count: int = 2
 
 
@@ -30,7 +29,7 @@ class ScheduleStrategy:
 @dataclass
 class SchedulingConfig:
     replicas: int = 0
-    specs: List[ContainerSpec] = field(default_factory=list)
+    specs: list[ContainerSpec] = field(default_factory=list)
     schedule_strategy: ScheduleStrategy | None = None
     role: str = ""
 
@@ -41,7 +40,7 @@ class Scheduler(abc.ABC):
         Start workers, return job id
         """
 
-    def get_workers(self, worker_key, timeout=None) -> List[Worker]:
+    def get_workers(self, worker_key, timeout=None) -> list[Worker]:
         """
         Wait and return worker list, including scheduling results such as ip and engine ports
         (worker id, ip, ports)

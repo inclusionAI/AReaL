@@ -9,7 +9,6 @@ both training and inference configurations with various parallelism strategies.
 import enum
 import math
 from dataclasses import dataclass, field
-from typing import Optional
 
 from lark import Lark, Transformer
 
@@ -216,7 +215,7 @@ class FSDPParallelStrategy(ParallelStrategy):
 class MegatronParallelStrategy(ParallelStrategy):
     """Megatron parallel strategy with additional sequence parallelism and virtual pipeline parallelism."""
 
-    virtual_pipeline_parallel_size: Optional[int] = field(
+    virtual_pipeline_parallel_size: int | None = field(
         default=None,
         metadata={
             "help": "Virtual pipeline parallelism size for megatron modules "
@@ -234,10 +233,7 @@ class MegatronParallelStrategy(ParallelStrategy):
     def parallelism_eq(this, other):
         """Compare Megatron parallelism configurations (excluding sequence parallelism)."""
         return ParallelStrategy.parallelism_eq(this, other) and (
-            (
-                this.virtual_pipeline_parallel_size
-                == other.virtual_pipeline_parallel_size
-            )
+            this.virtual_pipeline_parallel_size == other.virtual_pipeline_parallel_size
         )
 
 
@@ -274,9 +270,9 @@ class AllocationMode:
 
     type_: AllocationType
     gen: ParallelStrategy = field(default_factory=ParallelStrategy)
-    train: Optional[ParallelStrategy] = None
-    gen_backend: Optional[str] = None
-    train_backend: Optional[str] = None
+    train: ParallelStrategy | None = None
+    gen_backend: str | None = None
+    train_backend: str | None = None
 
     @property
     def gen_instance_size(self) -> int:
@@ -407,7 +403,7 @@ class TrainingParallelism:
     and comprehensive validation rules.
     """
 
-    backend: Optional[str] = None
+    backend: str | None = None
     strategy: ParallelStrategy = field(default_factory=lambda: ParallelStrategy())
 
     def __post_init__(self):
