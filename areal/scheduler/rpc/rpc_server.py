@@ -148,7 +148,6 @@ class EngineRPCServer(BaseHTTPRequestHandler):
         try:
             length = int(self.headers["Content-Length"])
             old_timeout = self.request.gettimeout()
-            logger.info(f"Receive rpc call, path: {self.path}, timeout: {old_timeout}")
             # set max read timeout = 120s here, if read hang raise exception
             self.request.settimeout(timeout)
             return self.rfile.read(length)
@@ -190,9 +189,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                     logger.error("Call received but engine is none.")
                     return
                 action, args, kwargs = cloudpickle.loads(data)
-                logger.info(
-                    f"Received call for action: {action} with args: {args} kwargs: {kwargs}"
-                )
+                logger.info(f"Received call for action: {action}")
 
                 method = getattr(EngineRPCServer.engine, action)
 
