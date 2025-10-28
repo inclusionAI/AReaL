@@ -1,9 +1,8 @@
 import abc
-from typing import Any, Dict, List
+from typing import Any
 
 
 class Environment(abc.ABC):
-
     async def ainitialize(self):
         """
         Performs the initialization logic for the environment asynchronously.
@@ -12,11 +11,11 @@ class Environment(abc.ABC):
         prepared (e.g., launching a browser).
         """
 
-    def list_tools(self) -> List[Dict[str, Any]]:
+    def list_tools(self) -> list[dict[str, Any]]:
         """Lists all available tools in the environment."""
         return []
 
-    async def aexecute(self, tool_name: str, tool_args: Dict[str, Any]) -> Any:
+    async def aexecute(self, tool_name: str, tool_args: dict[str, Any]) -> Any:
         """Executes a tool in the environment asynchronously."""
         raise NotImplementedError()
 
