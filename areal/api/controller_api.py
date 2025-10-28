@@ -1,6 +1,7 @@
 import abc
+from collections.abc import Callable
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -29,9 +30,7 @@ class DistributedBatch(abc.ABC):
     """
 
     @classmethod
-    def from_dict(
-        cls, dataset: Dict[str, Union[torch.Tensor, Any]]
-    ) -> "DistributedBatch":
+    def from_dict(cls, dataset: dict[str, torch.Tensor | Any]) -> "DistributedBatch":
         """Create a DistributedBatch from a dictionary format dataset.
 
         Parameters
@@ -48,7 +47,7 @@ class DistributedBatch(abc.ABC):
 
     @classmethod
     def from_list(
-        cls, dataset: List[Dict[str, Union[torch.Tensor, Any]]]
+        cls, dataset: list[dict[str, torch.Tensor | Any]]
     ) -> "DistributedBatch":
         """Create a DistributedBatch from a list format dataset.
 
@@ -115,7 +114,7 @@ class DistributedBatch(abc.ABC):
         """
         raise NotImplementedError()
 
-    def get_data(self) -> Dict[str, Union[torch.Tensor, Any]]:
+    def get_data(self) -> dict[str, torch.Tensor | Any]:
         """Get all data from the DistributedBatch.
 
         Returns
@@ -157,7 +156,7 @@ class DistributedBatch(abc.ABC):
         """
         raise NotImplementedError()
 
-    def __setitem__(self, key: str, value: Union[torch.Tensor, Any]):
+    def __setitem__(self, key: str, value: torch.Tensor | Any):
         """Set an item in the batch.
 
         Parameters
@@ -350,9 +349,9 @@ class TrainController(abc.ABC):
     def train_batch(
         self,
         input_: DistributedBatch,
-        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> Dict[str, float]:
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    ) -> dict[str, float]:
         """Update the model with a batch of data and a loss function.
 
         Note
@@ -385,8 +384,8 @@ class TrainController(abc.ABC):
     def eval_batch(
         self,
         input_: DistributedBatch,
-        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function.
 
@@ -420,9 +419,9 @@ class TrainController(abc.ABC):
     def forward(
         self,
         input_: DistributedBatch,
-        output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
-        aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
+        output_seqlens: list[int] | None = None,
+        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
+        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Run the forward pass or inference on the model.
 
@@ -541,7 +540,7 @@ class RolloutController(abc.ABC):
         raise NotImplementedError()
 
     def update_weights_from_distributed(
-        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> Future[None]:
         """Update weights in the inference engine in a non-blocking manner.
 
@@ -596,9 +595,9 @@ class RolloutController(abc.ABC):
 
     def submit(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
@@ -648,9 +647,9 @@ class RolloutController(abc.ABC):
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ) -> DistributedBatch:
         """Submit a batch of requests to the inference engine and wait for the results.
@@ -679,7 +678,7 @@ class RolloutController(abc.ABC):
         self,
         dataloader: StatefulDataLoader,
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ) -> DistributedBatch:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.

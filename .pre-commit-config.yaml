@@ -68,14 +68,3 @@ repos:
         pass_filenames: false
         always_run: false
         require_serial: true
-
-  # Generate requirements.txt with uv
-  - repo: https://github.com/astral-sh/uv-pre-commit
-    # uv version.
-    rev: 0.9.5
-    hooks:
-      # Compile requirements
-      - id: pip-compile
-        name: Compile requirements.txt using uv
-        files: ^requirements\.txt|pyproject\.toml$
-        args: [pyproject.toml, -o, requirements.txt]

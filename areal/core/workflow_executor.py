@@ -16,7 +16,7 @@ from areal.api.cli_args import InferenceEngineConfig
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.async_task_runner import AsyncTaskRunner, TaskQueueFullError
 from areal.core.staleness_manager import StalenessManager
-from areal.experimental.openai.types import CompletionWithTokenLogpReward
+from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 def check_trajectory_format(
-    data: dict[str, Any] | None | dict[str, CompletionWithTokenLogpReward],
+    data: dict[str, Any] | None | dict[str, InteractionWithTokenLogpReward],
     batch_size: int | None = None,
     expected_keys: set | None = None,
     logger: Any = None,
@@ -37,7 +37,7 @@ def check_trajectory_format(
 
     1. **None**: Indicates a rejected trajectory that will not be used for
        training
-    2. **Dict[str, CompletionWithTokenLogpReward]**: Completion results from
+    2. **Dict[str, InteractionWithTokenLogpReward]**: Completion/Response results from
        the workflow
     3. **Dict[str, torch.Tensor]**: Tensor format with specific shape and
        key requirements
@@ -58,11 +58,11 @@ def check_trajectory_format(
 
     Parameters
     ----------
-    data : Dict[str, Any] | None | Dict[str, CompletionWithTokenLogpReward]
+    data : Dict[str, Any] | None | Dict[str, InteractionWithTokenLogpReward]
         The trajectory data to validate. Can be:
 
         - ``None`` for rejected trajectories
-        - Dictionary mapping strings to ``CompletionWithTokenLogpReward`` objects
+        - Dictionary mapping strings to ``InteractionWithTokenLogpReward`` objects
         - Dictionary mapping strings to PyTorch tensors or other data types
 
     batch_size : int | None, optional
@@ -140,8 +140,8 @@ def check_trajectory_format(
     if len(data) == 0:
         raise ValueError("Data dict cannot be empty")
 
-    # Check if all values are CompletionWithTokenLogpReward
-    if all(isinstance(v, CompletionWithTokenLogpReward) for v in data.values()):
+    # Check if all values are InteractionWithTokenLogpReward
+    if all(isinstance(v, InteractionWithTokenLogpReward) for v in data.values()):
         return True
 
     # Check required keys
@@ -229,7 +229,7 @@ class WorkflowExecutor:
     - Staleness-aware capacity control via StalenessManager
     - Trajectory format validation
     - Result filtering via should_accept callbacks
-    - CompletionWithTokenLogpReward processing
+    - InteractionWithTokenLogpReward processing
 
     Parameters
     ----------
@@ -237,7 +237,7 @@ class WorkflowExecutor:
         Configuration for the inference engine including queue sizes,
         concurrency limits, and validation settings.
     inference_engine : InferenceEngine
-        The inference engine to use for generating completions.
+        The inference engine to use for generating completions/responses.
     staleness_manager : StalenessManager | None, optional
         Manager for staleness-aware capacity control. If None, a default manager
         will be created during initialization. Default is None.
@@ -384,9 +384,9 @@ class WorkflowExecutor:
                             f"{self._expected_trajectory_keys}"
                         )
 
-            # Convert CompletionWithTokenLogpReward to tensor dict if needed
+            # Convert InteractionWithTokenLogpReward to tensor dict if needed
             if isinstance(traj, dict) and all(
-                isinstance(v, CompletionWithTokenLogpReward) for v in traj.values()
+                isinstance(v, InteractionWithTokenLogpReward) for v in traj.values()
             ):
                 traj = concat_padded_tensors(
                     [v.to_tensor_dict() for v in traj.values()]

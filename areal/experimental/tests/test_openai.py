@@ -28,13 +28,12 @@ def check_server_health(base_url):
     try:
         response = requests.get(f"{base_url}/health", timeout=30)
         return response.status_code == 200
-    except requests.exceptions.RequestException as e:
+    except requests.exceptions.RequestException:
         return False
 
 
 @pytest.fixture(scope="module")
 def sglang_server():
-
     seeding.set_random_seed(1, EXPR_NAME)
     cmd = SGLangConfig.build_cmd(
         sglang_config=SGLangConfig(
@@ -431,7 +430,7 @@ async def test_multi_round_conversation_with_thinking(openai_client):
         },
         {"role": "user", "content": "What is 15 * 24? Please think step-by-step."},
     ]
-    c1 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
+    c1 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
 
     # Round 2 - Strip thinking from previous response
     cleaned_assistant_content = strip_thinking_tags(c1.choices[0].message.content)
@@ -442,7 +441,7 @@ async def test_multi_round_conversation_with_thinking(openai_client):
             "content": "Now what is 360 divided by 12? Please think step-by-step.",
         },
     ]
-    c2 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
+    c2 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
 
     # Round 3 - Continue conversation, stripping thinking from previous response
     cleaned_assistant_content_2 = strip_thinking_tags(c2.choices[0].message.content)
@@ -453,7 +452,7 @@ async def test_multi_round_conversation_with_thinking(openai_client):
             "content": "Great! Can you explain why division by 12 gave us 30?  Please think step-by-step.",
         },
     ]
-    c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
+    c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
 
     # Verify conversation history
     stored_messages_c2 = openai_client.get_completions(c2.id).messages
@@ -554,9 +553,9 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
         if msg.get("role") == "tool":
             tool_messages_found = True
             break
-    assert (
-        tool_messages_found
-    ), "Tool messages should be preserved in conversation history"
+
+    if not tool_messages_found:
+        raise RuntimeError("Tool messages should be preserved in conversation history")
 
     # Test reward system with thinking + tool calling
     openai_client.set_reward(c1.id, reward=1.0)
@@ -664,20 +663,24 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
     assert wrapped_completion(c_a1).parent is wrapped_completion(c_a)
     assert wrapped_completion(c_a).parent is wrapped_completion(c_root)
 
+    print(f"c_root: {c_root}")
+
     # Reward is not propagated to tree nodes, check reward values
     assert wrapped_completion(c_b1).reward == 3
     assert wrapped_completion(c_a2).reward == 1.5
     assert wrapped_completion(c_a1).reward == 2
 
+    print(f"c_root: {c_root}")
+
     # Check loss masks produced by completions
     # Ensure number of 1s in the loss masks is actually the number of tokens output by the model
     c_a1_loss_mask = wrapped_completion(c_a1).to_tensor_dict()["loss_mask"].squeeze(0)
-    c_root_input_len = wrapped_completion(c_root).response.input_len
-    c_root_output_len = wrapped_completion(c_root).response.output_len
-    c_a_input_len = wrapped_completion(c_a).response.input_len
-    c_a_output_len = wrapped_completion(c_a).response.output_len
-    c_a1_input_len = wrapped_completion(c_a1).response.input_len
-    c_a1_output_len = wrapped_completion(c_a1).response.output_len
+    c_root_input_len = wrapped_completion(c_root).model_response.input_len
+    c_root_output_len = wrapped_completion(c_root).model_response.output_len
+    c_a_input_len = wrapped_completion(c_a).model_response.input_len
+    c_a_output_len = wrapped_completion(c_a).model_response.output_len
+    c_a1_input_len = wrapped_completion(c_a1).model_response.input_len
+    c_a1_output_len = wrapped_completion(c_a1).model_response.output_len
 
     # c_a1 loss mask
     assert c_a1_loss_mask.squeeze(0).tolist() == (
@@ -691,8 +694,8 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
 
     # c_a2 loss mask
     c_a2_loss_mask = wrapped_completion(c_a2).to_tensor_dict()["loss_mask"].squeeze(0)
-    c_a2_input_len = wrapped_completion(c_a2).response.input_len
-    c_a2_output_len = wrapped_completion(c_a2).response.output_len
+    c_a2_input_len = wrapped_completion(c_a2).model_response.input_len
+    c_a2_output_len = wrapped_completion(c_a2).model_response.output_len
     assert c_a2_loss_mask.squeeze(0).tolist() == (
         [0] * c_root_input_len
         + [1] * c_root_output_len
@@ -704,10 +707,10 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
 
     # c_b1 loss mask
     c_b1_loss_mask = wrapped_completion(c_b1).to_tensor_dict()["loss_mask"].squeeze(0)
-    c_b_input_len = wrapped_completion(c_b).response.input_len
-    c_b_output_len = wrapped_completion(c_b).response.output_len
-    c_b1_input_len = wrapped_completion(c_b1).response.input_len
-    c_b1_output_len = wrapped_completion(c_b1).response.output_len
+    c_b_input_len = wrapped_completion(c_b).model_response.input_len
+    c_b_output_len = wrapped_completion(c_b).model_response.output_len
+    c_b1_input_len = wrapped_completion(c_b1).model_response.input_len
+    c_b1_output_len = wrapped_completion(c_b1).model_response.output_len
     assert c_b1_loss_mask.squeeze(0).tolist() == (
         [0] * c_root_input_len
         + [1] * c_root_output_len

@@ -744,11 +744,13 @@ class SGLangConfig:
         n_nodes: int = 1,
         node_rank: int = 0,
     ):
+        # Map "all-linear" to "all"
         args: dict = conf_as_dict(sglang_config)
         if sglang_config.enable_multithread_load or sglang_config.enable_fast_load:
-            assert pkg_version.is_version_equal("sglang", "0.5.2"), (
-                "Customized model loading requires exact SGLang version 0.5.2"
-            )
+            if not pkg_version.is_version_equal("sglang", "0.5.2"):
+                raise RuntimeError(
+                    "Customized model loading requires exact SGLang version 0.5.2"
+                )
             model_loader_extra_config = dict(
                 enable_multithread_load=sglang_config.enable_multithread_load,
                 enable_fast_load=sglang_config.enable_fast_load,
@@ -797,7 +799,8 @@ class InferenceEngineConfig:
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={
-            "help": "Maximum number of concurrent rollouts to the inference engine. Defaults to consumer_batch_size."
+            "help": "Maximum number of concurrent rollouts to "
+            "the inference engine. Defaults to consumer_batch_size."
         },
     )
     queue_size: None | int = field(

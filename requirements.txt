@@ -64,9 +64,9 @@ blobfile==3.0.0
     # via sglang
 blosc==1.11.3
     # via areal (pyproject.toml)
-boto3==1.40.59
+boto3==1.40.60
     # via swanlab
-botocore==1.40.59
+botocore==1.40.60
     # via
     #   boto3
     #   s3transfer
@@ -147,7 +147,7 @@ cupy-cuda12x==13.6.0
     # via ray
 cycler==0.12.1
     # via matplotlib
-dashscope==1.24.7
+dashscope==1.24.8
     # via qwen-agent
 datasets==4.3.0
     # via
@@ -206,7 +206,7 @@ executing==2.2.1
     # via stack-data
 farama-notifications==0.0.4
     # via gymnasium
-fastapi==0.120.0
+fastapi==0.120.1
     # via
     #   areal (pyproject.toml)
     #   sglang
@@ -258,7 +258,7 @@ gitdb==4.0.12
     # via gitpython
 gitpython==3.1.45
     # via wandb
-google-api-core==2.27.0
+google-api-core==2.28.0
     # via opencensus
 google-auth==2.41.1
     # via google-api-core
@@ -799,7 +799,7 @@ ray==2.50.1
     # via
     #   areal (pyproject.toml)
     #   vllm
-redis==7.0.0
+redis==7.0.1
     # via areal (pyproject.toml)
 referencing==0.37.0
     # via
@@ -924,7 +924,7 @@ soxr==1.0.0
     # via mistral-common
 stack-data==0.6.3
     # via ipython
-starlette==0.48.0
+starlette==0.49.0
     # via
     #   fastapi
     #   prometheus-fastapi-instrumentator
