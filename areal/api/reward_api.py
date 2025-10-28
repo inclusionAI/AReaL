@@ -2,10 +2,10 @@ import asyncio
 import threading
 import traceback
 import weakref
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from functools import partial
-from typing import Callable, List, Optional
 
 from areal.utils import logging
 
@@ -15,8 +15,8 @@ logger = logging.getLogger("Reward API")
 def reward_fn(
     prompt: str,
     completions: str,
-    prompt_ids: List[int],
-    completion_ids: List[int],
+    prompt_ids: list[int],
+    completion_ids: list[int],
     **kwargs,
 ):
     """This function is a placeholder for the reward function that will be used in the RLVR pipeline.
@@ -49,7 +49,7 @@ class AsyncRewardWrapper:
         self,
         reward_fn: Callable,
         timeout_seconds: float = 15,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
         max_retries: int = 3,
     ):
         self.reward_fn = reward_fn

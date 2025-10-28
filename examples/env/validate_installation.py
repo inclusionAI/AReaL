@@ -10,7 +10,6 @@ the installation procedure described in docs/tutorial/installation.md.
 import importlib
 import sys
 from importlib.metadata import version as get_version
-from typing import Optional
 
 from packaging.version import Version
 
@@ -25,7 +24,7 @@ class InstallationValidator:
         self,
         module_name: str,
         required: bool = True,
-        test_func: Optional[callable] = None,
+        test_func: callable | None = None,
     ) -> bool:
         """Test importing a module and optionally run additional tests."""
         try:
@@ -78,9 +77,9 @@ class InstallationValidator:
         """Test vLLM basic functionality."""
         from vllm import LLM, SamplingParams  # noqa
 
-        assert Version(get_version("vllm")) == Version(
-            "0.10.2"
-        ), f"vLLM version should be 0.10.2, found {Version(get_version('vllm'))}"
+        assert Version(get_version("vllm")) == Version("0.10.2"), (
+            f"vLLM version should be 0.10.2, found {Version(get_version('vllm'))}"
+        )
 
         print("  - vLLM core classes imported successfully")
 
@@ -96,15 +95,15 @@ class InstallationValidator:
         )
         from sglang import Engine, launch_server  # noqa
 
-        assert Version(get_version("sglang")) >= Version(
-            "v0.5.2"
-        ), "SGLang version should be >= v0.5.2"
+        assert Version(get_version("sglang")) >= Version("v0.5.2"), (
+            "SGLang version should be >= v0.5.2"
+        )
         print("  - SGLang imported successfully")
 
     def test_transformers(self, transformers_module):
-        assert Version(get_version("transformers")) == Version(
-            "4.56.1"
-        ), "transformers version should be 4.56.1"
+        assert Version(get_version("transformers")) == Version("4.56.1"), (
+            "transformers version should be 4.56.1"
+        )
         print("  - transformers imported successfully")
 
     def validate_critical_dependencies(self):
@@ -121,7 +120,6 @@ class InstallationValidator:
         self.test_import(
             "flash_attn", required=True, test_func=self.test_flash_attn_functionality
         )
-        self.test_import("cugae", required=True)
         # Inference engines
         self.test_import(
             "sglang", required=True, test_func=self.test_sglang_functionality
@@ -175,14 +173,15 @@ class InstallationValidator:
         self.test_import("seaborn", required=False)
         self.test_import("numba", required=False)
         self.test_import("nltk", required=False)
+        self.test_import("cugae", required=False)
 
     def test_te_functionality(self, _):
         try:
             import torch
 
-            assert Version(get_version("transformer_engine")) >= Version(
-                "2.3.0"
-            ), "transformer_engine version must be larger than 2.3.0"
+            assert Version(get_version("transformer_engine")) >= Version("2.3.0"), (
+                "transformer_engine version must be larger than 2.3.0"
+            )
 
             if torch.cuda.is_available():
                 import transformer_engine.pytorch as te
@@ -307,14 +306,14 @@ class InstallationValidator:
 
         # Determine overall result
         if self.critical_failures:
-            print(f"\n❌ INSTALLATION VALIDATION FAILED")
+            print("\n❌ INSTALLATION VALIDATION FAILED")
             print("Please check the critical failures above and ensure all required")
             print(
                 "dependencies are properly installed according to the installation guide."
             )
             return False
         else:
-            print(f"\n✅ INSTALLATION VALIDATION PASSED")
+            print("\n✅ INSTALLATION VALIDATION PASSED")
             if self.warnings:
                 print("Note: Some optional dependencies failed but this won't affect")
                 print("core functionality.")

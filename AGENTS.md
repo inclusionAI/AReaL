@@ -10,57 +10,92 @@
   docs—reference them instead of hand-rolling virtualenvs.
 - **Testing**: Integration and performance tests require multi-node hardware. Explain
   skips explicitly when you cannot access the cluster.
-- **Formatting**: Project uses Black/isort/autoflake (see `pyproject.toml`). Surface any
-  formatting gaps if you cannot run the tools yourself.
+- **Tooling**: `.pre-commit-config.yaml` runs Ruff (lint+format), mdformat,
+  clang-format, nbstripout, and CLI doc generation; install with `pre-commit install`
+  before submitting patches.
+- **Formatting**: Ruff + Ruff-format replace Black/isort; autoflake settings remain in
+  `pyproject.toml`. Surface any formatting gaps you cannot auto-fix.
 - **Docs**: Source lives under `docs/` (Jupyter Book). Coordinate doc edits with the
   docs build pipeline.
+- **Legacy code**: `realhf/` is deprecated—do not modify or import from it; migrate uses
+  into `areal/` equivalents instead.
 
 When unsure, leave a `TODO(agent)` comment and note the constraint in your response.
 
 ## Repository map
 
-| Path                     | Purpose                                                                        |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| `areal/api/`             | Core contracts: workflows, engines, CLI configs, IO structs, scheduler APIs.   |
-| `areal/workflow/`        | Rollout/agent implementations (`multi_turn`, `rlvr`, `vision_rlvr`).           |
-| `areal/engine/`          | Training backends (FSDP2, Megatron, PPO actors) and inference adapters.        |
-| `areal/dataset/`         | Dataset loaders & utilities that feed rollouts.                                |
-| `areal/reward/`          | Built-in reward functions plus helpers (math parsing, CLEVR counting).         |
-| `areal/utils/`           | Logging (`stats_tracker`), tensor helpers, recovery, evaluation, device utils. |
-| `examples/`              | Runnable entrypoints for math, multi-turn, RLHF, VLM, search agents.           |
-| `areal/launcher/`        | Entry scripts for local, Ray, and Slurm orchestration.                         |
-| `docs/`                  | Published docs (https://inclusionai.github.io/AReaL/).                         |
-| `realhf/`                | Legacy integrations retained for reference (read-only).                        |
-| `functioncall/`          | Tool-calling utilities reused in workflows.                                    |
-| `areal/platforms/`       | Cluster abstractions used by advanced agents.                                  |
-| `tests/`                 | Pytest suites (many require GPUs or mocked engines).                           |
-| `Dockerfile`, `Makefile` | Container recipe and helper tasks (`make docs`, `make lint`).                  |
+| Path                      | Purpose                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------- |
+| `areal/api/`              | Core contracts: workflows, engines, controllers, schedulers, IO structs.        |
+| `areal/controller/`       | Distributed batching utilities and controller-side dataset packing.             |
+| `areal/core/`             | Async orchestration primitives (task runners, remote inference, workflow exec). |
+| `areal/dataset/`          | Dataset loaders & utilities that feed rollouts.                                 |
+| `areal/engine/`           | Training backends (FSDP2, Megatron, PPO actors) and inference adapters.         |
+| `areal/experimental/`     | Prototype engines/workflows; expect churn and breaking changes.                 |
+| `areal/launcher/`         | Orchestration entrypoints (local, Ray, Slurm) plus container specs.             |
+| `areal/models/`           | Model-specific adapters (Megatron-Core, Transformers wrappers).                 |
+| `areal/platforms/`        | Hardware/platform abstractions (CPU/GPU/NPU backends, runtime adapters).        |
+| `areal/reward/`           | Built-in reward functions plus helpers (math parsing, CLEVR counting).          |
+| `areal/scheduler/`        | Scheduler implementations and allocation logic.                                 |
+| `areal/tests/`            | Targeted tests; many require GPUs or mocked distributed backends.               |
+| `areal/thirdparty/`       | Vendored integrations (e.g., vLLM shims).                                       |
+| `areal/utils/`            | Logging (`stats_tracker`), tensor helpers, recovery, evaluation, device utils.  |
+| `areal/workflow/`         | Rollout/agent implementations (`multi_turn`, `rlvr`, `vision_rlvr`).            |
+| `examples/`               | Runnable entrypoints for math, multi-turn, RLHF, VLM, search agents.            |
+| `evaluation/`             | Offline evaluation scripts (math/code/Elo) and utilities.                       |
+| `functioncall/`           | Tool-calling utilities reused in workflows.                                     |
+| `docs/`                   | Jupyter Book source published to https://inclusionai.github.io/AReaL/.          |
+| `assets/` `benchmark/`    | Figures, regression baselines, and benchmark snapshots.                         |
+| `blog/`                   | Release and update write-ups.                                                   |
+| `csrc/`                   | CUDA/C++ extensions that need `build_ext --inplace` after edits.                |
+| `notebook/`               | Reference notebooks (outputs stripped by pre-commit).                           |
+| `patch/`                  | Local patches for third-party deps (e.g., SGLang fixes).                        |
+| `recipe/`                 | Deployment recipes and higher-level orchestration configs.                      |
+| `.pre-commit-config.yaml` | Hooks: Ruff lint/format, mdformat, clang-format, nbstripout, CLI docs.          |
+| `Dockerfile`              | Container recipe for the standard runtime environment.                          |
+| `realhf/`                 | Legacy integrations (read-only, do **not** modify or import).                   |
 
 ### Where to find things
 
 - **`areal/api/`** – Contracts for engines, schedulers, dataloaders, and CLI configs.
   Start here when adding new dataclasses or API surfaces.
+- **`areal/controller/`** – Distributed batching utilities and controller-side dataset
+  packing.
+- **`areal/core/`** – Async orchestration primitives (task runners, remote inference,
+  workflow execution).
+- **`areal/launcher/`** – Reference launchers for local, Ray, and Slurm targets plus
+  container specs; reuse these instead of ad-hoc scripts.
+- **`areal/engine/`** – Training and inference engines: FSDP2, Megatron, PPO actors, and
+  SGLang/vLLM adapters. Keep weight versioning logic consistent across edits.
+- **`areal/models/`** – Model-specific adapters (Megatron-Core layers, Transformers
+  wrappers, custom heads).
 - **`areal/workflow/`** – Concrete rollout agents (`multi_turn`, `rlvr`, `vision_rlvr`).
   Each illustrates how `RolloutWorkflow.arun_episode` should orchestrate inference and
   rewards.
-- **`areal/engine/`** – Training and inference engines: FSDP2, Megatron, PPO actors, and
-  SGLang/vLLM adapters. Keep weight versioning logic consistent across edits.
 - **`areal/dataset/`** – Stateful data pipeline utilities. New datasets should plug into
   these loaders for replay-safe iteration.
 - **`areal/reward/`** – Reward functions and math parsers. Wrap slow logic with
   `AsyncRewardWrapper` in `areal/api/reward_api.py`.
 - **`areal/utils/`** – Cross-cutting helpers (logging, stats, tensor containers,
   recovery, evaluation). Prefer reusing these utilities over duplicating logic.
+- **`areal/scheduler/`** – Placement and allocation policies for launchers; align with
+  `examples/**` configs.
+- **`areal/tests/`** – Unit and integration tests colocated with code; many require GPU
+  or mocked distributed backends.
+- **`areal/platforms/`** – Hardware/platform abstractions for CPU/GPU/NPU targets and
+  runtime adapters.
+- **`areal/experimental/`** – Prototype engines/workflows; expect churn and breaking
+  changes.
 - **`examples/`** – End-to-end wiring scripts for math, multi-turn, RLHF, VLM, and
   search agents. Use them as references for config wiring and launcher usage.
+- **`evaluation/`** – Offline scoring pipelines that consume logged trajectories.
 - **`docs/`** – Jupyter Book source; mirrors the high-level architecture and
   customization guides published at https://inclusionai.github.io/AReaL/.
-- **`areal/launcher/`** – Orchestration entrypoints (local, Ray, Slurm) plus container
-  specs; essential for understanding deployment expectations.
-- **`realhf/`** – Legacy integrations retained for reference. Treat this directory as
-  read-only unless explicitly extending backward compatibility.
-- **`functioncall/` & `areal/platforms/`** – Tool-calling scaffolding and cluster
-  abstractions used by advanced agents.
+- **`functioncall/`** – Tool-calling scaffolding reused by workflows.
+- **`patch/`** – Maintains in-tree diffs applied to upstream dependencies; keep changes
+  minimal and well-documented.
+- **`realhf/`** – Legacy integrations retained for reference. Do **not** modify or
+  import; port call sites into `areal/` instead.
 
 ## Distributed operations & tooling
 
@@ -75,9 +110,20 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 - **Testing limitations**: End-to-end tests (FSDP, Megatron, distributed RPC) require
   multi-node NCCL clusters. If you cannot execute them, state that your validation is
   limited to static analysis/doc updates.
-- **Formatting & docs**: CI enforces Black/isort/autoflake and `mdformat`. Mention when
-  you cannot run the hooks; keep doc edits aligned with the Jupyter Book structure in
+- **Formatting & docs**: Pre-commit runs Ruff (lint+format), mdformat, clang-format,
+  nbstripout, and CLI doc generation. Run `pre-commit run --all-files` (or install the
+  hook) before submitting; keep doc edits aligned with the Jupyter Book structure in
   `docs/`.
+
+## Legacy `realhf/` (read-only)
+
+- `realhf/` remains only for archival context. The package build explicitly excludes it
+  via `pyproject.toml`.
+- Do **not** modify files under `realhf/`, and avoid importing them in new code. Treat
+  any dependency on these modules as tech debt.
+- When you encounter a `realhf` call site, prefer migrating the logic to the matching
+  `areal/` module or partner with maintainers to port it.
+- Flag lingering `realhf` usage in reviews/issues so we can track and eliminate it.
 
 ### Code style & patterns
 
@@ -87,9 +133,9 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
   is a strict superset of an existing one. Create a new dataclass if the config is
   conceptually distinct or would introduce breaking changes. Keep new configs
   dataclass-based so Hydra/CLI integration stays consistent.
-- **Imports**: Avoid wildcard imports; keep third-party vs internal imports separate
-  (`isort` handles ordering). Place heavy optional deps inside functions to prevent
-  import-time side effects.
+- **Imports**: Avoid wildcard imports; keep third-party vs internal groups consistent.
+  Ruff enforces import ordering (isort rules) when hooks run. Place heavy optional deps
+  inside functions to prevent import-time side effects.
 - **Logging**: Use `areal.utils.logging.getLogger(__name__)` rather than `print`. Emit
   structured metrics through `stats_tracker`/`StatsLogger` instead of ad-hoc counters.
 - **Async code**: Rollout workflows must stay non-blocking—prefer `await` with
@@ -134,7 +180,7 @@ Reference docs:
 
 1. Create/modify a class in `areal/workflow/` that subclasses `RolloutWorkflow`.
 1. Maintain async behavior (`async def arun_episode`); gather trajectories per prompt
-   and return padded tensors or `CompletionWithTokenLogpReward` maps.
+   and return padded tensors (typically via `concat_padded_tensors`).
 1. Expose knobs via `__init__` (tokenizer, `GenerationHyperparameters`, reward fn,
    dump_dir).
 1. Update references in entry scripts or configs (e.g.,
@@ -180,8 +226,9 @@ Reference docs:
   acknowledge skipped coverage explicitly.
 - **Distributed/FSDP suites**: `test_fsdp_*`, `test_sglang_engine.py`, and RPC suites
   demand multi-node NCCL clusters. Mention the dependency when deferring.
-- **Static checks**: Black/isort/autoflake and `mdformat` are enforced in CI. Call out
-  when formatting could not be verified locally.
+- **Static checks**: Pre-commit enforces Ruff lint/format, mdformat, clang-format,
+  nbstripout, CLI doc regeneration, and autoflake. Call out when hooks cannot be run
+  locally.
 
 Always mention resource requirements in PRs and in agent responses when tests are
 skipped.
@@ -238,8 +285,9 @@ skipped.
 - **Reviews**: Be explicit about follow-ups with `TODO(agent)` comments and track them
   in the PR discussion. Address review feedback with additional commits (no force-push
   once review starts unless requested).
-- **Pre-merge**: Ensure formatting hooks pass (`black`, `isort`, `mdformat`,
-  `autoflake`). For doc-only changes, run `mdformat --check` on touched files.
+- **Pre-merge**: Ensure pre-commit hooks pass (Ruff lint+format, mdformat, clang-format,
+  nbstripout, CLI docs, autoflake). For doc-only changes, run `mdformat --check` on
+  touched files.
 
 ## Reviewer checklist
 
@@ -253,8 +301,9 @@ skipped.
   `update_weights`) consistent.
 - **Resource awareness**: Ensure configs note memory/GPU expectations, and new
   datasets/models document storage paths or cache requirements.
-- **Code style compliance**: Watch for Black/isort/autoflake alignment, import grouping,
-  logging via `areal.utils.logging`, and consistent type hints/dataclass usage.
+- **Code style compliance**: Watch for Ruff lint/format alignment, autoflake cleanup,
+  clang-format on CUDA/C++, mdformat for docs, logging via `areal.utils.logging`, and
+  consistent type hints/dataclass usage.
 - **Config & docs**: Validate new knobs land in the right dataclasses/YAMLs with
   defaults explained in docs or README snippets. Cross-check hyperlinks and CLI
   references.

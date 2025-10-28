@@ -73,8 +73,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
                     messages, tokenize=False, add_generation_prompt=True
                 ),
                 _comp.choices[0].message.content,
-                comp.response.input_tokens,
-                comp.response.output_tokens,
+                comp.model_response.input_tokens,
+                comp.model_response.output_tokens,
                 **data,
             )
             # Increase counter
@@ -123,7 +123,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
             async with aiofiles.open(file_path, "a") as f:
                 n_samples = self.gconfig.n_samples
                 for i, (_, comp) in enumerate(results):
-                    sl = comp.response.input_len + comp.response.output_len
+                    sl = comp.model_response.input_len + comp.model_response.output_len
                     r = comp.reward
                     p = comp.messages
                     c = comp.completion.choices[0].message.content
