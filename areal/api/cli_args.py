@@ -240,7 +240,7 @@ class SchedulingSpec:
     image: str = field(
         default="", metadata={"help": "Docker/Singularity container image to use"}
     )
-    type: str = field(default="", metadata={"help": "Task type (e.g., worker, engine)"})
+    type: Literal["worker", "engine"] = field(default="worker", metadata={"help": "Task type (e.g., worker, engine)", "choices": ["worker", "engine"]})
     env_vars: Dict[str, str] = field(
         default_factory=dict,
         metadata={"help": "Environment variables for the container"},
