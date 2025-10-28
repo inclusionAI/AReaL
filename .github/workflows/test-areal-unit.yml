@@ -227,6 +227,9 @@ jobs:
             throw new Error(`Timed out waiting for runner ${instanceName} to come online.`);
 
   unit-tests:
+    needs:
+      - provision-runner
+    name: Run AReaL unit tests
     environment:
       name: AReaL-unittests
     permissions:
