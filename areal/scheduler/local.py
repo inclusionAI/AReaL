@@ -168,7 +168,12 @@ class LocalScheduler(Scheduler):
         return workers
 
     def delete_workers(self):
-        raise NotImplementedError("LocalScheduler does not support delete_workers")
+        # TODO: Implement proper worker cleanup. This might involve calling a method
+        # on self.launcher to terminate the processes it has started.
+        # For now, this is a no-op to prevent crashes.
+        logger.warning(
+            "LocalScheduler.delete_workers is not implemented and is a no-op. Worker processes might not be cleaned up properly."
+        )
 
     # Other methods remain the same
     def create_engine(self, worker_id, engine_obj, *args, **kwargs):
