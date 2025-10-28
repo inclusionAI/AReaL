@@ -241,8 +241,7 @@ jobs:
       #     python-version: "3.12"
 
       - run: |
-          pip3 install uv
-          uv pip install -e .[all] --no-deps --no-build-isolation --system
+          sudo uv pip install -e .[all] --no-deps --no-build-isolation --system
 
       # - name: Wait for 2 free GPUs
       #   timeout-minutes: 7200
