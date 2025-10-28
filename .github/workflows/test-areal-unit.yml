@@ -111,6 +111,9 @@ jobs:
           TOKEN=\$(curl -fsSL -H \"Metadata-Flavor: Google\" \"http://metadata.google.internal/computeMetadata/v1/instance/attributes/runner_token\")
           LABELS=\$(curl -fsSL -H \"Metadata-Flavor: Google\" \"http://metadata.google.internal/computeMetadata/v1/instance/attributes/runner_labels\")
 
+          apt-get update
+          apt-get install -y sudo
+
           if ! id runner >/dev/null 2>&1; then
             useradd --home-dir \"\${RUNNER_DIR}\" --create-home --shell /bin/bash runner
           fi
