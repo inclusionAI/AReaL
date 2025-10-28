@@ -34,7 +34,7 @@ def check_server_health(base_url):
     try:
         response = requests.get(f"{base_url}/health", timeout=30)
         return response.status_code == 200
-    except requests.exceptions.RequestException as e:
+    except requests.exceptions.RequestException:
         return False
 
 
@@ -155,11 +155,13 @@ def test_remote_vllm_staleness_control(vllm_server, bs, ofp, n_samples):
     for _ in range(bs * 2):
         engine.submit(data, workflow=workflow)
 
-    # wait for some time
-    time.sleep(10)
-    assert engine._engine.workflow_executor.output_queue.qsize() == min(
-        bs * 2, bs * (ofp + 1)
-    )
+    if ofp < 1:
+        # Due to controlled offpolicyness, not all requests are committed
+        with pytest.raises(TimeoutError):
+            engine.wait(count=bs * 2, timeout=10)
+    else:
+        result = engine.wait(count=bs * 2, timeout=10)
+        assert result["attention_mask"].shape[0] == bs * 2 * n_samples
 
     # Update model version
     engine.set_version(1)
@@ -168,11 +170,15 @@ def test_remote_vllm_staleness_control(vllm_server, bs, ofp, n_samples):
     # submit again
     for _ in range(bs * 2):
         engine.submit(data, workflow=workflow)
-    # wait for some time
-    time.sleep(5)
-    assert engine._engine.workflow_executor.output_queue.qsize() == min(
-        bs * 4, bs * (ofp + 2)
-    )
+
+    if ofp < 2:
+        # Due to controlled offpolicyness, not all requests are committed
+        with pytest.raises(TimeoutError):
+            engine.wait(count=bs * 4, timeout=5)
+    else:
+        # 2 * bs samples haved been retrived above
+        results = engine.wait(count=bs * 2, timeout=5)
+        assert results["attention_mask"].shape[0] == bs * 2 * n_samples
 
     # exit
     engine.destroy()

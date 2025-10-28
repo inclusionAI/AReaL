@@ -28,7 +28,7 @@ class AgentRLConfig(GRPOConfig):
         default="math",
         metadata={
             "help": "Type of agent workflow to use.",
-            "choices": ["math", "multi_turn_math"],
+            "choices": ["math", "multi_agent_math"],
         },
     )
     n_trajs: int = field(
@@ -110,10 +110,10 @@ def main(args):
                 StatsLogger.get_log_path(config.stats_logger), "generated"
             ),
         )
-    elif config.agent_type == "multi_turn_math":
-        from multi_turn_math_workflow import MultiturnRLVRAgentWorkflow
+    elif config.agent_type == "multi_agent_math":
+        from multi_agent_math_workflow import MultiAgentRLVRAgentWorkflow
 
-        workflow = MultiturnRLVRAgentWorkflow(
+        workflow = MultiAgentRLVRAgentWorkflow(
             gconfig=config.gconfig,
             tokenizer=tokenizer,
             n_trajs=config.n_trajs,
