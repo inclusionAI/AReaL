@@ -10,7 +10,8 @@ from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import stats_tracker
 from areal.utils.data import (
     KLEstimator,
-    Normalization,
+    get_adv_norm,
+    get_reward_norm,
     split_padded_tensor_dict_into_mb_list,
 )
 from areal.utils.functional import (
@@ -36,10 +37,8 @@ class PPOActor:
         self.kl_ctl = config.kl_ctl
         self.kl_estimator = KLEstimator(config.kl_estimator)
 
-        self.adv_norm = Normalization(config.adv_norm) if config.adv_norm else None
-        self.reward_norm = (
-            Normalization(config.reward_norm) if config.reward_norm else None
-        )
+        self.adv_norm = get_adv_norm(config)
+        self.reward_norm = get_reward_norm(config)
 
         self.discount = config.discount
         self.gae_lambda = config.gae_lambda

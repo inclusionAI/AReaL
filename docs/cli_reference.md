@@ -271,14 +271,16 @@ Specification for splitting micro-batches during training.
 
 Configuration for reward/advantage normalization.
 
-| Parameter        | Type           | Default   | Description                                                                                                      |
-| ---------------- | -------------- | --------- | ---------------------------------------------------------------------------------------------------------------- |
-| `mean_level`     | string \| None | `"batch"` | Mean level for normalization. None for no mean normalization. **Choices:** `batch`, `group`, `None`              |
-| `mean_leave1out` | boolean        | `False`   | Whether to use leave-one-out average.                                                                            |
-| `std_level`      | string \| None | `"batch"` | Standard deviation level for normalization. None for no std normalization. **Choices:** `batch`, `group`, `None` |
-| `std_unbiased`   | boolean        | `True`    | Whether to use unbiased standard deviation computation. Defaults to True (changed from False in v0.3.4).         |
-| `eps`            | float          | `1e-05`   | The eps when dividing by standard deviation to avoid numerical issues.                                           |
-| `group_size`     | integer        | `1`       | Group size for group-level normalization                                                                         |
+| Parameter          | Type           | Default    | Description                                                                                                                                                                                                 |
+| ------------------ | -------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mean_level`       | string \| None | `"batch"`  | Mean level for normalization. None for no mean normalization. **Choices:** `batch`, `group`, `None`                                                                                                         |
+| `mean_leave1out`   | boolean        | `False`    | Whether to use leave-one-out average.                                                                                                                                                                       |
+| `std_level`        | string \| None | `"batch"`  | Standard deviation level for normalization. None for no std normalization. **Choices:** `batch`, `group`, `None`                                                                                            |
+| `std_unbiased`     | boolean        | `True`     | Whether to use unbiased standard deviation computation. Defaults to True (changed from False in v0.3.4).                                                                                                    |
+| `eps`              | float          | `1e-05`    | The eps when dividing by standard deviation to avoid numerical issues.                                                                                                                                      |
+| `group_size`       | integer        | `1`        | Group size for group-level normalization                                                                                                                                                                    |
+| `adv_norm_mode`    | string         | `"native"` | native or mix. native is the normal z-score normalization. for mix, the normal z-score and mean-base z-score normalization will be calculated and aggregated (more info please refer to the paper of MAPO). |
+| `reward_norm_mode` | string         | `"native"` | Mode for reward normalization. Currently only 'native' is supported.                                                                                                                                        |
 
 (section-optimizer)=
 

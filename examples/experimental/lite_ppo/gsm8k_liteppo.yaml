@@ -1,4 +1,4 @@
-experiment_name: gsm8k-grpo
+experiment_name: gsm8k-liteppo
 trial_name: trial0
 
 seed: 1

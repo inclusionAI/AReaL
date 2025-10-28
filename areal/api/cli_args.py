@@ -57,6 +57,18 @@ class NormConfig:
     group_size: int = field(
         default=1, metadata={"help": "Group size for group-level normalization"}
     )
+    adv_norm_mode: str = field(
+        default="native",
+        metadata={
+            "help": "native or mix. native is the normal z-score normalization. for mix, the normal z-score and mean-base z-score normalization will be calculated and aggregated (more info please refer to the paper of MAPO)."
+        },
+    )
+    reward_norm_mode: str = field(
+        default="native",
+        metadata={
+            "help": "Mode for reward normalization. Currently only 'native' is supported."
+        },
+    )
 
 
 @dataclass
@@ -724,6 +736,7 @@ class SGLangConfig:
                 flags.append(f"--{k.replace('_','-')} {' '.join(map(str, v))}")
             else:
                 flags.append(f"--{k.replace('_','-')} {v}")
+
         return f"python3 -m sglang.launch_server {' '.join(flags)}"
 
     @staticmethod
