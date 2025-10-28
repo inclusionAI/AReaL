@@ -86,6 +86,16 @@ async def arequest_with_retry(
                     attempt + 1,
                     max_retries,
                 )
+            else:
+                logger.warning(
+                    "HTTP request to %s%s failed with %s: %s (attempt %d/%d)",
+                    addr,
+                    endpoint,
+                    e.__class__.__name__,
+                    str(e),
+                    attempt + 1,
+                    max_retries,
+                )
             last_exception = e
             if attempt < max_retries - 1:
                 await asyncio.sleep(retry_delay)
