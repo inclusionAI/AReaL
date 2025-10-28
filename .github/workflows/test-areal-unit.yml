@@ -80,10 +80,10 @@ jobs:
           CONTAINER_IMAGE="__CONTAINER_IMAGE__"
           RUNNER_DIR="/opt/actions-runner"
 
-          apt-get update
-          apt-get install -y curl jq git docker.io
-          systemctl enable docker
-          systemctl start docker
+          # apt-get update
+          # apt-get install -y curl jq
+          # systemctl enable docker
+          # systemctl start docker
 
           if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
             docker run --name "$CONTAINER_NAME" -d -it \
@@ -238,8 +238,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      # - run: |
-      #     source examples/env/setup-pip-deps.sh
+      - run: |
+          pip3 install -e .[all] --no-deps --no-build-isolation
 
       # - name: Wait for 2 free GPUs
       #   timeout-minutes: 7200

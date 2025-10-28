@@ -247,6 +247,7 @@ jobs:
       - name: Run SFT integration tests
         env:
           CI: true
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           TOKENIZERS_PARALLELISM=false HF_ENDPOINT=https://hf-mirror.com pytest -s -vv areal/tests/sft/
 
