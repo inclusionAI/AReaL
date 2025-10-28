@@ -117,6 +117,11 @@ class PerfTracer:
         if self._aggregate == aggregate:
             return
         self._aggregate = aggregate
+        if aggregate and fcntl is None:
+            logger.warning(
+                "PerfTracer aggregation is enabled on a platform without `fcntl` "
+                "(e.g., Windows). Concurrent writes may lead to corrupted trace files."
+            )
         if self._user_output_path is not None:
             # Re-resolve the output path to adjust rank suffix usage
             self.set_output(self._user_output_path, rank=self._rank)
@@ -414,7 +419,7 @@ class _AsyncScope(AbstractAsyncContextManager[Any]):
         return self
 
     async def __aexit__(self, exc_type, exc, exc_tb):
-        self._scope.__exit__(exc_type, exc, exc_tb)
+        return self._scope.__exit__(exc_type, exc, exc_tb)
 
 
 def _thread_id() -> int:
