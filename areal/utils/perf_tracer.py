@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover
 
 
 _THREAD_LOCAL = threading.local()
+_UNSET = object()
 
 
 @contextmanager
@@ -477,15 +478,15 @@ def configure(
     *,
     enabled: bool | None = None,
     output_path: str | None = None,
-    rank: int | None = None,
+    rank: int | None | object = _UNSET,
     aggregate: bool | None = None,
 ) -> PerfTracer:
     tracer = get_tracer()
     if aggregate is not None:
         tracer.set_aggregate(aggregate)
-    rank_provided = rank is not None
+    rank_provided = rank is not _UNSET
     if rank_provided:
-        tracer._rank = rank
+        tracer._rank = rank if rank is not None else None
     if output_path is not None:
         tracer.set_output(output_path)
     elif rank_provided and tracer._user_output_path is not None:
