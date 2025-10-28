@@ -10,6 +10,7 @@ from contextlib import (
     AbstractContextManager,
     contextmanager,
 )
+from enum import Enum
 from typing import Any
 
 from areal.utils import logging
@@ -24,6 +25,37 @@ except ImportError:  # pragma: no cover
 
 _THREAD_LOCAL = threading.local()
 _UNSET = object()
+
+
+class PerfTraceCategory(str, Enum):
+    COMPUTE = "compute"
+    COMM = "comm"
+    IO = "io"
+    SYNC = "sync"
+    SCHEDULER = "scheduler"
+    INSTR = "instr"
+    MISC = "misc"
+
+
+Category = PerfTraceCategory
+
+
+CategoryLike = PerfTraceCategory | str | None
+
+
+_CATEGORY_ALIASES: dict[str, PerfTraceCategory] = {
+    "compute": PerfTraceCategory.COMPUTE,
+    "communication": PerfTraceCategory.COMM,
+    "comm": PerfTraceCategory.COMM,
+    "io": PerfTraceCategory.IO,
+    "synchronization": PerfTraceCategory.SYNC,
+    "sync": PerfTraceCategory.SYNC,
+    "scheduling": PerfTraceCategory.SCHEDULER,
+    "scheduler": PerfTraceCategory.SCHEDULER,
+    "instrumentation": PerfTraceCategory.INSTR,
+    "instr": PerfTraceCategory.INSTR,
+    "misc": PerfTraceCategory.MISC,
+}
 
 
 @contextmanager
@@ -62,6 +94,20 @@ def _strtobool(value: str | None) -> bool:
     if value is None:
         return False
     return value.lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _normalize_category(category: CategoryLike) -> str:
+    if category is None:
+        return PerfTraceCategory.MISC.value
+    if isinstance(category, PerfTraceCategory):
+        return category.value
+    if isinstance(category, str) and category.strip():
+        lowered = category.strip().lower()
+        alias = _CATEGORY_ALIASES.get(lowered)
+        if alias is not None:
+            return alias.value
+        return category
+    return PerfTraceCategory.MISC.value
 
 
 class _NullContext(AbstractContextManager, AbstractAsyncContextManager):
@@ -177,29 +223,39 @@ class PerfTracer:
         self,
         name: str,
         *,
-        category: str | None = None,
+        category: CategoryLike = None,
         args: dict[str, Any] | None = None,
     ) -> AbstractContextManager[Any]:
         if not self._enabled:
             return _NullContext()
-        return _Scope(self, name, category=category, args=args)
+        return _Scope(
+            self,
+            name,
+            category=_normalize_category(category),
+            args=args,
+        )
 
     def atrace_scope(
         self,
         name: str,
         *,
-        category: str | None = None,
+        category: CategoryLike = None,
         args: dict[str, Any] | None = None,
     ) -> AbstractAsyncContextManager[Any]:
         if not self._enabled:
             return _NullContext()
-        return _AsyncScope(self, name, category=category, args=args)
+        return _AsyncScope(
+            self,
+            name,
+            category=_normalize_category(category),
+            args=args,
+        )
 
     def instant(
         self,
         name: str,
         *,
-        category: str | None = None,
+        category: CategoryLike = None,
         args: dict[str, Any] | None = None,
     ) -> None:
         if not self._enabled:
@@ -211,7 +267,7 @@ class PerfTracer:
                 "ts": self._now_us(),
                 "pid": self._pid,
                 "tid": _thread_id(),
-                "cat": category or "general",
+                "cat": _normalize_category(category),
                 "args": args or {},
                 "s": "t",
             }
@@ -283,7 +339,7 @@ class PerfTracer:
         start_ns: int,
         duration_ns: int,
         *,
-        category: str | None,
+        category: str,
         args: dict[str, Any] | None,
     ) -> None:
         event = {
@@ -293,7 +349,7 @@ class PerfTracer:
             "dur": max(duration_ns // 1000, 1),
             "pid": self._pid,
             "tid": _thread_id(),
-            "cat": category or "general",
+            "cat": category,
             "args": args or {},
         }
         self._record_event(event)
@@ -374,7 +430,7 @@ class _Scope(AbstractContextManager[Any]):
         tracer: PerfTracer,
         name: str,
         *,
-        category: str | None,
+        category: str,
         args: dict[str, Any] | None,
     ) -> None:
         self._tracer = tracer
@@ -410,7 +466,7 @@ class _AsyncScope(AbstractAsyncContextManager[Any]):
         tracer: PerfTracer,
         name: str,
         *,
-        category: str | None,
+        category: str,
         args: dict[str, Any] | None,
     ) -> None:
         self._scope = _Scope(tracer, name, category=category, args=args)
@@ -499,7 +555,7 @@ def configure(
 def trace_scope(
     name: str,
     *,
-    category: str | None = None,
+    category: CategoryLike = None,
     args: dict[str, Any] | None = None,
 ):
     return GLOBAL_TRACER.trace_scope(name, category=category, args=args)
@@ -508,7 +564,7 @@ def trace_scope(
 def atrace_scope(
     name: str,
     *,
-    category: str | None = None,
+    category: CategoryLike = None,
     args: dict[str, Any] | None = None,
 ):
     return GLOBAL_TRACER.atrace_scope(name, category=category, args=args)
@@ -517,7 +573,7 @@ def atrace_scope(
 def instant(
     name: str,
     *,
-    category: str | None = None,
+    category: CategoryLike = None,
     args: dict[str, Any] | None = None,
 ) -> None:
     GLOBAL_TRACER.instant(name, category=category, args=args)
@@ -529,6 +585,8 @@ def save(path: str | None = None, *, reset: bool = True) -> str | None:
 
 __all__ = [
     "PerfTracer",
+    "PerfTraceCategory",
+    "Category",
     "GLOBAL_TRACER",
     "get_tracer",
     "configure",

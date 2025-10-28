@@ -10,6 +10,7 @@ import pytest
 from areal.platforms import current_platform
 from areal.utils import perf_tracer
 from areal.utils.network import find_free_ports
+from areal.utils.perf_tracer import Category
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +46,7 @@ def test_perf_tracer_records_events_and_save(tmp_path, use_rank_suffix):
     output_file = tmp_path / "trace.json"
     tracer.set_output(str(output_file), rank=use_rank_suffix)
 
-    with tracer.trace_scope("unit-block", category="unit", args={"step": 1}):
+    with tracer.trace_scope("unit-block", category=Category.INSTR, args={"step": 1}):
         tracer.instant("inner-mark", args={"value": 42})
     tracer.instant("outer-mark")
 
@@ -130,11 +131,13 @@ async def test_global_tracer_configure_roundtrip(tmp_path):
     )
 
     async with perf_tracer.atrace_scope(
-        "async-step", category="unit-test", args={"phase": "enter"}
+        "async-step",
+        category=Category.INSTR,
+        args={"phase": "enter"},
     ):
         perf_tracer.instant("inside-async", args={"flag": True})
 
-    with perf_tracer.trace_scope("sync-step", category="unit-test"):
+    with perf_tracer.trace_scope("sync-step", category=Category.INSTR):
         pass
 
     saved = tracer.save(reset=True)

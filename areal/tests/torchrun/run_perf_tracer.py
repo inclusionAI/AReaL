@@ -5,6 +5,7 @@ import torch
 import torch.distributed as dist
 
 from areal.utils import perf_tracer
+from areal.utils.perf_tracer import Category
 
 
 def main() -> None:
@@ -27,7 +28,7 @@ def main() -> None:
 
         with perf_tracer.trace_scope(
             "torchrun-step",
-            category="torchrun",
+            category=Category.INSTR,
             args={"rank": rank},
         ):
             device = (
@@ -41,7 +42,7 @@ def main() -> None:
 
             with perf_tracer.trace_scope(
                 "warmup",
-                category="compute",
+                category=Category.COMPUTE,
                 args={"rank": rank, "size": size},
             ):
                 _c = torch.matmul(a, b)
@@ -50,7 +51,7 @@ def main() -> None:
 
             with perf_tracer.trace_scope(
                 "matmul",
-                category="compute",
+                category=Category.COMPUTE,
                 args={"rank": rank, "size": size, "iters": 1000},
             ):
                 c = None
