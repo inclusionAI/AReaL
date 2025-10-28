@@ -6,7 +6,6 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Union
 
 import psutil
 
@@ -62,7 +61,7 @@ for job_state, process_statuses in JOB_STATE_TO_PROCESS_STATUS.items():
         PROCESS_STATUS_TO_JOB_STATE[process_status] = job_state
 
 
-def terminate_process_and_children(pid: int, signal: Optional[Union[str, int]] = None):
+def terminate_process_and_children(pid: int, signal: str | int | None = None):
     if signal is None:
         signal = signal_module.SIGKILL
     if isinstance(signal, str):
@@ -71,7 +70,7 @@ def terminate_process_and_children(pid: int, signal: Optional[Union[str, int]] =
         parent = psutil.Process(pid)
         children = parent.children(recursive=True)
         for child in children:
-            terminate_process_and_children(child.pid)
+            terminate_process_and_children(child.pid, signal)
         parent.send_signal(signal)
     except psutil.NoSuchProcess:
         pass
@@ -83,12 +82,12 @@ class LocalLauncher:
         self.trial_name = trial_name
         self.fileroot = fileroot
 
-        self._jobs: Dict[str, subprocess.Popen] = {}
-        self._job_counter: Dict[str, int] = defaultdict(int)
+        self._jobs: dict[str, subprocess.Popen] = {}
+        self._job_counter: dict[str, int] = defaultdict(int)
         self._job_states = {}
 
         self._gpu_counter = 0
-        self._gpu_devices: List[str] = os.environ.get(
+        self._gpu_devices: list[str] = os.environ.get(
             current_platform.device_control_env_var,
             ",".join(map(str, range(current_platform.device_count()))),
         ).split(",")
@@ -114,10 +113,10 @@ class LocalLauncher:
     def submit_array(
         self,
         job_name: str,
-        cmd: str | List[str],
+        cmd: str | list[str],
         count: int = 1,
         gpu: int = 0,
-        env_vars: Optional[Dict] = None,
+        env_vars: dict | None = None,
     ):
         if env_vars is None:
             env_vars = {}
@@ -151,9 +150,9 @@ class LocalLauncher:
     def submit(
         self,
         job_name: str,
-        cmd: str | List[str],
+        cmd: str | list[str],
         gpu: int = 0,
-        env_vars: Optional[Dict] = None,
+        env_vars: dict | None = None,
     ):
         self.submit_array(job_name=job_name, cmd=cmd, gpu=gpu, env_vars=env_vars)
 
@@ -194,12 +193,12 @@ class LocalLauncher:
     def wait(
         self,
         timeout=None,
-        check_status: Tuple[JobState, ...] = (
+        check_status: tuple[JobState, ...] = (
             JobState.CANCELLED,
             JobState.FAILED,
             JobState.NOT_FOUND,
         ),
-        remove_status: Tuple[JobState, ...] = (JobState.COMPLETED,),
+        remove_status: tuple[JobState, ...] = (JobState.COMPLETED,),
         update=False,
     ):
         deadline = None if timeout is None else time.time() + timeout

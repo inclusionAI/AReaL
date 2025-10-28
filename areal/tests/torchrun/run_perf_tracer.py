@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 
+from areal.api.cli_args import PerfTracerConfig
 from areal.utils import perf_tracer
 from areal.utils.perf_tracer import Category
 
@@ -19,12 +20,17 @@ def main() -> None:
         dist.init_process_group(backend="gloo")
 
     try:
-        perf_tracer.configure(
+        config = PerfTracerConfig(
+            experiment_name="torchrun",
+            trial_name=f"world-{world_size}",
+            fileroot=str(base_dir),
             enabled=True,
-            output_path=str(base_dir / "trace.json"),
-            rank=rank,
-            aggregate=True,
         )
+        tracer = perf_tracer.configure(
+            config,
+            rank=rank,
+        )
+        tracer.reset()
 
         with perf_tracer.trace_scope(
             "torchrun-step",
@@ -73,7 +79,7 @@ def main() -> None:
         if world_size > 1:
             dist.barrier()
     finally:
-        perf_tracer.save(reset=True)
+        perf_tracer.save()
         if dist.is_initialized():
             dist.destroy_process_group()
 

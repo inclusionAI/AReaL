@@ -73,6 +73,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 
 - [DistributedDataParallel Configuration](section-distributed-data-parallel)
 - [MegatronEngine Configuration](section-megatron-engine)
+- [PerfTracer Configuration](section-perf-tracer)
 - [Scheduler Configuration](section-scheduler)
 
 ______________________________________________________________________
@@ -99,6 +100,7 @@ Base configuration class for all experiment types with common settings.
 | `saver`              | [`SaverConfig`](section-saver)              | **Required** | -                                                                                                                          |
 | `evaluator`          | [`EvaluatorConfig`](section-evaluator)      | **Required** | -                                                                                                                          |
 | `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger) | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer)   | **Required** | -                                                                                                                          |
 | `recover`            | [`RecoverConfig`](section-recover)          | **Required** | -                                                                                                                          |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)           | **Required** | -                                                                                                                          |
 | `vllm`               | [`vLLMConfig`](section-v-llm)               | **Required** | -                                                                                                                          |
@@ -128,6 +130,7 @@ experiments.
 | `saver`              | [`SaverConfig`](section-saver)                                    | **Required** | -                                                                                                                          |
 | `evaluator`          | [`EvaluatorConfig`](section-evaluator)                            | **Required** | -                                                                                                                          |
 | `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger)                       | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer)                         | **Required** | -                                                                                                                          |
 | `recover`            | [`RecoverConfig`](section-recover)                                | **Required** | -                                                                                                                          |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)                                 | **Required** | -                                                                                                                          |
 | `vllm`               | [`vLLMConfig`](section-v-llm)                                     | **Required** | -                                                                                                                          |
@@ -161,6 +164,7 @@ Configuration for Proximal Policy Optimization (PPO) reinforcement learning expe
 | `saver`              | [`SaverConfig`](section-saver)                                    | **Required** | -                                                                                                                          |
 | `evaluator`          | [`EvaluatorConfig`](section-evaluator)                            | **Required** | -                                                                                                                          |
 | `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger)                       | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer)                         | **Required** | -                                                                                                                          |
 | `recover`            | [`RecoverConfig`](section-recover)                                | **Required** | -                                                                                                                          |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)                                 | **Required** | -                                                                                                                          |
 | `vllm`               | [`vLLMConfig`](section-v-llm)                                     | **Required** | -                                                                                                                          |
@@ -195,6 +199,7 @@ Configuration for Reward Model (RW) training experiments.
 | `saver`              | [`SaverConfig`](section-saver)              | **Required** | -                                                                                                                          |
 | `evaluator`          | [`EvaluatorConfig`](section-evaluator)      | **Required** | -                                                                                                                          |
 | `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger) | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer)   | **Required** | -                                                                                                                          |
 | `recover`            | [`RecoverConfig`](section-recover)          | **Required** | -                                                                                                                          |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)           | **Required** | -                                                                                                                          |
 | `vllm`               | [`vLLMConfig`](section-v-llm)               | **Required** | -                                                                                                                          |
@@ -224,6 +229,7 @@ Configuration for Supervised Fine-Tuning (SFT) experiments.
 | `saver`              | [`SaverConfig`](section-saver)              | **Required** | -                                                                                                                          |
 | `evaluator`          | [`EvaluatorConfig`](section-evaluator)      | **Required** | -                                                                                                                          |
 | `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger) | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer)   | **Required** | -                                                                                                                          |
 | `recover`            | [`RecoverConfig`](section-recover)          | **Required** | -                                                                                                                          |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)           | **Required** | -                                                                                                                          |
 | `vllm`               | [`vLLMConfig`](section-v-llm)               | **Required** | -                                                                                                                          |
@@ -796,6 +802,19 @@ Refer to Megatron-LM documentation for implementation details.
 | `recompute_num_layers`                     | integer \| None                                                      | `1`          | -           |
 | `distribute_saved_activations`             | boolean \| None                                                      | `None`       | -           |
 | `recompute_modules`                        | list of string \| None                                               | `None`       | -           |
+
+(section-perf-tracer)=
+
+## PerfTracer Configuration
+
+Configuration for perf tracer emission.
+
+| Parameter         | Type    | Default      | Description                                                                    |
+| ----------------- | ------- | ------------ | ------------------------------------------------------------------------------ |
+| `experiment_name` | string  | **Required** | -                                                                              |
+| `trial_name`      | string  | **Required** | -                                                                              |
+| `fileroot`        | string  | **Required** | -                                                                              |
+| `enabled`         | boolean | `False`      | Explicitly enable or disable perf tracing. Set to true to capture perf traces. |
 
 (section-scheduler)=
 

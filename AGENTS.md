@@ -45,7 +45,8 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 | `evaluation/`             | Offline evaluation scripts (math/code/Elo) and utilities.                       |
 | `functioncall/`           | Tool-calling utilities reused in workflows.                                     |
 | `docs/`                   | Jupyter Book source published to https://inclusionai.github.io/AReaL/.          |
-| `assets/` `benchmark/`    | Figures, regression baselines, and benchmark snapshots.                         |
+| `assets/`                 | Figures and other static assets.                                                |
+| `benchmark/`              | Regression baselines and benchmark snapshots.                                   |
 | `blog/`                   | Release and update write-ups.                                                   |
 | `csrc/`                   | CUDA/C++ extensions that need `build_ext --inplace` after edits.                |
 | `notebook/`               | Reference notebooks (outputs stripped by pre-commit).                           |
@@ -63,34 +64,34 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
   packing.
 - **`areal/core/`** – Async orchestration primitives (task runners, remote inference,
   workflow execution).
-- **`areal/launcher/`** – Reference launchers for local, Ray, and Slurm targets plus
-  container specs; reuse these instead of ad-hoc scripts.
-- **`areal/engine/`** – Training and inference engines: FSDP2, Megatron, PPO actors, and
-  SGLang/vLLM adapters. Keep weight versioning logic consistent across edits.
-- **`areal/models/`** – Model-specific adapters (Megatron-Core layers, Transformers
-  wrappers, custom heads).
-- **`areal/workflow/`** – Concrete rollout agents (`multi_turn`, `rlvr`, `vision_rlvr`).
-  Each illustrates how `RolloutWorkflow.arun_episode` should orchestrate inference and
-  rewards.
 - **`areal/dataset/`** – Stateful data pipeline utilities. New datasets should plug into
   these loaders for replay-safe iteration.
+- **`areal/engine/`** – Training and inference engines: FSDP2, Megatron, PPO actors, and
+  SGLang/vLLM adapters. Keep weight versioning logic consistent across edits.
+- **`areal/experimental/`** – Prototype engines/workflows; expect churn and breaking
+  changes.
+- **`areal/launcher/`** – Reference launchers for local, Ray, and Slurm targets plus
+  container specs; reuse these instead of ad-hoc scripts.
+- **`areal/models/`** – Model-specific adapters (Megatron-Core layers, Transformers
+  wrappers, custom heads).
+- **`areal/platforms/`** – Hardware/platform abstractions for CPU/GPU/NPU targets and
+  runtime adapters.
 - **`areal/reward/`** – Reward functions and math parsers. Wrap slow logic with
   `AsyncRewardWrapper` in `areal/api/reward_api.py`.
-- **`areal/utils/`** – Cross-cutting helpers (logging, stats, tensor containers,
-  recovery, evaluation). Prefer reusing these utilities over duplicating logic.
 - **`areal/scheduler/`** – Placement and allocation policies for launchers; align with
   `examples/**` configs.
 - **`areal/tests/`** – Unit and integration tests colocated with code; many require GPU
   or mocked distributed backends.
-- **`areal/platforms/`** – Hardware/platform abstractions for CPU/GPU/NPU targets and
-  runtime adapters.
-- **`areal/experimental/`** – Prototype engines/workflows; expect churn and breaking
-  changes.
-- **`examples/`** – End-to-end wiring scripts for math, multi-turn, RLHF, VLM, and
-  search agents. Use them as references for config wiring and launcher usage.
-- **`evaluation/`** – Offline scoring pipelines that consume logged trajectories.
+- **`areal/utils/`** – Cross-cutting helpers (logging, stats, tensor containers,
+  recovery, evaluation). Prefer reusing these utilities over duplicating logic.
+- **`areal/workflow/`** – Concrete rollout agents (`multi_turn`, `rlvr`, `vision_rlvr`).
+  Each illustrates how `RolloutWorkflow.arun_episode` should orchestrate inference and
+  rewards.
 - **`docs/`** – Jupyter Book source; mirrors the high-level architecture and
   customization guides published at https://inclusionai.github.io/AReaL/.
+- **`evaluation/`** – Offline scoring pipelines that consume logged trajectories.
+- **`examples/`** – End-to-end wiring scripts for math, multi-turn, RLHF, VLM, and
+  search agents. Use them as references for config wiring and launcher usage.
 - **`functioncall/`** – Tool-calling scaffolding reused by workflows.
 - **`patch/`** – Maintains in-tree diffs applied to upstream dependencies; keep changes
   minimal and well-documented.

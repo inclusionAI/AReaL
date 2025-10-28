@@ -961,6 +961,23 @@ class StatsLoggerConfig:
 
 
 @dataclass
+class PerfTracerConfig:
+    """Configuration for perf tracer emission."""
+
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
+    fileroot: str = MISSING
+    enabled: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Explicitly enable or disable perf tracing. Set to true to capture perf traces."
+            )
+        },
+    )
+
+
+@dataclass
 class NameResolveConfig:
     """Configuration for distributed name resolution and service discovery."""
 
@@ -1196,6 +1213,7 @@ class BaseExperimentConfig:
     saver: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
+    perf_tracer: PerfTracerConfig = field(default_factory=PerfTracerConfig)
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
