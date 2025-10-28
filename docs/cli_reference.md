@@ -768,13 +768,13 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 
 Configuration class: SchedulingSpec
 
-| Parameter    | Type    | Default      | Description                               |
-| ------------ | ------- | ------------ | ----------------------------------------- |
-| `cpu`        | integer | `0`          | Number of CPU cores required              |
-| `gpu`        | integer | `0`          | Number of GPU units required              |
-| `mem`        | integer | `0`          | Amount of memory (GB) required            |
-| `port_count` | integer | `2`          | Number of ports to expose                 |
-| `image`      | string  | `""`         | Docker/Singularity container image to use |
-| `type`       | string  | `""`         | Task type (e.g., worker, engine)          |
-| `env_vars`   | `Dict`  | **Required** | Environment variables for the container   |
-| `cmd`        | string  | `""`         | Command to execute inside the container   |
+| Parameter    | Type    | Default      | Description                                                      |
+| ------------ | ------- | ------------ | ---------------------------------------------------------------- |
+| `cpu`        | integer | `0`          | Number of CPU cores required                                     |
+| `gpu`        | integer | `0`          | Number of GPU units required                                     |
+| `mem`        | integer | `0`          | Amount of memory (GB) required                                   |
+| `port_count` | integer | `2`          | Number of ports to expose                                        |
+| `image`      | string  | `""`         | Docker/Singularity container image to use                        |
+| `type`       | string  | `"worker"`   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine` |
+| `env_vars`   | `Dict`  | **Required** | Environment variables for the container                          |
+| `cmd`        | string  | `""`         | Command to execute inside the container                          |
