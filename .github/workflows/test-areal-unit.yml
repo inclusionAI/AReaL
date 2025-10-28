@@ -257,6 +257,7 @@ jobs:
       - name: Run unit tests
         env:
           CI: true
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           TOKENIZERS_PARALLELISM=false AREAL_IS_IN_CI=1 pytest -s -vv areal/tests/test_*.py
 
