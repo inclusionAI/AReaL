@@ -236,13 +236,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      # - uses: actions/setup-python@v5
+      #   with:
+      #     python-version: "3.12"
 
       - run: |
           pip3 install uv
-          uv pip install setuptools --system
           uv pip install -e .[all] --no-deps --no-build-isolation --system
 
       # - name: Wait for 2 free GPUs
