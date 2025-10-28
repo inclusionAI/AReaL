@@ -11,7 +11,7 @@ from contextlib import (
     contextmanager,
 )
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from areal.utils import logging
 
@@ -172,6 +172,15 @@ class PerfTracer:
         if self._user_output_path is not None:
             # Re-resolve the output path to adjust rank suffix usage
             self.set_output(self._user_output_path, rank=self._rank)
+
+    def set_rank(self, rank: int | None) -> None:
+        new_rank = int(rank) if rank is not None else None
+        if self._rank == new_rank:
+            return
+        self._rank = new_rank
+        if self._user_output_path is not None:
+            # Re-resolve the output path to adjust rank suffix usage
+            self.set_output(self._user_output_path)
 
     def set_output(
         self,
@@ -346,6 +355,8 @@ class PerfTracer:
             "name": name,
             "ph": "X",
             "ts": self._relative_us(start_ns),
+            # Chrome trace viewers drop complete events whose duration rounds to 0 µs,
+            # so clamp to 1 µs to keep sub-microsecond spans visible.
             "dur": max(duration_ns // 1000, 1),
             "pid": self._pid,
             "tid": _thread_id(),
@@ -540,13 +551,10 @@ def configure(
     tracer = get_tracer()
     if aggregate is not None:
         tracer.set_aggregate(aggregate)
-    rank_provided = rank is not _UNSET
-    if rank_provided:
-        tracer._rank = rank if rank is not None else None
+    if rank is not _UNSET:
+        tracer.set_rank(cast(int | None, rank))
     if output_path is not None:
         tracer.set_output(output_path)
-    elif rank_provided and tracer._user_output_path is not None:
-        tracer.set_output(tracer._user_output_path)
     if enabled is not None:
         tracer.set_enabled(enabled)
     return tracer
