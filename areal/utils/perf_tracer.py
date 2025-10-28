@@ -381,7 +381,7 @@ class _Scope(AbstractContextManager[Any]):
         self._start_ns = time.perf_counter_ns()
         return self
 
-    def __exit__(self, exc_type, exc, exc_tb) -> None:
+    def __exit__(self, exc_type, exc, exc_tb):
         if self._start_ns is None:
             return False
         duration_ns = time.perf_counter_ns() - self._start_ns
@@ -413,9 +413,8 @@ class _AsyncScope(AbstractAsyncContextManager[Any]):
         self._scope.__enter__()
         return self
 
-    async def __aexit__(self, exc_type, exc, exc_tb) -> None:
+    async def __aexit__(self, exc_type, exc, exc_tb):
         self._scope.__exit__(exc_type, exc, exc_tb)
-        return False
 
 
 def _thread_id() -> int:
@@ -479,10 +478,13 @@ def configure(
     tracer = get_tracer()
     if aggregate is not None:
         tracer.set_aggregate(aggregate)
-    if rank is not None:
+    rank_provided = rank is not None
+    if rank_provided:
         tracer._rank = rank
     if output_path is not None:
         tracer.set_output(output_path)
+    elif rank_provided and tracer._user_output_path is not None:
+        tracer.set_output(tracer._user_output_path)
     if enabled is not None:
         tracer.set_enabled(enabled)
     return tracer

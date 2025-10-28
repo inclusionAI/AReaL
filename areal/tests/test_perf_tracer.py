@@ -99,38 +99,79 @@ async def test_global_tracer_configure_roundtrip(tmp_path):
     prev_aggregate = tracer._aggregate  # noqa: SLF001
 
     tracer.reset()
-    perf_tracer.configure(
-        enabled=True,
-        output_path=str(tmp_path / "global_trace.json"),
-        rank=1,
-    )
 
-    async with perf_tracer.atrace_scope(
-        "async-step", category="unit-test", args={"phase": "enter"}
-    ):
-        perf_tracer.instant("inside-async", args={"flag": True})
+    try:
+        perf_tracer.configure(
+            enabled=True,
+            output_path=str(tmp_path / "global_trace.json"),
+            rank=1,
+        )
 
-    with perf_tracer.trace_scope("sync-step", category="unit-test"):
-        pass
+        async with perf_tracer.atrace_scope(
+            "async-step", category="unit-test", args={"phase": "enter"}
+        ):
+            perf_tracer.instant("inside-async", args={"flag": True})
 
-    saved = tracer.save(reset=True)
-    assert saved is not None
-    saved_path = Path(saved)
-    payload = json.loads(saved_path.read_text())
-    event_names = {evt["name"] for evt in payload["traceEvents"] if evt["ph"] != "M"}
-    assert {"async-step", "inside-async", "sync-step"}.issubset(event_names)
+        with perf_tracer.trace_scope("sync-step", category="unit-test"):
+            pass
 
-    # Restore global tracer state to avoid leaking configuration to other tests
-    perf_tracer.configure(
-        enabled=prev_enabled,
-        rank=prev_rank,
-        aggregate=prev_aggregate,
-    )
+        saved = tracer.save(reset=True)
+        assert saved is not None
+        saved_path = Path(saved)
+        payload = json.loads(saved_path.read_text())
+        event_names = {
+            evt["name"] for evt in payload["traceEvents"] if evt["ph"] != "M"
+        }
+        assert {"async-step", "inside-async", "sync-step"}.issubset(event_names)
+    finally:
+        # Restore global tracer state to avoid leaking configuration to other tests
+        perf_tracer.configure(
+            enabled=prev_enabled,
+            rank=prev_rank,
+            aggregate=prev_aggregate,
+        )
+        tracer.reset()
+        if prev_output:
+            tracer.set_output(prev_output, rank=prev_rank)
+        else:
+            tracer._output_path = None  # noqa: SLF001
+
+
+def test_configure_updates_output_path_when_rank_changes(tmp_path):
+    tracer = perf_tracer.get_tracer()
+
+    prev_enabled = tracer.enabled
+    prev_output = tracer._output_path  # noqa: SLF001
+    prev_rank = tracer._rank  # noqa: SLF001
+    prev_aggregate = tracer._aggregate  # noqa: SLF001
+
     tracer.reset()
-    if prev_output:
-        tracer.set_output(prev_output, rank=prev_rank)
-    else:
-        tracer._output_path = None  # noqa: SLF001
+
+    try:
+        base_path = tmp_path / "ranked.json"
+        perf_tracer.configure(
+            enabled=True,
+            output_path=str(base_path),
+            rank=0,
+            aggregate=False,
+        )
+        first_path = Path(tracer._output_path or "")
+        assert first_path.name == "ranked.rank0.json"
+
+        perf_tracer.configure(rank=1)
+        second_path = Path(tracer._output_path or "")
+        assert second_path.name == "ranked.rank1.json"
+    finally:
+        perf_tracer.configure(
+            enabled=prev_enabled,
+            rank=prev_rank,
+            aggregate=prev_aggregate,
+        )
+        tracer.reset()
+        if prev_output:
+            tracer.set_output(prev_output, rank=prev_rank)
+        else:
+            tracer._output_path = None  # noqa: SLF001
 
 
 def test_module_level_save_helper(tmp_path):
