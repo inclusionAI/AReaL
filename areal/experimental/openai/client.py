@@ -141,6 +141,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         top_p_val = 1.0 if top_p is NOT_GIVEN else (top_p or 1.0)
         stop_tokens = None if stop is NOT_GIVEN else stop
+        if stop_tokens is not None and not isinstance(stop_tokens, list):
+            stop_tokens = [stop_tokens]
 
         if frequency_penalty is NOT_GIVEN or frequency_penalty is None:
             frequency_penalty = 0.0
@@ -151,13 +153,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             temperature=temp,
             max_new_tokens=max_new_tokens,
             top_p=top_p_val,
-            stop=(
-                stop_tokens
-                if isinstance(stop_tokens, list)
-                else [stop_tokens]
-                if stop_tokens
-                else None
-            ),
+            stop=stop_tokens,
             greedy=temp == 0,
             frequency_penalty=frequency_penalty,
             stop_token_ids=list(
