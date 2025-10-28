@@ -215,6 +215,9 @@ class _RolloutTaskInput:
     should_accept: Callable | None = None
 
 
+TASK_RUNNER_MAX_QSIZE = 4096
+
+
 class WorkflowExecutor:
     """Executor for asynchronous workflow-based rollout generation.
 
@@ -268,9 +271,8 @@ class WorkflowExecutor:
         self.staleness_manager = staleness_manager
 
         # Create the generic async task runner
-        qsize = config.queue_size or self.max_concurrent_rollouts * 16
         self.runner = AsyncTaskRunner[dict[str, Any] | None](
-            max_queue_size=qsize,
+            max_queue_size=TASK_RUNNER_MAX_QSIZE,
             enable_tracing=config.enable_rollout_tracing,
         )
 

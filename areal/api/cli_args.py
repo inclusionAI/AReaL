@@ -805,7 +805,7 @@ class InferenceEngineConfig:
     )
     queue_size: None | int = field(
         default=None,
-        metadata={"help": "Input/Output queue size for async rollout."},
+        metadata={"help": "(Deprecated) Input/Output queue size for async rollout."},
     )
     consumer_batch_size: int = field(
         default=1,

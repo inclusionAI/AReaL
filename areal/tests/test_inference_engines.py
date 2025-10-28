@@ -57,7 +57,6 @@ def _dummy_reward_fn(*args, **kwargs):
         "sglang-remote",
         # "sglang-local",
     ],
-    scope="module",
 )
 def inference_engine(request):
     """Unified fixture that provides any inference engine (vLLM/SGLang, local/remote).
