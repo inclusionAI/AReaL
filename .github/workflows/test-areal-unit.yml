@@ -191,7 +191,7 @@ jobs:
           github-token: ${{ secrets.GH_PAT }}
           script: |
             const instanceName = process.env.INSTANCE_NAME;
-            const maxAttempts = 20;
+            const maxAttempts = 200;
             const delayMs = 15000;
 
             const pat = process.env.GH_PAT;
