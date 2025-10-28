@@ -48,6 +48,7 @@ def vllm_server():
             skip_tokenizer_init=False,
             model=MODEL_PATH,
             gpu_memory_utilization=0.1,
+            max_model_len=4096,
         ),
         host=HOST,
         port=PORT,

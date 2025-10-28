@@ -18,6 +18,8 @@ env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   RUNNER_LABELS: gcp-a2-highgpu-2g
   RUNNER_VERSION: '2.317.0'
+  GCP_OS_IMAGE: areal-cicd-test-202510270
+  CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:v0.3.4
 
 jobs:
   provision-runner:
@@ -77,54 +79,70 @@ jobs:
 
           exec > >(tee /var/log/github-runner-startup.log) 2>&1
 
-          apt-get update
-          apt-get install -y curl jq git python3 python3-venv python3-pip sudo
-
           RUNNER_VERSION="__RUNNER_VERSION__"
+          CONTAINER_NAME="areal-cicd"
+          CONTAINER_IMAGE="__CONTAINER_IMAGE__"
           RUNNER_DIR="/opt/actions-runner"
 
-          if ! id runner >/dev/null 2>&1; then
-            useradd --home-dir "$RUNNER_DIR" --create-home --shell /bin/bash runner
+          apt-get update
+          apt-get install -y curl jq git docker.io
+          systemctl enable docker
+          systemctl start docker
+
+          if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+            docker run --name "$CONTAINER_NAME" -d -it \
+              -e LC_ALL=C.UTF-8 \
+              -e LANG=C.UTF-8 \
+              --ulimit nofile=1048576:1048576 \
+              --shm-size="58205394001.92b" \
+              --runtime=nvidia \
+              --gpus all \
+              --net=host \
+              --cap-add=SYS_ADMIN \
+              --device=/dev/fuse \
+              --security-opt=apparmor:unconfined \
+              --entrypoint=/bin/bash \
+              "$CONTAINER_IMAGE" \
+              -lc "trap : TERM INT; sleep infinity & wait"
           fi
 
-          cd "$RUNNER_DIR"
+          docker exec "$CONTAINER_NAME" bash -lc "
+          set -euo pipefail
+          RUNNER_VERSION=\"__RUNNER_VERSION__\"
+          RUNNER_DIR=\"/opt/actions-runner\"
 
-          curl -sSLO "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
-          tar xzf "actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
-          chown -R runner:runner "$RUNNER_DIR"
+          REPO=\$(curl -fsSL -H \"Metadata-Flavor: Google\" \"http://metadata.google.internal/computeMetadata/v1/instance/attributes/repo\")
+          TOKEN=\$(curl -fsSL -H \"Metadata-Flavor: Google\" \"http://metadata.google.internal/computeMetadata/v1/instance/attributes/runner_token\")
+          LABELS=\$(curl -fsSL -H \"Metadata-Flavor: Google\" \"http://metadata.google.internal/computeMetadata/v1/instance/attributes/runner_labels\")
 
-          REPO=$(curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/repo")
-          TOKEN=$(curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/runner_token")
-          LABELS=$(curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/attributes/runner_labels")
+          mkdir -p \"\${RUNNER_DIR}\"
+          cd \"\${RUNNER_DIR}\"
 
-          sudo -u runner ./config.sh \
-            --url "https://github.com/${REPO}" \
-            --token "$TOKEN" \
-            --labels "$LABELS" \
-            --unattended \
+          if [ -f .runner ]; then
+            if [ -x ./config.sh ]; then
+              ./config.sh remove --token \"\${TOKEN}\" || rm -f .runner
+            else
+              rm -f .runner
+            fi
+          fi
+
+          if [ ! -d bin ]; then
+            curl -sSLO \"https://github.com/actions/runner/releases/download/v\${RUNNER_VERSION}/actions-runner-linux-x64-\${RUNNER_VERSION}.tar.gz\"
+            tar xzf \"actions-runner-linux-x64-\${RUNNER_VERSION}.tar.gz\"
+          fi
+
+          ./config.sh \\
+            --url \"https://github.com/\${REPO}\" \\
+            --token \"\${TOKEN}\" \\
+            --labels \"\${LABELS}\" \\
+            --unattended \\
             --ephemeral
 
-          cat <<'SERVICE' >/etc/systemd/system/actions-runner.service
-          [Unit]
-          Description=GitHub Actions Runner
-          After=network.target
-
-          [Service]
-          WorkingDirectory=/opt/actions-runner
-          ExecStart=/bin/su - runner -c '/opt/actions-runner/run.sh'
-          Restart=always
-          RestartSec=5s
-
-          [Install]
-          WantedBy=multi-user.target
-          SERVICE
-
-          systemctl daemon-reload
-          systemctl enable actions-runner
-          systemctl restart actions-runner
+          nohup ./run.sh >/opt/actions-runner/runner.log 2>&1 &
+          "
           EOF
 
-          sed "s/__RUNNER_VERSION__/${RUNNER_VERSION}/" startup-script.template > startup-script.sh
+          sed -e "s/__RUNNER_VERSION__/${RUNNER_VERSION}/g" -e "s#__CONTAINER_IMAGE__#${CONTAINER_IMAGE}#g" startup-script.template > startup-script.sh
           rm startup-script.template
 
           printf '%s' "$TOKEN" > runner-token.txt
@@ -143,12 +161,11 @@ jobs:
 
           for zone in $zones; do
             echo "Attempting to create instance in $zone..."
-            if gcloud compute instances create-with-container "$INSTANCE_NAME" \
+            if gcloud compute instances create "$INSTANCE_NAME" \
               --project "$GCP_PROJECT_ID" \
               --zone "$zone" \
               --machine-type "a2-highgpu-2g" \
-              --container-image "ghcr.io/inclusionai/areal-runtime:v0.3.4" \
-              --boot-disk-size "100GB" \
+              --image "$GCP_OS_IMAGE" \
               --scopes "https://www.googleapis.com/auth/cloud-platform" \
               --metadata repo=${{ github.repository }},runner_labels=${RUNNER_LABELS} \
               --metadata-from-file startup-script=startup-script.sh,runner_token=runner-token.txt
