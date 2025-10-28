@@ -131,7 +131,7 @@ jobs:
             --unattended \\
             --ephemeral
 
-          sudo -u runner ./run.sh
+          sudo -u runner nohup ./run.sh >/opt/actions-runner/runner.log 2>&1 &
           "
           EOF
 
