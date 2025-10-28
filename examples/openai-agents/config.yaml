@@ -1,4 +1,4 @@
-experiment_name: camel-gsm8k-grpo
+experiment_name: openai-agents-gsm8k-grpo
 trial_name: trial0
 
 seed: 1
@@ -7,7 +7,9 @@ tokenizer_path: ${actor.path}
 async_training: true
 
 n_trajs: 2
+max_turns: 8
 max_tokens_per_trajectory: 8192
+agent_type: math
 
 cluster:
   n_nodes: 1

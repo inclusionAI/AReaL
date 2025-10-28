@@ -67,14 +67,14 @@ class MultiTurnWorkflow(RolloutWorkflow):
             )
             # _comp is an openai ChatCompletion object
             # but we also need to fetch the saved token IDs
-            comp = client.get_completion(_comp.id)
+            comp = client.get_completions(_comp.id)
             reward = await self.async_reward_fn(
                 self.tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
                 ),
                 _comp.choices[0].message.content,
-                comp.response.input_tokens,
-                comp.response.output_tokens,
+                comp.model_response.input_tokens,
+                comp.model_response.output_tokens,
                 **data,
             )
             # Increase counter
@@ -123,7 +123,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
             async with aiofiles.open(file_path, "a") as f:
                 n_samples = self.gconfig.n_samples
                 for i, (_, comp) in enumerate(results):
-                    sl = comp.response.input_len + comp.response.output_len
+                    sl = comp.model_response.input_len + comp.model_response.output_len
                     r = comp.reward
                     p = comp.messages
                     c = comp.completion.choices[0].message.content

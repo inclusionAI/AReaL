@@ -19,9 +19,7 @@ from areal.experimental.camel.openai_model import AReaLOpenAICompatibleModel
 from areal.experimental.openai import ArealOpenAI
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import (
-    cycle_dataloader,
-)
+from areal.utils.data import cycle_dataloader
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator

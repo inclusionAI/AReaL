@@ -23,7 +23,7 @@ from openai.types.chat.chat_completion_tool_choice_option_param import (
     ChatCompletionToolChoiceOptionParam,
 )
 from openai.types.completion_usage import CompletionUsage
-from openai.types.responses import response_create_params
+from openai.types.responses import ResponseInputItemParam, response_create_params
 from openai.types.responses.response import Response
 from openai.types.responses.response_input_param import ResponseInputParam
 from openai.types.responses.response_output_message import ResponseOutputMessage
@@ -141,6 +141,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         top_p_val = 1.0 if top_p is NOT_GIVEN else (top_p or 1.0)
         stop_tokens = None if stop is NOT_GIVEN else stop
+        if stop_tokens is not None and not isinstance(stop_tokens, list):
+            stop_tokens = [stop_tokens]
 
         if frequency_penalty is NOT_GIVEN or frequency_penalty is None:
             frequency_penalty = 0.0
@@ -151,13 +153,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             temperature=temp,
             max_new_tokens=max_new_tokens,
             top_p=top_p_val,
-            stop=(
-                stop_tokens
-                if isinstance(stop_tokens, list)
-                else [stop_tokens]
-                if stop_tokens
-                else None
-            ),
+            stop=stop_tokens,
             greedy=temp == 0,
             frequency_penalty=frequency_penalty,
             stop_token_ids=list(
@@ -273,15 +269,39 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         # Build a simple messages list compatible with tokenizer chat template
         messages_list: list[dict] = []
+        if instructions is not NOT_GIVEN and instructions is not None:
+            messages_list = [
+                {"role": "system", "content": instructions},
+            ]
         if input is NOT_GIVEN or input is None:
             raise ValueError("input is required for Responses.create")
 
+        def _build_messages_list(item: ResponseInputItemParam) -> list[dict]:
+            messages_list = []
+            if "content" in item:
+                if isinstance(item["content"], str):
+                    messages_list.append(
+                        {"role": item["role"], "content": item["content"]},
+                    )
+                elif isinstance(item["content"], Iterable):
+                    for content in item["content"]:
+                        if isinstance(content, dict):
+                            messages_list.append(deepcopy(content))
+                        else:
+                            raise ValueError("Unsupported content format")
+                else:
+                    raise ValueError("Unsupported input item format")
+            else:
+                messages_list.append(deepcopy(item))
+            return messages_list
+
         if isinstance(input, str):
-            messages_list = [
+            messages_list += [
                 {"role": "user", "content": input},
             ]
         elif isinstance(input, list):
-            messages_list = deepcopy(input)
+            for item in input:
+                messages_list += _build_messages_list(item)
         else:
             raise ValueError(
                 "Unsupported Responses input format: "
@@ -347,6 +367,17 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         engine_resp = await self.engine.agenerate(model_request)
         output_text = self.tokenizer.decode(engine_resp.output_tokens)
 
+        # Parse tool calls.
+        tool_calls = None
+        if tool_choice != "none" and tools:
+            tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
+                output_text,
+                tools,
+                self.tool_call_parser,
+                engine_resp.stop_reason,
+                use_responses=True,
+            )
+
         # Extract reasoning tokens from output
         reasoning_token_count = self._count_reasoning_tokens(output_text)
 
@@ -369,6 +400,11 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             ],
         )
 
+        if tool_calls:
+            resp_output = tool_calls
+        else:
+            resp_output = [output_message]
+
         usage = ResponseUsage(
             input_tokens=len(engine_resp.input_tokens),
             input_tokens_details=InputTokensDetails(cached_tokens=0),
@@ -388,7 +424,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             metadata=None if metadata is NOT_GIVEN else metadata,
             model="None",
             object="response",
-            output=[output_message],
+            output=resp_output,
             parallel_tool_calls=False,
             temperature=temp,
             tool_choice=tool_choice if tool_choice is not NOT_GIVEN else "none",
@@ -494,15 +530,15 @@ class ArealOpenAI(AsyncOpenAI):
         """Get completion/response with its reward from cache."""
         return self._cache.get(id)
 
-    def get_completion(self, id: str) -> InteractionWithTokenLogpReward | None:
+    def get_completions(self, id: str) -> InteractionWithTokenLogpReward | None:
         logger.warning(
-            "get_completion is deprecated. Please use get_interaction instead."
+            "get_completions is deprecated. Please use get_interaction instead."
         )
         return self.get_interaction(id)
 
-    def get_response(self, id: str) -> InteractionWithTokenLogpReward | None:
+    def get_responses(self, id: str) -> InteractionWithTokenLogpReward | None:
         logger.warning(
-            "get_response is deprecated. Please use get_interaction instead."
+            "get_responses is deprecated. Please use get_interaction instead."
         )
         return self.get_interaction(id)
 
