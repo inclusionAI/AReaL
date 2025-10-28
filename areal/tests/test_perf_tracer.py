@@ -1,6 +1,8 @@
+import asyncio
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -141,6 +143,82 @@ async def test_global_tracer_configure_roundtrip(tmp_path):
     payload = json.loads(saved_path.read_text())
     event_names = {evt["name"] for evt in payload["traceEvents"] if evt["ph"] != "M"}
     assert {"async-step", "inside-async", "sync-step"}.issubset(event_names)
+
+
+@pytest.mark.asyncio
+async def test_async_multi_request_cross_phase_trace(tmp_path):
+    tracer = perf_tracer.get_tracer()
+
+    tracer.reset()
+
+    output_path = tmp_path / "async_requests.json"
+    perf_tracer.configure(
+        enabled=True,
+        output_path=str(output_path),
+        rank=None,
+        aggregate=False,
+    )
+
+    phase_schedules = {
+        "req-0": [
+            ("rollout", 0.1),
+            ("train", 0.2),
+            ("reward", 0.15),
+        ],
+        "req-1": [
+            ("rollout", 0.12),
+            ("train", 0.11),
+            ("reward", 0.18),
+        ],
+    }
+
+    async def run_request(
+        req_id: str, phases: list[tuple[str, float]], offset: float
+    ) -> None:
+        if offset:
+            await asyncio.sleep(offset)
+        loop = asyncio.get_running_loop()
+        async with perf_tracer.atrace_scope("request", args={"request_id": req_id}):
+            for phase, duration in phases:
+                with perf_tracer.trace_scope(phase, args={"request_id": req_id}):
+                    await loop.run_in_executor(None, time.sleep, duration)
+
+    await asyncio.gather(
+        run_request("req-0", phase_schedules["req-0"], 0.0),
+        run_request("req-1", phase_schedules["req-1"], 0.05),
+    )
+
+    saved = tracer.save(reset=True)
+    assert saved is not None
+    saved_path = Path(saved)
+    payload = json.loads(saved_path.read_text())
+    events = [evt for evt in payload["traceEvents"] if evt.get("ph") != "M"]
+
+    observed = {
+        (evt["args"].get("request_id"), evt["name"])
+        for evt in events
+        if evt["ph"] == "X"
+    }
+    expected_phases = {
+        ("req-0", "request"),
+        ("req-0", "rollout"),
+        ("req-0", "train"),
+        ("req-0", "reward"),
+        ("req-1", "request"),
+        ("req-1", "rollout"),
+        ("req-1", "train"),
+        ("req-1", "reward"),
+    }
+    assert expected_phases.issubset(observed)
+
+    request_timestamps = {
+        req_id: [evt["ts"] for evt in events if evt["args"].get("request_id") == req_id]
+        for req_id in phase_schedules
+    }
+    overlap = min(request_timestamps["req-1"]) < max(
+        request_timestamps["req-0"]
+    ) and min(request_timestamps["req-0"]) < max(request_timestamps["req-1"])
+    assert overlap
 
 
 def test_configure_updates_output_path_when_rank_changes(tmp_path):
