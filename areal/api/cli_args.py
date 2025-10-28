@@ -790,7 +790,8 @@ class InferenceEngineConfig:
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={
-            "help": "Maximum number of concurrent rollouts to the inference engine. Defaults to consumer_batch_size."
+            "help": "Maximum number of concurrent rollouts to "
+            "the inference engine. Defaults to consumer_batch_size."
         },
     )
     queue_size: None | int = field(
