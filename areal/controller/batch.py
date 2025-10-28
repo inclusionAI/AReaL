@@ -236,10 +236,10 @@ class DistributedBatchMemory(DistributedBatch):
 
     def to_list(self) -> List[Dict[str, Any]]:
         """Convert the dataset to a list format.
-        
+
         Returns a list where each element is a dictionary representing
         a single sample from the dataset.
-        
+
         Returns
         -------
         List[Dict[str, Any]]
@@ -249,11 +249,11 @@ class DistributedBatchMemory(DistributedBatch):
         """
         if not self.dataset:
             return []
-            
+
         total_size = self._get_total_size()
         if total_size == 0:
             return []
-            
+
         # Build list of individual samples
         result = []
         for i in range(total_size):
@@ -267,7 +267,7 @@ class DistributedBatchMemory(DistributedBatch):
                     # For scalar values, use the same value for all samples
                     sample[key] = values
             result.append(sample)
-        
+
         return result
 
     @staticmethod
