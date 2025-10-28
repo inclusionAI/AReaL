@@ -162,6 +162,8 @@ jobs:
               --zone "$zone" \
               --machine-type "a2-highgpu-2g" \
               --image "$GCP_OS_IMAGE" \
+              --maintenance-policy TERMINATE \
+              --restart-on-failure \
               --scopes "https://www.googleapis.com/auth/cloud-platform" \
               --metadata repo=${{ github.repository }},runner_labels=${RUNNER_LABELS} \
               --metadata-from-file startup-script=startup-script.sh,runner_token=runner-token.txt
