@@ -7,7 +7,7 @@ import uuid
 from concurrent.futures import Future, ProcessPoolExecutor
 from datetime import datetime
 from threading import Lock
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 import requests
@@ -16,7 +16,7 @@ import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.engine_api import InferenceEngine, Scheduling
+from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     ModelRequest,
     ModelResponse,
@@ -27,11 +27,8 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
-from areal.utils.scheduler import scheduling_specs_to_schedulings
 
 RID_CACHE_SIZE = 128
-
-logger = logging.getLogger(__name__)
 
 
 class RemoteSGLangEngine(InferenceEngine):
@@ -48,8 +45,11 @@ class RemoteSGLangEngine(InferenceEngine):
         self.distributed_weight_update_initialized = False
         self._version = 0
 
-        self.lock: Lock
-        self.workflow_executor: WorkflowExecutor
+        self.lock = Lock()
+        self.workflow_executor = WorkflowExecutor(
+            config=config,
+            inference_engine=self,
+        )
 
     def _wait_for_server(self, address):
         base_url = f"http://{address}"
@@ -74,11 +74,6 @@ class RemoteSGLangEngine(InferenceEngine):
         addr: str | List[str] | None = None,
         train_data_parallel_size: int | None = None,
     ):
-        self.lock = Lock()
-        self.workflow_executor = WorkflowExecutor(
-            config=self.config,
-            inference_engine=self,
-        )
         if engine_id is None:
             if dist.is_initialized():
                 engine_id = str(dist.get_rank())
@@ -373,27 +368,17 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def submit(
         self,
-        data: Union[Dict[str, Any], List[Dict[str, Any]]],
+        data: Dict[str, Any],
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
     ) -> None:
-        if isinstance(data, Dict):
-            return self.workflow_executor.submit(
-                data,
-                workflow=workflow,
-                workflow_builder=workflow_builder,
-                should_accept=should_accept,
-            )
-        else:
-            for item in data:
-                self.workflow_executor.submit(
-                    item,
-                    workflow=workflow,
-                    workflow_builder=workflow_builder,
-                    should_accept=should_accept,
-                )
-            return None
+        return self.workflow_executor.submit(
+            data,
+            workflow=workflow,
+            workflow_builder=workflow_builder,
+            should_accept=should_accept,
+        )
 
     def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
         return self.workflow_executor.wait(count, timeout=timeout)
@@ -414,7 +399,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def prepare_batch(
         self,
-        dataloader: Union[StatefulDataLoader, List[Dict[str, Any]]],
+        dataloader: StatefulDataLoader,
         workflow: Optional[RolloutWorkflow] = None,
         workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
@@ -433,9 +418,6 @@ class RemoteSGLangEngine(InferenceEngine):
     def resume(self):
         """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
-
-    def get_scheduling_config(self) -> List[Scheduling]:
-        return scheduling_specs_to_schedulings(self.config.scheduling_specs)
 
 
 def update_weights_from_disk(
