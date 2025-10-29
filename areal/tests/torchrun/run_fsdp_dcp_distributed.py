@@ -178,7 +178,6 @@ def test_simple_dcp_save_load(alloc_mode: str, output: str | None = None):
     dist.barrier()
 
     engine.destroy()
-    engine.destroy_process_groups()
 
     if rank == 0 and output:
         write_result(output, succ)
@@ -274,7 +273,6 @@ def test_train_dcp_save_load(alloc_mode: str, output: str | None = None):
     dist.barrier()
 
     engine.destroy()
-    engine.destroy_process_groups()
 
     if rank == 0 and output:
         write_result(output, succ)
