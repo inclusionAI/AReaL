@@ -111,7 +111,7 @@ class AppState(Stateful):
         else:
             set_model_state_dict(
                 self.model,
-                state_dict=state_dict["model"],
+                model_state_dict=state_dict["model"],
             )
 
 
