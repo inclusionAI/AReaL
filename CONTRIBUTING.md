@@ -112,7 +112,7 @@ helping with code reviews. This guide will help you get started.
    the CI/CD workflow. If you have implemented a new feature, you are highly recommended
    to write your own tests and add them to our pytest workflow. Please put your tests in
    files under `areal/tests/test_*.py` and mark the tests with our pre-defined pytest
-   marks:
+   markers:
 
    - `slow`: Tests that are expected to cost more than 30 seconds. They will not run in
      the CI/CD workflow unless marked with `ci`.
@@ -122,7 +122,15 @@ helping with code reviews. This guide will help you get started.
    - `multi_gpu`: Tests that use more than one GPU.
 
    Since our CI machine only has two GPUs, please mark skip to tests that uses more than
-   2 GPUs otherwise it will fail in our CI/CD workflow.
+   2 GPUs otherwise it will fail in our CI/CD workflow. For example:
+
+   ```python
+   import pytest
+
+   @pytest.mark.skip(reason="This test requires 4 GPUs")
+   def test_some_multi_gpu_functionality():
+       ...
+   ```
 
 1. **Submit a Pull Request**
 
