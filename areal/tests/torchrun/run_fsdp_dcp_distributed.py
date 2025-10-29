@@ -75,10 +75,6 @@ def make_fsdp_engine(
         optimizer=OptimizerConfig() if init_optimizer else None,
     )
     alloc_mode = AllocationMode.from_str(allocation_mode)
-    # ignore other parallel strategy (not supported in fsdp)
-    alloc_mode.train.data_parallel_size = (
-        alloc_mode.train.world_size // alloc_mode.train.context_parallel_size
-    )
     engine = FSDPEngine(config)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine.create_process_group(parallel_strategy=alloc_mode.train)
