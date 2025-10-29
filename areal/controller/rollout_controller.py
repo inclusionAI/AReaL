@@ -16,7 +16,6 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.controller_api import DistributedBatch
-from areal.api.controller_api import RolloutController as RolloutControllerAPI
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Scheduler, SchedulingConfig, Worker
@@ -38,19 +37,35 @@ class _RemoteRolloutTaskInput:
     should_accept_path: str | None = None
 
 
-class RolloutController(RolloutControllerAPI):
-    """A centralized controller managing multiple InferenceEngine workers for rollout generation.
+class RolloutController:
+    """A centralized controller that manages multiple distributed InferenceEngine workers for rollout generation.
 
-    This controller orchestrates distributed inference by:
-    1. Launching local inference engines on workers via scheduler
-    2. Scheduling requests to specific engines via round-robin
-    3. Delegating actual execution to AsyncTaskRunner
-    4. Aggregating results from workers into DistributedBatch
+    RolloutController orchestrates distributed inference workloads by scheduling and
+    dispatching requests across multiple concurrent InferenceEngine instances. It provides
+    intelligent load balancing, staleness control, and capacity management to optimize
+    rollout generation efficiency.
+
+    Key features:
+        - Distributed request scheduling and load balancing across workers
+        - Centralized staleness and capacity control for consistent performance
+        - Asynchronous rollout generation with configurable acceptance criteria
+        - Data aggregation from heterogeneously loaded workers
+
+    The controller handles workload imbalances inherent in rollout generation, where
+    different workers may produce varying amounts of data depending on the complexity
+    of their assigned tasks. Generated data is stored locally on workers and aggregated
+    into `DistributedBatch` objects for seamless integration with TrainController.
+
+    Implementation details:
+        - Launches local inference engines on workers via scheduler
+        - Schedules requests to specific engines via round-robin
+        - Delegates actual execution to AsyncTaskRunner
+        - Aggregates results from workers into DistributedBatch
 
     Parameters
     ----------
-    inf_engine : InferenceEngine
-        The inference engine class to instantiate on each worker
+    inf_engine : type[InferenceEngine]
+        The inference engine class (not instance) to instantiate on each worker
     config : InferenceEngineConfig
         Configuration for inference engines
     scheduler : Scheduler
@@ -59,7 +74,7 @@ class RolloutController(RolloutControllerAPI):
 
     def __init__(
         self,
-        inf_engine: InferenceEngine,
+        inf_engine: type[InferenceEngine],
         config: InferenceEngineConfig,
         scheduler: Scheduler,
     ):
@@ -67,14 +82,16 @@ class RolloutController(RolloutControllerAPI):
 
         Parameters
         ----------
-        inf_engine : InferenceEngine
+        inf_engine : type[InferenceEngine]
             The inference engine class (not instance) to create on workers
         config : InferenceEngineConfig
             Configuration for the inference engines
         scheduler : Scheduler
             Scheduler for managing workers
         """
-        super().__init__(inf_engine, config, scheduler)
+        self.inf_engine = inf_engine
+        self.config = config
+        self.scheduler = scheduler
 
         # Worker management
         self.workers: list[Worker] = []  # List of Worker objects from scheduler
@@ -107,6 +124,20 @@ class RolloutController(RolloutControllerAPI):
         *args,
         **kwargs,
     ):
+        """Initialize environments and launch the background thread for asynchronous distributed inference.
+
+        For remote inference engines, this serves as a client and connects to the inference servers.
+        For local inference engines, this creates an LLM engine on the local GPU.
+
+        Parameters
+        ----------
+        alloc_mode : AllocationMode
+            The allocation mode configuration for distributed setup
+        *args
+            Variable length argument list passed to engine initialization
+        **kwargs
+            Arbitrary keyword arguments passed to engine initialization
+        """
         self.logger = logging.getLogger("[RolloutController]")
 
         # Get scheduling config from kwargs or use defaults
@@ -191,7 +222,10 @@ class RolloutController(RolloutControllerAPI):
         self.logger.info("All engines are initialized...")
 
     def destroy(self):
-        """Destroy the controller and clean up resources."""
+        """Destroy the engine and release GPU memory for the local inference engine.
+
+        This method cleans up all resources including workers, task runner, and thread pool.
+        """
         self.logger.info("Destroying RolloutController...")
 
         # Destroy task runner
@@ -291,6 +325,24 @@ class RolloutController(RolloutControllerAPI):
         workflow_kwargs: dict[str, Any],
         should_accept_path: str | None = None,
     ) -> None:
+        """Submit a request to the inference engine and return immediately.
+
+        Should be used together with subsequent `wait`.
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            The input data for rollout. Used by the user's customized workflow implementation.
+        workflow_path : str
+            The fully qualified path to the workflow class (e.g., "module.submodule.WorkflowClass").
+            The workflow will be dynamically imported on the worker.
+        workflow_kwargs : dict[str, Any]
+            Keyword arguments to pass to the workflow constructor.
+        should_accept_path : str | None, optional
+            The fully qualified path to a function used to decide whether to accept a specific
+            trajectory (dynamic filtering). The function should take a complete trajectory
+            output by the workflow and return a bool, by default None.
+        """
         # Add to pending queue (will be submitted when capacity allows)
         self._pending_inputs.append(
             _RemoteRolloutTaskInput(
@@ -333,6 +385,27 @@ class RolloutController(RolloutControllerAPI):
             )
 
     def wait(self, count: int, timeout: float | None = None) -> DistributedBatch:
+        """Wait for a specified number of requests to complete, with a timeout.
+
+        Should be used together with preceding `submit`.
+
+        Parameters
+        ----------
+        count : int
+            The number of accepted trajectories to wait for
+        timeout : float | None, optional
+            Timeout in seconds. Exceeding the timeout will raise a `TimeoutError`, by default None
+
+        Returns
+        -------
+        DistributedBatch
+            A concatenated batch of trajectories
+
+        Raises
+        ------
+        TimeoutError
+            If the timeout is exceeded before enough trajectories are collected
+        """
         #######################################################
         # The following logic is copied from WorkflowExecutor #
         #######################################################
@@ -409,6 +482,24 @@ class RolloutController(RolloutControllerAPI):
         workflow_kwargs: dict[str, Any],
         should_accept_path: str | None = None,
     ) -> DistributedBatch:
+        """Submit a batch of requests to the inference engine and wait for the results.
+
+        Parameters
+        ----------
+        data : list[dict[str, Any]]
+            A list of input data dictionaries for rollout
+        workflow_path : str
+            The fully qualified path to the workflow class (e.g., "module.submodule.WorkflowClass")
+        workflow_kwargs : dict[str, Any]
+            Keyword arguments to pass to the workflow constructor
+        should_accept_path : str | None, optional
+            The fully qualified path to a function to decide whether to accept a trajectory, by default None
+
+        Returns
+        -------
+        DistributedBatch
+            A concatenated batch of trajectory results
+        """
         # Submit all requests
         for item in data:
             self.submit(
@@ -428,6 +519,24 @@ class RolloutController(RolloutControllerAPI):
         workflow_kwargs: dict[str, Any],
         should_accept_path: str | None = None,
     ) -> DistributedBatch:
+        """Asynchronously submit and wait until a full batch is ready with controlled staleness.
+
+        Parameters
+        ----------
+        dataloader : StatefulDataLoader
+            The data loader to pull data from for batch preparation
+        workflow_path : str
+            The fully qualified path to the workflow class (e.g., "module.submodule.WorkflowClass")
+        workflow_kwargs : dict[str, Any]
+            Keyword arguments to pass to the workflow constructor
+        should_accept_path : str | None, optional
+            The fully qualified path to a function to decide whether to accept a trajectory, by default None
+
+        Returns
+        -------
+        DistributedBatch
+            A full batch of trajectory results with controlled staleness
+        """
         #######################################################
         # The following logic is copied from WorkflowExecutor #
         #######################################################
@@ -461,17 +570,19 @@ class RolloutController(RolloutControllerAPI):
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.
 
+        This method provides direct access to the inference engine's generation capabilities
+        for single requests, bypassing the workflow system.
+
         Parameters
         ----------
         req : ModelRequest
-            Model request containing input data and generation parameters
+            The model request containing input data and generation parameters
 
         Returns
         -------
         ModelResponse
-            Generated response from the model
+            The generated response from the model
         """
-
         # Choose worker and delegate
         worker = self._choose_worker()
 
@@ -483,17 +594,21 @@ class RolloutController(RolloutControllerAPI):
         )
 
     def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
-        """Initialize weight update process group for all workers.
+        """Initialize the weight update process group for distributed weight updates.
+
+        This method should be called before performing any weight updates to ensure
+        that the necessary communication groups are set up correctly across all workers.
 
         Parameters
         ----------
         meta : WeightUpdateMeta
-            Metadata containing weight update information
+            Metadata containing information about the weight update, such as the
+            type of communication backend and allocation mode.
 
         Returns
         -------
         Future[None]
-            Future representing the async initialization operation
+            A future object representing the asynchronous initialization operation.
         """
 
         async def _init_all_workers():
@@ -515,19 +630,19 @@ class RolloutController(RolloutControllerAPI):
     def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> Future[None]:
-        """Update weights from distributed memory for all workers.
+        """Update weights in the inference engine in a non-blocking manner from distributed memory.
 
         Parameters
         ----------
         meta : WeightUpdateMeta
-            Metadata containing weight update information
+            Metadata containing information about the weight update
         param_specs : list[ParamSpec]
-            Parameter specifications for weights to update
+            A list of parameter specifications for the weights to be updated
 
         Returns
         -------
         Future[None]
-            Future representing the async update operation
+            A future object representing the asynchronous weight update operation
         """
 
         async def _update_all_workers():
@@ -548,17 +663,17 @@ class RolloutController(RolloutControllerAPI):
         return self.executor.submit(update_all_workers)
 
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
-        """Update weights from disk for all workers.
+        """Update weights in the inference engine from disk in a non-blocking manner.
 
         Parameters
         ----------
         meta : WeightUpdateMeta
-            Metadata containing weight update information
+            Metadata containing information about the weight update
 
         Returns
         -------
         Future[None]
-            Future representing the async update operation
+            A future object representing the asynchronous weight update operation
         """
 
         async def _update_all_workers():
@@ -578,14 +693,16 @@ class RolloutController(RolloutControllerAPI):
         return self.executor.submit(update_all_workers)
 
     def set_version(self, version: int) -> None:
-        """Set the current weight version for all workers.
+        """Set the current weight version in the inference engine.
+
+        This updates the version number across all workers, which is used for
+        staleness tracking in online training scenarios.
 
         Parameters
         ----------
         version : int
-            Weight version number to set
+            The weight version number to set
         """
-
         self._version = version
         for worker in self.workers:
             try:
@@ -598,18 +715,20 @@ class RolloutController(RolloutControllerAPI):
                 self.logger.error(f"Error setting version for worker {worker.id}: {e}")
 
     def get_version(self) -> int:
-        """Get the current weight version.
+        """Get the current weight version in the inference engine.
 
         Returns
         -------
         int
-            Current weight version number
+            The current weight version number
         """
         return self._version
 
     def pause(self):
-        """Pause request submission for async rollout on all workers."""
+        """Pause request submission for async rollout.
 
+        Used during evaluation to prevent data over-generation across all workers.
+        """
         for worker in self.workers:
             try:
                 self.scheduler.call_engine(
@@ -620,7 +739,7 @@ class RolloutController(RolloutControllerAPI):
                 self.logger.error(f"Error pausing worker {worker.id}: {e}")
 
     def resume(self):
-        """Resume request submission for async rollout on all workers."""
+        """Resume request submission for async rollout across all workers."""
         for worker in self.workers:
             try:
                 self.scheduler.call_engine(
@@ -633,7 +752,37 @@ class RolloutController(RolloutControllerAPI):
     def register_callback_to_all_worker(
         self, method: str, callback: Callable, **kwargs
     ):
+        """Register a callback function for the specified method across all workers.
+
+        Partial rollout API. After successful registration, the controller will poll
+        and call the specified method in a background thread. When the return value
+        is obtained, it will be used as a parameter to call the `callback` function.
+
+        Parameters
+        ----------
+        method : str
+            The name of the method to register the callback for
+        callback : Callable
+            The callback function to be called with the method's return value
+        **kwargs
+            Additional keyword arguments for the callback registration
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not yet implemented
+        """
         raise NotImplementedError()
 
     def abort_all_requests(self) -> None:
+        """Abort all ongoing requests in the inference engine.
+
+        Partial rollout API for canceling all queued and in-progress requests across
+        all workers.
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not yet implemented
+        """
         raise NotImplementedError()
