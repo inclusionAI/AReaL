@@ -208,6 +208,10 @@ filterwarnings = [
     "ignore::UserWarning:torch.*",
     "ignore::UserWarning:transformers.*",
 ]
+markers = [
+    "slow: mark test as slow.",
+    "ci: mark test as must-run in CI (only marked for slow tests).",
+]
 
 [tool.ruff]
 line-length = 88
@@ -249,9 +253,3 @@ in-place = true
 recursive = true
 remove-all-unused-imports = true
 remove-unused-variables = true
-
-[tool.pytest.ini_options]
-markers = [
-    "slow: mark test as slow.",
-    "ci: mark test as must-run in CI (only marked for slow tests).",
-]
