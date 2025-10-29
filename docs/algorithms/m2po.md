@@ -51,6 +51,22 @@ We recommend to change the parameter within the configuration file
 | **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py --config examples/math/gsm8k_m2po.yaml --<other_args_to_overwrite>`   |
 | **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py --config examples/math/gsm8k_m2po.yaml --<other_args_to_overwrite>` |
 
+## Test Result
+
+![m2po test figure](../figures/m2po_test.png)
+
+In this test, we name the trails by the rules as follow:
+- **stale:** the value of `max_head_offpolicyness`
+- **dx+dy**: x for the number of rollout workers and y for the number of training workers
+- **rollout**: the value of `max_concurrent_rollout`
+
+The setting for GRPO is stale 256 d2+d1 rollout 96
+
+The key findings in the trails are as follow:
+- The `grad_norm` of GRPO is higher than M2PO, which may cause training instability.
+- The evaluate reward of M2PO is higher than GRPO.
+
+
 ## Baselines
 
 We still lack baseline, welcome to contribute!
