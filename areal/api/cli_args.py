@@ -3,6 +3,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 import uvloop
 import yaml
@@ -151,6 +152,31 @@ class GenerationHyperparameters:
         args = asdict(self)
         args.update(kwargs)
         return GenerationHyperparameters(**args)
+
+    def to_openai_args_dict(
+        self, exclude_args: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Convert the generation hyperparameters to a dictionary of arguments for OpenAI client."""
+        if exclude_args is None:
+            exclude_args = []
+        exclude_args.extend(
+            [
+                "min_new_tokens",  # Not supported by OpenAI
+                "greedy",  # Not directly supported by OpenAI
+                "top_k",  # Not supported by OpenAI
+                "stop_token_ids",  # Not supported by OpenAI
+            ]
+        )
+        # TODO: add warning for unsupported args
+        mapping = {
+            "n_samples": "n",
+            "max_new_tokens": "max_completion_tokens",
+        }
+        return {
+            mapping.get(k, k): v
+            for k, v in asdict(self).items()
+            if k not in exclude_args
+        }
 
 
 # Train Engine Configs
