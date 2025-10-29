@@ -34,7 +34,7 @@ class ExpStatus(Enum):
 
 
 @dataclasses.dataclass
-class Scheduling:
+class SchedulingSpec:
     # TODO: add partition
     cpu: int
     gpu: int
@@ -173,7 +173,7 @@ class MasterWorker:
 @dataclasses.dataclass
 class TasksGroup:
     count: int
-    scheduling: Scheduling
+    scheduling: SchedulingSpec
 
 
 @dataclasses.dataclass
@@ -458,7 +458,7 @@ class Experiment:
     """Base class for defining the procedure of an experiment."""
 
     def scheduling_setup(self) -> ExperimentScheduling:
-        """Returns the Scheduling of all workers."""
+        """Returns the SchedulingSpec of all workers."""
         raise NotImplementedError()
 
     def initial_setup(self) -> ExperimentConfig | List[ExperimentConfig]:

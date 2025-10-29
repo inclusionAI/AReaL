@@ -18,7 +18,7 @@ from areal.api.cli_args import InferenceEngineConfig
 from areal.api.controller_api import DistributedBatch
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse, ParamSpec, WeightUpdateMeta
-from areal.api.scheduler_api import Scheduler, SchedulingConfig, Worker
+from areal.api.scheduler_api import Job, Scheduler, ScheduleStrategy, Worker
 from areal.controller.batch import DistributedBatchMemory
 from areal.core.async_task_runner import AsyncTaskRunner, TaskQueueFullError
 from areal.core.staleness_manager import StalenessManager
@@ -95,7 +95,7 @@ class RolloutController:
 
         # Worker management
         self.workers: list[Worker] = []  # List of Worker objects from scheduler
-        self._worker_role = "rollout"  # Role name for workers
+        self._worker_role: str
 
         # Round-robin scheduling
         self._current_worker_idx = 0
@@ -120,7 +120,9 @@ class RolloutController:
 
     def initialize(
         self,
+        role: str,
         alloc_mode: AllocationMode,
+        schedule_strategy: ScheduleStrategy | None = None,
         *args,
         **kwargs,
     ):
@@ -141,13 +143,21 @@ class RolloutController:
         self.logger = logging.getLogger("[RolloutController]")
 
         # Get scheduling config from kwargs or use defaults
-        # FIXME: Should get scheduling config in a more strategical way
-        scheduling_config = SchedulingConfig(replicas=alloc_mode.gen.dp_size)
+        self._worker_role = role
+        self.config.scheduling_spec.cpu *= alloc_mode.gen_instance_size
+        self.config.scheduling_spec.mem *= alloc_mode.gen_instance_size
+        self.config.scheduling_spec.gpu = alloc_mode.gen_instance_size
+        job = Job(
+            replicas=alloc_mode.gen.dp_size,
+            tasks=[self.config.scheduling_spec for _ in range(alloc_mode.gen.dp_size)],
+            schedule_strategy=schedule_strategy,
+            role=self._worker_role,
+        )
 
         # Use asyncio.run to call async scheduler methods synchronously
         asyncio.run(
             self._async_initialize(
-                scheduling_config,
+                job,
                 *args,
                 **kwargs,
             )
@@ -175,23 +185,15 @@ class RolloutController:
             max_staleness=self.config.max_head_offpolicyness,
         )
 
-    async def _async_initialize(
-        self, scheduling_config: SchedulingConfig, *args, **kwargs
-    ):
+    async def _async_initialize(self, job: Job, *args, **kwargs):
         # Create workers via scheduler
         self.logger.info("Creating workers via scheduler...")
-        worker_ids = self.scheduler.create_workers(
-            role=self._worker_role,
-            scheduler_config=scheduling_config,
-        )
+        worker_ids = self.scheduler.create_workers(job=job)
         self.logger.info(f"Workers created: {worker_ids}")
 
         # Wait for workers to be ready
         self.logger.info("Waiting for workers to be ready...")
-        self.workers = self.scheduler.get_workers(
-            role=self._worker_role,
-            timeout=CREATE_WORKER_TIMEOUT,
-        )
+        self.workers = self.scheduler.get_workers(role=job.role)
         self.logger.info(f"Workers ready: {[w.id for w in self.workers]}")
 
         # Get engine class path for dynamic import on workers

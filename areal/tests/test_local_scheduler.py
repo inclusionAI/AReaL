@@ -8,9 +8,9 @@ import psutil
 import pytest
 
 from areal.api.scheduler_api import (
-    ContainerSpec,
+    Job,
     ScheduleStrategy,
-    SchedulingConfig,
+    SchedulingSpec,
     Worker,
 )
 from areal.scheduler.exceptions import (
@@ -94,7 +94,7 @@ def create_worker_info(
         process = create_mock_process()
 
     return WorkerInfo(
-        worker=Worker(id=worker_id, ip=ip, ports=ports),
+        worker=Worker(id=worker_id, ip=ip, worker_ports=ports, engine_ports=[]),
         process=process,
         role=role,
         gpu_devices=gpu_devices,
@@ -335,8 +335,8 @@ class TestWorkerCreation:
 
         scheduler = LocalScheduler(gpu_devices=[0, 1], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(replicas=2, role="rollout")
-        worker_ids = scheduler.create_workers("rollout", config)
+        job = Job(replicas=2, role="rollout")
+        worker_ids = scheduler.create_workers(job)
 
         assert worker_ids == ["rollout/0", "rollout/1"]
         assert "rollout" in scheduler._workers
@@ -366,19 +366,19 @@ class TestWorkerCreation:
 
         scheduler = LocalScheduler(gpu_devices=[0, 1, 2], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(
+        job = Job(
             replicas=3,
             role="actor",
-            specs=[ContainerSpec(gpu=2, port_count=3)],
+            tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=2, port_count=3)],
         )
-        worker_ids = scheduler.create_workers("actor", config)
+        worker_ids = scheduler.create_workers(job)
 
         assert len(worker_ids) == 3
         assert mock_popen.call_count == 3
 
         # All workers should use the same spec
         for worker_info in scheduler._workers["actor"]:
-            assert len(worker_info.worker.ports) == 3
+            assert len(worker_info.worker.worker_ports) == 3
 
     @patch("areal.scheduler.local_scheduler.gethostip")
     @patch("areal.scheduler.local_scheduler.subprocess.Popen")
@@ -401,19 +401,19 @@ class TestWorkerCreation:
 
         scheduler = LocalScheduler(gpu_devices=[0, 1], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(
+        job = Job(
             replicas=2,
             role="critic",
-            specs=[
-                ContainerSpec(gpu=1, port_count=1),
-                ContainerSpec(gpu=1, port_count=2),
+            tasks=[
+                SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=1),
+                SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2),
             ],
         )
-        worker_ids = scheduler.create_workers("critic", config)
+        worker_ids = scheduler.create_workers(job)
 
         assert len(worker_ids) == 2
-        assert len(scheduler._workers["critic"][0].worker.ports) == 1
-        assert len(scheduler._workers["critic"][1].worker.ports) == 2
+        assert len(scheduler._workers["critic"][0].worker.worker_ports) == 1
+        assert len(scheduler._workers["critic"][1].worker.worker_ports) == 2
 
     @patch("areal.scheduler.local_scheduler.gethostip")
     @patch("areal.scheduler.local_scheduler.subprocess.Popen")
@@ -432,16 +432,20 @@ class TestWorkerCreation:
 
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(
+        job = Job(
             replicas=1,
             role="custom",
-            specs=[
-                ContainerSpec(
-                    gpu=1, port_count=2, cmd="python my_custom_server.py --port 8000"
+            tasks=[
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
+                    gpu=1,
+                    port_count=2,
+                    cmd="python my_custom_server.py --port 8000",
                 )
             ],
         )
-        worker_ids = scheduler.create_workers("custom", config)
+        worker_ids = scheduler.create_workers(job)
 
         assert len(worker_ids) == 1
 
@@ -467,18 +471,20 @@ class TestWorkerCreation:
 
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(
+        job = Job(
             replicas=1,
             role="envtest",
-            specs=[
-                ContainerSpec(
+            tasks=[
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
                     gpu=1,
                     port_count=2,
                     env_vars={"CUSTOM_VAR": "custom_value", "ANOTHER_VAR": "123"},
                 )
             ],
         )
-        worker_ids = scheduler.create_workers("envtest", config)
+        worker_ids = scheduler.create_workers(job)
 
         assert len(worker_ids) == 1
 
@@ -511,10 +517,12 @@ class TestWorkerCreation:
         scheduler = LocalScheduler(gpu_devices=[0, 1, 2, 3], log_dir=str(tmp_path))
 
         # Create target workers (actors)
-        actor_config = SchedulingConfig(
-            replicas=2, role="actor", specs=[ContainerSpec(gpu=2, port_count=2)]
+        actor_job = Job(
+            replicas=2,
+            role="actor",
+            tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=2, port_count=2)],
         )
-        scheduler.create_workers("actor", actor_config)
+        scheduler.create_workers(actor_job)
 
         # Get GPU allocations for actors
         actor_gpus_0 = scheduler._workers["actor"][0].gpu_devices
@@ -525,13 +533,13 @@ class TestWorkerCreation:
         mock_find_ports.return_value = [8010, 8011]
 
         # Create colocated workers (critics)
-        critic_config = SchedulingConfig(
+        critic_job = Job(
             replicas=2,
             role="critic",
-            specs=[ContainerSpec(gpu=2, port_count=2)],
-            schedule_strategy=ScheduleStrategy(type="colocate", uid="actor"),
+            tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=2, port_count=2)],
+            schedule_strategy=ScheduleStrategy(type="colocation", target="actor"),
         )
-        critic_ids = scheduler.create_workers("critic", critic_config)
+        critic_ids = scheduler.create_workers(critic_job)
 
         assert len(critic_ids) == 2
 
@@ -558,12 +566,12 @@ class TestWorkerCreation:
             mock_proc.poll.return_value = None
             mock_popen.return_value = mock_proc
 
-            config = SchedulingConfig(replicas=1, role="test")
-            scheduler.create_workers("test", config)
+            job = Job(replicas=1, role="test")
+            scheduler.create_workers(job)
 
             # Try to create again
             with pytest.raises(WorkerCreationError) as exc_info:
-                scheduler.create_workers("test", config)
+                scheduler.create_workers(job)
 
             assert "Worker group already exists" in str(exc_info.value)
             assert exc_info.value.worker_key == "test"
@@ -572,30 +580,30 @@ class TestWorkerCreation:
         """Should raise WorkerCreationError when replicas is 0."""
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(replicas=0, role="test")
+        job = Job(replicas=0, role="test")
 
         with pytest.raises(WorkerCreationError) as exc_info:
-            scheduler.create_workers("test", config)
+            scheduler.create_workers(job)
 
         assert "replicas must be greater than 0" in str(exc_info.value)
 
     def test_create_workers_invalid_specs_length(self, tmp_path):
-        """Should raise WorkerCreationError when specs length is invalid."""
+        """Should raise WorkerCreationError when tasks length is invalid."""
         scheduler = LocalScheduler(gpu_devices=[0, 1], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(
+        job = Job(
             replicas=3,
             role="test",
-            specs=[
-                ContainerSpec(gpu=1, port_count=2),
-                ContainerSpec(gpu=1, port_count=2),
-            ],  # 2 specs for 3 replicas
+            tasks=[
+                SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2),
+                SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2),
+            ],  # 2 tasks for 3 replicas
         )
 
         with pytest.raises(WorkerCreationError) as exc_info:
-            scheduler.create_workers("test", config)
+            scheduler.create_workers(job)
 
-        assert "specs length (2) must be 1 or equal to replicas (3)" in str(
+        assert "schedulings length (2) must be 1 or equal to replicas (3)" in str(
             exc_info.value
         )
 
@@ -622,13 +630,13 @@ class TestWorkerCreation:
 
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(replicas=1, role="test")
+        job = Job(replicas=1, role="test")
 
         with patch.object(
             scheduler, "_read_log_tail", return_value="Error: Failed to start server"
         ):
             with pytest.raises(WorkerCreationError) as exc_info:
-                scheduler.create_workers("test", config)
+                scheduler.create_workers(job)
 
             assert "exited immediately with code 1" in str(exc_info.value)
 
@@ -653,31 +661,33 @@ class TestWorkerCreation:
 
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(replicas=2, role="test")
+        job = Job(replicas=2, role="test")
 
         with patch.object(scheduler, "_cleanup_workers") as mock_cleanup:
             with pytest.raises(WorkerCreationError) as exc_info:
-                scheduler.create_workers("test", config)
+                scheduler.create_workers(job)
 
             # Verify cleanup was called
             assert mock_cleanup.called
             assert "Resource allocation failed" in str(exc_info.value)
 
-    def test_create_workers_colocate_strategy_missing_uid(self, tmp_path):
-        """Should raise WorkerCreationError when colocate strategy is missing target role uid."""
+    def test_create_workers_colocate_strategy_missing_target(self, tmp_path):
+        """Should raise WorkerCreationError when colocation strategy is missing target role."""
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(
+        job = Job(
             replicas=1,
             role="test",
-            specs=[ContainerSpec(gpu=1, port_count=2)],
-            schedule_strategy=ScheduleStrategy(type="colocate", uid=""),  # Missing uid
+            tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2)],
+            schedule_strategy=ScheduleStrategy(
+                type="colocation", target=""
+            ),  # Missing target
         )
 
         with pytest.raises(WorkerCreationError) as exc_info:
-            scheduler.create_workers("test", config)
+            scheduler.create_workers(job)
 
-        assert "Colocate strategy requires uid" in str(exc_info.value)
+        assert "Colocation strategy requires target" in str(exc_info.value)
 
 
 class TestGetWorkers:
@@ -1499,8 +1509,8 @@ class TestEdgeCases:
 
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
-        config = SchedulingConfig(replicas=5, role="worker")
-        worker_ids = scheduler.create_workers("worker", config)
+        job = Job(replicas=5, role="worker")
+        worker_ids = scheduler.create_workers(job)
 
         assert worker_ids == [
             "worker/0",
@@ -1555,8 +1565,8 @@ class TestRPCWorkflowIntegration:
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
         try:
-            config = SchedulingConfig(replicas=1)
-            worker_ids = scheduler.create_workers(role="test", scheduler_config=config)
+            job = Job(replicas=1, role="test")
+            worker_ids = scheduler.create_workers(job)
             assert len(worker_ids) == 1
 
             workers = scheduler.get_workers(role="test", timeout=30.0)
@@ -1594,8 +1604,8 @@ class TestRPCWorkflowIntegration:
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
         try:
-            config = SchedulingConfig(replicas=1)
-            scheduler.create_workers(role="test", scheduler_config=config)
+            job = Job(replicas=1, role="test")
+            scheduler.create_workers(job)
 
             workers = scheduler.get_workers(role="test", timeout=30.0)
             worker_id = workers[0].id
@@ -1629,8 +1639,8 @@ class TestRPCWorkflowIntegration:
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
         try:
-            config = SchedulingConfig(replicas=1)
-            scheduler.create_workers(role="test", scheduler_config=config)
+            job = Job(replicas=1, role="test")
+            scheduler.create_workers(job)
 
             workers = scheduler.get_workers(role="test", timeout=30.0)
             worker_id = workers[0].id
@@ -1670,8 +1680,8 @@ class TestRPCWorkflowIntegration:
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
         try:
-            config = SchedulingConfig(replicas=1)
-            scheduler.create_workers(role="test", scheduler_config=config)
+            job = Job(replicas=1, role="test")
+            scheduler.create_workers(job)
 
             workers = scheduler.get_workers(role="test", timeout=30.0)
             worker_id = workers[0].id

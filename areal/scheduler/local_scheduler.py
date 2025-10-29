@@ -13,7 +13,7 @@ import httpx
 import orjson
 import psutil
 
-from areal.api.scheduler_api import ContainerSpec, Scheduler, SchedulingConfig, Worker
+from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
 from areal.scheduler.exceptions import (
     EngineCallError,
     EngineCreationError,
@@ -194,50 +194,47 @@ class LocalScheduler(Scheduler):
             raise PortAllocationError(str(e)) from e
 
     def _prepare_worker_specs(
-        self, role: str, num_workers: int, specs: list[ContainerSpec] | None
-    ) -> list[ContainerSpec]:
+        self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
+    ) -> list[SchedulingSpec]:
         """
         Prepare worker specs for a given number of workers.
 
         Args:
             role: Worker role name
             num_workers: Number of workers to create
-            specs: Optional list of specs
+            schedulings: Optional list of scheduling specs
 
         Returns:
-            List of ContainerSpec objects (one per worker)
+            List of SchedulingSpec objects (one per worker)
 
         Raises:
-            WorkerCreationError: If specs configuration is invalid
+            WorkerCreationError: If schedulings configuration is invalid
         """
-        if not specs:
-            # Default spec: 1 GPU, 2 ports
-            return [ContainerSpec(gpu=1, port_count=2)] * num_workers
+        if not schedulings:
+            # Default spec: 1 CPU, 1024 MB mem, 1 GPU, 2 ports
+            return [SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2)] * num_workers
 
         # If a single spec is provided, use it for all workers
-        if len(specs) == 1:
-            return [specs[0]] * num_workers
+        if len(schedulings) == 1:
+            return [schedulings[0]] * num_workers
 
         # If per-worker specs, validate length matches
-        if len(specs) == num_workers:
-            return specs
+        if len(schedulings) == num_workers:
+            return schedulings
 
         # Invalid configuration
         raise WorkerCreationError(
             role,
             "Invalid configuration",
-            f"specs length ({len(specs)}) must be 1 or equal to replicas ({num_workers})",
+            f"schedulings length ({len(schedulings)}) must be 1 or equal to replicas ({num_workers})",
         )
 
-    def create_workers(
-        self, role: str, scheduler_config: SchedulingConfig, *args, **kwargs
-    ) -> list[str]:
+    def create_workers(self, job: Job, *args, **kwargs) -> list[str]:
         """
         Create worker subprocesses.
 
         Args:
-            role: Role name for this group of workers (e.g., "rollout", "actor", "critic")
-            scheduler_config: Scheduling configuration with replicas, specs, and strategy
+            job: Job configuration with role, replicas, tasks, and scheduling strategy
             *args: Additional arguments passed to worker command
             **kwargs: Additional keyword arguments
 
@@ -249,6 +246,7 @@ class LocalScheduler(Scheduler):
             GPUAllocationError: If GPU allocation fails
             PortAllocationError: If port allocation fails
         """
+        role = job.role
         if role in self._workers:
             raise WorkerCreationError(
                 role,
@@ -257,23 +255,23 @@ class LocalScheduler(Scheduler):
             )
 
         # Extract configuration
-        num_workers = scheduler_config.replicas
+        num_workers = job.replicas
         if num_workers == 0:
             raise WorkerCreationError(
                 role, "Invalid configuration", "replicas must be greater than 0"
             )
 
         # Prepare worker specs
-        specs = self._prepare_worker_specs(role, num_workers, scheduler_config.specs)
+        schedulings = self._prepare_worker_specs(role, num_workers, job.tasks)
 
         # Determine scheduling strategy
-        strategy = scheduler_config.schedule_strategy
+        strategy = job.schedule_strategy
         if strategy is None:
-            strategy_type = "new"
+            strategy_type = "separation"
             colocate_role = None
         else:
-            strategy_type = strategy.type or "new"
-            colocate_role = strategy.uid if strategy_type == "colocate" else None
+            strategy_type = strategy.type or "separation"
+            colocate_role = strategy.target if strategy_type == "colocation" else None
 
         logger.info(
             f"Creating {num_workers} workers for role '{role}' "
@@ -285,29 +283,29 @@ class LocalScheduler(Scheduler):
         try:
             for idx in range(num_workers):
                 worker_id = f"{role}/{idx}"
-                spec = specs[idx]
+                scheduling = schedulings[idx]
 
                 # Allocate resources based on strategy
                 try:
                     # GPU allocation
-                    if strategy_type == "colocate":
+                    if strategy_type == "colocation":
                         if not colocate_role:
                             raise WorkerCreationError(
                                 role,
                                 "Invalid strategy",
-                                "Colocate strategy requires uid (target role) to be specified",
+                                "Colocation strategy requires target role to be specified",
                             )
                         gpu_devices = self._get_colocated_gpus(colocate_role, idx)
                         logger.debug(
                             f"Worker {worker_id} colocated with {colocate_role}/{idx} on GPUs {gpu_devices}"
                         )
-                    else:  # "new" or default
-                        gpu_devices = self._allocate_gpus(spec.gpu)
+                    else:  # "separation" or default
+                        gpu_devices = self._allocate_gpus(scheduling.gpu)
                         logger.debug(
                             f"Worker {worker_id} allocated new GPUs {gpu_devices}"
                         )
 
-                    ports = self._allocate_ports(spec.port_count)
+                    ports = self._allocate_ports(scheduling.port_count)
                 except (
                     GPUAllocationError,
                     PortAllocationError,
@@ -325,17 +323,17 @@ class LocalScheduler(Scheduler):
                 env["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_devices))
                 env["WORKER_ID"] = worker_id
 
-                # Merge user-provided environment variables from spec
-                if spec.env_vars:
-                    env.update(spec.env_vars)
+                # Merge user-provided environment variables from scheduling
+                if scheduling.env_vars:
+                    env.update(scheduling.env_vars)
 
                 # Prepare log file
                 log_file = self.log_dir / f"{worker_id.replace('/', '_')}.log"
 
                 # Build command to start RPC server
-                if spec.cmd:
-                    # Use custom command from spec
-                    cmd = shlex.split(spec.cmd)
+                if scheduling.cmd:
+                    # Use custom command from scheduling
+                    cmd = shlex.split(scheduling.cmd)
                 else:
                     # Default: start RPC server
                     cmd = [
@@ -385,7 +383,8 @@ class LocalScheduler(Scheduler):
                 worker = Worker(
                     id=worker_id,
                     ip=gethostip(),
-                    ports=[str(p) for p in ports],
+                    worker_ports=[str(p) for p in ports],
+                    engine_ports=[],
                 )
 
                 worker_info = WorkerInfo(
@@ -482,7 +481,7 @@ class LocalScheduler(Scheduler):
 
     def _is_worker_ready(self, worker_info: WorkerInfo) -> bool:
         """Check if worker's RPC server is ready via HTTP health check."""
-        port = int(worker_info.worker.ports[0])
+        port = int(worker_info.worker.worker_ports[0])
         url = f"http://{worker_info.worker.ip}:{port}/health"
 
         try:
@@ -544,7 +543,7 @@ class LocalScheduler(Scheduler):
         for worker_info in workers:
             try:
                 # Release ports
-                for port_str in worker_info.worker.ports:
+                for port_str in worker_info.worker.worker_ports:
                     self._allocated_ports.discard(int(port_str))
 
                 # Terminate process tree
@@ -645,7 +644,7 @@ class LocalScheduler(Scheduler):
         }
 
         # Send HTTP request to create engine
-        port = int(worker_info.worker.ports[0])
+        port = int(worker_info.worker.worker_ports[0])
         url = f"http://{worker_info.worker.ip}:{port}/create_engine"
 
         try:
@@ -745,7 +744,7 @@ class LocalScheduler(Scheduler):
         }
 
         # Retry logic with exponential backoff
-        port = int(worker_info.worker.ports[0])
+        port = int(worker_info.worker.worker_ports[0])
         url = f"http://{worker_info.worker.ip}:{port}/call"
         last_error = None
 
@@ -838,7 +837,7 @@ class LocalScheduler(Scheduler):
             raise WorkerNotFoundError(worker_id)
 
         # Route to different endpoint based on method
-        port = int(worker_info.worker.ports[0])
+        port = int(worker_info.worker.worker_ports[0])
         if method == "run_workflow":
             # Special routing for workflow execution
             url = f"http://{worker_info.worker.ip}:{port}/run_workflow"

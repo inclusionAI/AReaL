@@ -34,7 +34,7 @@ from realhf.api.core.system_api import (
     GserverManager,
     ModelWorker,
     RolloutWorker,
-    Scheduling,
+    SchedulingSpec,
     TasksGroup,
 )
 from realhf.api.quickstart.device_mesh import RPCAllocation
@@ -90,7 +90,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
         return ExperimentScheduling(
             master_worker=TasksGroup(
                 count=1,
-                scheduling=Scheduling(
+                scheduling=SchedulingSpec(
                     cpu=self.cpus_per_master_worker,
                     gpu=0,
                     mem=self.mem_per_master_worker,
@@ -101,7 +101,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
             ),
             model_worker=TasksGroup(
                 count=train_world_size,
-                scheduling=Scheduling(
+                scheduling=SchedulingSpec(
                     cpu=self.cpus_per_model_worker,
                     gpu=1,
                     mem=self.mem_per_model_worker,
@@ -112,7 +112,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
             ),
             generation_server=TasksGroup(
                 count=gen_world_size // gen_tp_size,
-                scheduling=Scheduling(
+                scheduling=SchedulingSpec(
                     cpu=self.cpus_per_generation_server,
                     gpu=gen_tp_size,
                     mem=self.mem_per_generation_server,
@@ -123,7 +123,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
             ),
             gserver_manager=TasksGroup(
                 count=1,
-                scheduling=Scheduling(
+                scheduling=SchedulingSpec(
                     cpu=self.cpus_per_gserver_manager,
                     gpu=0,
                     mem=self.mem_per_gserver_manager,
@@ -134,7 +134,7 @@ class AsyncRLExperimentConfig(CommonExperimentConfig, AsyncRLOptions):
             ),
             rollout_worker=TasksGroup(
                 count=self.n_rollout_workers or train_world_size,
-                scheduling=Scheduling(
+                scheduling=SchedulingSpec(
                     cpu=self.cpus_per_rollout_worker,
                     gpu=0,
                     mem=self.mem_per_rollout_worker,

@@ -1,8 +1,8 @@
 import abc
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
-from areal.api.engine_api import Scheduling
+from areal.api.cli_args import ScheduleStrategy, SchedulingSpec
 
 
 @dataclass
@@ -24,15 +24,9 @@ class Worker:
 
 
 @dataclass
-class ScheduleStrategy:
-    type: Literal["colocation", "separation"] = "separation"
-    target: str = ""
-
-
-@dataclass
 class Job:
     replicas: int = 0
-    tasks: list[Scheduling] = field(default_factory=list)
+    tasks: list[SchedulingSpec] = field(default_factory=list)
     schedule_strategy: ScheduleStrategy | None = None
     role: str = ""
 
@@ -49,12 +43,11 @@ class Scheduler(abc.ABC):
     """
 
     @abc.abstractmethod
-    def create_workers(self, role: str, job: Job, *args, **kwargs) -> list[str]:
+    def create_workers(self, job: Job, *args, **kwargs) -> list[str]:
         """
         Create and start worker processes for a specific role.
 
         Args:
-            role: Role name for this group of workers (e.g., "rollout", "actor", "critic").
             scheduler_config: Configuration specifying replicas, resources, and scheduling strategy.
             *args: Additional positional arguments (implementation-specific).
             **kwargs: Additional keyword arguments (implementation-specific).

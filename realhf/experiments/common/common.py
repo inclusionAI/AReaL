@@ -34,7 +34,7 @@ from realhf.api.core.system_api import (
     ExperimentConfig,
     ExperimentScheduling,
     ModelWorker,
-    Scheduling,
+    SchedulingSpec,
     TasksGroup,
 )
 from realhf.api.quickstart.device_mesh import (
@@ -163,7 +163,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
         return ExperimentScheduling(
             master_worker=TasksGroup(
                 count=1,
-                scheduling=Scheduling(
+                scheduling=SchedulingSpec(
                     cpu=self.cpus_per_master_worker,
                     gpu=0,
                     mem=self.mem_per_master_worker,
@@ -174,7 +174,7 @@ class CommonExperimentConfig(BaseExperimentConfig, Experiment):
             ),
             model_worker=TasksGroup(
                 count=self.n_nodes * self.n_gpus_per_node,
-                scheduling=Scheduling(
+                scheduling=SchedulingSpec(
                     cpu=self.cpus_per_model_worker,
                     gpu=1,
                     mem=self.mem_per_model_worker,

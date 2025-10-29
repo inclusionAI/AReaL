@@ -24,7 +24,13 @@ class MockScheduler:
     def create_workers(self, role, scheduler_config, *args, **kwargs):
         worker_ids = [f"{role}/{i}" for i in range(scheduler_config.replicas)]
         self.workers = [
-            Worker(id=wid, ip="127.0.0.1", ports=["8000", "8001"]) for wid in worker_ids
+            Worker(
+                id=wid,
+                ip="127.0.0.1",
+                worker_ports=["8000", "8001"],
+                engine_ports=["9000", "9001"],
+            )
+            for wid in worker_ids
         ]
         return worker_ids
 

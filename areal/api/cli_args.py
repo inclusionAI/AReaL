@@ -3,7 +3,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import uvloop
 import yaml
@@ -313,6 +313,12 @@ class MegatronEngineConfig:
 
 
 @dataclass
+class ScheduleStrategy:
+    type: Literal["colocation", "separation"] = "separation"
+    target: str = ""
+
+
+@dataclass
 class SchedulingSpec:
     cpu: int = field(default=0, metadata={"help": "Number of CPU cores required"})
     gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
@@ -332,9 +338,20 @@ class SchedulingSpec:
         default_factory=dict,
         metadata={"help": "Environment variables for the container"},
     )
-    cmd: str = field(
-        default="", metadata={"help": "Command to execute inside the container"}
+    # cmd
+    cmd: str | None = field(
+        default=None,
+        metadata={
+            "help": "Command to execute inside the container. Defaults to AReaL's RPC server."
+        },
     )
+    # slurm configurations from "https://slurm.schedmd.com/sbatch.html"
+    nodelist: str | None = None
+    exclude: str | None = None
+    partition: str | None = None
+    time_limit: str | None = None  # see  "--time" option for format
+    begin: str | None = None  # see "--begin" option for format
+    deadline: str | None = None  # see "--deadline" option for format
 
 
 @dataclass
@@ -410,10 +427,11 @@ class TrainEngineConfig:
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
-    scheduling_specs: list[SchedulingSpec] = field(
-        default_factory=list,
+    scheduling_spec: SchedulingSpec = field(
+        default_factory=SchedulingSpec,
         metadata={"help": "train engine schedule specs"},
     )
+    scheduling_strategy: ScheduleStrategy = field(default_factory=ScheduleStrategy)
 
 
 @dataclass
@@ -882,10 +900,11 @@ class InferenceEngineConfig:
             "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
         },
     )
-    scheduling_specs: list[SchedulingSpec] = field(
-        default_factory=list,
+    scheduling_spec: SchedulingSpec = field(
+        default_factory=SchedulingSpec,
         metadata={"help": "inference engine schedule specs"},
     )
+    scheduling_strategy: ScheduleStrategy = field(default_factory=ScheduleStrategy)
 
 
 @dataclass

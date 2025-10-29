@@ -4,14 +4,13 @@ import os
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import SaverConfig
-from areal.api.controller_api import TrainController
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
+from areal.controller.train_controller import TrainController
 from areal.utils import timeutil
 
 
 class Saver:
-
     def __init__(self, config: SaverConfig, ft_spec: FinetuneSpec):
         self.config = config
         self.ft_spec = ft_spec

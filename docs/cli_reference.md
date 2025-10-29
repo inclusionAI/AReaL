@@ -73,6 +73,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 
 - [DistributedDataParallel Configuration](section-distributed-data-parallel)
 - [MegatronEngine Configuration](section-megatron-engine)
+- [ScheduleStrategy](section-schedule-strategy)
 - [Scheduler Configuration](section-scheduler)
 - [Scheduling Specification](section-scheduling)
 
@@ -335,7 +336,8 @@ Configuration for PPO actor model, a subclass of a TrainEngine.
 | `lora_alpha`              | integer                                           | `16`                  | lora alpha                                                                                                                                                                                                                                                                                                                 |
 | `target_modules`          | list of string                                    | **Required**          | lora target_modules.                                                                                                                                                                                                                                                                                                       |
 | `peft_type`               | string                                            | `"lora"`              | peft method type. Only LoRA is supported for now.                                                                                                                                                                                                                                                                          |
-| `scheduling_specs`        | list of [`SchedulingSpec`](section-scheduling)    | **Required**          | train engine schedule specs                                                                                                                                                                                                                                                                                                |
+| `scheduling_spec`         | [`SchedulingSpec`](section-scheduling)            | **Required**          | train engine schedule specs                                                                                                                                                                                                                                                                                                |
+| `scheduling_strategy`     | [`ScheduleStrategy`](section-schedule-strategy)   | **Required**          | -                                                                                                                                                                                                                                                                                                                          |
 | `group_size`              | integer                                           | `1`                   | Number of sequences in each group                                                                                                                                                                                                                                                                                          |
 | `ppo_n_minibatches`       | integer                                           | `4`                   | Number of minibatches for each PPO update                                                                                                                                                                                                                                                                                  |
 | `eps_clip`                | float                                             | `0.2`                 | Clipping factor for policy ratio                                                                                                                                                                                                                                                                                           |
@@ -393,7 +395,8 @@ Configuration for PPO critic model, a subclass of a TrainEngine.
 | `lora_alpha`             | integer                                           | `16`                  | lora alpha                                                                                                                              |
 | `target_modules`         | list of string                                    | **Required**          | lora target_modules.                                                                                                                    |
 | `peft_type`              | string                                            | `"lora"`              | peft method type. Only LoRA is supported for now.                                                                                       |
-| `scheduling_specs`       | list of [`SchedulingSpec`](section-scheduling)    | **Required**          | train engine schedule specs                                                                                                             |
+| `scheduling_spec`        | [`SchedulingSpec`](section-scheduling)            | **Required**          | train engine schedule specs                                                                                                             |
+| `scheduling_strategy`    | [`ScheduleStrategy`](section-schedule-strategy)   | **Required**          | -                                                                                                                                       |
 | `ppo_n_minibatches`      | integer                                           | `4`                   | Number of minibatches for each PPO update                                                                                               |
 | `eps_clip`               | float                                             | `0.5`                 | Clipping factor for value loss                                                                                                          |
 | `mask_no_eos_with_zero`  | boolean                                           | `False`               | Mask truncated generations (no EOS token) and exclude from training                                                                     |
@@ -428,7 +431,8 @@ Core configuration for model training, including optimization and backend settin
 | `lora_alpha`             | integer                                           | `16`                  | lora alpha                                                                                                                              |
 | `target_modules`         | list of string                                    | **Required**          | lora target_modules.                                                                                                                    |
 | `peft_type`              | string                                            | `"lora"`              | peft method type. Only LoRA is supported for now.                                                                                       |
-| `scheduling_specs`       | list of [`SchedulingSpec`](section-scheduling)    | **Required**          | train engine schedule specs                                                                                                             |
+| `scheduling_spec`        | [`SchedulingSpec`](section-scheduling)            | **Required**          | train engine schedule specs                                                                                                             |
+| `scheduling_strategy`    | [`ScheduleStrategy`](section-schedule-strategy)   | **Required**          | -                                                                                                                                       |
 
 (section-generation-hyperparameters)=
 
@@ -456,22 +460,23 @@ Controls text generation behavior for rollout.
 
 Configuration for inference servers, including offpolicyness control.
 
-| Parameter                 | Type                                           | Default         | Description                                                                                                                                                         |
-| ------------------------- | ---------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `experiment_name`         | string \| None                                 | `None`          | -                                                                                                                                                                   |
-| `trial_name`              | string \| None                                 | `None`          | -                                                                                                                                                                   |
-| `max_concurrent_rollouts` | integer \| None                                | `None`          | Maximum number of concurrent rollouts to the inference engine. Defaults to consumer_batch_size.                                                                     |
-| `queue_size`              | integer \| None                                | `None`          | (Deprecated) Input/Output queue size for async rollout.                                                                                                             |
-| `consumer_batch_size`     | integer                                        | `1`             | Batch size for consuming rollouts from the queue.                                                                                                                   |
-| `max_head_offpolicyness`  | integer                                        | `0`             | Maximum off-policyness for the head. If the current version is more than this many versions behind, the request will not be accepted.                               |
-| `enable_rollout_tracing`  | boolean                                        | `False`         | Whether to output verbose tracing messages for each generation request.                                                                                             |
-| `check_trajectory_format` | boolean                                        | `False`         | Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training. |
-| `schedule_policy`         | string                                         | `"round_robin"` | Request scheduling policy **Choices:** `round_robin`                                                                                                                |
-| `setup_timeout`           | float                                          | `120.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                      |
-| `request_timeout`         | float                                          | `3600`          | Timeout for HTTP requests.                                                                                                                                          |
-| `request_retries`         | integer                                        | `3`             | Number of retries for failed requests.                                                                                                                              |
-| `pause_grace_period`      | float                                          | `0.0`           | The grace period after calling /pause_generation. Wait until all requests have been dropped.                                                                        |
-| `scheduling_specs`        | list of [`SchedulingSpec`](section-scheduling) | **Required**    | inference engine schedule specs                                                                                                                                     |
+| Parameter                 | Type                                            | Default         | Description                                                                                                                                                         |
+| ------------------------- | ----------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`         | string \| None                                  | `None`          | -                                                                                                                                                                   |
+| `trial_name`              | string \| None                                  | `None`          | -                                                                                                                                                                   |
+| `max_concurrent_rollouts` | integer \| None                                 | `None`          | Maximum number of concurrent rollouts to the inference engine. Defaults to consumer_batch_size.                                                                     |
+| `queue_size`              | integer \| None                                 | `None`          | (Deprecated) Input/Output queue size for async rollout.                                                                                                             |
+| `consumer_batch_size`     | integer                                         | `1`             | Batch size for consuming rollouts from the queue.                                                                                                                   |
+| `max_head_offpolicyness`  | integer                                         | `0`             | Maximum off-policyness for the head. If the current version is more than this many versions behind, the request will not be accepted.                               |
+| `enable_rollout_tracing`  | boolean                                         | `False`         | Whether to output verbose tracing messages for each generation request.                                                                                             |
+| `check_trajectory_format` | boolean                                         | `False`         | Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training. |
+| `schedule_policy`         | string                                          | `"round_robin"` | Request scheduling policy **Choices:** `round_robin`                                                                                                                |
+| `setup_timeout`           | float                                           | `120.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                      |
+| `request_timeout`         | float                                           | `3600`          | Timeout for HTTP requests.                                                                                                                                          |
+| `request_retries`         | integer                                         | `3`             | Number of retries for failed requests.                                                                                                                              |
+| `pause_grace_period`      | float                                           | `0.0`           | The grace period after calling /pause_generation. Wait until all requests have been dropped.                                                                        |
+| `scheduling_spec`         | [`SchedulingSpec`](section-scheduling)          | **Required**    | inference engine schedule specs                                                                                                                                     |
+| `scheduling_strategy`     | [`ScheduleStrategy`](section-schedule-strategy) | **Required**    | -                                                                                                                                                                   |
 
 (section-sg-lang)=
 
@@ -802,6 +807,17 @@ Refer to Megatron-LM documentation for implementation details.
 | `distribute_saved_activations`             | boolean \| None                                                      | `None`       | -           |
 | `recompute_modules`                        | list of string \| None                                               | `None`       | -           |
 
+(section-schedule-strategy)=
+
+## ScheduleStrategy
+
+Configuration class: ScheduleStrategy
+
+| Parameter | Type      | Default        | Description |
+| --------- | --------- | -------------- | ----------- |
+| `type`    | `Literal` | `"separation"` | -           |
+| `target`  | string    | `""`           | -           |
+
 (section-scheduler)=
 
 ## Scheduler Configuration
@@ -823,13 +839,19 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 
 Configuration class: SchedulingSpec
 
-| Parameter    | Type    | Default      | Description                                                      |
-| ------------ | ------- | ------------ | ---------------------------------------------------------------- |
-| `cpu`        | integer | `0`          | Number of CPU cores required                                     |
-| `gpu`        | integer | `0`          | Number of GPU units required                                     |
-| `mem`        | integer | `0`          | Amount of memory (GB) required                                   |
-| `port_count` | integer | `2`          | Number of ports to expose                                        |
-| `image`      | string  | `""`         | Docker/Singularity container image to use                        |
-| `type`       | string  | `"worker"`   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine` |
-| `env_vars`   | `dict`  | **Required** | Environment variables for the container                          |
-| `cmd`        | string  | `""`         | Command to execute inside the container                          |
+| Parameter    | Type           | Default      | Description                                                              |
+| ------------ | -------------- | ------------ | ------------------------------------------------------------------------ |
+| `cpu`        | integer        | `0`          | Number of CPU cores required                                             |
+| `gpu`        | integer        | `0`          | Number of GPU units required                                             |
+| `mem`        | integer        | `0`          | Amount of memory (GB) required                                           |
+| `port_count` | integer        | `2`          | Number of ports to expose                                                |
+| `image`      | string         | `""`         | Docker/Singularity container image to use                                |
+| `type`       | string         | `"worker"`   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine`         |
+| `env_vars`   | `dict`         | **Required** | Environment variables for the container                                  |
+| `cmd`        | string \| None | `None`       | Command to execute inside the container. Defaults to AReaL's RPC server. |
+| `nodelist`   | string \| None | `None`       | -                                                                        |
+| `exclude`    | string \| None | `None`       | -                                                                        |
+| `partition`  | string \| None | `None`       | -                                                                        |
+| `time_limit` | string \| None | `None`       | -                                                                        |
+| `begin`      | string \| None | `None`       | -                                                                        |
+| `deadline`   | string \| None | `None`       | -                                                                        |

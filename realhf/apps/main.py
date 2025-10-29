@@ -47,7 +47,7 @@ def _submit_workers(
         job_environs = {**environs, **sch_cfg.scheduling.env_vars}
         cmd = sched_client.remote_worker_cmd(expr_name, trial_name, debug, worker_type)
 
-        logger.debug(f"Scheduling worker {worker_type}, {scheduling_configs}")
+        logger.debug(f"SchedulingSpec worker {worker_type}, {scheduling_configs}")
 
         nodelist = sch_cfg.scheduling.nodelist
         exclude = sch_cfg.scheduling.exclude

@@ -1,8 +1,7 @@
 import abc
 from collections.abc import Callable
 from concurrent.futures import Future
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 import torch.distributed as dist
@@ -19,25 +18,6 @@ from areal.api.io_struct import (
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
-
-
-@dataclass
-class Scheduling:
-    cpu: int
-    gpu: int
-    mem: int
-    port_count: int
-    cmd: str | None = None
-    nodelist: str | None = None
-    exclude: str | None = None
-    partition: str | None = None
-    container_image: str | None = None
-    type: Literal["worker", "engine"] = None
-    env_vars: dict[str, str] = field(default_factory=dict)
-    # time utils from "https://slurm.schedmd.com/sbatch.html"
-    time_limit: str | None = None  # see  "--time" option for format
-    begin: str | None = None  # see "--begin" option for format
-    deadline: str | None = None  # see "--deadline" option for format
 
 
 class TrainEngine(abc.ABC):
@@ -143,18 +123,6 @@ class TrainEngine(abc.ABC):
         -------
         dist.ProcessGroup
             The global communication group
-        """
-        raise NotImplementedError()
-
-    def get_scheduling_config(self) -> list[Scheduling]:
-        """Get the scheduling configuration for the engine.
-
-        This includes configuration such as container image, CPU/GPU/memory size.
-
-        Returns
-        -------
-        Scheduling
-            The scheduling configuration for the engine
         """
         raise NotImplementedError()
 
@@ -604,16 +572,4 @@ class InferenceEngine(abc.ABC):
 
     def resume(self):
         """Resume request submission for async rollout."""
-        raise NotImplementedError()
-
-    def get_scheduling_config(self) -> list[Scheduling]:
-        """Get the scheduling configuration for the engine.
-
-        This includes configuration such as container image, CPU/GPU/memory size.
-
-        Returns
-        -------
-        List[Scheduling]
-            A list of scheduling configurations for the engine
-        """
         raise NotImplementedError()
