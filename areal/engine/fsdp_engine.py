@@ -88,13 +88,13 @@ class AppState(Stateful):
         This automatically manages FSDP FQN's and
         sets default state dict type to FSDP.SHARDED_STATE_DICT
         """
-        #
-        model_state_dict, optimizer_state_dict = get_state_dict(
-            self.model, self.optimizer
-        )
-        state_dict = {"model": model_state_dict}
         if self.optimizer is not None:
-            state_dict["optim"] = optimizer_state_dict
+            model_state_dict, optimizer_state_dict = get_state_dict(
+                self.model, self.optimizer
+            )
+            state_dict = {"model": model_state_dict, "optim": optimizer_state_dict}
+        else:
+            state_dict = {"model": get_model_state_dict(self.model)}
         return state_dict
 
     def load_state_dict(self, state_dict):
