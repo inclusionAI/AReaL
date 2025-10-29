@@ -253,14 +253,17 @@ jobs:
 
       #     echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
 
+      - name: Install python packages for testing
+        run: |
+          pip install pytest-asyncio openai-agents==0.3.3
+
       - name: Run unit tests
         env:
           CI: true
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          echo "PYTHONPATH=$PYTHONPATH"
-          TOKENIZERS_PARALLELISM=false AREAL_IS_IN_CI=1 pytest -s -vv areal/tests/test_*.py
+          TOKENIZERS_PARALLELISM=false AREAL_IS_IN_CI=1 pytest --durations=0 -s -vv areal/tests/test_*.py
 
   cleanup:
     name: Tear down GCP runner

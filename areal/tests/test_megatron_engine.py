@@ -1,7 +1,7 @@
 import os
 import time
 from importlib.metadata import version as get_version
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 import torch
@@ -33,7 +33,7 @@ def mock_input(
     min_seqlen=10,
     max_seqlen=20,
     device=current_platform.device_type,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -101,7 +101,9 @@ def test_simple_forward(engine, mock_input):
 def test_simple_train(engine, mock_input):
     engine.train()
     train_result = engine.train_batch(
-        mock_input, loss_fn=mock_loss_fn, loss_weight_fn=lambda x: 1
+        mock_input,
+        loss_fn=mock_loss_fn,
+        loss_weight_fn=lambda x: torch.tensor(1.0, device="cuda"),
     )
     engine.step_lr_scheduler()
     logger.info(f"Train done, result={train_result}")
