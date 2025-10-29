@@ -25,7 +25,7 @@ from areal.scheduler.exceptions import (
     WorkerNotFoundError,
     WorkerTimeoutError,
 )
-from areal.scheduler.local_scheduler import LocalScheduler, WorkerInfo
+from areal.scheduler.local import LocalScheduler, WorkerInfo
 
 # ============================================================================
 # Fixtures and Helper Functions
@@ -258,9 +258,7 @@ class TestPortAllocation:
 
     def test_allocate_ports_success(self, tmp_path):
         """Should allocate requested number of free ports."""
-        with patch(
-            "areal.scheduler.local_scheduler.find_free_ports"
-        ) as mock_find_ports:
+        with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.return_value = [8000, 8001, 8002]
 
             scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
@@ -272,9 +270,7 @@ class TestPortAllocation:
 
     def test_allocate_ports_excludes_already_allocated(self, tmp_path):
         """Should exclude already allocated ports from search."""
-        with patch(
-            "areal.scheduler.local_scheduler.find_free_ports"
-        ) as mock_find_ports:
+        with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.side_effect = [
                 [8000, 8001],
                 [8002, 8003],
@@ -298,9 +294,7 @@ class TestPortAllocation:
 
     def test_allocate_ports_failure(self, tmp_path):
         """Should raise PortAllocationError when port allocation fails."""
-        with patch(
-            "areal.scheduler.local_scheduler.find_free_ports"
-        ) as mock_find_ports:
+        with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.side_effect = ValueError("No free ports available")
 
             scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
@@ -314,8 +308,8 @@ class TestPortAllocation:
 class TestWorkerCreation:
     """Test worker creation with various configurations."""
 
-    @patch("areal.scheduler.local_scheduler.gethostip")
-    @patch("areal.scheduler.local_scheduler.subprocess.Popen")
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local_scheduler.find_free_ports")
     def test_create_workers_with_default_spec(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
@@ -345,8 +339,8 @@ class TestWorkerCreation:
         # Verify default spec was used
         assert mock_popen.call_count == 2
 
-    @patch("areal.scheduler.local_scheduler.gethostip")
-    @patch("areal.scheduler.local_scheduler.subprocess.Popen")
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local_scheduler.find_free_ports")
     def test_create_workers_with_single_spec_for_all(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
@@ -380,8 +374,8 @@ class TestWorkerCreation:
         for worker_info in scheduler._workers["actor"]:
             assert len(worker_info.worker.worker_ports) == 3
 
-    @patch("areal.scheduler.local_scheduler.gethostip")
-    @patch("areal.scheduler.local_scheduler.subprocess.Popen")
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local_scheduler.find_free_ports")
     def test_create_workers_with_per_worker_specs(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
@@ -415,8 +409,8 @@ class TestWorkerCreation:
         assert len(scheduler._workers["critic"][0].worker.worker_ports) == 1
         assert len(scheduler._workers["critic"][1].worker.worker_ports) == 2
 
-    @patch("areal.scheduler.local_scheduler.gethostip")
-    @patch("areal.scheduler.local_scheduler.subprocess.Popen")
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local_scheduler.find_free_ports")
     def test_create_workers_with_custom_command(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
@@ -454,8 +448,8 @@ class TestWorkerCreation:
         cmd_args = popen_call[0][0]
         assert cmd_args == ["python", "my_custom_server.py", "--port", "8000"]
 
-    @patch("areal.scheduler.local_scheduler.gethostip")
-    @patch("areal.scheduler.local_scheduler.subprocess.Popen")
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local_scheduler.find_free_ports")
     def test_create_workers_with_environment_variables(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
@@ -496,8 +490,8 @@ class TestWorkerCreation:
         assert env["CUDA_VISIBLE_DEVICES"] == "0"
         assert env["WORKER_ID"] == "envtest/0"
 
-    @patch("areal.scheduler.local_scheduler.gethostip")
-    @patch("areal.scheduler.local_scheduler.subprocess.Popen")
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local_scheduler.find_free_ports")
     def test_create_workers_with_colocate_strategy(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
@@ -555,9 +549,9 @@ class TestWorkerCreation:
         scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
 
         with (
-            patch("areal.scheduler.local_scheduler.subprocess.Popen") as mock_popen,
-            patch("areal.scheduler.local_scheduler.find_free_ports") as mock_find_ports,
-            patch("areal.scheduler.local_scheduler.gethostip") as mock_gethostip,
+            patch("areal.scheduler.local.subprocess.Popen") as mock_popen,
+            patch("areal.scheduler.local.find_free_ports") as mock_find_ports,
+            patch("areal.scheduler.local.gethostip") as mock_gethostip,
         ):
             mock_gethostip.return_value = "127.0.0.1"
             mock_find_ports.return_value = [8000, 8001]
@@ -607,8 +601,8 @@ class TestWorkerCreation:
             exc_info.value
         )
 
-    @patch("areal.scheduler.local_scheduler.gethostip")
-    @patch("areal.scheduler.local_scheduler.subprocess.Popen")
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local_scheduler.find_free_ports")
     def test_create_workers_subprocess_fails_immediately(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
@@ -640,8 +634,8 @@ class TestWorkerCreation:
 
             assert "exited immediately with code 1" in str(exc_info.value)
 
-    @patch("areal.scheduler.local_scheduler.gethostip")
-    @patch("areal.scheduler.local_scheduler.subprocess.Popen")
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local_scheduler.find_free_ports")
     def test_create_workers_cleanup_on_partial_failure(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
@@ -700,7 +694,7 @@ class TestGetWorkers:
 
         assert exc_info.value.worker_id == "nonexistent"
 
-    @patch("areal.scheduler.local_scheduler.time.sleep")
+    @patch("areal.scheduler.local.time.sleep")
     def test_get_workers_success(self, mock_sleep, scheduler, tmp_path):
         """Should return workers when all are ready."""
         # Create mock workers
@@ -720,8 +714,8 @@ class TestGetWorkers:
             assert workers[0].id == "test/0"
             assert workers[1].id == "test/1"
 
-    @patch("areal.scheduler.local_scheduler.time.time")
-    @patch("areal.scheduler.local_scheduler.time.sleep")
+    @patch("areal.scheduler.local.time.time")
+    @patch("areal.scheduler.local.time.sleep")
     def test_get_workers_timeout(self, mock_sleep, mock_time, scheduler, tmp_path):
         """Should raise WorkerTimeoutError when timeout is exceeded."""
         # Mock time progression - provide enough values
@@ -760,7 +754,7 @@ class TestGetWorkers:
             assert exc_info.value.worker_id == "test/0"
             assert exc_info.value.exit_code == 1
 
-    @patch("areal.scheduler.local_scheduler.time.sleep")
+    @patch("areal.scheduler.local.time.sleep")
     def test_get_workers_gradual_readiness(self, mock_sleep, scheduler, tmp_path):
         """Should wait for all workers to become ready gradually."""
         worker1 = create_worker_info(
@@ -946,8 +940,8 @@ class TestDeleteWorkers:
 class TestProcessTermination:
     """Test process termination functionality."""
 
-    @patch("areal.scheduler.local_scheduler.psutil.Process")
-    @patch("areal.scheduler.local_scheduler.psutil.wait_procs")
+    @patch("areal.scheduler.local.psutil.Process")
+    @patch("areal.scheduler.local.psutil.wait_procs")
     def test_terminate_process_tree_graceful(
         self, mock_wait_procs, mock_process_class, tmp_path
     ):
@@ -976,8 +970,8 @@ class TestProcessTermination:
         mock_child2.kill.assert_not_called()
         mock_parent.kill.assert_not_called()
 
-    @patch("areal.scheduler.local_scheduler.psutil.Process")
-    @patch("areal.scheduler.local_scheduler.psutil.wait_procs")
+    @patch("areal.scheduler.local.psutil.Process")
+    @patch("areal.scheduler.local.psutil.wait_procs")
     def test_terminate_process_tree_force_kill(
         self, mock_wait_procs, mock_process_class, tmp_path
     ):
@@ -1006,7 +1000,7 @@ class TestProcessTermination:
         mock_child.terminate.assert_called_once()
         mock_child.kill.assert_called_once()
 
-    @patch("areal.scheduler.local_scheduler.psutil.Process")
+    @patch("areal.scheduler.local.psutil.Process")
     def test_terminate_process_tree_no_such_process(self, mock_process_class, tmp_path):
         """Should handle gracefully when process doesn't exist."""
         mock_process_class.side_effect = psutil.NoSuchProcess(1234)
@@ -1016,7 +1010,7 @@ class TestProcessTermination:
         # Should not raise
         scheduler._terminate_process_tree(1234)
 
-    @patch("areal.scheduler.local_scheduler.psutil.Process")
+    @patch("areal.scheduler.local.psutil.Process")
     def test_terminate_process_tree_handles_child_no_such_process(
         self, mock_process_class, tmp_path
     ):
@@ -1276,7 +1270,7 @@ class TestEngineMethodCalls:
 
             assert "Method 'nonexistent' not found" in str(exc_info.value)
 
-    @patch("areal.scheduler.local_scheduler.time.sleep")
+    @patch("areal.scheduler.local.time.sleep")
     def test_call_engine_retry_on_503(self, mock_sleep, scheduler, tmp_path):
         """Should retry on 503 Service Unavailable."""
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
@@ -1298,7 +1292,7 @@ class TestEngineMethodCalls:
             assert result == "success"
             assert mock_sleep.called
 
-    @patch("areal.scheduler.local_scheduler.time.sleep")
+    @patch("areal.scheduler.local.time.sleep")
     def test_call_engine_max_retries_exhausted(self, mock_sleep, scheduler, tmp_path):
         """Should raise EngineCallError after max retries."""
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
@@ -1315,7 +1309,7 @@ class TestEngineMethodCalls:
             ) or "Service unavailable" in str(exc_info.value)
             assert exc_info.value.attempt == 3
 
-    @patch("areal.scheduler.local_scheduler.time.sleep")
+    @patch("areal.scheduler.local.time.sleep")
     def test_call_engine_exponential_backoff(self, mock_sleep, scheduler, tmp_path):
         """Should use exponential backoff for retries."""
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
@@ -1464,9 +1458,7 @@ class TestEdgeCases:
 
     def test_port_allocation_accumulates_correctly(self, tmp_path):
         """Should correctly accumulate allocated ports over multiple allocations."""
-        with patch(
-            "areal.scheduler.local_scheduler.find_free_ports"
-        ) as mock_find_ports:
+        with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.side_effect = [
                 [8000, 8001],
                 [8002, 8003],
@@ -1489,8 +1481,8 @@ class TestEdgeCases:
                 8006,
             }
 
-    @patch("areal.scheduler.local_scheduler.gethostip")
-    @patch("areal.scheduler.local_scheduler.subprocess.Popen")
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local_scheduler.find_free_ports")
     def test_worker_id_format(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
