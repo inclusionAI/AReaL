@@ -1,9 +1,9 @@
 name: Unit Tests
 
 on:
-  # pull_request:
-  #   branches:
-  #     - main
+  pull_request:
+    branches: [main]
+    types: [labeled]
   workflow_dispatch:
 
 concurrency:
@@ -19,6 +19,7 @@ env:
 
 jobs:
   provision-runner:
+    if: contains(github.event.pull_request.labels.*.name, 'safe-to-test') || github.event_name == 'workflow_dispatch'
     name: Provision GCP runner with 2 A100 GPUs
     runs-on: ubuntu-latest
     outputs:
@@ -224,6 +225,7 @@ jobs:
             throw new Error(`Timed out waiting for runner ${instanceName} to come online.`);
 
   unit-tests:
+    if: contains(github.event.pull_request.labels.*.name, 'safe-to-test') || github.event_name == 'workflow_dispatch'
     needs:
       - provision-runner
     name: Run AReaL tests
