@@ -11,7 +11,7 @@ total_train_steps: 16
 tokenizer_path: ${actor.path}
 train_dataset:
   path: openai/gsm8k
-  batch_size: 64
+  batch_size: 16
   max_length: 512
   type: rl
 saver:
@@ -35,7 +35,7 @@ sglang:
   random_seed: ${seed}
 launcher: {}
 gconfig:
-  n_samples: 8
+  n_samples: 2
   max_new_tokens: 1024
 
 rollout:
