@@ -97,6 +97,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
+        areal_completion_cache: dict[str, InteractionWithTokenLogpReward] | None = None,
         **kwargs: Any,
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
@@ -218,7 +219,15 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         if is_omitted(store) or store:
             # Cache the completion with its input messages
-            self._cache[completion_id] = InteractionWithTokenLogpReward(
+            cache = (
+                areal_completion_cache
+                if areal_completion_cache is not None
+                else self._cache
+            )
+            if completion_id in cache:
+                raise ValueError(f"Completion {completion_id} already exists in cache")
+
+            cache[completion_id] = InteractionWithTokenLogpReward(
                 completion=deepcopy(chat_completion),
                 model_response=response,  # Should not deepcopy response because of tokenizer
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
@@ -262,6 +271,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         temperature: float | None | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
+        areal_response_cache: dict[str, InteractionWithTokenLogpReward] | None = None,
         **kwargs: Any,
     ) -> Response:
         """Override create method to use AReaL engine"""
@@ -490,6 +500,12 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         )
 
         # Cache the response with its input data
+        cache = (
+            areal_response_cache if areal_response_cache is not None else self._cache
+        )
+        if resp_id in cache:
+            raise ValueError(f"Response {resp_id} already exists in cache")
+
         self._cache[resp_id] = InteractionWithTokenLogpReward(
             response=deepcopy(response),
             model_response=engine_resp,  # Should not deepcopy because of tokenizer
