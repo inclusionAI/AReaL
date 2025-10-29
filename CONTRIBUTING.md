@@ -121,8 +121,9 @@ helping with code reviews. This guide will help you get started.
    - `gpu`: Tests that use a single GPU.
    - `multi_gpu`: Tests that use more than one GPU.
 
-   Since our CI machine only has two GPUs, please mark skip to tests that uses more than
-   2 GPUs otherwise it will fail in our CI/CD workflow. For example:
+   The tests that run in our CI/CD are selected by `pytest -m "not slow or ci"`.
+   Moreover, since our CI machine only has two GPUs, please mark skip to tests that uses
+   more than 2 GPUs otherwise it will fail in our CI/CD workflow. For example:
 
    ```python
    import pytest
