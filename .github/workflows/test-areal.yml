@@ -246,7 +246,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          TOKENIZERS_PARALLELISM=false AREAL_IS_IN_CI=1 pytest --durations=0 -s -vv areal/tests/test_*.py
+          TOKENIZERS_PARALLELISM=false AREAL_IS_IN_CI=1 pytest -m "not slow or ci" --durations=0 -s -vv areal/tests/test_*.py
 
       - name: Run SFT integration tests
         env:

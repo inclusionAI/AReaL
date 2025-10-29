@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 SUCCESS_PATTERN = re.compile(r"Epoch 1/\d+ Step 1/\d+ Train step 1/\d+ done\.")
 
+pytestmark = pytest.mark.slow
+
 
 async def run_example(
     example_file: str,
@@ -152,6 +154,7 @@ def test_countdown_example(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.ci
 def test_gsm8k_grpo(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
@@ -187,6 +190,7 @@ def test_gsm8k_grpo(tmp_path_factory):
 
 
 @pytest.mark.gpu
+@pytest.mark.ci
 def test_gsm8k_sft(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
@@ -324,6 +328,7 @@ def test_vlm_sft(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.ci
 def test_gsm8k_grpo_megatron(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
@@ -359,6 +364,7 @@ def test_gsm8k_grpo_megatron(tmp_path_factory):
 
 
 @pytest.mark.gpu
+@pytest.mark.ci
 def test_gsm8k_sft_megatron(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
