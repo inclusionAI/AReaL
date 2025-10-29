@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import ORJSONResponse
 
 from areal.api.engine_api import InferenceEngine, TrainEngine
+from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging
 
 logger = logging.getLogger("RPCServer")
@@ -181,6 +182,10 @@ async def call_engine_method(request: Request):
                 status_code=400, detail="Missing 'method' field in request"
             )
 
+        # Deserialize args and kwargs (convert SerializedTensor dicts to tensors)
+        args = deserialize_value(args)
+        kwargs = deserialize_value(kwargs)
+
         # Call method directly (no need for hasattr/getattr with typed engine)
         logger.info(f"Calling engine method: {method_name}")
         try:
@@ -188,10 +193,9 @@ async def call_engine_method(request: Request):
             method = getattr(_engine, method_name)
             result = method(*args, **kwargs)
 
-            # Serialize result
-            # Note: This assumes the result is JSON-serializable
-            # For complex types (tensors, etc.), you may need custom serialization
-            return {"status": "success", "result": result}
+            # Serialize result (convert tensors to SerializedTensor dicts)
+            serialized_result = serialize_value(result)
+            return {"status": "success", "result": serialized_result}
 
         except AttributeError as e:
             logger.error(f"Method '{method_name}' not found on engine: {e}")
@@ -247,6 +251,9 @@ async def run_workflow(request: Request):
                 status_code=400, detail="Missing 'data' field in request"
             )
 
+        # Deserialize episode_data (may contain tensors)
+        episode_data = deserialize_value(episode_data)
+
         # Dynamic import workflow
         try:
             module_path, class_name = workflow_path.rsplit(".", 1)
@@ -291,7 +298,8 @@ async def run_workflow(request: Request):
 
         # Run episode
         try:
-            traj = await workflow.arun_episode(episode_data)
+            global _engine
+            traj = await workflow.arun_episode(_engine, episode_data)
 
             global app
             if check_trajectory_format and traj is not None:
@@ -330,8 +338,12 @@ async def run_workflow(request: Request):
             accept_this = traj is not None and (
                 should_accept is None or should_accept(traj)
             )
+            print(">>>>>>>>>", traj, accept_this, flush=True)
+
+            # Serialize trajectory result (convert tensors to SerializedTensor dicts)
             if accept_this:
-                return {"status": "success", "result": traj}
+                serialized_traj = serialize_value(traj)
+                return {"status": "success", "result": serialized_traj}
             else:
                 return {"status": "success", "result": None}
         except Exception as e:

@@ -9,10 +9,11 @@ import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.controller_api import DistributedBatch
 from areal.api.controller_api import RolloutController as RolloutControllerAPI
@@ -25,8 +26,7 @@ from areal.core.staleness_manager import StalenessManager
 from areal.utils import logging
 from areal.utils.data import cycle_dataloader
 
-if TYPE_CHECKING:
-    pass
+CREATE_WORKER_TIMEOUT = 60.0
 
 
 @dataclass
@@ -77,7 +77,6 @@ class RolloutController(RolloutControllerAPI):
 
         # Worker management
         self.workers: list[Worker] = []  # List of Worker objects from scheduler
-        self.num_workers = 0
         self._worker_role = "rollout"  # Role name for workers
 
         # Round-robin scheduling
@@ -93,7 +92,6 @@ class RolloutController(RolloutControllerAPI):
         self.logger = None
 
         # State
-        self._initialized = False
         self._version = 0
 
         # Staleness management
@@ -102,61 +100,28 @@ class RolloutController(RolloutControllerAPI):
             _RemoteRolloutTaskInput
         ] = []  # Queue for inputs waiting for capacity
 
-    def initialize(self, num_workers: int = 1, *args, **kwargs):
-        """Initialize the controller by creating workers and deploying engines.
-
-        Parameters
-        ----------
-        num_workers : int
-            Number of worker instances to create (default: 1)
-        *args
-            Additional positional arguments
-        **kwargs
-            Additional keyword arguments including:
-            - scheduling_config: SchedulingConfig for worker creation
-            - engine_init_args: List of args to pass to engine initialization
-            - engine_init_kwargs: Dict of kwargs to pass to engine initialization
-            - timeout: Timeout for worker creation
-        """
-        if self._initialized:
-            self.logger.warning("RolloutController already initialized, skipping...")
-            return
-
+    def initialize(
+        self,
+        alloc_mode: AllocationMode,
+    ):
         self.logger = logging.getLogger("[RolloutController]")
-        self.logger.info(
-            f"Initializing RolloutController with {num_workers} workers..."
-        )
-
-        self.num_workers = num_workers
 
         # Get scheduling config from kwargs or use defaults
-        scheduling_config = kwargs.get(
-            "scheduling_config",
-            SchedulingConfig(replicas=num_workers),
-        )
-
-        # Get engine initialization parameters
-        engine_init_args = kwargs.get("engine_init_args", [])
-        engine_init_kwargs = kwargs.get("engine_init_kwargs", {})
-        timeout = kwargs.get("timeout", 60.0)
+        # FIXME: Should get scheduling config in a more strategical way
+        scheduling_config = SchedulingConfig(replicas=alloc_mode.gen.dp_size)
 
         # Use asyncio.run to call async scheduler methods synchronously
-        asyncio.run(
-            self._async_initialize(
-                scheduling_config,
-                engine_init_args,
-                engine_init_kwargs,
-                timeout,
-            )
-        )
+        asyncio.run(self._async_initialize(scheduling_config))
 
         # Initialize AsyncTaskRunner for task execution
-        max_queue_size = getattr(self.config, "max_queue_size", 1024)
-        self.runner = AsyncTaskRunner(max_queue_size=max_queue_size)
+        self.runner = AsyncTaskRunner(
+            max_queue_size=self.config.queue_size,
+            enable_tracing=self.config.enable_rollout_tracing,
+        )
         self.runner.initialize(logger=self.logger)
 
         # Initialize thread pool for weight updates
-        self.executor = ThreadPoolExecutor(max_workers=num_workers)
+        self.executor = ThreadPoolExecutor(max_workers=alloc_mode.gen.dp_size)
 
         # Initialize staleness manager for global capacity control
         max_concurrent_rollouts = (
@@ -170,29 +135,10 @@ class RolloutController(RolloutControllerAPI):
             max_staleness=self.config.max_head_offpolicyness,
         )
 
-        self._initialized = True
-        self.logger.info(f"RolloutController initialized with {num_workers} workers")
-
     async def _async_initialize(
         self,
         scheduling_config: SchedulingConfig,
-        engine_init_args: list,
-        engine_init_kwargs: dict,
-        timeout: float,
     ):
-        """Async helper to initialize workers and engines.
-
-        Parameters
-        ----------
-        scheduling_config : SchedulingConfig
-            Configuration for worker creation
-        engine_init_args : list
-            Positional arguments for engine initialization
-        engine_init_kwargs : dict
-            Keyword arguments for engine initialization
-        timeout : float
-            Timeout for worker readiness
-        """
         # Create workers via scheduler
         self.logger.info("Creating workers via scheduler...")
         worker_ids = self.scheduler.create_workers(
@@ -205,7 +151,7 @@ class RolloutController(RolloutControllerAPI):
         self.logger.info("Waiting for workers to be ready...")
         self.workers = self.scheduler.get_workers(
             role=self._worker_role,
-            timeout=timeout,
+            timeout=CREATE_WORKER_TIMEOUT,
         )
         self.logger.info(f"Workers ready: {[w.id for w in self.workers]}")
 
@@ -221,19 +167,12 @@ class RolloutController(RolloutControllerAPI):
             await self.scheduler.create_engine(
                 worker_id=worker.id,
                 engine=engine_path,
-                init_args=engine_init_args,
-                init_kwargs={
-                    **engine_init_kwargs,
-                    "engine_id": f"worker_{i}",
-                },
+                init_kwargs=dict(config=self.config),
             )
             self.logger.info(f"Engine created on worker {worker.id}")
 
     def destroy(self):
         """Destroy the controller and clean up resources."""
-        if not self._initialized:
-            return
-
         self.logger.info("Destroying RolloutController...")
 
         # Destroy task runner
@@ -255,7 +194,6 @@ class RolloutController(RolloutControllerAPI):
             self.executor.shutdown(wait=True)
             self.executor = None
 
-        self._initialized = False
         self.logger.info("RolloutController destroyed")
 
     def get_capacity(self) -> int:
@@ -266,8 +204,6 @@ class RolloutController(RolloutControllerAPI):
         int
             Number of new rollout slots available based on staleness constraints
         """
-        if not self._initialized:
-            return 0
         version = self.get_version()  # Use controller's global version
         return self.staleness_manager.get_capacity(version)
 
@@ -279,11 +215,9 @@ class RolloutController(RolloutControllerAPI):
         Worker
             The chosen worker object
         """
-        if self.num_workers == 0:
-            raise RuntimeError("No workers available")
 
         worker = self.workers[self._current_worker_idx]
-        self._current_worker_idx = (self._current_worker_idx + 1) % self.num_workers
+        self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
         return worker
 
     async def _run_workflow_on_worker(
@@ -338,9 +272,6 @@ class RolloutController(RolloutControllerAPI):
         workflow_kwargs: dict[str, Any],
         should_accept_path: str | None = None,
     ) -> None:
-        if not self._initialized:
-            raise RuntimeError("RolloutController not initialized")
-
         # Add to pending queue (will be submitted when capacity allows)
         self._pending_inputs.append(
             _RemoteRolloutTaskInput(
@@ -383,9 +314,6 @@ class RolloutController(RolloutControllerAPI):
             )
 
     def wait(self, count: int, timeout: float | None = None) -> DistributedBatch:
-        if not self._initialized:
-            raise RuntimeError("RolloutController not initialized")
-
         #######################################################
         # The following logic is copied from WorkflowExecutor #
         #######################################################
@@ -462,9 +390,6 @@ class RolloutController(RolloutControllerAPI):
         workflow_kwargs: dict[str, Any],
         should_accept_path: str | None = None,
     ) -> DistributedBatch:
-        if not self._initialized:
-            raise RuntimeError("RolloutController not initialized")
-
         # Submit all requests
         for item in data:
             self.submit(
@@ -484,9 +409,6 @@ class RolloutController(RolloutControllerAPI):
         workflow_kwargs: dict[str, Any],
         should_accept_path: str | None = None,
     ) -> DistributedBatch:
-        if not self._initialized:
-            raise RuntimeError("RolloutController not initialized")
-
         #######################################################
         # The following logic is copied from WorkflowExecutor #
         #######################################################
@@ -530,8 +452,6 @@ class RolloutController(RolloutControllerAPI):
         ModelResponse
             Generated response from the model
         """
-        if not self._initialized:
-            raise RuntimeError("RolloutController not initialized")
 
         # Choose worker and delegate
         worker = self._choose_worker()
@@ -556,8 +476,6 @@ class RolloutController(RolloutControllerAPI):
         Future[None]
             Future representing the async initialization operation
         """
-        if not self._initialized:
-            raise RuntimeError("RolloutController not initialized")
 
         async def _init_all_workers():
             tasks = [
@@ -592,8 +510,6 @@ class RolloutController(RolloutControllerAPI):
         Future[None]
             Future representing the async update operation
         """
-        if not self._initialized:
-            raise RuntimeError("RolloutController not initialized")
 
         async def _update_all_workers():
             tasks = [
@@ -625,8 +541,6 @@ class RolloutController(RolloutControllerAPI):
         Future[None]
             Future representing the async update operation
         """
-        if not self._initialized:
-            raise RuntimeError("RolloutController not initialized")
 
         async def _update_all_workers():
             tasks = [
@@ -652,8 +566,6 @@ class RolloutController(RolloutControllerAPI):
         version : int
             Weight version number to set
         """
-        if not self._initialized:
-            raise RuntimeError("RolloutController not initialized")
 
         self._version = version
         for worker in self.workers:
@@ -678,8 +590,6 @@ class RolloutController(RolloutControllerAPI):
 
     def pause(self):
         """Pause request submission for async rollout on all workers."""
-        if not self._initialized:
-            return
 
         for worker in self.workers:
             try:
@@ -692,9 +602,6 @@ class RolloutController(RolloutControllerAPI):
 
     def resume(self):
         """Resume request submission for async rollout on all workers."""
-        if not self._initialized:
-            return
-
         for worker in self.workers:
             try:
                 self.scheduler.call_engine(

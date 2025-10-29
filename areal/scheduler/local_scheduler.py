@@ -27,6 +27,7 @@ from areal.scheduler.exceptions import (
     WorkerNotFoundError,
     WorkerTimeoutError,
 )
+from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging
 from areal.utils.network import find_free_ports, gethostip
 
@@ -732,11 +733,15 @@ class LocalScheduler(Scheduler):
         if worker_info is None:
             raise WorkerNotFoundError(worker_id)
 
+        # Serialize args and kwargs (convert tensors to SerializedTensor dicts)
+        serialized_args = serialize_value(list(args))
+        serialized_kwargs = serialize_value(kwargs)
+
         # Build JSON payload
         payload = {
             "method": method,
-            "args": list(args),
-            "kwargs": kwargs,
+            "args": serialized_args,
+            "kwargs": serialized_kwargs,
         }
 
         # Retry logic with exponential backoff
@@ -837,18 +842,23 @@ class LocalScheduler(Scheduler):
         if method == "run_workflow":
             # Special routing for workflow execution
             url = f"http://{worker_info.worker.ip}:{port}/run_workflow"
-            payload = kwargs
+            # Serialize kwargs for workflow execution
+            payload = serialize_value(kwargs)
         else:
             # Standard engine method call
             url = f"http://{worker_info.worker.ip}:{port}/call"
+            # Serialize args and kwargs
+            serialized_args = serialize_value(list(args))
+            serialized_kwargs = serialize_value(kwargs)
             payload = {
                 "method": method,
-                "args": list(args),
-                "kwargs": kwargs,
+                "args": serialized_args,
+                "kwargs": serialized_kwargs,
             }
 
         last_error = None
 
+        print(url)
         for attempt in range(1, max_retries + 1):
             # Check worker health before each attempt
             if worker_info.process.poll() is not None:
@@ -870,6 +880,7 @@ class LocalScheduler(Scheduler):
                     headers={"Content-Type": "application/json"},
                     timeout=7200.0,  # 2 hours for long-running operations
                 )
+                print(response, payload, response.json())
 
                 result, should_retry, error_msg = self._handle_call_response(
                     response, worker_id, method, attempt
@@ -962,7 +973,10 @@ class LocalScheduler(Scheduler):
             - error_message: Error message if failed, None if successful
         """
         if response.status_code == 200:
-            return response.json().get("result"), False, None
+            result = response.json().get("result")
+            # Deserialize result (convert SerializedTensor dicts back to tensors)
+            deserialized_result = deserialize_value(result)
+            return deserialized_result, False, None
         elif response.status_code == 400:
             # Bad request (e.g., method doesn't exist) - don't retry
             error_detail = response.json().get("detail", "Unknown error")
