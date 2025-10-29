@@ -1,4 +1,4 @@
-name: Unit Tests
+name: AReaL CI Tests
 
 on:
   # pull_request:
@@ -226,7 +226,7 @@ jobs:
   unit-tests:
     needs:
       - provision-runner
-    name: Run AReaL unit tests
+    name: Run AReaL tests
     environment:
       name: AReaL-unittests
     permissions:
@@ -235,23 +235,6 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-
-      # - uses: actions/setup-python@v5
-      #   with:
-      #     python-version: "3.12"
-
-      # - run: |
-      #     uv pip install -e .[all] --no-deps --no-build-isolation --system
-
-      # - name: Wait for 2 free GPUs
-      #   timeout-minutes: 7200
-      #   run: |
-      #     until [[ $(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l) -ge 2 ]]; do
-      #       CUDA_VISIBLE_DEVICES="$(nvidia-smi --query-gpu=index,memory.free,memory.total --format=csv,noheader,nounits | awk -F',' '$2/$3 >= 0.90 {print $1}' | tr '\n' ',' | sed 's/,$//')"
-      #       sleep 1
-      #     done
-
-      #     echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "$GITHUB_ENV"
 
       - name: Install python packages for testing
         run: |
@@ -264,6 +247,22 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           TOKENIZERS_PARALLELISM=false AREAL_IS_IN_CI=1 pytest --durations=0 -s -vv areal/tests/test_*.py
+
+      - name: Run SFT integration tests
+        env:
+          CI: true
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          TOKENIZERS_PARALLELISM=false pytest -s -vv areal/tests/sft/
+
+      - name: Run GRPO integration tests
+        env:
+          CI: true
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          TOKENIZERS_PARALLELISM=false pytest -s -vv areal/tests/grpo/
 
   cleanup:
     name: Tear down GCP runner
