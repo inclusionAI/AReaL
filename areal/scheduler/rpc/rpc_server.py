@@ -392,9 +392,15 @@ async def export_stats(request: Request):
             }
         else:
             assert isinstance(_engine, InferenceEngine)
-            # Rollout engines do not have collective communication channel.
-            # Return individual results and reduce in the client side.
-            return {"status": "success", "result": stats_tracker.export_all()}
+            # Rollout engines do not have the collective communication channel.
+            # Return individual results and reduce them in the client side.
+            raw_stats = {}
+            for name, tracker in stats_tracker.TRACKERS.items():
+                s = {name.strip("/") + k: v for k, v in tracker.stats.items()}
+                raw_stats.update(s)
+            # clear stats tracker
+            stats_tracker.export_all()
+            return {"status": "success", "result": raw_stats}
 
     except HTTPException:
         raise

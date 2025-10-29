@@ -1,5 +1,3 @@
-"""RolloutController implementation using LocalScheduler and RPC workers."""
-
 from __future__ import annotations
 
 import asyncio
@@ -750,6 +748,32 @@ class RolloutController:
                 )
             except Exception as e:
                 self.logger.error(f"Error resuming worker {worker.id}: {e}")
+
+    def export_stats(self):
+        async def _call_all():
+            tasks = [
+                self.scheduler.async_call_engine(
+                    worker=worker,
+                    method="export_stats",
+                )
+                for worker in self.workers
+            ]
+            return await asyncio.gather(*tasks)
+
+        # Stats
+        all_raw_stats = asyncio.run(_call_all())
+        stats = {}
+        exported = set()
+        for raw_stats in all_raw_stats:
+            for k in raw_stats:
+                if k in exported:
+                    continue
+                data = sum([s[1].get(k, []) for s in all_raw_stats], [])
+                if len(data) == 0:
+                    continue
+                stats[k] = sum(data) / len(data)
+                exported.add(k)
+        return stats
 
     def register_callback_to_all_worker(
         self, method: str, callback: Callable, **kwargs
