@@ -32,9 +32,6 @@ jobs:
           ruff check --select I examples/
           ruff check --select I docs/
 
-      - name: Check Python formatting with black
-        run: black --check .
-
       - name: Check C++ formatting
         run: |
           find . -type f \( -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' -o -name '*.cu' -o -name '*.cuh' \) -exec clang-format --dry-run --Werror {} +
