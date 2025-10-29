@@ -9,6 +9,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import RecoverConfig
+from areal.api.controller_api import TrainController
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta, StepInfo, WeightUpdateMeta
 from areal.utils import logging, timeutil
@@ -213,7 +214,7 @@ class RecoverHandler:
 
     def load(
         self,
-        engine: TrainEngine | Dict[str, TrainEngine],
+        engine: TrainEngine | Dict[str, TrainEngine] | TrainController,
         saver: Saver,
         evaluator: Evaluator,
         stats_logger: "StatsLogger",
@@ -231,7 +232,7 @@ class RecoverHandler:
                 weight_update_meta is not None
             ), "Inference engine requires weight update meta for recovery."
 
-        if isinstance(engine, TrainEngine):
+        if isinstance(engine, (TrainEngine, TrainController)):
             engine = {"default": engine}
 
         recover_info_path = self.recover_info_path(
@@ -304,7 +305,7 @@ class RecoverHandler:
 
     def _load_checkpoint(
         self,
-        engine: TrainEngine,
+        engine: TrainEngine | TrainController,
         name: str = "default",
         tokenizer: PreTrainedTokenizerFast | None = None,
         base_model_path: str | None = None,

@@ -313,6 +313,31 @@ class MegatronEngineConfig:
 
 
 @dataclass
+class SchedulingSpec:
+    cpu: int = field(default=0, metadata={"help": "Number of CPU cores required"})
+    gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
+    mem: int = field(default=0, metadata={"help": "Amount of memory (GB) required"})
+    port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
+    image: str = field(
+        default="", metadata={"help": "Docker/Singularity container image to use"}
+    )
+    type: str = field(
+        default="worker",
+        metadata={
+            "help": "Task type (e.g., worker, engine)",
+            "choices": ["worker", "engine"],
+        },
+    )
+    env_vars: dict[str, str] = field(
+        default_factory=dict,
+        metadata={"help": "Environment variables for the container"},
+    )
+    cmd: str = field(
+        default="", metadata={"help": "Command to execute inside the container"}
+    )
+
+
+@dataclass
 class TrainEngineConfig:
     """Core configuration for model training, including optimization and backend settings."""
 
@@ -384,6 +409,10 @@ class TrainEngineConfig:
     peft_type: str = field(
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
+    )
+    scheduling_specs: list[SchedulingSpec] = field(
+        default_factory=list,
+        metadata={"help": "train engine schedule specs"},
     )
 
 
@@ -852,6 +881,10 @@ class InferenceEngineConfig:
         metadata={
             "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
         },
+    )
+    scheduling_specs: list[SchedulingSpec] = field(
+        default_factory=list,
+        metadata={"help": "inference engine schedule specs"},
     )
 
 

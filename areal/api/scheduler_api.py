@@ -1,6 +1,8 @@
 import abc
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+from areal.api.engine_api import Scheduling
 
 
 @dataclass
@@ -15,67 +17,22 @@ class Worker:
     """
 
     id: str
+    # worker and engine deploy on the same machine, so ip are the same
     ip: str
-    ports: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ContainerSpec:
-    """
-    Resource specification for a worker container/process.
-
-    Attributes:
-        cpu: Number of CPU cores to allocate.
-        gpu: Number of GPUs to allocate.
-        mem: Memory in MB to allocate.
-        container_image: Docker container image (for containerized deployments).
-        cmd: Command to execute when starting the worker.
-        env_vars: Environment variables to set for the worker process.
-        port_count: Number of ports to allocate for this worker.
-    """
-
-    cpu: int = 0
-    gpu: int = 0
-    mem: int = 0
-    container_image: str = ""
-    cmd: str = ""
-    env_vars: dict[str, str] = field(default_factory=dict)
-    port_count: int = 2
+    worker_ports: list[str] = field(default_factory=list)
+    engine_ports: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ScheduleStrategy:
-    """
-    Scheduling strategy configuration.
-
-    Supported strategies:
-        - "new": Allocate new GPUs using round-robin (default).
-        - "colocate": Schedule workers on the same GPUs as another role.
-
-    Attributes:
-        type: Type of scheduling strategy ("new" or "colocate").
-        uid: For "colocate" strategy, the role name to colocate with (e.g., "actor").
-            For "new" strategy, this field is optional.
-    """
-
-    type: str = ""
-    uid: str = ""
+    type: Literal["colocation", "separation"] = "separation"
+    target: str = ""
 
 
 @dataclass
-class SchedulingConfig:
-    """
-    Complete configuration for scheduling a group of workers.
-
-    Attributes:
-        replicas: Number of worker replicas to create.
-        specs: List of container specifications, one per replica (or a single spec for all).
-        schedule_strategy: Optional scheduling strategy to use.
-        role: Role name for this group of workers (e.g., "rollout", "actor", "critic").
-    """
-
+class Job:
     replicas: int = 0
-    specs: list[ContainerSpec] = field(default_factory=list)
+    tasks: list[Scheduling] = field(default_factory=list)
     schedule_strategy: ScheduleStrategy | None = None
     role: str = ""
 
@@ -92,9 +49,7 @@ class Scheduler(abc.ABC):
     """
 
     @abc.abstractmethod
-    def create_workers(
-        self, role: str, scheduler_config: SchedulingConfig, *args, **kwargs
-    ) -> list[str]:
+    def create_workers(self, role: str, job: Job, *args, **kwargs) -> list[str]:
         """
         Create and start worker processes for a specific role.
 

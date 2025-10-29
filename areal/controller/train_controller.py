@@ -1,0 +1,256 @@
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
+from typing import Any
+
+import torch
+
+from areal.api.alloc_mode import ParallelStrategy
+from areal.api.cli_args import TrainEngineConfig
+from areal.api.controller_api import DistributedBatch, TrainController
+from areal.api.engine_api import TrainEngine
+from areal.api.io_struct import (
+    AllocationMode,
+    FinetuneSpec,
+    ParamSpec,
+    SaveLoadMeta,
+    WeightUpdateMeta,
+)
+from areal.api.scheduler_api import Job, Scheduler, ScheduleStrategy, Worker
+from areal.controller.batch import DistributedBatchMemory
+from areal.controller.utils import create_engine_with_retry, rpc_call
+from areal.utils import logging
+from areal.utils.http import wait_future_ordered
+
+logger = logging.getLogger("DistributedTrainController")
+
+
+class DistributedTrainController(TrainController):
+    def __init__(
+        self, train_engine: TrainEngine, config: TrainEngineConfig, scheduler: Scheduler
+    ):
+        super().__init__(train_engine, config, scheduler)
+
+        self.role: str = "train"
+        self.group_size: int
+        self.alloc_mode: AllocationMode
+        self.workers: list[Worker]
+        self.engine_dp_ranks: list[int]
+
+    def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
+        assert self.workers is not None, "Workers are not created"
+        self.custom_function_call("create_process_group", parallel_strategy)
+
+    def initialize(
+        self,
+        alloc_mode_str: str,
+        ft_spec: FinetuneSpec,
+        schedule_strategy: ScheduleStrategy,
+        **kwargs,
+    ):
+        """Initialize environments for distributed training and load models."""
+        self.alloc_mode = AllocationMode.from_str(alloc_mode_str)
+        self.ft_spec = ft_spec
+
+        # todo: group size is a sampling parameter and an attribute of the data, should be moved to DistributedBatch
+        self.group_size = kwargs.get("group_size", 1)
+
+        job = Job(
+            replicas=self.alloc_mode.train.world_size,
+            tasks=self.train_engine.get_scheduling_config(),
+            schedule_strategy=schedule_strategy,
+            role=self.role,
+        )
+        logger.info(f"Start to create job: {job}")
+        self.scheduler.create_workers(job)
+        # after get workers, all rpc server is ready
+        self.workers = self.scheduler.get_workers(self.role, timeout=1800)
+
+        logger.info("Start to initialize engine")
+        with ThreadPoolExecutor(max_workers=len(self.workers)) as executor:
+            create_engine: Callable[..., Any] = partial(
+                create_engine_with_retry,
+                self.scheduler.create_engine,
+                60,  # max_retries
+                10,  # retry_delay
+            )
+            futures: list[Future] = [
+                executor.submit(
+                    create_engine,
+                    worker.id,
+                    self.train_engine,
+                    None,
+                    self.ft_spec,
+                    self.alloc_mode.train,
+                )
+                for worker in self.workers
+            ]
+            try:
+                wait_future_ordered(futures, exit_on_exception=True)
+            except Exception as e:
+                logger.error(f"Failed to initialize engine: {e}")
+                raise
+
+        logger.info("Start to get rank info from engine")
+        self.engine_dp_ranks = rpc_call(
+            self.scheduler, self.workers, "data_parallel_rank"
+        )
+        logger.info("Initialize train engines succeeded!")
+
+    def destroy(self):
+        self.scheduler.delete_workers()
+
+    def train(self, mode: bool = True):
+        self.custom_function_call("train", mode)
+
+    def upload_weights(self, meta: WeightUpdateMeta):
+        self.custom_function_call("upload_weights", meta)
+
+    def get_param_specs(
+        self, weight_chunked_mem_mb: int = 1024
+    ) -> list[list[ParamSpec]]:
+        ret: list[list[list[ParamSpec]]] = self.custom_function_call(
+            "get_param_specs", weight_chunked_mem_mb
+        )
+        return ret[0]
+
+    def set_version(self, version: int):
+        return self.custom_function_call("set_version", version)
+
+    def get_version(self) -> int:
+        results = self.custom_function_call("get_version")
+        return results[0]
+
+    def save(self, meta: SaveLoadMeta):
+        self.custom_function_call("save", meta)
+
+    def load(self, meta: SaveLoadMeta):
+        self.custom_function_call("load", meta)
+
+    def step_lr_scheduler(self):
+        self.custom_function_call("step_lr_scheduler")
+
+    def custom_function_call(self, method: str, *args, **kwargs):
+        return rpc_call(self.scheduler, self.workers, method, None, *args, **kwargs)
+
+    def custom_function_call_with_data(
+        self, method: str, input_: DistributedBatch, strict_order=False, *args, **kwargs
+    ):
+        if strict_order:
+            batches = self._align_batches_with_dp(input_, False)
+        else:
+            batches = self._align_batches_with_dp(input_, True)
+
+        stats = rpc_call(
+            self.scheduler,
+            self.workers,
+            method,
+            batches,
+            *args,
+            **kwargs,
+        )
+        return stats
+
+    def _align_batches_with_dp(
+        self, input_: DistributedBatch, rebalance=True
+    ) -> list[DistributedBatch]:
+        if rebalance:
+            inputs = input_.chunk_by_ffd(self.group_size, self.alloc_mode.train.dp_size)
+        else:
+            inputs = input_.chunk(self.alloc_mode.train.dp_size)
+
+        batches = []
+        for dp_rank in self.engine_dp_ranks:
+            batches.append(inputs[dp_rank])
+
+        return batches
+
+    def train_batch(
+        self,
+        input_: DistributedBatch,
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    ) -> dict[str, float]:
+        stats = self.custom_function_call_with_data(
+            "train_batch", input_, False, loss_fn, loss_weight_fn
+        )
+
+        return stats[0]
+
+    def ppo_update(
+        self,
+        input_: DistributedBatch,
+    ) -> dict[str, float]:
+        stats = self.custom_function_call_with_data("ppo_update", input_, False)
+
+        return stats[0]
+
+    def eval_batch(
+        self,
+        input_: DistributedBatch,
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    ) -> torch.Tensor | None:
+        stats = self.custom_function_call_with_data(
+            "eval_batch", input_, False, loss_fn, loss_weight_fn
+        )
+
+        return stats[0]
+
+    def compute_logp(
+        self,
+        input_: DistributedBatch,
+        *args,
+        **kwargs,
+    ):
+        logps = self.custom_function_call_with_data(
+            "compute_logp", input_, True, *args, **kwargs
+        )
+        return logps
+
+    def compute_advantages(
+        self,
+        input_: DistributedBatch,
+        *args,
+        **kwargs,
+    ):
+        advantages = self.custom_function_call_with_data(
+            "compute_advantages", input_, True, *args, **kwargs
+        )
+
+        return DistributedBatchMemory.concat(advantages)
+
+    def train_lm(
+        self,
+        input_: DistributedBatch,
+        *args,
+        **kwargs,
+    ) -> dict[str, float]:
+        stats = self.custom_function_call_with_data(
+            "train_lm", input_, False, *args, **kwargs
+        )
+
+        return stats[0]
+
+    def evaluate_lm(
+        self,
+        input_: DistributedBatch,
+        *args,
+        **kwargs,
+    ) -> torch.Tensor | None:
+        stats = self.custom_function_call_with_data(
+            "evaluate_lm", input_, False, *args, **kwargs
+        )
+        return stats[0]
+
+    def forward(
+        self,
+        input_: DistributedBatch,
+        output_seqlens: list[int] | None = None,
+        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
+        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
+    ) -> list[Any]:
+        stats = self.custom_function_call_with_data(
+            "forward", input_, True, output_seqlens, post_hook, aggregate_fn
+        )
+        return stats[0]
