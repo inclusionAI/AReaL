@@ -177,6 +177,31 @@ async def call_engine_method(request: Request):
         args = deserialize_value(args)
         kwargs = deserialize_value(kwargs)
 
+        try:
+            if isinstance(_engine, TrainEngine):
+                logger.info(f"Broadcasting data for TrainEngine method: {method_name}")
+                from areal.utils.data import broadcast_tensor_container
+
+                args = broadcast_tensor_container(
+                    args,
+                    src_rank=_engine.current_data_parallel_head(),
+                    group=_engine.context_and_model_parallel_group,
+                )
+                kwargs = broadcast_tensor_container(
+                    kwargs,
+                    src_rank=_engine.current_data_parallel_head(),
+                    group=_engine.context_and_model_parallel_group,
+                )
+                logger.info("Broadcasting data done.")
+        except Exception as e:
+            logger.error(
+                f"Broadcasting data for method '{method_name}' failed: {e}\n{traceback.format_exc()}"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Data bcast '{method_name}' failed: {str(e)}",
+            )
+
         # Call method directly (no need for hasattr/getattr with typed engine)
         logger.info(f"Calling engine method: {method_name}")
         try:

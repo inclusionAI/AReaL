@@ -2,12 +2,11 @@ import sys
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.api.scheduler_api import ScheduleStrategy
 from areal.controller.batch import DistributedBatchMemory
-from areal.controller.train_controller import DistributedTrainController
+from areal.controller.train_controller import TrainController
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
 from areal.scheduler.local import LocalScheduler
@@ -28,8 +27,6 @@ logger = logging.getLogger("Trainer")
 def main(args):
     config, _ = load_expr_config(args, SFTConfig)
     config: SFTConfig
-
-    AllocationMode.from_str(config.allocation_mode)
 
     engine = FSDPLMEngine(config=config.model)
 
@@ -80,7 +77,7 @@ def main(args):
     # Initialize scheduler
     scheduler = LocalScheduler(config)
     # Initialize train controller
-    train_controller = DistributedTrainController(engine, config.model, scheduler)
+    train_controller = TrainController(engine, config.model, scheduler)
     train_controller.initialize(
         config.allocation_mode,
         ft_spec,

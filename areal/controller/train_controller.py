@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 import torch
@@ -7,7 +8,7 @@ import torch
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.controller_api import DistributedBatch
-from areal.api.engine_api import InferenceEngine, TrainEngine
+from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import (
     AllocationMode,
     FinetuneSpec,
@@ -16,7 +17,9 @@ from areal.api.io_struct import (
 )
 from areal.api.scheduler_api import Job, Scheduler, ScheduleStrategy, Worker
 from areal.controller.batch import DistributedBatchMemory
-from areal.utils import logging
+from areal.controller.rollout_controller import RolloutController
+from areal.platforms import current_platform
+from areal.utils import logging, name_resolve, names
 
 logger = logging.getLogger("TrainController")
 
@@ -59,11 +62,13 @@ class TrainController:
         self.config = config
         self.scheduler = scheduler
 
-        self.group_size: int
         self.alloc_mode: AllocationMode
         self.workers: list[Worker] = []
-        self.dp_head_workers: list[Worker] = []  # Only DP head workers
-        self.engine_dp_ranks: list[int] = []  # DP rank of each DP head worker
+        self.workers_is_dp_head: list[bool] = []  # Only DP head workers
+        self.parallel_strategy: ParallelStrategy | None = None
+
+        self.rollout: RolloutController
+        self.weight_update_group_initialized = False
 
         self._worker_role: str
         self.logger = None
@@ -76,7 +81,10 @@ class TrainController:
         parallel_strategy : ParallelStrategy, optional
             The parallel strategy configuration for distributed training, by default None
         """
-        assert self.workers is not None, "Workers are not created"
+        assert len(self.workers) > 0, "Workers are not created"
+        if parallel_strategy is None:
+            parallel_strategy = ParallelStrategy()
+        self.parallel_strategy = parallel_strategy
         self.custom_function_call("create_process_group", parallel_strategy)
 
     def initialize(
@@ -109,8 +117,14 @@ class TrainController:
         # Store configuration
         self._worker_role = role
         self.alloc_mode = alloc_mode
-        # todo: group size is a sampling parameter and an attribute of the data, should be moved to DistributedBatch
-        self.group_size = kwargs.get("group_size", 1)
+
+        # Initialize parallel_strategy from alloc_mode if not already set
+        if self.parallel_strategy is None:
+            self.parallel_strategy = ParallelStrategy(
+                data_parallel_size=alloc_mode.train.dp_size,
+                tensor_parallel_size=alloc_mode.train.tp_size,
+                pipeline_parallel_size=alloc_mode.train.pp_size,
+            )
 
         # Create job for scheduler
         job = Job(
@@ -169,7 +183,6 @@ class TrainController:
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
                 method="initialize",
-                addr=None,
                 ft_spec=ft_spec,
                 **kwargs,
             )
@@ -183,33 +196,16 @@ class TrainController:
         self.logger.info("Identifying DP head workers...")
 
         # Query all workers for their DP rank
-        async def _get_dp_ranks():
+        async def _get_dp_head():
             tasks = [
                 self.scheduler.async_call_engine(
-                    worker_id=worker.id, method="data_parallel_rank"
+                    worker_id=worker.id, method="is_data_parallel_head"
                 )
                 for worker in self.workers
             ]
             return await asyncio.gather(*tasks)
 
-        dp_ranks = asyncio.run(_get_dp_ranks())
-
-        # Find unique DP ranks and corresponding head workers
-        seen_dp_ranks = set()
-        self.dp_head_workers = []
-        self.engine_dp_ranks = []
-
-        for worker, dp_rank in zip(self.workers, dp_ranks):
-            if dp_rank not in seen_dp_ranks:
-                self.dp_head_workers.append(worker)
-                self.engine_dp_ranks.append(dp_rank)
-                seen_dp_ranks.add(dp_rank)
-
-        self.logger.info(
-            f"Identified {len(self.dp_head_workers)} DP head workers "
-            f"from {len(self.workers)} total workers. "
-            f"DP ranks: {self.engine_dp_ranks}"
-        )
+        self.workers_is_dp_head = asyncio.run(_get_dp_head())
 
     def destroy(self):
         """Destroy the controller and release GPU memory of models.
@@ -227,31 +223,15 @@ class TrainController:
 
         # Clear worker lists
         self.workers.clear()
-        self.dp_head_workers.clear()
-        self.engine_dp_ranks.clear()
+        self.workers_is_dp_head.clear()
 
         self.logger.info("TrainController destroyed")
 
     def custom_function_call(self, method: str, *args, **kwargs):
         """Dispatch method call to appropriate workers based on input type.
 
-        If any argument is a DistributedBatch, split data and call only DP heads.
-        Otherwise, call all workers with the same arguments.
+        If any argument is a DistributedBatch, split data. Call only DP heads.
         """
-        # Check if any argument is a DistributedBatch
-        has_distributed_batch = any(
-            isinstance(arg, DistributedBatch) for arg in args
-        ) or any(isinstance(v, DistributedBatch) for v in kwargs.values())
-
-        if has_distributed_batch:
-            # Call ONLY DP heads with split data
-            return self._call_dp_heads_with_data_split(method, *args, **kwargs)
-        else:
-            # Call ALL workers (no data splitting needed)
-            return self._call_all_workers(method, *args, **kwargs)
-
-    def _call_dp_heads_with_data_split(self, method: str, *args, **kwargs):
-        """Call only DP head workers with data split across DP groups."""
         # Find and split DistributedBatch arguments
         split_args = []
         for arg in args:
@@ -260,37 +240,48 @@ class TrainController:
                 split_args.append(self._align_batches_with_dp(arg, rebalance=True))
             else:
                 # Replicate to all DP heads
-                split_args.append([arg] * len(self.dp_head_workers))
+                split_args.append([arg] * self.parallel_strategy.dp_size)
 
         split_kwargs = {}
         for k, v in kwargs.items():
             if isinstance(v, DistributedBatch):
                 split_kwargs[k] = self._align_batches_with_dp(v, rebalance=True)
             else:
-                split_kwargs[k] = [v] * len(self.dp_head_workers)
+                split_kwargs[k] = [v] * self.parallel_strategy.dp_size
 
-        # Call ONLY DP head workers with their data slice
+        # Call all workers.
+        # ONLY DP head workers get their data slice.
+        # Other workers will get data by broadcasting in RPC server.
         async def _call_all():
             tasks = []
-            for idx, worker in enumerate(self.dp_head_workers):
-                # Get this worker's slice of each argument
-                worker_args = [splits[idx] for splits in split_args]
-                worker_kwargs = {k: splits[idx] for k, splits in split_kwargs.items()}
+            dp_idx = 0
+            for idx, worker in enumerate(self.workers):
+                if self.workers_is_dp_head[idx]:
+                    # Get this worker's slice of each argument
+                    worker_args = [splits[dp_idx] for splits in split_args]
+                    worker_kwargs = {
+                        k: splits[dp_idx] for k, splits in split_kwargs.items()
+                    }
 
-                # Convert DistributedBatch to dict for RPC
-                worker_args = [
-                    arg.get_data() if isinstance(arg, DistributedBatch) else arg
-                    for arg in worker_args
-                ]
-                worker_kwargs = {
-                    k: v.get_data() if isinstance(v, DistributedBatch) else v
-                    for k, v in worker_kwargs.items()
-                }
+                    # Convert DistributedBatch to dict for RPC
+                    # FIXME: pass metadata instead of real tensors
+                    worker_args = [
+                        arg.get_data() if isinstance(arg, DistributedBatch) else arg
+                        for arg in worker_args
+                    ]
+                    worker_kwargs = {
+                        k: v.get_data() if isinstance(v, DistributedBatch) else v
+                        for k, v in worker_kwargs.items()
+                    }
+                    dp_idx += 1
+                else:
+                    worker_args = []
+                    worker_kwargs = {}
 
                 tasks.append(
                     self.scheduler.async_call_engine(
-                        worker_id=worker.id,
-                        method=method,
+                        worker.id,
+                        method,
                         *worker_args,
                         **worker_kwargs,
                     )
@@ -298,77 +289,43 @@ class TrainController:
             return await asyncio.gather(*tasks)
 
         results = asyncio.run(_call_all())
+        # Only remain data from DP head.
+        results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
         return self._merge_results(results, method)
 
-    def _call_all_workers(self, method: str, *args, **kwargs):
-        """Call all workers with the same arguments (no data splitting)."""
+    def _merge_results(self, results, method):
+        """Merge results from DP head workers based on result type.
 
-        async def _call_all():
-            tasks = [
-                self.scheduler.async_call_engine(
-                    worker_id=worker.id, method=method, *args, **kwargs
-                )
-                for worker in self.workers
-            ]
-            return await asyncio.gather(*tasks)
-
-        results = asyncio.run(_call_all())
-        return self._merge_results(results, method)
-
-    def _merge_results(self, results, method: str):
-        """Merge results from workers based on result type.
-
-        - For None: return None
-        - For dict with scalar values: return first (already synchronized)
-        - For dict with tensor/batch values: concat as DistributedBatch
-        - For tensors/lists: concat as DistributedBatch
-        - For scalars: return first (already synchronized)
+        - For torch.Tensor: concat results as DistributedBatch
+        - For others: assume they have been synchronized and return the first
         """
-        # Filter out None results
-        non_none_results = [r for r in results if r is not None]
+        first_result = results[0]
 
-        if len(non_none_results) == 0:
-            return None
-
-        first_result = non_none_results[0]
-
-        # If all results are dicts
+        # FIXME: should use a more general data conversion strategy
         if isinstance(first_result, dict):
-            # Check if it's a dict of scalars (like train_batch stats)
-            if all(isinstance(v, (int, float)) for v in first_result.values()):
-                # Stats are already synchronized within engines - return first
-                return first_result
-            else:
-                # Dict of tensors/batches - concat as DistributedBatch
-                return DistributedBatchMemory.concat(
-                    [DistributedBatchMemory.from_dict(r) for r in non_none_results]
-                )
+            if len(first_result) == 0:
+                return DistributedBatchMemory.from_dict({})
 
-        # If result is a tensor or torch.Tensor
-        elif isinstance(first_result, torch.Tensor):
-            # Single tensor, likely already reduced - return first
-            return first_result
+            k = next(iter(first_result.keys()))
+            if isinstance(first_result[k], torch.Tensor):
+                # Check if this looks like a proper batch (has attention_mask)
+                # If so, use DistributedBatchMemory.concat which handles padding
+                if "attention_mask" in first_result:
+                    return DistributedBatchMemory.concat(
+                        [DistributedBatchMemory.from_dict(r) for r in results]
+                    )
+                else:
+                    # Simple tensor dict - just concatenate tensors along batch dim
+                    merged = {}
+                    for key in first_result.keys():
+                        if isinstance(first_result[key], torch.Tensor):
+                            merged[key] = torch.cat([r[key] for r in results], dim=0)
+                        else:
+                            merged[key] = first_result[key]
+                    return DistributedBatchMemory.from_dict(merged)
 
-        # If result is a list/iterable (but not string)
-        elif hasattr(first_result, "__iter__") and not isinstance(first_result, str):
-            try:
-                # Try to concat as DistributedBatch
-                return DistributedBatchMemory.concat(
-                    [
-                        DistributedBatchMemory.from_dict(r)
-                        if isinstance(r, dict)
-                        else r
-                        for r in non_none_results
-                    ]
-                )
-            except Exception:
-                # If concat fails, return list of results
-                return non_none_results
-
-        # For scalars (int, float, bool, etc.)
-        else:
-            # Return first (already synchronized)
-            return first_result
+        # Return first (already synchronized)
+        return first_result
 
     def _align_batches_with_dp(
         self, input_: DistributedBatch, rebalance=True
@@ -377,17 +334,77 @@ class TrainController:
 
         Returns a list of batches, one for each DP head worker.
         """
+        # Handle empty batch by replicating to all DP groups
+        if len(input_.get_data()) == 0:
+            return [input_] * self.alloc_mode.train.dp_size
+
+        # NOTE: group normalization should be done in workflow
         if rebalance:
-            inputs = input_.chunk_by_ffd(self.group_size, self.alloc_mode.train.dp_size)
+            inputs = input_.chunk_by_ffd(1, self.alloc_mode.train.dp_size)
         else:
             inputs = input_.chunk(self.alloc_mode.train.dp_size)
+        return inputs
 
-        # Return batches corresponding to DP head ranks
-        batches = []
-        for dp_rank in self.engine_dp_ranks:
-            batches.append(inputs[dp_rank])
+    def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
+        if self.rollout is not None and self.rollout != rollout:
+            self.logger.warning(
+                f"Connected rollout controller changed from {self.rollout} to {rollout}."
+            )
+        self.rollout = rollout
 
-        return batches
+        if (
+            meta.type == current_platform.communication_backend
+            and not self.weight_update_group_initialized
+        ):
+            self._init_weight_update_from_distributed(meta)
+            self.weight_update_group_initialized = True
+
+    def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
+        raise NotImplementedError()
+
+    def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
+        raise NotImplementedError()
+
+    def _update_weights_from_disk(self, meta: WeightUpdateMeta):
+        # Update all LocalInfEngine's local weight
+        fut = self.rollout.update_weights_from_disk(meta)
+        self.save(
+            SaveLoadMeta(
+                path=meta.path,
+                weight_format="hf",
+                with_optim=False,
+                tokenizer=None,
+                processor=None,
+            )
+        )
+        update_name = names.update_weights_from_disk(
+            self.config.experiment_name,
+            self.config.trial_name,
+            self.get_version(),
+        )
+        name_resolve.add(
+            update_name, str(datetime.now().timestamp()), keepalive_ttl=120
+        )
+
+        fut.result()
+
+    def _check_rollout_engine_connected(self):
+        """Validate that rollout engine has been connected via connect_engine()."""
+        if self.rollout is None:
+            raise RuntimeError(
+                "Rollout engine not connected. Call connect_engine()"
+                " before using rollout/update_weight methods."
+            )
+
+    def update_weights(self, meta: WeightUpdateMeta):
+        self._check_rollout_engine_connected()
+        if meta.type == current_platform.communication_backend:
+            assert self.weight_update_group_initialized
+            self._update_weights_from_distributed(meta)
+        elif meta.type == "disk":
+            self._update_weights_from_disk(meta)
+        else:
+            raise ValueError(f"Unknown weight update type {meta.type}")
 
     # ==================== ENGINE RPC WRAPPERS ====================
     def train(self, mode: bool = True):
@@ -417,36 +434,6 @@ class TrainController:
             Returns self for method chaining
         """
         return self.train(False)
-
-    def update_weights(self, meta: WeightUpdateMeta):
-        """Update weights to the inference engine in a blocking manner.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Metadata containing information about the weight update
-        """
-        self.custom_function_call("update_weights", meta)
-
-    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
-        """Connect to an inference engine for online training.
-
-        Parameters
-        ----------
-        engine : InferenceEngine
-            The inference engine to connect to
-        meta : WeightUpdateMeta
-            Metadata for weight update configuration
-
-        Raises
-        ------
-        NotImplementedError
-            This method is not implemented for TrainController
-        """
-        raise NotImplementedError(
-            "connect_engine is not implemented for TrainController. "
-            "Use RolloutController for online training workflows."
-        )
 
     def set_version(self, version: int):
         """Set the current weight version in the training engine.
