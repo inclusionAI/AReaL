@@ -1,46 +1,41 @@
 import abc
 from dataclasses import dataclass, field
+from typing import List, Literal
+
+from areal.api.engine_api import Scheduling
 
 
 @dataclass
 class Worker:
     id: str
+    # worker and engine deploy on the same machine, so ip are the same
     ip: str
-    ports: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ContainerSpec:
-    cpu: int = 0
-    gpu: int = 0
-    mem: int = 0
-    container_image: str = ""
-    cmd: str = ""
-    env_vars: dict[str, str] = field(default_factory=dict)
-    port_count: int = 2
+    worker_ports: List[str] = field(default_factory=list)
+    engine_ports: List[str] = field(default_factory=list)
 
 
 @dataclass
 class ScheduleStrategy:
-    type: str = ""
-    uid: str = ""
+    type: Literal["colocation", "separation"] = "separation"
+    target: str = ""
 
 
 @dataclass
-class SchedulingConfig:
+class Job:
     replicas: int = 0
-    specs: list[ContainerSpec] = field(default_factory=list)
+    tasks: List[Scheduling] = field(default_factory=list)
     schedule_strategy: ScheduleStrategy | None = None
     role: str = ""
 
 
 class Scheduler(abc.ABC):
-    def create_workers(self, worker_key, scheduler_config, *args, **kwargs) -> str:
+    def create_workers(self, job: Job, *args, **kwargs) -> None:
         """
-        Start workers, return job id
+        Start workers
         """
+        raise NotImplementedError()
 
-    def get_workers(self, worker_key, timeout=None) -> list[Worker]:
+    def get_workers(self, role: str, timeout=None) -> List[Worker]:
         """
         Wait and return worker list, including scheduling results such as ip and engine ports
         (worker id, ip, ports)

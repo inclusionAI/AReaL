@@ -1,5 +1,6 @@
 import asyncio
 import os
+import threading
 import uuid
 from typing import Callable
 
@@ -16,6 +17,7 @@ from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
+from areal.utils.hf_utils import load_hf_tokenizer
 
 logger = logging.getLogger("RLVR workflow")
 
@@ -39,7 +41,7 @@ class RLVRWorkflow(RolloutWorkflow):
         self,
         reward_fn,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: str | PreTrainedTokenizerFast | None = None,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
@@ -48,17 +50,39 @@ class RLVRWorkflow(RolloutWorkflow):
     ):
         self.reward_fn = reward_fn
         self.gconfig = gconfig
-        self.tokenizer = tokenizer
+
+        self.tokenizer = None
+        self._initialized = False
+        self.tokenizer_path = ""
+        self._init_lock = threading.Lock()
+        # Handle tokenizer parameter
+        if isinstance(tokenizer, str):
+            self.tokenizer_path = tokenizer
+        elif isinstance(tokenizer, PreTrainedTokenizerFast):
+            self.tokenizer = tokenizer
+
         self.enable_thinking = enable_thinking
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
-        self.async_reward_fn = AsyncRewardWrapper(reward_fn)
+        self.async_reward_fn = None
         self.get_input_ids_fn = get_input_ids_fn
         self.data_extract_prompt_fn = data_extract_prompt_fn
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
 
+    def initialize(self):
+        if self.async_reward_fn is None:
+            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
+        if self.tokenizer is None:
+            self.tokenizer = load_hf_tokenizer(self.tokenizer_path)
+
     async def arun_episode(self, engine: InferenceEngine, data):
+        if not self._initialized:
+            with self._init_lock:
+                if not self._initialized:
+                    self.initialize()
+                    self._initialized = True
+
         input_ids = self.get_input_ids_fn(
             self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking
         )
@@ -142,3 +166,13 @@ class RLVRWorkflow(RolloutWorkflow):
                     await f.write(info + "\n")
 
         return concat_padded_tensors(results)
+
+    def __getstate__(self):
+        # pickle时不保存锁对象
+        state = self.__dict__.copy()
+        del state["_init_lock"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__ = state
+        self._init_lock = threading.Lock()

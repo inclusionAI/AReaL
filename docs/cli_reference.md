@@ -74,6 +74,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 - [DistributedDataParallel Configuration](section-distributed-data-parallel)
 - [MegatronEngine Configuration](section-megatron-engine)
 - [Scheduler Configuration](section-scheduler)
+- [Scheduling Specification](section-scheduling)
 
 ______________________________________________________________________
 
@@ -452,21 +453,22 @@ Controls text generation behavior for rollout.
 
 Configuration for inference servers, including offpolicyness control.
 
-| Parameter                 | Type            | Default         | Description                                                                                                                                                         |
-| ------------------------- | --------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `experiment_name`         | string \| None  | `None`          | -                                                                                                                                                                   |
-| `trial_name`              | string \| None  | `None`          | -                                                                                                                                                                   |
-| `max_concurrent_rollouts` | integer \| None | `None`          | Maximum number of concurrent rollouts to the inference engine. Defaults to consumer_batch_size.                                                                     |
-| `queue_size`              | integer \| None | `None`          | Input/Output queue size for async rollout.                                                                                                                          |
-| `consumer_batch_size`     | integer         | `1`             | Batch size for consuming rollouts from the queue.                                                                                                                   |
-| `max_head_offpolicyness`  | integer         | `0`             | Maximum off-policyness for the head. If the current version is more than this many versions behind, the request will not be accepted.                               |
-| `enable_rollout_tracing`  | boolean         | `False`         | Whether to output verbose tracing messages for each generation request.                                                                                             |
-| `check_trajectory_format` | boolean         | `False`         | Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training. |
-| `schedule_policy`         | string          | `"round_robin"` | Request scheduling policy **Choices:** `round_robin`                                                                                                                |
-| `setup_timeout`           | float           | `120.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                      |
-| `request_timeout`         | float           | `3600`          | Timeout for HTTP requests.                                                                                                                                          |
-| `request_retries`         | integer         | `3`             | Number of retries for failed requests.                                                                                                                              |
-| `pause_grace_period`      | float           | `0.0`           | The grace period after calling /pause_generation. Wait until all requests have been dropped.                                                                        |
+| Parameter                 | Type                                           | Default         | Description                                                                                                                                                         |
+| ------------------------- | ---------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`         | string \| None                                 | `None`          | -                                                                                                                                                                   |
+| `trial_name`              | string \| None                                 | `None`          | -                                                                                                                                                                   |
+| `max_concurrent_rollouts` | integer \| None                                | `None`          | Maximum number of concurrent rollouts to the inference engine. Defaults to consumer_batch_size.                                                                     |
+| `queue_size`              | integer \| None                                | `None`          | Input/Output queue size for async rollout.                                                                                                                          |
+| `consumer_batch_size`     | integer                                        | `1`             | Batch size for consuming rollouts from the queue.                                                                                                                   |
+| `max_head_offpolicyness`  | integer                                        | `0`             | Maximum off-policyness for the head. If the current version is more than this many versions behind, the request will not be accepted.                               |
+| `enable_rollout_tracing`  | boolean                                        | `False`         | Whether to output verbose tracing messages for each generation request.                                                                                             |
+| `check_trajectory_format` | boolean                                        | `False`         | Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training. |
+| `schedule_policy`         | string                                         | `"round_robin"` | Request scheduling policy **Choices:** `round_robin`                                                                                                                |
+| `setup_timeout`           | float                                          | `120.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                      |
+| `request_timeout`         | float                                          | `3600`          | Timeout for HTTP requests.                                                                                                                                          |
+| `request_retries`         | integer                                        | `3`             | Number of retries for failed requests.                                                                                                                              |
+| `pause_grace_period`      | float                                          | `0.0`           | The grace period after calling /pause_generation. Wait until all requests have been dropped.                                                                        |
+| `scheduling_specs`        | list of [`SchedulingSpec`](section-scheduling) | **Required**    | inference engine schedule specs                                                                                                                                     |
 
 (section-sg-lang)=
 
@@ -811,3 +813,20 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 | `reward_functioncall_config`  | `dict` | **Required**                        | -           |
 | `reward_model_path`           | string | `""`                                | -           |
 | `reward_model_service_url`    | string | `"http://localhost:30000/classify"` | -           |
+
+(section-scheduling)=
+
+## Scheduling Specification
+
+Configuration class: SchedulingSpec
+
+| Parameter    | Type    | Default      | Description                                                      |
+| ------------ | ------- | ------------ | ---------------------------------------------------------------- |
+| `cpu`        | integer | `0`          | Number of CPU cores required                                     |
+| `gpu`        | integer | `0`          | Number of GPU units required                                     |
+| `mem`        | integer | `0`          | Amount of memory (GB) required                                   |
+| `port_count` | integer | `2`          | Number of ports to expose                                        |
+| `image`      | string  | `""`         | Docker/Singularity container image to use                        |
+| `type`       | string  | `"worker"`   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine` |
+| `env_vars`   | `Dict`  | **Required** | Environment variables for the container                          |
+| `cmd`        | string  | `""`         | Command to execute inside the container                          |

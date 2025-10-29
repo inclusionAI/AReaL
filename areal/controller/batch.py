@@ -234,6 +234,42 @@ class DistributedBatchMemory(DistributedBatch):
 
         return batch_data
 
+    def to_list(self) -> List[Dict[str, Any]]:
+        """Convert the dataset to a list format.
+
+        Returns a list where each element is a dictionary representing
+        a single sample from the dataset.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            List of dictionaries, where each dictionary contains the data
+            for one sample with keys as field names and values as the
+            corresponding field values for that sample.
+        """
+        if not self.dataset:
+            return []
+
+        total_size = self._get_total_size()
+        if total_size == 0:
+            return []
+
+        # Build list of individual samples
+        result = []
+        for i in range(total_size):
+            sample = {}
+            for key, values in self.dataset.items():
+                if isinstance(values, torch.Tensor):
+                    sample[key] = values[i]
+                elif isinstance(values, list):
+                    sample[key] = values[i] if i < len(values) else None
+                else:
+                    # For scalar values, use the same value for all samples
+                    sample[key] = values
+            result.append(sample)
+
+        return result
+
     @staticmethod
     def concat(data: list["DistributedBatchMemory"]) -> "DistributedBatchMemory":
         """Concatenate multiple DistributedBatchMemory objects

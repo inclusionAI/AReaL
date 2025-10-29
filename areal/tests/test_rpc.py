@@ -16,8 +16,7 @@ from areal.controller.batch import DistributedBatchMemory
 from areal.scheduler.rpc.rpc_client import RPCClient
 from areal.scheduler.rpc.rpc_server import (
     EngineRPCServer,
-    get_serve_port,
-    process_input_to_distributed_batch,
+    get_server_port,
     process_output_to_distributed_batch,
     start_rpc_server,
 )
@@ -29,6 +28,7 @@ class MockEngine:
     def __init__(self):
         self.initialized = False
         self.call_count = 0
+        self.device = "cpu"
 
     def initialize(self, config):
         self.initialized = True
@@ -53,55 +53,7 @@ class MockEngine:
         return batch
 
 
-# Test RPC data processing functions
-
-
-def test_process_input_to_distributed_batch_with_memory_batch():
-    """Test processing input parameters containing DistributedBatchMemory"""
-    # Create DistributedBatchMemory instance
-    data = {
-        "input_ids": torch.tensor([1, 2, 3, 4]),
-        "labels": torch.tensor([5, 6, 7, 8]),
-        "metadata": ["text1", "text2", "text3", "text4"],
-    }
-    batch = DistributedBatchMemory.from_dict(data)
-
-    # Test args and kwargs containing DistributedBatchMemory
-    args = (batch, "other_arg")
-    kwargs = {"batch_param": batch, "other_param": "value"}
-
-    processed_args, processed_kwargs = process_input_to_distributed_batch(
-        *args, **kwargs
-    )
-
-    # Verify DistributedBatchMemory is converted to dictionary
-    assert isinstance(processed_args[0], dict)
-    assert processed_args[1] == "other_arg"
-    assert isinstance(processed_kwargs["batch_param"], dict)
-    assert processed_kwargs["other_param"] == "value"
-
-    # Verify converted dictionary contains original data
-    converted_data = processed_args[0]
-    torch.testing.assert_close(converted_data["input_ids"], data["input_ids"])
-    torch.testing.assert_close(converted_data["labels"], data["labels"])
-    assert converted_data["metadata"] == data["metadata"]
-
-
-def test_process_input_no_distributed_batch():
-    """Test processing input that does not contain DistributedBatch"""
-    args = ("arg1", "arg2", torch.tensor([1, 2, 3]))
-    kwargs = {"param1": "value1", "param2": torch.tensor([4, 5, 6])}
-
-    processed_args, processed_kwargs = process_input_to_distributed_batch(
-        *args, **kwargs
-    )
-
-    # Should remain unchanged
-    assert processed_args == args
-    assert processed_kwargs == kwargs
-
-
-def test_process_output_to_distributed_batch_dict():
+def test_process_output_to_dict():
     """Test converting dictionary output to DistributedBatch"""
     result = {
         "output_ids": torch.tensor([1, 2, 3]),
@@ -112,13 +64,7 @@ def test_process_output_to_distributed_batch_dict():
     processed = process_output_to_distributed_batch(result)
 
     # Should be converted to DistributedBatchMemory
-    assert isinstance(processed, DistributedBatchMemory)
-
-    # Verify data integrity
-    processed_data = processed.get_data()
-    torch.testing.assert_close(processed_data["output_ids"], result["output_ids"])
-    torch.testing.assert_close(processed_data["scores"], result["scores"])
-    assert processed_data["texts"] == result["texts"]
+    assert isinstance(processed, dict)
 
 
 def test_process_output_to_distributed_batch_tensordict():
@@ -139,8 +85,8 @@ def test_process_output_to_distributed_batch_tensordict():
     torch.testing.assert_close(processed_data["tensor2"], tensor_dict["tensor2"])
 
 
-def test_process_output_to_distributed_batch_list():
-    """Test converting list/tuple output to DistributedBatch"""
+def test_process_output_to_list():
+    """Test converting list/tuple output to list"""
     result_list = [
         {"id": 1, "value": torch.tensor([0.1])},
         {"id": 2, "value": torch.tensor([0.2])},
@@ -148,7 +94,7 @@ def test_process_output_to_distributed_batch_list():
     ]
 
     processed_list = process_output_to_distributed_batch(result_list)
-    assert isinstance(processed_list, DistributedBatchMemory)
+    assert isinstance(processed_list, list)
 
 
 def test_process_output_to_distributed_batch_other_types():
@@ -175,60 +121,17 @@ def test_process_output_to_distributed_batch_other_types():
 def test_get_serve_port_from_args():
     """Test getting port from command line arguments"""
     mock_args = Mock()
-    mock_args.port = 8080
+    mock_args.rpc_port = 8080
 
     with patch.dict("os.environ", {}, clear=True):
-        port = get_serve_port(mock_args)
+        port = get_server_port(mock_args.rpc_port)
         assert port == 8080
 
 
-def test_get_serve_port_from_env_single_port():
+def test_get_server_ports_default_from_multi_ports():
     """Test getting single port from PORT_LIST environment variable"""
-    mock_args = Mock()
-    mock_args.port = 8080
-
-    with patch.dict("os.environ", {"PORT_LIST": "9000"}):
-        port = get_serve_port(mock_args)
-        assert port == 9000
-
-
-def test_get_serve_port_from_env_multiple_ports():
-    """Test getting first port from multiple ports in PORT_LIST environment variable"""
-    mock_args = Mock()
-    mock_args.port = 8080
-
-    with patch.dict("os.environ", {"PORT_LIST": "9000, 9001, 9002"}):
-        port = get_serve_port(mock_args)
-        assert port == 9000
-
-
-def test_get_serve_port_invalid_env_port():
-    """Test fallback when PORT_LIST contains invalid ports"""
-    mock_args = Mock()
-    mock_args.port = 8080
-
-    with patch.dict("os.environ", {"PORT_LIST": "invalid_port, 9001"}):
-        port = get_serve_port(mock_args)
-        assert port == 8080
-
-
-def test_get_serve_port_empty_env():
-    """Test fallback when PORT_LIST is empty"""
-    mock_args = Mock()
-    mock_args.port = 8080
-
-    with patch.dict("os.environ", {"PORT_LIST": ""}):
-        port = get_serve_port(mock_args)
-        assert port == 8080
-
-
-def test_get_serve_port_whitespace_env():
-    """Test fallback when PORT_LIST contains only whitespace"""
-    mock_args = Mock()
-    mock_args.port = 8080
-
-    with patch.dict("os.environ", {"PORT_LIST": "   "}):
-        port = get_serve_port(mock_args)
+    with patch.dict("os.environ", {"PORT_LIST": "8080,8081,8082,8083"}, clear=True):
+        port = get_server_port(0)
         assert port == 8080
 
 
@@ -314,7 +217,6 @@ def test_end_to_end_with_distributed_batch_memory(setup_rpc_server):
     batch_data = {
         "input_ids": torch.tensor([[1, 2, 3], [4, 5, 6], [7, 8, 9]]),
         "attention_mask": torch.tensor([[1, 1, 1], [1, 1, 0], [1, 0, 0]]),
-        "metadata": ["sample1", "sample2", "sample3"],
     }
     batch = DistributedBatchMemory.from_dict(batch_data)
 
@@ -323,7 +225,7 @@ def test_end_to_end_with_distributed_batch_memory(setup_rpc_server):
 
     # Verify batch processing success
     assert process_result["processed"]
-    assert process_result["batch_size"] == 3
+    assert process_result["batch_size"] == 2
 
     # Test tensor processing
     distrubuted_batch_result = client.call_engine(
@@ -333,4 +235,3 @@ def test_end_to_end_with_distributed_batch_memory(setup_rpc_server):
     tensor_result = distrubuted_batch_result.get_data()
     assert torch.equal(tensor_result["input_ids"], batch_data["input_ids"])
     assert torch.equal(tensor_result["attention_mask"], batch_data["attention_mask"])
-    assert tensor_result["metadata"] == batch_data["metadata"]

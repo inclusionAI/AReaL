@@ -1,6 +1,11 @@
 import asyncio
+import os
+import signal
+import traceback
+from concurrent.futures import Future, as_completed
 from http import HTTPStatus
 from typing import Any
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -115,3 +120,31 @@ def response_ok(http_code: int) -> bool:
 
 def response_retryable(http_code: int) -> bool:
     return http_code == HTTPStatus.REQUEST_TIMEOUT
+
+
+def wait_future_ordered(
+    futures: List[Future], exit_on_exception: bool = False
+) -> List[Any]:
+    """
+    Waits for a list of futures to complete and returns the results in the order the futures were submitted.
+    :param futures: List of Future objects to wait for.
+    :param exit_on_exception: If True, terminate the process upon an exception in any future.
+                             If False, raise the exception.
+    :return: List of results in the same order as the input futures.
+    :raises Exception: If exit_on_exception is False and any future raises an exception.
+    """
+    results = [None] * len(futures)
+    future_index_map = {future: i for i, future in enumerate(futures)}
+    for future in as_completed(futures):
+        index = future_index_map[future]
+        try:
+            results[index] = future.result()
+        except Exception as e:
+            logger.warning(f"Exception caught when waiting for future: {e}")
+            logger.warning(traceback.format_exc())
+            if exit_on_exception:
+                logger.info("Exiting due to exception in future.")
+                os.kill(os.getpid(), signal.SIGTERM)
+            else:
+                raise e
+    return results

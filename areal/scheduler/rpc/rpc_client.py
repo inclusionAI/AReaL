@@ -6,7 +6,6 @@ from typing import Any, Union
 import cloudpickle
 import requests
 
-from areal.api.cli_args import InferenceEngineConfig, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.utils import logging
 from areal.utils.http import response_ok, response_retryable
@@ -22,16 +21,20 @@ class RPCClient:
         self._addrs[worker_id] = (ip, port)
         logger.info(f"Registered worker {worker_id} at {ip}:{port}")
 
+    def get_info(self, worker_id: str) -> tuple[str, int]:
+        return self._addrs[worker_id]
+
     def create_engine(
         self,
         worker_id: str,
         engine_obj: Union[InferenceEngine, TrainEngine],
-        init_config: Union[InferenceEngineConfig, TrainEngineConfig],
+        *args,
+        **kwargs,
     ) -> None:
         ip, port = self._addrs[worker_id]
         url = f"http://{ip}:{port}/create_engine"
         logger.info(f"send create_engine to {worker_id} ({ip}:{port})")
-        payload = (engine_obj, init_config)
+        payload = (engine_obj, args, kwargs)
         serialized_data = cloudpickle.dumps(payload)
         serialized_obj = gzip.compress(serialized_data)
         resp = requests.post(url, data=serialized_obj)
@@ -46,6 +49,24 @@ class RPCClient:
             raise RuntimeError(
                 f"Failed to create engine, {resp.status_code}, {resp.content}"
             )
+
+    def check_health(self, worker_id: str, timeout: int = 20) -> bool:
+        ip, port = self._addrs[worker_id]
+        url = f"http://{ip}:{port}/health"
+
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            remain_timeout = timeout - (time.time() - start_time)
+            try:
+                resp = requests.post(url, timeout=remain_timeout)
+                resp.raise_for_status()
+                return True
+            except Exception as e:
+                logger.warning(f"Health check exception for {worker_id}: {e}")
+            time.sleep(2)
+
+        logger.error(f"Health check failed for {worker_id} after {timeout} seconds")
+        return False
 
     def call_engine(
         self, worker_id: str, method: str, max_retries: int = 3, *args, **kwargs
