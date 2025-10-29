@@ -21,6 +21,7 @@ from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
     get_state_dict,
+    set_model_state_dict,
     set_state_dict,
 )
 from torch.distributed.checkpoint.stateful import Stateful
@@ -82,22 +83,36 @@ class AppState(Stateful):
         self.optimizer = optimizer
 
     def state_dict(self):
-        """Get state dict for model and optimizer using DCP utilities."""
-        # This automatically manages FSDP FQN's and sets default state dict type to FSDP.SHARDED_STATE_DICT
+        """
+        Get state dict for model and optimizer using DCP utilities.
+        This automatically manages FSDP FQN's and
+        sets default state dict type to FSDP.SHARDED_STATE_DICT
+        """
+        #
         model_state_dict, optimizer_state_dict = get_state_dict(
             self.model, self.optimizer
         )
-        return {"model": model_state_dict, "optim": optimizer_state_dict}
+        state_dict = {"model": model_state_dict}
+        if self.optimizer is not None:
+            state_dict["optim"] = optimizer_state_dict
+        return state_dict
 
     def load_state_dict(self, state_dict):
-        """Load state dicts onto model and optimizer."""
-        # Sets our state dicts on the model and optimizer
-        set_state_dict(
-            self.model,
-            self.optimizer,
-            model_state_dict=state_dict["model"],
-            optim_state_dict=state_dict["optim"],
-        )
+        """
+        Load state dicts onto model and optimizer.
+        """
+        if self.optimizer is not None:
+            set_state_dict(
+                self.model,
+                self.optimizer,
+                model_state_dict=state_dict["model"],
+                optim_state_dict=state_dict["optim"],
+            )
+        else:
+            set_model_state_dict(
+                self.model,
+                state_dict=state_dict["model"],
+            )
 
 
 class FSDPEngine(BaseHFEngine):

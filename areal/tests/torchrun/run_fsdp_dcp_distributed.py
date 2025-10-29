@@ -14,6 +14,7 @@ from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.platforms import current_platform
 from areal.utils import seeding
+from areal.utils.distributed import DTensor
 
 MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
@@ -157,7 +158,15 @@ def test_simple_dcp_save_load(alloc_mode: str, output: str | None = None):
     succ = True
     for name, param in engine.model.named_parameters():
         if not torch.allclose(param, params[name]):
-            diff = torch.abs(params[name] - param)
+            if isinstance(param, DTensor):
+                param_after_load = param.to_local()
+            else:
+                param_after_load = param
+            if isinstance(params[name], DTensor):
+                param_train = params[name].to_local()
+            else:
+                param_train = params[name]
+            diff = torch.abs(param_train - param_after_load)
             print(
                 f"Rank {rank} diff of {name}: {diff}, max(diff)={torch.max(diff)} avg(diff)={torch.mean(diff)}, count(diff)={torch.count_nonzero(diff)}"
             )
@@ -224,7 +233,7 @@ def test_train_dcp_save_load(alloc_mode: str, output: str | None = None):
 
     with torch.no_grad():
         engine.eval()
-        params_after_step2 = copy.deepcopy(dict(engine.model.named_parameters()))
+        params = copy.deepcopy(dict(engine.model.named_parameters()))
 
     for p in engine.model.parameters():
         p.data.zero_()
@@ -244,8 +253,16 @@ def test_train_dcp_save_load(alloc_mode: str, output: str | None = None):
     with torch.no_grad():
         engine.eval()
         for name, param in engine.model.named_parameters():
-            if not torch.allclose(param, params_after_step2[name]):
-                diff = torch.abs(params_after_step2[name] - param)
+            if isinstance(param, DTensor):
+                param_train_after_load = param.to_local()
+            else:
+                param_train_after_load = param
+            if isinstance(params[name], DTensor):
+                param_train = params[name].to_local()
+            else:
+                param_train = params[name]
+            if not torch.allclose(param_train_after_load, param_train):
+                diff = torch.abs(param_train - param_train_after_load)
                 print(
                     f"Rank {rank} diff of {name}: {diff}, max(diff)={torch.max(diff)} avg(diff)={torch.mean(diff)}, count(diff)={torch.count_nonzero(diff)}"
                 )
