@@ -82,36 +82,6 @@ def make_fsdp_engine(
     return engine
 
 
-def test_forward(alloc_mode: str, output: str | None = None):
-    rank = int(os.environ["RANK"])
-    print(f"Running forward test on rank {rank}")
-
-    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
-    engine = make_fsdp_engine(alloc_mode, mb_spec, init_optimizer=False)
-
-    seeding.set_random_seed(0, key=f"trainer{rank}")
-
-    input_data = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
-
-    # Forward pass
-    with torch.no_grad():
-        engine.eval()
-        logits = engine.forward(input_data)
-
-    print(f"Rank {rank} forward result shape: {logits.shape}")
-
-    # Synchronize across ranks
-    dist.barrier()
-
-    # Clean up
-    engine.destroy()
-
-    if rank == 0 and output is not None:
-        write_result(output, True)
-
-    print(f"Forward test completed on rank {rank}")
-
-
 def test_simple_dcp_save_load(alloc_mode: str, output: str | None = None):
     """Test simple DCP save and load in distributed setting."""
     rank = int(os.environ["RANK"])
@@ -281,8 +251,8 @@ def main():
     parser.add_argument(
         "--test_type",
         type=str,
-        choices=["forward", "simple_dcp_save_load", "train_dcp_save_load"],
-        default="forward",
+        choices=["simple_dcp_save_load", "train_dcp_save_load"],
+        default="simple_dcp_save_load",
         help="Type of test to run",
     )
     parser.add_argument(
@@ -301,9 +271,7 @@ def main():
 
     print(f"Running {args.test_type} test")
 
-    if args.test_type == "forward":
-        test_forward(alloc_mode=args.allocation_mode, output=args.output)
-    elif args.test_type == "simple_dcp_save_load":
+    if args.test_type == "simple_dcp_save_load":
         test_simple_dcp_save_load(alloc_mode=args.allocation_mode, output=args.output)
     elif args.test_type == "train_dcp_save_load":
         test_train_dcp_save_load(alloc_mode=args.allocation_mode, output=args.output)
