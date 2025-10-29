@@ -1,7 +1,14 @@
-"""Modern FastAPI-based RPC server for engine workers.
+"""Async FastAPI-based RPC server for InferenceEngine workers.
 
-This server runs on worker nodes to expose engine methods via HTTP/JSON RPC.
-It uses safe JSON serialization instead of cloudpickle.
+This server runs on worker nodes to expose InferenceEngine methods via HTTP/JSON RPC.
+It uses safe JSON serialization instead of cloudpickle and supports async workflow
+execution via the /run_workflow endpoint.
+
+Key differences from sync_rpc_server:
+- Multi-threaded: Uses FastAPI/uvicorn with async support
+- InferenceEngine: Primarily for InferenceEngine (async rollout generation)
+- Has /run_workflow: Supports direct workflow execution
+- All async endpoints: All HTTP handlers are async functions
 """
 
 import argparse
@@ -15,14 +22,14 @@ import uvicorn
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import ORJSONResponse
 
-from areal.api.engine_api import InferenceEngine
+from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging, stats_tracker
 
 logger = logging.getLogger("RPCServer")
 
-# Global engine instance - must be InferenceEngine
-_engine: InferenceEngine | None = None
+# Global engine instance - must be TrainEngine or InferenceEngine
+_engine: TrainEngine | InferenceEngine | None = None
 
 
 @asynccontextmanager
@@ -61,7 +68,7 @@ async def health_check():
 
 
 @app.post("/create_engine")
-def create_engine(data: dict[str, Any] = Body(...)):
+async def create_engine(data: dict[str, Any] = Body(...)):
     """
     Create and initialize an engine instance on this worker.
 
@@ -91,9 +98,13 @@ def create_engine(data: dict[str, Any] = Body(...)):
             module = importlib.import_module(module_path)
             engine_class = getattr(module, class_name)
 
-            if not (issubclass(engine_class, InferenceEngine)):
+            # Validate that the class is a TrainEngine or InferenceEngine
+            if not (
+                issubclass(engine_class, TrainEngine)
+                or issubclass(engine_class, InferenceEngine)
+            ):
                 raise TypeError(
-                    f"Engine class must be a subclass of InferenceEngine, "
+                    f"Engine class must be a subclass of TrainEngine or InferenceEngine, "
                     f"got {engine_class}"
                 )
         except (ValueError, ImportError, AttributeError) as e:
@@ -135,7 +146,7 @@ def create_engine(data: dict[str, Any] = Body(...)):
 
 
 @app.post("/call")
-def call_engine_method(data: dict[str, Any] = Body(...)):
+async def call_engine_method(data: dict[str, Any] = Body(...)):
     """
     Call a method on the engine instance.
 
@@ -167,6 +178,32 @@ def call_engine_method(data: dict[str, Any] = Body(...)):
         # Deserialize args and kwargs (convert SerializedTensor dicts to tensors)
         args = deserialize_value(args)
         kwargs = deserialize_value(kwargs)
+
+        try:
+            should_bcast = kwargs.pop("_should_bcast", True)
+            if isinstance(_engine, TrainEngine) and should_bcast:
+                logger.info(f"Broadcasting data for TrainEngine method: {method_name}")
+                from areal.utils.data import broadcast_tensor_container
+
+                args = broadcast_tensor_container(
+                    args,
+                    src_rank=_engine.current_data_parallel_head(),
+                    group=_engine.context_and_model_parallel_group,
+                )
+                kwargs = broadcast_tensor_container(
+                    kwargs,
+                    src_rank=_engine.current_data_parallel_head(),
+                    group=_engine.context_and_model_parallel_group,
+                )
+                logger.info("Broadcasting data done.")
+        except Exception as e:
+            logger.error(
+                f"Broadcasting data for method '{method_name}' failed: {e}\n{traceback.format_exc()}"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Data bcast '{method_name}' failed: {str(e)}",
+            )
 
         # Call method directly (no need for hasattr/getattr with typed engine)
         logger.info(f"Calling engine method: {method_name}")
@@ -342,47 +379,56 @@ async def run_workflow(request: Request):
 
 
 @app.post("/export_stats")
-def export_stats(data: dict[str, Any] | None = Body(None)):
+async def export_stats(data: dict[str, Any] | None = Body(None)):
     try:
         assert data is None
 
         global _engine
-        assert isinstance(_engine, InferenceEngine)
-        # Rollout engines do not have the collective communication channel.
-        # Return individual results and reduce them in the client side.
-        raw_stats = {}
-        for name, tracker in stats_tracker.TRACKERS.items():
-            s = {name.strip("/") + k: v for k, v in tracker.stats.items()}
-            raw_stats.update(s)
-        # clear stats tracker
-        stats_tracker.export_all()
-        return {"status": "success", "result": raw_stats}
+        if isinstance(_engine, TrainEngine):
+            return {
+                "status": "success",
+                "result": stats_tracker.export(
+                    reduce_group=_engine.data_parallel_group
+                ),
+            }
+        else:
+            assert isinstance(_engine, InferenceEngine)
+            # Rollout engines do not have the collective communication channel.
+            # Return individual results and reduce them in the client side.
+            raw_stats = {}
+            for name, tracker in stats_tracker.TRACKERS.items():
+                s = {name.strip("/") + k: v for k, v in tracker.stats.items()}
+                raw_stats.update(s)
+            # clear stats tracker
+            stats_tracker.export_all()
+            return {"status": "success", "result": raw_stats}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in run_workflow: {e}\n{traceback.format_exc()}")
+        logger.error(f"Unexpected error in export_stats: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 def main():
-    """Main entry point for the RPC server."""
-    parser = argparse.ArgumentParser(description="AReaL Worker RPC Server")
+    """Main entry point for the async RPC server."""
+    parser = argparse.ArgumentParser(
+        description="AReaL Async RPC Server for InferenceEngine"
+    )
     parser.add_argument("--port", type=int, required=True, help="Port to serve on")
     parser.add_argument(
         "--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
     )
 
     args, _ = parser.parse_known_args()
-    port = args.port
 
-    logger.info(f"Starting RPC server on {args.host}:{port}")
+    logger.info(f"Starting async RPC server on {args.host}:{args.port}")
 
     # Run uvicorn server with a single worker (required for GPU workloads)
     uvicorn.run(
         app,
         host=args.host,
-        port=port,
+        port=args.port,
         workers=1,  # Single worker required for GPU memory management
         log_level="info",
         access_log=True,

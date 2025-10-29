@@ -432,7 +432,9 @@ class TrainEngineConfig:
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
     scheduling_spec: SchedulingSpec = field(
-        default_factory=SchedulingSpec,
+        default_factory=lambda: SchedulingSpec(
+            cmd="python -m areal.scheduler.rpc.sync_rpc_server"
+        ),
         metadata={"help": "train engine schedule specs"},
     )
     scheduling_strategy: ScheduleStrategy = field(default_factory=ScheduleStrategy)
@@ -905,7 +907,9 @@ class InferenceEngineConfig:
         },
     )
     scheduling_spec: SchedulingSpec = field(
-        default_factory=SchedulingSpec,
+        default_factory=lambda: SchedulingSpec(
+            cmd="python -m areal.scheduler.rpc.async_rpc_server"
+        ),
         metadata={"help": "inference engine schedule specs"},
     )
     scheduling_strategy: ScheduleStrategy = field(default_factory=ScheduleStrategy)

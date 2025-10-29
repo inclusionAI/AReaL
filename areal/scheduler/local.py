@@ -4,7 +4,6 @@ import getpass
 import os
 import shlex
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -357,22 +356,18 @@ class LocalScheduler(Scheduler):
                 log_file = self.log_dir / f"{worker_id.replace('/', '_')}.log"
 
                 # Build command to start RPC server
-                if scheduling.cmd:
-                    # Use custom command from scheduling
-                    cmd = shlex.split(scheduling.cmd)
-                else:
-                    # Default: start RPC server
-                    cmd = [
-                        sys.executable,
-                        "-m",
-                        "areal.scheduler.rpc.rpc_server",
-                        "--port",
-                        str(ports[0]),  # Main RPC port
-                    ]
+                if not scheduling.cmd:
+                    self._cleanup_workers(workers)
+                    raise WorkerCreationError(
+                        role,
+                        f"SchedulingSpec.cmd is required but not set for worker {worker_id}",
+                        "Specify either 'python -m areal.scheduler.rpc.async_rpc_server' or "
+                        "'python -m areal.scheduler.rpc.sync_rpc_server' in your config.",
+                    )
 
-                    # Add any additional arguments
-                    if args:
-                        cmd.extend(args)
+                cmd = shlex.split(scheduling.cmd)
+                # Append --port argument to command
+                cmd.extend(["--port", str(ports[0])])
 
                 logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
 
