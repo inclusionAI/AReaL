@@ -1,4 +1,4 @@
-name: AReaL CI Tests
+name: Unit Tests
 
 on:
   # pull_request:
