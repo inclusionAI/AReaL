@@ -87,8 +87,7 @@ def make_fsdp_engine(
 
 def test_forward(alloc_mode: str, output: str | None = None):
     rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
-    print(f"Running forward test on rank {rank}/{world_size}")
+    print(f"Running forward test on rank {rank}")
 
     mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
     engine = make_fsdp_engine(alloc_mode, mb_spec, init_optimizer=False)
@@ -122,6 +121,10 @@ def test_simple_dcp_save_load(alloc_mode: str, output: str | None = None):
 
     print(f"Running simple DCP save/load test on rank {rank}")
 
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
+    engine = make_fsdp_engine(alloc_mode, mb_spec, init_optimizer=False)
+
     base_dir = tempfile.gettempdir()
     path = os.path.join(base_dir, "fsdp_engine_simple_dcp_test")
     if rank == 0:
@@ -129,10 +132,6 @@ def test_simple_dcp_save_load(alloc_mode: str, output: str | None = None):
 
     # Wait for rank 0 to create directory
     dist.barrier()
-
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
-    engine = make_fsdp_engine(alloc_mode, mb_spec, init_optimizer=False)
 
     seeding.set_random_seed(0, key=f"trainer{rank}")
 
@@ -182,6 +181,10 @@ def test_train_dcp_save_load(alloc_mode: str, output: str | None = None):
     rank = int(os.environ["RANK"])
     print(f"Running train DCP save/load test on rank {rank}")
 
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
+    engine = make_fsdp_engine(alloc_mode, mb_spec, init_optimizer=True)
+
     base_dir = tempfile.gettempdir()
     path = os.path.join(base_dir, "fsdp_engine_train_dcp_test")
     if rank == 0:
@@ -189,11 +192,6 @@ def test_train_dcp_save_load(alloc_mode: str, output: str | None = None):
 
     # Wait for rank 0 to create directory
     dist.barrier()
-
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-
-    mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
-    engine = make_fsdp_engine(alloc_mode, mb_spec, init_optimizer=True)
 
     seeding.set_random_seed(0, key=f"trainer{rank}")
 
