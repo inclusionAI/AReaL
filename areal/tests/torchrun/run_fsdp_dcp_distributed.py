@@ -157,15 +157,15 @@ def test_simple_dcp_save_load(alloc_mode: str, output: str | None = None):
 
     succ = True
     for name, param in engine.model.named_parameters():
-        if not torch.allclose(param, params[name]):
-            if isinstance(param, DTensor):
-                param_after_load = param.to_local()
-            else:
-                param_after_load = param
-            if isinstance(params[name], DTensor):
-                param_train = params[name].to_local()
-            else:
-                param_train = params[name]
+        if isinstance(param, DTensor):
+            param_after_load = param.to_local()
+        else:
+            param_after_load = param
+        if isinstance(params[name], DTensor):
+            param_train = params[name].to_local()
+        else:
+            param_train = params[name]
+        if not torch.allclose(param_after_load, param_train):
             diff = torch.abs(param_train - param_after_load)
             print(
                 f"Rank {rank} diff of {name}: {diff}, max(diff)={torch.max(diff)} avg(diff)={torch.mean(diff)}, count(diff)={torch.count_nonzero(diff)}"
