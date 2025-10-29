@@ -4,6 +4,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
 
@@ -11,6 +12,11 @@ import aiohttp
 import requests
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
+from openai import AsyncOpenAI
+from openai.resources.chat.completions.completions import AsyncCompletions
+from openai.resources.responses.responses import AsyncResponses
+from openai.types.chat.chat_completion import ChatCompletion
+from openai.types.responses.response import Response
 from pydantic import BaseModel
 from sglang.srt.entrypoints.http_server import validate_json_request
 from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest
@@ -20,12 +26,6 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
-
-from openai import AsyncOpenAI
-from openai.resources.chat.completions.completions import AsyncCompletions
-from openai.resources.responses.responses import AsyncResponses
-from openai.types.chat.chat_completion import ChatCompletion
-from openai.types.responses.response import Response
 
 from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
@@ -449,27 +449,24 @@ def insert_session_id_to_kwargs(kwargs: dict, session_id: str) -> None:
     kwargs["extra_body"] = extra_body
 
 
-class AsyncProxyCompletions(AsyncCompletions):
-    def __init__(self, client: AsyncOpenAI, session_id: str):
-        super().__init__(client=client)
-        self.session_id = session_id
+proxy_session_id = ContextVar[str]("proxy_session_id")
 
+
+class AsyncProxyCompletions(AsyncCompletions):
     async def create(self, *args, **kwargs) -> ChatCompletion:
-        insert_session_id_to_kwargs(kwargs, self.session_id)
+        session_id = proxy_session_id.get()
+        insert_session_id_to_kwargs(kwargs, session_id)
         return await super().create(*args, **kwargs)
 
 
 class AsyncProxyResponses(AsyncResponses):
-    def __init__(self, client: AsyncOpenAI, session_id: str):
-        super().__init__(client=client)
-        self.session_id = session_id
-
     async def create(self, *args, **kwargs) -> Response:
-        insert_session_id_to_kwargs(kwargs, self.session_id)
+        session_id = proxy_session_id.get()
+        insert_session_id_to_kwargs(kwargs, session_id)
         return await super().create(*args, **kwargs)
 
 
-class ProxyClient(AsyncOpenAI):
+class PatchedAsyncOpenAI(AsyncOpenAI):
     def __init__(
         self,
         base_url: str,
@@ -477,9 +474,17 @@ class ProxyClient(AsyncOpenAI):
         **kwargs,
     ):
         super().__init__(base_url=base_url, api_key=api_key, **kwargs)
+        # Override self.chat.completions and self.responses to insert session_id to extra_body
+        self.chat.completions = AsyncProxyCompletions(self)
+        self.responses = AsyncProxyResponses(self)
+
+
+class ProxySession:
+    def __init__(self, base_url: str):
         self.stripped_base_url = base_url.rstrip("/")
-        self.final_reward = None
         self.session_id = None
+        self.final_reward = None
+        self.http_session = aiohttp.ClientSession()
 
     async def set_reward(self, reward: float, completion_id: str | None = None):
         if self.session_id is None:
@@ -488,32 +493,33 @@ class ProxyClient(AsyncOpenAI):
             payload = AReaLSetRewardRequest(
                 session_id=self.session_id, completion_id=completion_id, reward=reward
             ).model_dump()
-            async with aiohttp.ClientSession() as session:
-                await _post_json_with_retry(
-                    session,
-                    f"{self.stripped_base_url}/rl/set_reward",
-                    payload=payload,
-                )
+            await _post_json_with_retry(
+                self.http_session,
+                f"{self.stripped_base_url}/rl/set_reward",
+                payload=payload,
+            )
         else:
             self.final_reward = reward
 
+    def __enter__(self):
+        raise TypeError("Use async with instead")
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass
+
     async def __aenter__(self):
-        async with aiohttp.ClientSession() as session:
-            data = await _post_json_with_retry(
-                session,
-                f"{self.stripped_base_url}/rl/start_session",
-                payload={},
-            )
-            self.session_id = data["session_id"]
-            # Override self.chat.completions and self.responses to insert session_id to extra_body
-            self.chat.completions = AsyncProxyCompletions(
-                self, session_id=self.session_id
-            )
-            self.responses = AsyncProxyResponses(self, session_id=self.session_id)
-            return self
+        data = await _post_json_with_retry(
+            self.http_session,
+            f"{self.stripped_base_url}/rl/start_session",
+            payload={},
+        )
+        self.session_id = data["session_id"]
+        proxy_session_id.set(self.session_id)
+        return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         if exc_type is not None:
+            await self.http_session.close()
             return
 
         if self.session_id is None:
@@ -522,20 +528,21 @@ class ProxyClient(AsyncOpenAI):
         payload = AReaLEndSessionRequest(
             session_id=self.session_id, final_reward=self.final_reward
         ).model_dump()
-
-        async with aiohttp.ClientSession() as session:
-            await _post_json_with_retry(
-                session, f"{self.stripped_base_url}/rl/end_session", payload=payload
-            )
+        proxy_session_id.set(None)
+        await _post_json_with_retry(
+            self.http_session,
+            f"{self.stripped_base_url}/rl/end_session",
+            payload=payload,
+        )
+        await self.http_session.close()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
-    server = ProxyServer(args.host, args.port)
+    server = ProxyServer(args.port)
     server.start(wait_until_ready=True)
 
     async def run_client():

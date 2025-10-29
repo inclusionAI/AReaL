@@ -16,7 +16,11 @@ from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai.client import ArealOpenAI
-from areal.experimental.openai.proxy import ProxyClient, ProxyServer
+from areal.experimental.openai.proxy import (
+    PatchedAsyncOpenAI,
+    ProxyServer,
+    ProxySession,
+)
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import cycle_dataloader
@@ -55,10 +59,12 @@ class BasicOpenAIAgent:
         self.proxy_server_url = proxy_server_url
         self.gconfig = gconfig
         self.reward_fn = reward_fn
+        self.client = PatchedAsyncOpenAI(base_url=proxy_server_url)
 
     async def run_agent(self, messages: list[dict], answer: str) -> tuple[float, str]:
-        async with ProxyClient(base_url=self.proxy_server_url) as client:
-            completion: ChatCompletion = await client.chat.completions.create(
+        async with ProxySession(base_url=self.proxy_server_url) as session:
+            session_id = session.session_id
+            completion: ChatCompletion = await self.client.chat.completions.create(
                 messages=messages,
                 model="default",  # no need to pass
                 **self.gconfig.to_openai_args_dict(),
@@ -66,8 +72,8 @@ class BasicOpenAIAgent:
             reward = float(
                 self.reward_fn(completion.choices[0].message.content, answer)
             )
-            await client.set_reward(reward)
-            return reward, client.session_id
+            await session.set_reward(reward)
+            return reward, session_id
 
 
 class ProxyRLVRWorkflow(RolloutWorkflow):
