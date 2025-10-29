@@ -1,5 +1,6 @@
 """Local scheduler for managing worker subprocesses on a single GPU node."""
 
+import getpass
 import os
 import shlex
 import subprocess
@@ -65,7 +66,10 @@ class LocalScheduler(Scheduler):
     def __init__(
         self,
         gpu_devices: list[int] | None = None,
-        log_dir: str = "./logs/workers",
+        fileroot: str | None = None,
+        experiment_name: str | None = None,
+        trial_name: str | None = None,
+        log_dir: str | None = None,
         startup_timeout: float = 30.0,
         health_check_interval: float = 1.0,
     ):
@@ -79,7 +83,19 @@ class LocalScheduler(Scheduler):
             health_check_interval: Interval for health checks (seconds)
         """
         self.gpu_devices = gpu_devices or self._detect_gpus()
-        self.log_dir = Path(log_dir)
+        if log_dir is not None:
+            self.log_dir = Path(log_dir)
+        else:
+            assert experiment_name is not None
+            assert trial_name is not None
+            assert fileroot is not None
+            self.log_dir = (
+                Path(fileroot)
+                / "logs"
+                / getpass.getuser()
+                / experiment_name
+                / trial_name
+            )
         self.startup_timeout = startup_timeout
         self.health_check_interval = health_check_interval
 
@@ -843,6 +859,9 @@ class LocalScheduler(Scheduler):
             url = f"http://{worker_info.worker.ip}:{port}/run_workflow"
             # Serialize kwargs for workflow execution
             payload = serialize_value(kwargs)
+        elif method == "export_stats":
+            url = f"http://{worker_info.worker.ip}:{port}/export_stats"
+            payload = None
         else:
             # Standard engine method call
             url = f"http://{worker_info.worker.ip}:{port}/call"

@@ -16,7 +16,7 @@ from fastapi.responses import ORJSONResponse
 
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
-from areal.utils import logging
+from areal.utils import logging, stats_tracker
 
 logger = logging.getLogger("RPCServer")
 
@@ -367,6 +367,34 @@ async def run_workflow(request: Request):
                 status_code=500,
                 detail=f"Workflow arun_episode failed: {str(e)}",
             )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in run_workflow: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.post("/export_stats")
+async def export_stats(request: Request):
+    try:
+        body = await request.body()
+        data = orjson.loads(body)
+        assert data is None
+
+        global _engine
+        if isinstance(_engine, TrainEngine):
+            return {
+                "status": "success",
+                "result": stats_tracker.export(
+                    reduce_group=_engine.data_parallel_group
+                ),
+            }
+        else:
+            assert isinstance(_engine, InferenceEngine)
+            # Rollout engines do not have collective communication channel.
+            # Return individual results and reduce in the client side.
+            return {"status": "success", "result": stats_tracker.export_all()}
 
     except HTTPException:
         raise

@@ -406,6 +406,18 @@ class TrainController:
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
+    def export_stats(self):
+        async def _call_all():
+            tasks = [
+                self.scheduler.async_call_engine(worker.id, "export_stats")
+                for worker in self.workers
+            ]
+            return await asyncio.gather(*tasks)
+
+        results = asyncio.run(_call_all())
+        # stats have been aggregated and synchronized.
+        return results[0]
+
     # ==================== ENGINE RPC WRAPPERS ====================
     def train(self, mode: bool = True):
         """Set the engine to training mode.
