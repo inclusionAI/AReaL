@@ -41,13 +41,20 @@ classifiers = [
 
 dependencies = [
     # Core ML/AI libraries
-    "torch>2.0.0",
+    "torch==2.8.0",
+    "torchaudio",
+    "torchvision",
+
     "huggingface_hub",
     "datasets",
     "accelerate",
     "transformers==4.56.1",
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
+    "flashinfer-python==0.3.1",
+    "sglang[all]==0.5.2",
+    "flash-attn==2.8.3",
+    "vllm==0.10.2",
     "peft",
     "qwen_agent",
 
@@ -68,6 +75,7 @@ dependencies = [
     "orjson>=3.10.16",
     "pydantic",
     "PyYAML",
+    "omegaconf==2.4.0.dev2",
     "hydra-core==1.4.0.dev1",
     "packaging",
     "lark",
@@ -78,6 +86,7 @@ dependencies = [
     "tensordict",
     "pybase64",
     "msgspec",
+    "latex2sympy2",
     "openai==1.99.6",
     "dotenv",
     "json5",
@@ -89,7 +98,9 @@ dependencies = [
     "colorlog",
     "psutil",
     "pynvml",
-    "swanlab[dashboard]",
+    "nvidia-ml-py",
+    "swanboard==0.1.9b1",
+    "swanlab[dashboard]==0.6.12",
 
     # Performance and compression
     "ninja",
@@ -139,6 +150,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pytest-asyncio",
     "ipython",
     "ruff==0.14.1",
     "clang-format==19.1.7",
@@ -174,6 +186,19 @@ where = ["."]
 include = ["areal*"]
 exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*"]
 
+[tool.uv]
+override-dependencies=[
+    "openai==1.99.6",
+    "xgrammar==0.1.24",
+    "outlines-core==0.1.26",
+]
+
+[tool.uv.sources]
+latex2sympy2 = { path = "./evaluation/latex2sympy" }
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch==2.8.0"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 filterwarnings = [
@@ -182,6 +207,10 @@ filterwarnings = [
     "ignore::FutureWarning",
     "ignore::UserWarning:torch.*",
     "ignore::UserWarning:transformers.*",
+]
+markers = [
+    "slow: mark test as slow.",
+    "ci: mark test as must-run in CI (only marked for slow tests).",
 ]
 
 [tool.ruff]

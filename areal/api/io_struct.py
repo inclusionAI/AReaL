@@ -1,7 +1,7 @@
 import os
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import numpy as np
 import torch
@@ -20,16 +20,16 @@ if TYPE_CHECKING:
 @dataclass
 class ModelRequest:
     rid: str = field(default_factory=lambda: str(uuid.uuid4()))
-    input_ids: List[int] = field(default_factory=list)
+    input_ids: list[int] = field(default_factory=list)
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     # tokenizer is used for encode-decode in the inference engine
-    tokenizer: Optional[PreTrainedTokenizerFast] = None
+    tokenizer: PreTrainedTokenizerFast | None = None
 
     # vlm
-    image_data: Optional[List[ImageObject | str]] = field(default_factory=list)
+    image_data: list[ImageObject | str] | None = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
 
     def copy(self):
@@ -47,22 +47,22 @@ class ModelRequest:
 @dataclass
 class ModelResponse:
     # outputs
-    input_tokens: List[int] = field(default_factory=list)
-    output_tokens: List[int] = field(default_factory=list)
-    output_logprobs: List[float] = field(default_factory=list)
-    output_versions: List[int] = field(default_factory=list)
+    input_tokens: list[int] = field(default_factory=list)
+    output_tokens: list[int] = field(default_factory=list)
+    output_logprobs: list[float] = field(default_factory=list)
+    output_versions: list[int] = field(default_factory=list)
     stop_reason: Literal["length", "stop", "interrupt"] = "stop"
     # tokenizer is used for encode-decode in the inference engine
-    tokenizer: Optional[PreTrainedTokenizerFast] = None
+    tokenizer: PreTrainedTokenizerFast | None = None
 
     # vlm
-    input_images: List[ImageObject | str] = field(default_factory=list)
+    input_images: list[ImageObject | str] = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
 
     # statistics
     latency: float = float("inf")
     ttft: float = float("inf")  # Time to first token
-    itl: List[float] = field(default_factory=list)  # List of inter-token latencies
+    itl: list[float] = field(default_factory=list)  # List of inter-token latencies
 
     @property
     def input_len(self) -> int:
@@ -92,7 +92,7 @@ class FinetuneSpec:
 @dataclass
 class ParamSpec:
     name: str
-    shape: Tuple
+    shape: tuple
     dtype: str
 
     @property
@@ -173,7 +173,7 @@ class HttpRequest:
     """Represents an HTTP request to be sent to a remote inference server."""
 
     endpoint: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     method: str = "POST"
 
 
@@ -181,8 +181,8 @@ class HttpRequest:
 class HttpGenerationResult:
     """Parsed result from a generation response."""
 
-    output_tokens: List[int]
-    output_logprobs: List[float]
+    output_tokens: list[int]
+    output_logprobs: list[float]
     stop_reason: str
 
 
@@ -190,7 +190,7 @@ class HttpGenerationResult:
 class WeightUpdateRequests:
     """Collection of HTTP requests needed for a weight update operation."""
 
-    requests: List[HttpRequest]
+    requests: list[HttpRequest]
 
 
 @dataclass
@@ -198,7 +198,7 @@ class SaveLoadMeta:
     path: str
     weight_format: str
     with_optim: bool
-    tokenizer: Optional[PreTrainedTokenizerFast] = None
+    tokenizer: PreTrainedTokenizerFast | None = None
     processor: Optional["AutoProcessor"] = None
     base_model_path: str | None = None
     naive_distributed: bool = False

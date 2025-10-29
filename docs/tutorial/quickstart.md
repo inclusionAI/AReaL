@@ -111,6 +111,29 @@ Additional references:
 > **Note**: Ray and Slurm launchers only work for distributed experiments with more than 1 node (`cluster.n_nodes > 1`). They allocate GPUs for training and generation at the granularity of **nodes**, which means the number of GPUs allocated for generation and training must be integer multiples of `cluster.n_gpus_per_node`.
 -->
 
+## Distributed Experiments on Cloud or K8s with SkyPilot
+
+If you want to directly run an experiment on cloud or your own Kubernetes
+infrastructure, we recommend you to use SkyPilot. After installing and setting up
+SkyPilot (see [Install SkyPilot](installation.md#install-skypilot)), you could launch a
+distributed experiment based on our SkyPilot example (two 8xA100 GPU nodes) with one
+command line:
+
+```bash
+# Launch on GCP
+sky launch -c areal-test examples/skypilot/ray_cluster.sky.yaml --infra gcp
+# Launch on AWS
+sky launch -c areal-test examples/skypilot/ray_cluster.sky.yaml --infra aws
+# Launch on your K8s Cluster
+sky launch -c areal-test examples/skypilot/ray_cluster.sky.yaml --infra k8s
+```
+
+Check
+[Running AReaL with SkyPilot](https://github.com/inclusionAI/AReaL/blob/main/examples/skypilot/README.md),
+for more details about the examples. Check
+[SkyPilot Documentation](https://docs.skypilot.co/en/latest/docs/index.html) for more
+information about SkyPilot.
+
 (switching-from-legacy-areal-to-areal-lite)=
 
 ## Switching from legacy AReaL to AReaL-lite

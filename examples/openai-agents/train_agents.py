@@ -1,19 +1,18 @@
-import itertools
 import os
 import sys
-from copy import deepcopy
+from dataclasses import dataclass, field
 
-import torch
 import torch.distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import load_expr_config
+from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.reward.math_parser import process_results
-from areal.utils import logging, seeding, stats_tracker
+from areal.platforms import current_platform
+from areal.utils import seeding, stats_tracker
+from areal.utils.data import cycle_dataloader
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
@@ -22,65 +21,63 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
-from tir_workflow import TIRGRPOConfig, TIRWorkflow  # isort: skip
 
-logger = logging.getLogger("TIR Training")
-
-
-def math_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    # tool_using = 0.01 if 'tool_using' in kwargs and kwargs['tool_using'] else 0
-    # tool_success = 0.05 if 'tool_status' in kwargs and kwargs['tool_status'] else 0
-
-    retval, (extracted_answer, extracted_solution) = process_results(
-        completions, answer
+@dataclass
+class AgentRLConfig(GRPOConfig):
+    agent_type: str = field(
+        default="math",
+        metadata={
+            "help": "Type of agent workflow to use.",
+            "choices": ["math", "multi_agent_math"],
+        },
     )
-
-    return int(retval)
+    n_trajs: int = field(
+        default=1,
+        metadata={
+            "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
+        },
+    )
+    max_turns: int = field(
+        default=8,
+        metadata={
+            "help": "Maximum number of turns per trajectory. By default max_turns=8."
+        },
+    )
+    max_tokens_per_trajectory: int = field(
+        default=32768,
+        metadata={
+            "help": "Maximum number of tokens per trajectory. By default max_tokens_per_trajectory=32768."
+        },
+    )
 
 
 def main(args):
-    config, _ = load_expr_config(args, TIRGRPOConfig)
-    config: TIRGRPOConfig
+    config, _ = load_expr_config(args, AgentRLConfig)
+    config: AgentRLConfig
 
     rank = int(os.getenv("RANK"))
-
-    logger.info("Starting TIR training")
-    logger.info(f"Configuration: {config.experiment_name}")
-    logger.info(f"Model: {config.actor.path}")
-    logger.info(f"Batch size: {config.train_dataset.batch_size}")
-
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
-    # Load datasets
+    # Create dataset and dataloaders
     train_dataset = get_custom_dataset(
         split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
-    valid_dataset = get_custom_dataset(
-        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
-    )
 
-    # Create dataloaders
     train_dataloader = create_dataloader(
         train_dataset,
         rank=actor.data_parallel_rank,
         world_size=actor.data_parallel_world_size,
         dataset_config=config.train_dataset,
     )
-    valid_dataloader = create_dataloader(
-        valid_dataset,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        dataset_config=config.valid_dataset,
-    )
-
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
@@ -90,54 +87,46 @@ def main(args):
     # Initialize inference engine
     rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
-    eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
-    eval_rollout.config.max_head_offpolicyness = int(1e12)
-    eval_rollout.initialize()
 
-    # Weight update meta
     weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
 
     actor.initialize(None, ft_spec)
     actor.connect_engine(rollout, weight_update_meta)
 
-    ref = None
-    if config.actor.kl_ctl > 0 and config.ref is not None:
-        ref = FSDPPPOActor(config=config.ref)
-        ref.create_process_group(parallel_strategy=parallel_strategy)
-        ref.initialize(None, ft_spec)
-
-    reward_fn = math_reward_fn
-
-    # Create TIR workflow
+    # Create rollout workflow based on agent type
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
-    workflow = TIRWorkflow(
-        reward_fn=reward_fn,
-        gconfig=config.gconfig,
-        tokenizer=tokenizer,
-        tir_config=config.tir,
-        enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
-    )
+    if config.agent_type == "math":
+        from math_workflow import RLVRAgentWorkflow
 
-    eval_workflow = TIRWorkflow(
-        reward_fn=reward_fn,
-        gconfig=config.gconfig.new(temperature=0.6),
-        tokenizer=tokenizer,
-        tir_config=config.tir,
-        enable_thinking=False,
-        rollout_stat_scope="eval-rollout",
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-        ),
-    )
+        workflow = RLVRAgentWorkflow(
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
+            n_trajs=config.n_trajs,
+            dump_dir=os.path.join(
+                StatsLogger.get_log_path(config.stats_logger), "generated"
+            ),
+        )
+    elif config.agent_type == "multi_agent_math":
+        from multi_agent_math_workflow import MultiAgentRLVRAgentWorkflow
 
-    # Run training
+        workflow = MultiAgentRLVRAgentWorkflow(
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
+            n_trajs=config.n_trajs,
+            max_tokens=config.max_tokens_per_trajectory,
+            max_turns=config.max_turns,
+            dump_dir=os.path.join(
+                StatsLogger.get_log_path(config.stats_logger), "generated"
+            ),
+        )
+    else:
+        raise ValueError(f"Unknown agent_type: {config.agent_type}.")
+
+    # Run training.
     saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
@@ -162,7 +151,7 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = itertools.cycle(train_dataloader)
+    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -195,11 +184,6 @@ def main(args):
                 batch["prox_logp"] = logp
                 log_gpu_stats("recompute logp")
 
-        if ref is not None:
-            with stats_tracker.record_timing("ref_logp"):
-                batch["ref_logp"] = ref.compute_logp(batch)
-                log_gpu_stats("ref logp")
-
         with stats_tracker.record_timing("compute_advantage"):
             actor.compute_advantages(batch)
             log_gpu_stats("compute advantages")
@@ -220,27 +204,9 @@ def main(args):
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
-            eval_rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
-
-        with stats_tracker.record_timing("eval"):
-
-            def evaluate_fn():
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
-
-            evaluator.evaluate(
-                evaluate_fn,
-                epoch,
-                step,
-                global_step,
-            )
 
         with stats_tracker.record_timing("checkpoint_for_recover"):
             recover_handler.dump(
@@ -254,26 +220,25 @@ def main(args):
             )
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
-        # Upload statistics to the logger
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+
+        # Upload statistics to the logger (e.g., wandb)
         stats[0].update(
             stats_tracker.export_all(reduce_group=actor.data_parallel_group)
         )
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
-        torch.cuda.synchronize()
+        current_platform.synchronize()
 
         # Resume rollout
         rollout.resume()
 
-    # Cleanup
     stats_logger.close()
-    eval_rollout.destroy()
     rollout.destroy()
-    if ref is not None:
-        ref.destroy()
     actor.destroy()
 
 

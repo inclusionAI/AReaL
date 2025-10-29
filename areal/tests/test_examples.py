@@ -7,7 +7,6 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Tuple
 
 import pytest
 
@@ -18,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 SUCCESS_PATTERN = re.compile(r"Epoch 1/\d+ Step 1/\d+ Train step 1/\d+ done\.")
 
+pytestmark = pytest.mark.slow
+
 
 async def run_example(
     example_file: str,
@@ -25,7 +26,7 @@ async def run_example(
     *additional_args,
     timeout: int = 300,
     success_pattern=SUCCESS_PATTERN,
-) -> Tuple[bool, str, str]:
+) -> tuple[bool, str, str]:
     """
     Run a single example and return the result.
 
@@ -139,8 +140,8 @@ def test_countdown_example(tmp_path_factory):
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=128",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={str(train_file_path)}",
             f"valid_dataset.path={str(test_file_path)}",
             "cluster.n_gpus_per_node=2",
@@ -153,6 +154,7 @@ def test_countdown_example(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.ci
 def test_gsm8k_grpo(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
@@ -174,8 +176,8 @@ def test_gsm8k_grpo(tmp_path_factory):
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
@@ -188,6 +190,7 @@ def test_gsm8k_grpo(tmp_path_factory):
 
 
 @pytest.mark.gpu
+@pytest.mark.ci
 def test_gsm8k_sft(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
@@ -207,8 +210,8 @@ def test_gsm8k_sft(tmp_path_factory):
             config_name,
             "allocation_mode=d1",
             "model.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=1",
@@ -241,7 +244,7 @@ def test_gsm8k_eval(tmp_path_factory):
             "allocation_mode=sglang:d1+eval",
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
-            f"valid_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=1",
             f"cluster.fileroot={str(experiments_path)}",
@@ -275,14 +278,15 @@ def test_vlm_grpo(tmp_path_factory):
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
+            timeout=1800,
         )
     )
     assert success, f"CLEVR Count 70k GRPO example failed, return_code={return_code}"
@@ -309,8 +313,8 @@ def test_vlm_sft(tmp_path_factory):
             config_name,
             "allocation_mode=d1",
             "model.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=1",
@@ -324,6 +328,7 @@ def test_vlm_sft(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.ci
 def test_gsm8k_grpo_megatron(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
@@ -345,8 +350,8 @@ def test_gsm8k_grpo_megatron(tmp_path_factory):
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
@@ -359,6 +364,7 @@ def test_gsm8k_grpo_megatron(tmp_path_factory):
 
 
 @pytest.mark.gpu
+@pytest.mark.ci
 def test_gsm8k_sft_megatron(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
@@ -378,8 +384,8 @@ def test_gsm8k_sft_megatron(tmp_path_factory):
             config_name,
             "allocation_mode=megatron:d1",
             "model.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=1",
@@ -413,8 +419,8 @@ def test_gsm8k_dapo(tmp_path_factory):
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
@@ -448,8 +454,8 @@ def test_gsm8k_drgrpo(tmp_path_factory):
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
@@ -483,8 +489,8 @@ def test_gsm8k_liteppo(tmp_path_factory):
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
@@ -519,8 +525,8 @@ def test_gsm8k_ppo(tmp_path_factory):
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
             "critic.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
@@ -555,8 +561,8 @@ def test_gsm8k_grpo_lora(tmp_path_factory):
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
@@ -590,7 +596,7 @@ def test_multi_turn_math(tmp_path_factory):
             "gconfig.n_samples=1",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
             f"cluster.fileroot={str(experiments_path)}",
@@ -623,15 +629,16 @@ def test_hhrlhf_rw(tmp_path_factory):
             config_name,
             "allocation_mode=d1",
             "model.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=1",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"model.path={model_path}",
-        )
+            timeout=1800,
+        ),
     )
     assert success, f"HH-RLHF Reward Modeling example failed, return_code={return_code}"
 
@@ -658,8 +665,8 @@ def test_tir_grpo(tmp_path_factory):
             "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=1024",
-            f"train_dataset.batch_size=16",
-            f"valid_dataset.batch_size=16",
+            "train_dataset.batch_size=16",
+            "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
             f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
@@ -732,7 +739,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
             "gconfig.n_samples=1",
             "gconfig.max_new_tokens=128",
             "actor.mb_spec.max_tokens_per_mb=2048",
-            f"train_dataset.batch_size=4",
+            "train_dataset.batch_size=4",
             f"train_dataset.path={dataset_path}",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
@@ -744,8 +751,81 @@ def test_search_agent_deepresearch(tmp_path_factory):
             f"judge_engine.trial_name={llm_judge_trial_name}",
         )
     )
-    assert (
-        success
-    ), f"Search Agent DeepResearch example failed, return_code={return_code}"
+    if not success:
+        raise RuntimeError(
+            f"Search Agent DeepResearch example failed, return_code={return_code}"
+        )
     llm_judge_proc.terminate()
     llm_judge_proc.wait(5)
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.parametrize("agent_type", ["math", "multi_agent_math"])
+def test_openai_agents(tmp_path_factory, agent_type):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+    example_file = "examples/openai-agents/train_agents.py"
+    config_name = "examples/openai-agents/config.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            f"agent_type={agent_type}",
+            "gconfig.n_samples=1",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=4096",
+            "train_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            "n_trajs=1",
+        )
+    )
+    if not success:
+        raise RuntimeError(
+            f"OpenAI Agents {agent_type} example failed, return_code={return_code}"
+        )
+
+
+@pytest.mark.multi_gpu
+def test_camel(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+    example_file = "examples/camel/train.py"
+    config_name = "examples/camel/config.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=1",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=4096",
+            "train_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            "n_trajs=1",
+        )
+    )
+    if not success:
+        raise RuntimeError(f"Camel Math example failed, return_code={return_code}")

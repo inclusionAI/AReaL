@@ -713,7 +713,7 @@ Configuration for SwanLab experiment tracking and monitoring.
 | --------- | -------------- | ------------ | ----------- |
 | `project` | string \| None | `None`       | -           |
 | `name`    | string \| None | `None`       | -           |
-| `config`  | `Dict` \| None | `None`       | -           |
+| `config`  | `dict` \| None | `None`       | -           |
 | `logdir`  | string \| None | `None`       | -           |
 | `mode`    | string \| None | `"disabled"` | -           |
 | `api_key` | string \| None | `None`       | -           |
@@ -746,7 +746,7 @@ Configuration for Weights & Biases experiment tracking.
 | `group`          | string \| None         | `None`       | -           |
 | `notes`          | string \| None         | `None`       | -           |
 | `tags`           | list of string \| None | `None`       | -           |
-| `config`         | `Dict` \| None         | `None`       | -           |
+| `config`         | `dict` \| None         | `None`       | -           |
 | `id_suffix`      | string \| None         | `"train"`    | -           |
 
 (section-distributed-data-parallel)=
@@ -809,6 +809,6 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 | `endpoint`                    | string | `"http://localhost:8081"`           | -           |
 | `deploy_mode`                 | string | `"separation"`                      | -           |
 | `functioncall_service_domain` | string | `"http://localhost:8080"`           | -           |
-| `reward_functioncall_config`  | `Dict` | **Required**                        | -           |
+| `reward_functioncall_config`  | `dict` | **Required**                        | -           |
 | `reward_model_path`           | string | `""`                                | -           |
 | `reward_model_service_url`    | string | `"http://localhost:30000/classify"` | -           |
