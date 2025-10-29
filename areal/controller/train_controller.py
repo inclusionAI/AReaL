@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +21,7 @@ from areal.controller.batch import DistributedBatchMemory
 from areal.controller.rollout_controller import RolloutController
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
+from areal.utils.network import find_free_ports
 
 logger = logging.getLogger("TrainController")
 
@@ -74,18 +76,8 @@ class TrainController:
         self.logger = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
-        """Initialize PyTorch distributed communication groups.
-
-        Parameters
-        ----------
-        parallel_strategy : ParallelStrategy, optional
-            The parallel strategy configuration for distributed training, by default None
-        """
-        assert len(self.workers) > 0, "Workers are not created"
-        if parallel_strategy is None:
-            parallel_strategy = ParallelStrategy()
-        self.parallel_strategy = parallel_strategy
-        self.custom_function_call("create_process_group", parallel_strategy)
+        # A dummy method. Process group will be created during `initialize`
+        pass
 
     def initialize(
         self,
@@ -118,23 +110,30 @@ class TrainController:
         self._worker_role = role
         self.alloc_mode = alloc_mode
 
-        # Initialize parallel_strategy from alloc_mode if not already set
-        if self.parallel_strategy is None:
-            self.parallel_strategy = ParallelStrategy(
-                data_parallel_size=alloc_mode.train.dp_size,
-                tensor_parallel_size=alloc_mode.train.tp_size,
-                pipeline_parallel_size=alloc_mode.train.pp_size,
-            )
+        if alloc_mode.gen_backend == "sglang":
+            self.config.scheduling_spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
+            self.config.scheduling_spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
+
+        self.parallel_strategy = alloc_mode.train
 
         # Create job for scheduler
         job = Job(
             replicas=alloc_mode.train.world_size,
             tasks=[
-                self.config.scheduling_spec for _ in range(alloc_mode.train.world_size)
+                deepcopy(self.config.scheduling_spec)
+                for _ in range(alloc_mode.train.world_size)
             ],
             schedule_strategy=schedule_strategy,
             role=self._worker_role,
         )
+        # Create environment variables to mimic torchrun
+        for i, task in enumerate(job.tasks):
+            task.env_vars["RANK"] = str(i)
+            task.env_vars["WORLD_SIZE"] = str(alloc_mode.train.world_size)
+            task.env_vars["LOCAL_RANK"] = str(i)
+            # TODO: find a real master addr with scheduler
+            task.env_vars["MASTER_ADDR"] = "localhost"
+            task.env_vars["MASTER_PORT"] = str(find_free_ports(1)[0])
 
         # Create workers via scheduler
         self.logger.info("Creating workers via scheduler...")
@@ -151,19 +150,15 @@ class TrainController:
         engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
-        asyncio.run(
-            self._async_create_and_initialize_engines(engine_path, ft_spec, **kwargs)
-        )
+        asyncio.run(self._async_create_engines(engine_path))
+        asyncio.run(self._async_initialize_engines(ft_spec, **kwargs))
 
         # Identify DP head workers
         self._identify_dp_heads()
 
         self.logger.info("TrainController initialization complete")
 
-    async def _async_create_and_initialize_engines(
-        self, engine_path: str, ft_spec: FinetuneSpec, **kwargs
-    ):
-        """Create and initialize engines on all workers."""
+    async def _async_create_engines(self, engine_path: str):
         # Create engines on workers
         self.logger.info("Creating engines on workers...")
         tasks = [
@@ -177,13 +172,25 @@ class TrainController:
         await asyncio.gather(*tasks)
         self.logger.info("Engines created on all workers!")
 
+    async def _async_initialize_engines(self, ft_spec: FinetuneSpec, **kwargs):
         # Initialize engines
         self.logger.info("Calling engine initialization...")
         tasks = [
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
+                method="create_process_group",
+                parallel_strategy=self.parallel_strategy,
+                _should_bcast=False,
+            )
+            for worker in self.workers
+        ]
+        await asyncio.gather(*tasks)
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker_id=worker.id,
                 method="initialize",
                 ft_spec=ft_spec,
+                _should_bcast=False,
                 **kwargs,
             )
             for worker in self.workers

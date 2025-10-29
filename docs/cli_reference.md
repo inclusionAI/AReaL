@@ -813,10 +813,10 @@ Refer to Megatron-LM documentation for implementation details.
 
 Configuration class: ScheduleStrategy
 
-| Parameter | Type      | Default        | Description |
-| --------- | --------- | -------------- | ----------- |
-| `type`    | `Literal` | `"separation"` | -           |
-| `target`  | string    | `""`           | -           |
+| Parameter | Type           | Default        | Description                               |
+| --------- | -------------- | -------------- | ----------------------------------------- |
+| `type`    | string         | `"separation"` | - **Choices:** `separation`, `colocation` |
+| `target`  | string \| None | `None`         | The target role to be colocated with      |
 
 (section-scheduler)=
 

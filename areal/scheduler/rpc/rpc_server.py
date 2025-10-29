@@ -178,7 +178,8 @@ async def call_engine_method(request: Request):
         kwargs = deserialize_value(kwargs)
 
         try:
-            if isinstance(_engine, TrainEngine):
+            should_bcast = kwargs.pop("_should_bcast", True)
+            if isinstance(_engine, TrainEngine) and should_bcast:
                 logger.info(f"Broadcasting data for TrainEngine method: {method_name}")
                 from areal.utils.data import broadcast_tensor_container
 

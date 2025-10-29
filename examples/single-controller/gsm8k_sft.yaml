@@ -8,17 +8,17 @@ tokenizer_path: ${model.path}
 cluster:
   n_nodes: 1
   n_gpus_per_node: 8
-  fileroot: /tmp/areal/experiments
+  fileroot: /storage/openpsi/experiments
   name_resolve:
     type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
+    nfs_record_root: /storage/openpsi/name_resolve
 
 allocation_mode: d8p1t1
 
 model:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen3-1.7B
+  path: /storage/openpsi/models/Qwen__Qwen3-1.7B
   init_from_scratch: false
   gradient_checkpointing: false
   dtype: bfloat16
@@ -34,18 +34,20 @@ model:
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
   backend: fsdp
-  scheduling_specs:
-  - type: worker
+  scheduling_spec:
+    type: worker
     port_count: 1
     gpu: 1
-    cmd: python3 -m areal.scheduler.rpc.rpc_server
+    # AReaL will by default uses `python3 -m areal.scheduler.rpc.rpc_server --port {PORT}`
+    # where ${PORT} is dynamically allocated
+    # cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 train_dataset:
   batch_size: 128
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: openai/gsm8k
+  path: /storage/openpsi/data/gsm8k
   type: sft
 
 valid_dataset:
@@ -53,7 +55,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: openai/gsm8k
+  path: /storage/openpsi/data/gsm8k
   type: sft
 
 # Utilities
@@ -88,9 +90,3 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
-
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768

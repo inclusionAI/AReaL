@@ -3,7 +3,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import uvloop
 import yaml
@@ -314,8 +314,12 @@ class MegatronEngineConfig:
 
 @dataclass
 class ScheduleStrategy:
-    type: Literal["colocation", "separation"] = "separation"
-    target: str = ""
+    type: str = field(
+        default="separation", metadata={"choices": ["separation", "colocation"]}
+    )
+    target: str | None = field(
+        default=None, metadata={"help": "The target role to be colocated with"}
+    )
 
 
 @dataclass

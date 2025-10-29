@@ -67,6 +67,7 @@ def main(args):
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     engine = TrainController(FSDPLMEngine, config=config.model, scheduler=scheduler)
     engine.initialize(
+        role="default",
         alloc_mode=allocation_mode,
         ft_spec=ft_spec,
         schedule_strategy=ScheduleStrategy(),

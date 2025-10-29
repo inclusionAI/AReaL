@@ -15,6 +15,7 @@ import orjson
 import psutil
 
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
+from areal.platforms import current_platform
 from areal.scheduler.exceptions import (
     EngineCallError,
     EngineCreationError,
@@ -30,6 +31,9 @@ from areal.scheduler.exceptions import (
 )
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging
+from areal.utils.launcher import (
+    get_env_vars,
+)
 from areal.utils.network import find_free_ports, gethostip
 
 logger = logging.getLogger("LocalScheduler")
@@ -69,6 +73,7 @@ class LocalScheduler(Scheduler):
         fileroot: str | None = None,
         experiment_name: str | None = None,
         trial_name: str | None = None,
+        cluster_name: str | None = None,
         log_dir: str | None = None,
         startup_timeout: float = 30.0,
         health_check_interval: float = 1.0,
@@ -96,6 +101,7 @@ class LocalScheduler(Scheduler):
                 / experiment_name
                 / trial_name
             )
+        self.cluster_name = cluster_name
         self.startup_timeout = startup_timeout
         self.health_check_interval = health_check_interval
 
@@ -122,13 +128,13 @@ class LocalScheduler(Scheduler):
 
     def _detect_gpus(self) -> list[int]:
         """Detect available GPU devices."""
-        cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        cuda_visible = os.environ.get(current_platform.device_control_env_var)
         if cuda_visible:
             try:
                 return [int(x) for x in cuda_visible.split(",")]
             except ValueError:
                 logger.warning(
-                    f"Invalid CUDA_VISIBLE_DEVICES: {cuda_visible}, using default [0]"
+                    f"Invalid {current_platform.device_control_env_var}: {cuda_visible}, using default [0]"
                 )
                 return [0]
         # Default to single GPU
@@ -335,9 +341,13 @@ class LocalScheduler(Scheduler):
                     ) from e
 
                 # Prepare environment
-                env = os.environ.copy()
-                env["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_devices))
-                env["WORKER_ID"] = worker_id
+                env = get_env_vars(
+                    self.cluster_name,
+                    ",".join([f"{k}={v}" for k, v in scheduling.env_vars.items()]),
+                )
+                env[current_platform.device_control_env_var] = ",".join(
+                    map(str, gpu_devices)
+                )
 
                 # Merge user-provided environment variables from scheduling
                 if scheduling.env_vars:
@@ -364,7 +374,7 @@ class LocalScheduler(Scheduler):
                     if args:
                         cmd.extend(args)
 
-                logger.debug(f"Starting worker {worker_id}: {' '.join(cmd)}")
+                logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
 
                 # Spawn subprocess
                 try:
@@ -603,8 +613,12 @@ class LocalScheduler(Scheduler):
         except psutil.NoSuchProcess:
             # Process already gone
             pass
-        except Exception as e:
-            logger.warning(f"Error terminating process tree {pid}: {e}")
+        except Exception:
+            import traceback
+
+            logger.warning(
+                f"Error terminating process tree {pid}: {traceback.print_exec()}"
+            )
 
     def _read_log_tail(self, log_file: str, lines: int = 50) -> str:
         """Read the last N lines from a log file."""
@@ -666,7 +680,7 @@ class LocalScheduler(Scheduler):
         try:
             logger.info(f"Creating engine '{engine}' on worker '{worker_id}'")
 
-            response = self._http_client.post(
+            response = await self._async_http_client.post(
                 url,
                 content=orjson.dumps(payload),
                 headers={"Content-Type": "application/json"},
