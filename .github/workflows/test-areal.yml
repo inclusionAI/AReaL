@@ -1,4 +1,4 @@
-name: Unit Tests
+name: AReaL CI on GCP runner
 
 on:
   pull_request:
