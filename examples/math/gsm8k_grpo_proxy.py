@@ -1,13 +1,10 @@
 import asyncio
-import multiprocessing as mp
 import os
 import sys
+from collections.abc import Callable
 from copy import deepcopy
-from typing import Callable
 
-import aiohttp
 import torch.distributed as dist
-from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 from areal.api.alloc_mode import AllocationMode
