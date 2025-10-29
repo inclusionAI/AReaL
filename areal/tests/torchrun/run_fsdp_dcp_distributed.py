@@ -6,6 +6,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+from torch.distributed.tensor import DTensor
 from transformers import AutoTokenizer
 
 from areal.api.alloc_mode import AllocationMode
@@ -14,7 +15,6 @@ from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.platforms import current_platform
 from areal.utils import seeding
-from areal.utils.distributed import DTensor
 
 MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
