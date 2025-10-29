@@ -6,9 +6,7 @@ import uuid
 from typing import Any
 
 import torch
-from prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT
 from tensordict import TensorDict
-from tool_manager import ToolCallStatus, ToolManager
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import (
@@ -23,6 +21,9 @@ from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
+
+from prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT  # isort: skip
+from tool_manager import ToolCallStatus, ToolManager  # isort: skip
 
 logger = logging.getLogger("TIR workflow")
 

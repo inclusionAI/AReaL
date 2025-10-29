@@ -5,7 +5,6 @@ from copy import deepcopy
 
 import torch
 import torch.distributed as dist
-from tir_workflow import TIRGRPOConfig, TIRWorkflow
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import load_expr_config
@@ -22,6 +21,8 @@ from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+
+from tir_workflow import TIRGRPOConfig, TIRWorkflow  # isort: skip
 
 logger = logging.getLogger("TIR Training")
 
