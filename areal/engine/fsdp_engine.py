@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+import torch.distributed.checkpoint as dcp
 import torch.distributed.nn.functional as dist_F
 from peft import (
     LoraConfig,
@@ -19,7 +20,10 @@ from torch import nn
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
+    get_state_dict,
+    set_state_dict,
 )
+from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
@@ -60,6 +64,40 @@ from areal.utils.ulysses import (
     ulysses_pad_and_slice_inputs,
     ulysses_prepare_inputs,
 )
+
+
+class AppState(Stateful):
+    """Wrapper for checkpointing the Application State using DCP.
+
+    This class implements the Stateful protocol, so DCP will automatically call
+    state_dict/load_state_dict as needed in the dcp.save/load APIs.
+
+    It handles calling distributed state dict methods on the model and optimizer.
+    """
+
+    def __init__(
+        self, model: nn.Module, optimizer: torch.optim.Optimizer | None = None
+    ):
+        self.model = model
+        self.optimizer = optimizer
+
+    def state_dict(self):
+        """Get state dict for model and optimizer using DCP utilities."""
+        # This automatically manages FSDP FQN's and sets default state dict type to FSDP.SHARDED_STATE_DICT
+        model_state_dict, optimizer_state_dict = get_state_dict(
+            self.model, self.optimizer
+        )
+        return {"model": model_state_dict, "optim": optimizer_state_dict}
+
+    def load_state_dict(self, state_dict):
+        """Load state dicts onto model and optimizer."""
+        # Sets our state dicts on the model and optimizer
+        set_state_dict(
+            self.model,
+            self.optimizer,
+            model_state_dict=state_dict["model"],
+            optim_state_dict=state_dict["optim"],
+        )
 
 
 class FSDPEngine(BaseHFEngine):
@@ -205,24 +243,22 @@ class FSDPEngine(BaseHFEngine):
         if meta.weight_format == "hf":
             self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
         elif meta.weight_format == "dcp":
-            # TODO: implement DCP save/load for FSDP
-            raise NotImplementedError("DCP format saving is not implemented yet. ")
+            self._save_to_dcp(meta.path, meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
-        if meta.with_optim:
+        if meta.with_optim and meta.weight_format == "hf":
             self.save_optimizer_state(meta.path)
 
     def load(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
             self._load_model_from_hf(meta.path)
         elif meta.weight_format == "dcp":
-            # TODO: implement DCP save/load for FSDP
-            raise NotImplementedError("DCP format loading is not implemented yet. ")
+            self._load_from_dcp(meta.path, meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
-        if meta.with_optim:
+        if meta.with_optim and meta.weight_format == "hf":
             self.load_optimizer_state(meta.path)
 
     def _save_model_to_hf(
@@ -266,6 +302,63 @@ class FSDPEngine(BaseHFEngine):
             self.cpu_offload,
             tie_word_embeddings=self.model_config.tie_word_embeddings,
         )
+
+    def _save_to_dcp(
+        self,
+        path: str,
+        with_optim: bool,
+    ):
+        """Save model in PyTorch Distributed Checkpoint (DCP) format."""
+        if self.model is None:
+            raise RuntimeError("Model not initialized")
+
+        os.makedirs(path, exist_ok=True)
+
+        app_state = AppState(self.model, self.optimizer if with_optim else None)
+        state_dict = {"app": app_state}
+        dcp.save(state_dict, checkpoint_id=path)
+
+    def _load_from_dcp(self, path: str, with_optim: bool):
+        """Load model from Distributed Checkpoint (DCP) format."""
+        if self.model is None:
+            raise RuntimeError("Model not initialized")
+
+        app_state = AppState(self.model, self.optimizer if with_optim else None)
+        state_dict = {"app": app_state}
+        dcp.load(
+            state_dict=state_dict,
+            checkpoint_id=path,
+        )
+
+    def convert_dcp_to_torch_save(self, dcp_path: str, torch_save_path: str):
+        """Convert DCP checkpoint to torch.save format."""
+        try:
+            from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
+
+            dcp_to_torch_save(dcp_path, torch_save_path)
+            self.logger.info(
+                f"Successfully converted DCP checkpoint from {dcp_path} to {torch_save_path}"
+            )
+        except ImportError:
+            self.logger.error(
+                "DCP format conversion utilities not available. Please ensure PyTorch >= 2.4.0"
+            )
+            raise RuntimeError("DCP format conversion requires PyTorch >= 2.4.0")
+
+    def convert_torch_save_to_dcp(self, torch_save_path: str, dcp_path: str):
+        """Convert torch.save checkpoint to DCP format."""
+        try:
+            from torch.distributed.checkpoint.format_utils import torch_save_to_dcp
+
+            torch_save_to_dcp(torch_save_path, dcp_path)
+            self.logger.info(
+                f"Successfully converted torch.save checkpoint from {torch_save_path} to {dcp_path}"
+            )
+        except ImportError:
+            self.logger.error(
+                "DCP format conversion utilities not available. Please ensure PyTorch >= 2.4.0"
+            )
+            raise RuntimeError("DCP format conversion requires PyTorch >= 2.4.0")
 
     def _apply_peft_wrapper(self):
         config = self.config
