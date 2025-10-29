@@ -293,11 +293,11 @@ def main():
     print(f"Running {args.test_type} test")
 
     if args.test_type == "forward":
-        test_forward(output=args.output)
+        test_forward(alloc_mode=args.allocation_mode, output=args.output)
     elif args.test_type == "simple_dcp_save_load":
-        test_simple_dcp_save_load(output=args.output)
+        test_simple_dcp_save_load(alloc_mode=args.allocation_mode, output=args.output)
     elif args.test_type == "train_dcp_save_load":
-        test_train_dcp_save_load(output=args.output)
+        test_train_dcp_save_load(alloc_mode=args.allocation_mode, output=args.output)
     else:
         raise NotImplementedError(f"Test type {args.test_type} not implemented")
 
