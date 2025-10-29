@@ -154,9 +154,8 @@ def test_forward(model_type: str, alloc_mode: str, output: str | None = None):
     logits_list = [torch.empty_like(logits) for _ in range(model_parallel_world_size)]
     dist.all_gather(logits_list, logits, group=model_parallel_group)
 
-    assert all(torch.equal(logits, logits_list[0]) for logits in logits_list), (
-        "Logits should be the same across all model parallel ranks."
-    )
+    is_equal = all(torch.equal(logits, logits_list[0]) for logits in logits_list)
+    assert is_equal, "Logits should be the same across all model parallel ranks."
 
     # make FSDP engine, and check if the difference between FSDP and megatron engine
     fsdp_engine = make_fsdp_engine("qwen3", alloc_mode, mb_spec)
