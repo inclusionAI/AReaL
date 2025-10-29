@@ -8,10 +8,11 @@ import argparse
 import importlib
 import traceback
 from contextlib import asynccontextmanager
+from typing import Any
 
 import orjson
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import ORJSONResponse
 
 from areal.api.engine_api import InferenceEngine, TrainEngine
@@ -60,7 +61,7 @@ async def health_check():
 
 
 @app.post("/create_engine")
-async def create_engine(request: Request):
+def create_engine(data: dict[str, Any] = Body(...)):
     """
     Create and initialize an engine instance on this worker.
 
@@ -74,9 +75,6 @@ async def create_engine(request: Request):
     global _engine
 
     try:
-        body = await request.body()
-        data = orjson.loads(body)
-
         engine_path = data.get("engine")
         # Deserialize init_args and init_kwargs (may contain tensors or dataclasses)
         init_args = deserialize_value(data.get("init_args", []))
@@ -141,7 +139,7 @@ async def create_engine(request: Request):
 
 
 @app.post("/call")
-async def call_engine_method(request: Request):
+def call_engine_method(data: dict[str, Any] = Body(...)):
     """
     Call a method on the engine instance.
 
@@ -161,9 +159,6 @@ async def call_engine_method(request: Request):
         )
 
     try:
-        body = await request.body()
-        data = orjson.loads(body)
-
         method_name = data.get("method")
         args = data.get("args", [])
         kwargs = data.get("kwargs", {})
@@ -377,10 +372,8 @@ async def run_workflow(request: Request):
 
 
 @app.post("/export_stats")
-async def export_stats(request: Request):
+def export_stats(data: dict[str, Any] | None = Body(None)):
     try:
-        body = await request.body()
-        data = orjson.loads(body)
         assert data is None
 
         global _engine
