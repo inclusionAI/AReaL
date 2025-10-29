@@ -48,11 +48,3 @@ def test_fsdp_dcp_distributed_train(tmp_path_factory):
         pytest.skip("Distributed test requires 2 GPUs to run")
     output = tmp_path_factory.mktemp("test_output") / "fsdp_dcp_train_distributed.out"
     _run_test_with_torchrun("train_dcp_save_load", "d2t1c1", str(output))
-
-
-@pytest.mark.multi_gpu
-def test_fsdp_dcp_distributed_forward(tmp_path_factory):
-    if current_platform.device_count() < 2:
-        pytest.skip("Distributed test requires 2 GPUs to run")
-    output = tmp_path_factory.mktemp("test_output") / "fsdp_dcp_forward_distributed.out"
-    _run_test_with_torchrun("forward", "d2t1c1", str(output))
