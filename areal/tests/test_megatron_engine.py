@@ -90,6 +90,7 @@ def engine():
     logger.info(f"mcore GPTModel initialized: {engine.model}")
     log_gpu_stats("initialize")
     yield engine
+    engine.destroy()
 
 
 def test_simple_forward(engine, mock_input):
