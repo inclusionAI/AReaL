@@ -195,6 +195,10 @@ class TestPPOActorLossFnSequenceLevel:
         assert not torch.isnan(loss)
         assert not torch.isinf(loss)
 
+        # With ratio=1, the loss is the negative mean of the sequence-summed advantages.
+        # Expected loss: -((10*4 + 2*4) / 8) = -6.0
+        assert torch.allclose(loss, torch.tensor(-6.0))
+
     def test_sequence_level_with_mask_2d(self):
         """Test sequence-level with partial masking for 2D tensors."""
         batch_size = 2
