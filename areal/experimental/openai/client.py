@@ -506,7 +506,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         if resp_id in cache:
             raise ValueError(f"Response {resp_id} already exists in cache")
 
-        self._cache[resp_id] = InteractionWithTokenLogpReward(
+        cache[resp_id] = InteractionWithTokenLogpReward(
             response=deepcopy(response),
             model_response=engine_resp,  # Should not deepcopy because of tokenizer
             input_data=(
