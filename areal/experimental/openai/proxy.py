@@ -11,11 +11,6 @@ import aiohttp
 import requests
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
-from openai import AsyncOpenAI
-from openai.resources.chat.completions.completions import AsyncCompletions
-from openai.resources.responses.responses import AsyncResponses
-from openai.types.chat.chat_completion import ChatCompletion
-from openai.types.responses.response import Response
 from pydantic import BaseModel
 from sglang.srt.entrypoints.http_server import validate_json_request
 from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest
@@ -25,6 +20,12 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+from openai import AsyncOpenAI
+from openai.resources.chat.completions.completions import AsyncCompletions
+from openai.resources.responses.responses import AsyncResponses
+from openai.types.chat.chat_completion import ChatCompletion
+from openai.types.responses.response import Response
 
 from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
