@@ -161,6 +161,7 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
     assert torch.allclose(old, new)
 
 
+@torch.no_grad()
 def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
     from areal.experimental.autotp_engine import DeepSpeedAutoTPEngine
 
