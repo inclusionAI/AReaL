@@ -20,7 +20,7 @@ def _run_test_with_torchrun(
                 "--nnodes=1",
                 "--master-addr=localhost",
                 f"--master_port={port}",
-                "areal/experimental/tests/torchrun/run_megatron_engine_distributed.py",
+                "areal/tests/torchrun/run_megatron_engine_distributed.py",
                 f"--model_type={model_type}",
                 f"--allocation_mode={alloc_mode}",
                 f"--output={output}",
@@ -32,7 +32,7 @@ def _run_test_with_torchrun(
         )
     except subprocess.CalledProcessError as e:
         pytest.fail(f"Test failed with error: {e.stderr}")
-    with open(output, "r") as f:
+    with open(output) as f:
         result = f.read().strip()
     assert result == "Passed", f"Test failed: {result}"
 

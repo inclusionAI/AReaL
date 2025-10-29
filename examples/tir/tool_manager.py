@@ -1,15 +1,15 @@
 import re
-from typing import Dict, List, Optional, Tuple
 
 from areal.utils import logging
 
-from .tools import (
+from tools import (  # isort: skip
     BaseTool,
     CalculatorTool,
     PythonTool,
     ToolCallStatus,
     ToolType,
 )
+
 
 logger = logging.getLogger("Tool Manager")
 
@@ -56,15 +56,15 @@ class ToolRegistry:
             f"ToolRegistry initialized with enabled tools: {[t.value for t in self.enabled_tools]}"
         )
 
-    def get_tool(self, tool_type: ToolType) -> Optional[BaseTool]:
+    def get_tool(self, tool_type: ToolType) -> BaseTool | None:
         """Get tool instance"""
         return self.tools.get(tool_type)
 
-    def get_all_tools(self) -> Dict[ToolType, BaseTool]:
+    def get_all_tools(self) -> dict[ToolType, BaseTool]:
         """Get all tool instances"""
         return self.tools
 
-    def get_tool_markers(self) -> Dict[ToolType, Tuple[List[str], List[str]]]:
+    def get_tool_markers(self) -> dict[ToolType, tuple[list[str], list[str]]]:
         """Get marker information for enabled tools only
 
         Returns:
@@ -75,7 +75,7 @@ class ToolRegistry:
             for tool_type, tool in self.tools.items()
         }
 
-    def get_all_start_markers(self) -> List[str]:
+    def get_all_start_markers(self) -> list[str]:
         """Get all start markers for enabled tools only
 
         Returns:
@@ -86,7 +86,7 @@ class ToolRegistry:
             start_markers.extend(tool.markers.start_markers)
         return start_markers
 
-    def get_all_end_markers(self) -> List[str]:
+    def get_all_end_markers(self) -> list[str]:
         """Get all end markers for enabled tools only
 
         Returns:
@@ -97,7 +97,7 @@ class ToolRegistry:
             end_markers.extend(tool.markers.end_markers)
         return end_markers
 
-    def get_all_markers(self) -> List[str]:
+    def get_all_markers(self) -> list[str]:
         """Get all markers (start and end) for enabled tools only
 
         Returns:
@@ -122,7 +122,7 @@ class ToolRegistry:
 
         return "\n".join(prompt_parts)
 
-    def get_enabled_tools(self) -> List[ToolType]:
+    def get_enabled_tools(self) -> list[ToolType]:
         """Get list of enabled tools
 
         Returns:
@@ -139,7 +139,7 @@ class ToolRouter:
         # Build tool markers dynamically based on enabled tools
         self.tool_markers = self._build_tool_markers()
 
-    def _build_tool_markers(self) -> List[Tuple[ToolType, str]]:
+    def _build_tool_markers(self) -> list[tuple[ToolType, str]]:
         """Build tool markers based on enabled tools"""
         markers = []
 
@@ -156,7 +156,7 @@ class ToolRouter:
 
         return markers
 
-    def route(self, text: str) -> Optional[ToolType]:
+    def route(self, text: str) -> ToolType | None:
         """Determine tool type to call based on markers (enabled tools only)"""
         text = text.strip()
 
@@ -190,7 +190,7 @@ class ToolManager:
         """Get tool description prompt text for external calls"""
         return self.registry.get_tool_descriptions_prompt()
 
-    def get_tool_markers(self) -> Dict[ToolType, Tuple[List[str], List[str]]]:
+    def get_tool_markers(self) -> dict[ToolType, tuple[list[str], list[str]]]:
         """Get marker information for all tools
 
         Returns:
@@ -198,7 +198,7 @@ class ToolManager:
         """
         return self.registry.get_tool_markers()
 
-    def get_all_start_markers(self) -> List[str]:
+    def get_all_start_markers(self) -> list[str]:
         """Get all start markers for setting stop tokens
 
         Returns:
@@ -206,7 +206,7 @@ class ToolManager:
         """
         return self.registry.get_all_start_markers()
 
-    def get_all_end_markers(self) -> List[str]:
+    def get_all_end_markers(self) -> list[str]:
         """Get all end markers for setting stop tokens
 
         Returns:
@@ -214,7 +214,7 @@ class ToolManager:
         """
         return self.registry.get_all_end_markers()
 
-    def get_all_markers(self) -> List[str]:
+    def get_all_markers(self) -> list[str]:
         """Get all markers (start and end) for setting stop tokens
 
         Returns:
@@ -222,7 +222,7 @@ class ToolManager:
         """
         return self.registry.get_all_markers()
 
-    def execute_tool_call(self, text: str) -> Tuple[str, ToolCallStatus]:
+    def execute_tool_call(self, text: str) -> tuple[str, ToolCallStatus]:
         """Unified tool call interface
 
         Returns:
