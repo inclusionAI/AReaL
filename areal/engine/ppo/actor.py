@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
 
@@ -53,8 +53,8 @@ class PPOActor:
     @torch.no_grad()
     def compute_logp(
         self,
-        data: Dict[str, Any],
-        temperature: Optional[float] = None,
+        data: dict[str, Any],
+        temperature: float | None = None,
     ) -> torch.Tensor | None:
         def calc_logprobs(logits, input_data):
             labels = input_data.get(
@@ -71,7 +71,7 @@ class PPOActor:
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 
-    def compute_advantages(self, data: Dict[str, Any]) -> None:
+    def compute_advantages(self, data: dict[str, Any]) -> None:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
@@ -165,7 +165,7 @@ class PPOActor:
         # because we have rolled old_logp by -1
         data["logprobs"] = old_logp
 
-    def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
+    def ppo_update(self, data: dict[str, Any]) -> list[dict[str, float]]:
         if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
             data, sampling_stat = dynamic_sampling(data, self.group_size)
 
@@ -269,6 +269,7 @@ class PPOActor:
                     c_clip=self.config.c_clip,
                     behav_imp_weight_cap=self.config.behav_imp_weight_cap,
                     m2_threshold=self.m2_threshold,
+                    importance_sampling_level=self.config.importance_sampling_level,
                 ),
                 loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
             )
@@ -293,7 +294,7 @@ class FSDPPPOActor(FSDPEngine):
     def compute_advantages(self, *args, **kwargs) -> None:
         self.actor.compute_advantages(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
+    def ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
         return self.actor.ppo_update(*args, **kwargs)
 
 
@@ -310,19 +311,20 @@ class MegatronPPOActor(MegatronEngine):
     def compute_advantages(self, *args, **kwargs) -> None:
         self.actor.compute_advantages(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
+    def ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
         return self.actor.ppo_update(*args, **kwargs)
 
 
 def grpo_loss_fn(
     logits: torch.Tensor,
-    input_data: Dict,
+    input_data: dict,
     temperature: float,
     eps_clip: float,
     eps_clip_higher: float | None,
     c_clip: float | None,
     behav_imp_weight_cap: float | None,
     m2_threshold: float | None = None,
+    importance_sampling_level: str = "token",
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
@@ -372,6 +374,8 @@ def grpo_loss_fn(
         c_clip=c_clip,
         proximal_logprobs=prox_logp,
         behav_imp_weight_cap=behav_imp_weight_cap,
+        importance_sampling_level=importance_sampling_level,
+        cu_seqlens=input_data.get("cu_seqlens"),
     )
 
     # Log training statistics
