@@ -27,6 +27,7 @@ from areal.utils import logging
 from areal.utils.data import cycle_dataloader
 
 CREATE_WORKER_TIMEOUT = 60.0
+TASK_RUNNER_MAX_QSIZE = 32768
 
 
 @dataclass
@@ -96,13 +97,15 @@ class RolloutController(RolloutControllerAPI):
 
         # Staleness management
         self.staleness_manager: StalenessManager | None = None
-        self._pending_inputs: list[
-            _RemoteRolloutTaskInput
-        ] = []  # Queue for inputs waiting for capacity
+
+        self._pending_results: list[dict[str, Any]] = []
+        self._pending_inputs: list[_RemoteRolloutTaskInput] = []
 
     def initialize(
         self,
         alloc_mode: AllocationMode,
+        *args,
+        **kwargs,
     ):
         self.logger = logging.getLogger("[RolloutController]")
 
@@ -111,11 +114,17 @@ class RolloutController(RolloutControllerAPI):
         scheduling_config = SchedulingConfig(replicas=alloc_mode.gen.dp_size)
 
         # Use asyncio.run to call async scheduler methods synchronously
-        asyncio.run(self._async_initialize(scheduling_config))
+        asyncio.run(
+            self._async_initialize(
+                scheduling_config,
+                *args,
+                **kwargs,
+            )
+        )
 
         # Initialize AsyncTaskRunner for task execution
         self.runner = AsyncTaskRunner(
-            max_queue_size=self.config.queue_size,
+            max_queue_size=TASK_RUNNER_MAX_QSIZE,
             enable_tracing=self.config.enable_rollout_tracing,
         )
         self.runner.initialize(logger=self.logger)
@@ -136,8 +145,7 @@ class RolloutController(RolloutControllerAPI):
         )
 
     async def _async_initialize(
-        self,
-        scheduling_config: SchedulingConfig,
+        self, scheduling_config: SchedulingConfig, *args, **kwargs
     ):
         # Create workers via scheduler
         self.logger.info("Creating workers via scheduler...")
@@ -160,16 +168,27 @@ class RolloutController(RolloutControllerAPI):
         engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
-        for i, worker in enumerate(self.workers):
-            self.logger.info(f"Creating engine on worker {worker.id}...")
-
-            # Create engine on worker
-            await self.scheduler.create_engine(
+        self.logger.info("Creating engines...")
+        tasks = [
+            self.scheduler.create_engine(
                 worker_id=worker.id,
                 engine=engine_path,
-                init_kwargs=dict(config=self.config),
+                config=self.config,
             )
-            self.logger.info(f"Engine created on worker {worker.id}")
+            for worker in self.workers
+        ]
+        await asyncio.gather(*tasks)
+        self.logger.info("Engine created on all workers!")
+
+        self.logger.info("Calling engine initialization...")
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker_id=worker.id, method="initialize", *args, **kwargs
+            )
+            for worker in self.workers
+        ]
+        await asyncio.gather(*tasks)
+        self.logger.info("All engines are initialized...")
 
     def destroy(self):
         """Destroy the controller and clean up resources."""

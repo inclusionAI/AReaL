@@ -1,13 +1,42 @@
-"""Pytest test suite for tensor serialization utilities."""
+"""Pytest test suite for tensor and dataclass serialization utilities."""
+
+from dataclasses import dataclass
 
 import pytest
 import torch
 
 from areal.scheduler.rpc.serialization import (
+    SerializedDataclass,
     SerializedTensor,
     deserialize_value,
     serialize_value,
 )
+
+
+# Test dataclasses
+@dataclass
+class SimpleConfig:
+    """Simple test dataclass."""
+
+    batch_size: int
+    learning_rate: float
+    name: str
+
+
+@dataclass
+class ConfigWithTensor:
+    """Dataclass containing a tensor field."""
+
+    data: torch.Tensor
+    label: str
+
+
+@dataclass
+class NestedConfig:
+    """Dataclass containing another dataclass."""
+
+    inner: SimpleConfig
+    outer_value: int
 
 
 class TestSerializedTensor:
@@ -385,6 +414,234 @@ class TestRoundtrip:
             serialized = serialize_value(original)
             result = deserialize_value(serialized)
             assert result == original
+
+
+class TestSerializedDataclass:
+    """Test suite for SerializedDataclass Pydantic model."""
+
+    def test_from_dataclass_simple(self):
+        """Test serialization of simple dataclass."""
+        config = SimpleConfig(batch_size=32, learning_rate=0.001, name="test")
+        serialized = SerializedDataclass.from_dataclass(config)
+
+        assert serialized.type == "dataclass"
+        assert "SimpleConfig" in serialized.class_path
+        assert serialized.data["batch_size"] == 32
+        assert serialized.data["learning_rate"] == 0.001
+        assert serialized.data["name"] == "test"
+
+    def test_to_dataclass_simple(self):
+        """Test deserialization of simple dataclass."""
+        config = SimpleConfig(batch_size=32, learning_rate=0.001, name="test")
+        serialized = SerializedDataclass.from_dataclass(config)
+        dataclass_type, data = serialized.to_dataclass()
+
+        reconstructed = dataclass_type(**data)
+        assert isinstance(reconstructed, SimpleConfig)
+        assert reconstructed.batch_size == 32
+        assert reconstructed.learning_rate == 0.001
+        assert reconstructed.name == "test"
+
+    def test_roundtrip_simple_dataclass(self):
+        """Test serialize-deserialize roundtrip for simple dataclass."""
+        original = SimpleConfig(batch_size=64, learning_rate=0.01, name="experiment")
+        serialized = SerializedDataclass.from_dataclass(original)
+        dataclass_type, data = serialized.to_dataclass()
+        reconstructed = dataclass_type(**data)
+
+        assert reconstructed.batch_size == original.batch_size
+        assert reconstructed.learning_rate == original.learning_rate
+        assert reconstructed.name == original.name
+
+
+class TestSerializeValueDataclass:
+    """Test suite for serialize_value with dataclasses."""
+
+    def test_serialize_simple_dataclass(self):
+        """Test serialization of simple dataclass."""
+        config = SimpleConfig(batch_size=32, learning_rate=0.001, name="test")
+        result = serialize_value(config)
+
+        assert isinstance(result, dict)
+        assert result["type"] == "dataclass"
+        assert "SimpleConfig" in result["class_path"]
+        assert result["data"]["batch_size"] == 32
+
+    def test_serialize_dataclass_with_tensor(self):
+        """Test serialization of dataclass containing tensor."""
+        config = ConfigWithTensor(data=torch.tensor([1.0, 2.0, 3.0]), label="example")
+        result = serialize_value(config)
+
+        assert result["type"] == "dataclass"
+        assert result["data"]["label"] == "example"
+        # Tensor should be serialized within dataclass
+        assert result["data"]["data"]["type"] == "tensor"
+
+    def test_serialize_nested_dataclass(self):
+        """Test serialization of nested dataclass."""
+        inner = SimpleConfig(batch_size=16, learning_rate=0.01, name="inner")
+        outer = NestedConfig(inner=inner, outer_value=42)
+        result = serialize_value(outer)
+
+        assert result["type"] == "dataclass"
+        assert "NestedConfig" in result["class_path"]
+        # Inner dataclass should also be serialized
+        assert result["data"]["inner"]["type"] == "dataclass"
+        assert result["data"]["inner"]["data"]["batch_size"] == 16
+        assert result["data"]["outer_value"] == 42
+
+    def test_serialize_list_of_dataclasses(self):
+        """Test serialization of list containing dataclasses."""
+        configs = [
+            SimpleConfig(batch_size=32, learning_rate=0.001, name="config1"),
+            SimpleConfig(batch_size=64, learning_rate=0.002, name="config2"),
+        ]
+        result = serialize_value(configs)
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert all(item["type"] == "dataclass" for item in result)
+        assert result[0]["data"]["batch_size"] == 32
+        assert result[1]["data"]["batch_size"] == 64
+
+    def test_serialize_dict_with_dataclass_values(self):
+        """Test serialization of dict with dataclass values."""
+        data = {
+            "config": SimpleConfig(batch_size=32, learning_rate=0.001, name="test"),
+            "value": 42,
+        }
+        result = serialize_value(data)
+
+        assert result["config"]["type"] == "dataclass"
+        assert result["config"]["data"]["batch_size"] == 32
+        assert result["value"] == 42
+
+
+class TestDeserializeValueDataclass:
+    """Test suite for deserialize_value with dataclasses."""
+
+    def test_deserialize_simple_dataclass(self):
+        """Test deserialization of simple dataclass."""
+        config = SimpleConfig(batch_size=32, learning_rate=0.001, name="test")
+        serialized = serialize_value(config)
+        result = deserialize_value(serialized)
+
+        assert isinstance(result, SimpleConfig)
+        assert result.batch_size == 32
+        assert result.learning_rate == 0.001
+        assert result.name == "test"
+
+    def test_deserialize_dataclass_with_tensor(self):
+        """Test deserialization of dataclass containing tensor."""
+        original_tensor = torch.tensor([1.0, 2.0, 3.0])
+        config = ConfigWithTensor(data=original_tensor, label="example")
+        serialized = serialize_value(config)
+        result = deserialize_value(serialized)
+
+        assert isinstance(result, ConfigWithTensor)
+        assert result.label == "example"
+        assert isinstance(result.data, torch.Tensor)
+        assert torch.allclose(original_tensor, result.data)
+
+    def test_deserialize_nested_dataclass(self):
+        """Test deserialization of nested dataclass."""
+        inner = SimpleConfig(batch_size=16, learning_rate=0.01, name="inner")
+        outer = NestedConfig(inner=inner, outer_value=42)
+        serialized = serialize_value(outer)
+        result = deserialize_value(serialized)
+
+        assert isinstance(result, NestedConfig)
+        assert isinstance(result.inner, SimpleConfig)
+        assert result.inner.batch_size == 16
+        assert result.inner.learning_rate == 0.01
+        assert result.outer_value == 42
+
+    def test_deserialize_list_of_dataclasses(self):
+        """Test deserialization of list containing dataclasses."""
+        configs = [
+            SimpleConfig(batch_size=32, learning_rate=0.001, name="config1"),
+            SimpleConfig(batch_size=64, learning_rate=0.002, name="config2"),
+        ]
+        serialized = serialize_value(configs)
+        result = deserialize_value(serialized)
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert all(isinstance(item, SimpleConfig) for item in result)
+        assert result[0].batch_size == 32
+        assert result[1].batch_size == 64
+
+
+class TestRoundtripDataclass:
+    """Test suite for full serialize-deserialize roundtrips with dataclasses."""
+
+    def test_roundtrip_simple_dataclass(self):
+        """Test roundtrip for simple dataclass."""
+        original = SimpleConfig(batch_size=32, learning_rate=0.001, name="test")
+        serialized = serialize_value(original)
+        result = deserialize_value(serialized)
+
+        assert result.batch_size == original.batch_size
+        assert result.learning_rate == original.learning_rate
+        assert result.name == original.name
+
+    def test_roundtrip_dataclass_with_tensor(self):
+        """Test roundtrip for dataclass with tensor field."""
+        original = ConfigWithTensor(data=torch.tensor([1.0, 2.0, 3.0]), label="test")
+        serialized = serialize_value(original)
+        result = deserialize_value(serialized)
+
+        assert isinstance(result, ConfigWithTensor)
+        assert result.label == original.label
+        assert torch.allclose(original.data, result.data)
+
+    def test_roundtrip_nested_dataclass(self):
+        """Test roundtrip for nested dataclass."""
+        inner = SimpleConfig(batch_size=16, learning_rate=0.01, name="inner")
+        original = NestedConfig(inner=inner, outer_value=42)
+        serialized = serialize_value(original)
+        result = deserialize_value(serialized)
+
+        assert isinstance(result, NestedConfig)
+        assert isinstance(result.inner, SimpleConfig)
+        assert result.inner.batch_size == original.inner.batch_size
+        assert result.outer_value == original.outer_value
+
+    def test_roundtrip_mixed_dataclass_and_tensor(self):
+        """Test roundtrip for structure with both dataclasses and tensors."""
+        config = SimpleConfig(batch_size=32, learning_rate=0.001, name="test")
+        original = {
+            "config": config,
+            "tensor": torch.tensor([1.0, 2.0, 3.0]),
+            "metadata": {"count": 3, "type": "experiment"},
+        }
+        serialized = serialize_value(original)
+        result = deserialize_value(serialized)
+
+        assert isinstance(result["config"], SimpleConfig)
+        assert result["config"].batch_size == 32
+        assert isinstance(result["tensor"], torch.Tensor)
+        assert torch.allclose(original["tensor"], result["tensor"])
+        assert result["metadata"] == original["metadata"]
+
+    def test_roundtrip_list_of_mixed_types(self):
+        """Test roundtrip for list containing dataclasses, tensors, and primitives."""
+        config = SimpleConfig(batch_size=32, learning_rate=0.001, name="test")
+        original = [
+            config,
+            torch.tensor([1.0, 2.0]),
+            42,
+            "string",
+        ]
+        serialized = serialize_value(original)
+        result = deserialize_value(serialized)
+
+        assert isinstance(result[0], SimpleConfig)
+        assert result[0].batch_size == 32
+        assert isinstance(result[1], torch.Tensor)
+        assert torch.allclose(original[1], result[1])
+        assert result[2] == 42
+        assert result[3] == "string"
 
 
 if __name__ == "__main__":

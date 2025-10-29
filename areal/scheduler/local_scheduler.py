@@ -637,11 +637,11 @@ class LocalScheduler(Scheduler):
                 f"Engine must be a string import path, got {type(engine)}",
             )
 
-        # Build JSON payload
+        # Build JSON payload with serialized args and kwargs
         payload = {
             "engine": engine,
-            "init_args": list(args),
-            "init_kwargs": kwargs,
+            "init_args": serialize_value(list(args)),
+            "init_kwargs": serialize_value(kwargs),
         }
 
         # Send HTTP request to create engine
@@ -858,7 +858,6 @@ class LocalScheduler(Scheduler):
 
         last_error = None
 
-        print(url)
         for attempt in range(1, max_retries + 1):
             # Check worker health before each attempt
             if worker_info.process.poll() is not None:
@@ -880,7 +879,6 @@ class LocalScheduler(Scheduler):
                     headers={"Content-Type": "application/json"},
                     timeout=7200.0,  # 2 hours for long-running operations
                 )
-                print(response, payload, response.json())
 
                 result, should_retry, error_msg = self._handle_call_response(
                     response, worker_id, method, attempt

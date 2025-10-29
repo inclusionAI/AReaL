@@ -1,15 +1,19 @@
-"""Tensor serialization utilities for RPC communication.
+"""Tensor and dataclass serialization utilities for RPC communication.
 
 This module provides utilities to serialize and deserialize PyTorch tensors
-for transmission over HTTP/JSON. Tensors are encoded as base64 strings with
-metadata stored in Pydantic models.
+and dataclass instances for transmission over HTTP/JSON. Tensors are encoded
+as base64 strings and dataclasses preserve their type information with metadata
+stored in Pydantic models.
 
 Assumptions:
 - All tensors are on CPU
 - Gradient tracking (requires_grad) is not preserved
+- Dataclasses are reconstructed with their original types
 """
 
 import base64
+import importlib
+from dataclasses import is_dataclass
 from typing import Any, Literal
 
 import torch
@@ -125,11 +129,81 @@ class SerializedTensor(BaseModel):
         return dtype_map.get(torch_dtype, np.float32)
 
 
+class SerializedDataclass(BaseModel):
+    """Pydantic model for serialized dataclass with metadata.
+
+    Attributes
+    ----------
+    type : str
+        Type marker, always "dataclass"
+    class_path : str
+        Full import path to the dataclass (e.g., "areal.api.cli_args.InferenceEngineConfig")
+    data : dict
+        Dataclass fields as dictionary (recursively serialized)
+    """
+
+    type: Literal["dataclass"] = Field(default="dataclass")
+    class_path: str
+    data: dict[str, Any]
+
+    @classmethod
+    def from_dataclass(cls, dataclass_instance: Any) -> "SerializedDataclass":
+        """Create SerializedDataclass from a dataclass instance.
+
+        Parameters
+        ----------
+        dataclass_instance : Any
+            Dataclass instance to serialize
+
+        Returns
+        -------
+        SerializedDataclass
+            Serialized dataclass with metadata
+        """
+        class_path = (
+            f"{dataclass_instance.__class__.__module__}."
+            f"{dataclass_instance.__class__.__name__}"
+        )
+        # Get fields without recursive conversion to preserve nested dataclass instances
+        # We'll handle recursive serialization in serialize_value()
+        from dataclasses import fields
+
+        data = {}
+        for field in fields(dataclass_instance):
+            data[field.name] = getattr(dataclass_instance, field.name)
+
+        return cls(class_path=class_path, data=data)
+
+    def to_dataclass(self) -> Any:
+        """Reconstruct dataclass instance from serialized data.
+
+        Returns
+        -------
+        Any
+            Reconstructed dataclass instance
+
+        Raises
+        ------
+        ImportError
+            If the dataclass module cannot be imported
+        AttributeError
+            If the dataclass class is not found in the module
+        """
+        # Dynamically import the dataclass type
+        module_path, class_name = self.class_path.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        dataclass_type = getattr(module, class_name)
+
+        # Return the dataclass type and data for caller to deserialize fields
+        return dataclass_type, self.data
+
+
 def serialize_value(value: Any) -> Any:
-    """Recursively serialize a value, converting tensors to SerializedTensor dicts.
+    """Recursively serialize a value, converting tensors and dataclasses to serialized dicts.
 
     This function transparently handles:
     - torch.Tensor -> SerializedTensor dict (CPU only, no gradient tracking)
+    - dataclass instances -> SerializedDataclass dict (preserves type information)
     - dict -> recursively serialize values
     - list/tuple -> recursively serialize elements
     - primitives (int, float, str, bool, None) -> unchanged
@@ -142,7 +216,7 @@ def serialize_value(value: Any) -> Any:
     Returns
     -------
     Any
-        Serialized value (JSON-compatible with SerializedTensor dicts)
+        Serialized value (JSON-compatible with SerializedTensor and SerializedDataclass dicts)
     """
     # Handle None
     if value is None:
@@ -151,6 +225,20 @@ def serialize_value(value: Any) -> Any:
     # Handle torch.Tensor
     if isinstance(value, torch.Tensor):
         return SerializedTensor.from_tensor(value).model_dump()
+
+    # Handle dataclass instances (check before dict, as dataclasses can be dict-like)
+    # Note: is_dataclass returns True for both classes and instances, so check it's not a type
+    if is_dataclass(value) and not isinstance(value, type):
+        serialized_dc = SerializedDataclass.from_dataclass(value)
+        # Recursively serialize the data fields
+        serialized_data = {
+            key: serialize_value(val) for key, val in serialized_dc.data.items()
+        }
+        return {
+            "type": "dataclass",
+            "class_path": serialized_dc.class_path,
+            "data": serialized_data,
+        }
 
     # Handle dict - recursively serialize values
     if isinstance(value, dict):
@@ -169,10 +257,11 @@ def serialize_value(value: Any) -> Any:
 
 
 def deserialize_value(value: Any) -> Any:
-    """Recursively deserialize a value, converting SerializedTensor dicts back to tensors.
+    """Recursively deserialize a value, converting SerializedTensor and SerializedDataclass dicts back.
 
     This function transparently handles:
     - SerializedTensor dict -> torch.Tensor (CPU, no gradient tracking)
+    - SerializedDataclass dict -> dataclass instance (reconstructed with original type)
     - dict -> recursively deserialize values
     - list -> recursively deserialize elements
     - primitives -> unchanged
@@ -180,19 +269,34 @@ def deserialize_value(value: Any) -> Any:
     Parameters
     ----------
     value : Any
-        Value to deserialize (potentially containing SerializedTensor dicts)
+        Value to deserialize (potentially containing SerializedTensor and SerializedDataclass dicts)
 
     Returns
     -------
     Any
-        Deserialized value with torch.Tensor objects restored
+        Deserialized value with torch.Tensor and dataclass objects restored
     """
     # Handle None
     if value is None:
         return None
 
-    # Handle dict - check if it's a SerializedTensor
+    # Handle dict - check if it's a SerializedDataclass or SerializedTensor
     if isinstance(value, dict):
+        # Check for SerializedDataclass marker (check before tensor)
+        if value.get("type") == "dataclass":
+            try:
+                serialized_dc = SerializedDataclass.model_validate(value)
+                dataclass_type, data = serialized_dc.to_dataclass()
+                # Recursively deserialize the fields
+                deserialized_data = {
+                    key: deserialize_value(val) for key, val in data.items()
+                }
+                # Reconstruct the dataclass instance
+                return dataclass_type(**deserialized_data)
+            except Exception:
+                # If parsing fails, treat as regular dict
+                pass
+
         # Check for SerializedTensor marker
         if value.get("type") == "tensor":
             try:

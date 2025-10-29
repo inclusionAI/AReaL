@@ -348,7 +348,7 @@ class AsyncTaskRunner(Generic[T]):
                         )
                         if self.enable_tracing and self.logger:
                             self.logger.info(
-                                f"AsyncTaskRunner: Completed task {tid}. "
+                                f"AsyncTaskRunner: Completed task ID: {tid}. "
                                 f"Running: {len(running_tasks)}"
                             )
                     except queue.Full:

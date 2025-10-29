@@ -78,8 +78,9 @@ async def create_engine(request: Request):
         data = orjson.loads(body)
 
         engine_path = data.get("engine")
-        init_args = data.get("init_args", [])
-        init_kwargs = data.get("init_kwargs", {})
+        # Deserialize init_args and init_kwargs (may contain tensors or dataclasses)
+        init_args = deserialize_value(data.get("init_args", []))
+        init_kwargs = deserialize_value(data.get("init_kwargs", {}))
 
         if not engine_path:
             raise HTTPException(
@@ -118,26 +119,16 @@ async def create_engine(request: Request):
         try:
             _engine = engine_class(*init_args, **init_kwargs)
             logger.info(f"Engine '{engine_path}' instantiated successfully")
+            return {
+                "status": "success",
+                "message": f"Engine '{engine_path}' created and initialized",
+                "result": None,
+            }
         except Exception as e:
             logger.error(f"Failed to instantiate engine: {e}\n{traceback.format_exc()}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to instantiate engine: {str(e)}",
-            )
-
-        # Initialize engine if it has initialize method
-        try:
-            result = _engine.initialize(*init_args, **init_kwargs)
-            logger.info(f"Engine initialized with result: {result}")
-            return {
-                "status": "success",
-                "message": f"Engine '{engine_path}' created and initialized",
-                "result": result,
-            }
-        except Exception as e:
-            logger.error(f"Failed to initialize engine: {e}\n{traceback.format_exc()}")
-            raise HTTPException(
-                status_code=500, detail=f"Failed to initialize engine: {str(e)}"
             )
 
     except HTTPException:
@@ -338,7 +329,6 @@ async def run_workflow(request: Request):
             accept_this = traj is not None and (
                 should_accept is None or should_accept(traj)
             )
-            print(">>>>>>>>>", traj, accept_this, flush=True)
 
             # Serialize trajectory result (convert tensors to SerializedTensor dicts)
             if accept_this:

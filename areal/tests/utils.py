@@ -45,8 +45,17 @@ class TestWorkflow(RolloutWorkflow):
         gen_len = random.randint(2, 8)
         seqlen = prompt_len + gen_len
         return dict(
-            input_ids=torch.randint(0, 100, (seqlen,)),
-            attention_mask=torch.ones(seqlen, dtype=torch.bool),
-            loss_mask=torch.tensor([0] * prompt_len + [1] * gen_len, dtype=torch.bool),
+            input_ids=torch.randint(
+                0,
+                100,
+                (
+                    1,
+                    seqlen,
+                ),
+            ),
+            attention_mask=torch.ones(1, seqlen, dtype=torch.bool),
+            loss_mask=torch.tensor(
+                [0] * prompt_len + [1] * gen_len, dtype=torch.bool
+            ).unsqueeze(0),
             rewards=torch.randn(1),
         )
