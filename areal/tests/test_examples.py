@@ -795,3 +795,37 @@ def test_openai_agents(tmp_path_factory, agent_type):
         raise RuntimeError(
             f"OpenAI Agents {agent_type} example failed, return_code={return_code}"
         )
+
+
+@pytest.mark.multi_gpu
+def test_camel(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    if not os.path.exists(model_path):
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+    dataset_path = "/storage/openpsi/data/gsm8k"
+    if not os.path.exists(dataset_path):
+        dataset_path = "openai/gsm8k"
+    example_file = "examples/camel/train.py"
+    config_name = "examples/camel/config.yaml"
+    loop = asyncio.get_event_loop()
+    return_code, success = loop.run_until_complete(
+        run_example(
+            example_file,
+            config_name,
+            "allocation_mode=sglang:d1+fsdp:d1",
+            "gconfig.n_samples=1",
+            "gconfig.max_new_tokens=256",
+            "actor.mb_spec.max_tokens_per_mb=4096",
+            "train_dataset.batch_size=16",
+            f"train_dataset.path={dataset_path}",
+            "cluster.n_gpus_per_node=2",
+            f"cluster.fileroot={str(experiments_path)}",
+            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            f"actor.path={model_path}",
+            "n_trajs=1",
+        )
+    )
+    if not success:
+        raise RuntimeError(f"Camel Math example failed, return_code={return_code}")
