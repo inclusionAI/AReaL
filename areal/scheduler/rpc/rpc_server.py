@@ -358,7 +358,7 @@ def main():
         "--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
     )
 
-    args, unknown = parser.parse_known_args()
+    args, _ = parser.parse_known_args()
     port = args.port
 
     logger.info(f"Starting RPC server on {args.host}:{port}")

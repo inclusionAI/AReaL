@@ -1,20 +1,3 @@
-"""
-Comprehensive unit tests for LocalScheduler.
-
-This test suite covers:
-1. Initialization and GPU detection
-2. Worker creation with various configurations
-3. GPU allocation strategies (new, colocate, round-robin)
-4. Port allocation and tracking
-5. Worker health checks and readiness
-6. Engine creation and method calls (sync and async)
-7. Error handling for all exception types
-8. Resource cleanup and process termination
-9. Edge cases (duplicate workers, worker not found, GPU exhaustion, port conflicts)
-10. Log file handling
-11. HTTP client interactions
-"""
-
 import asyncio
 import os
 import time
@@ -1560,3 +1543,152 @@ class TestEdgeCases:
 
         assert log_dir.exists()
         assert scheduler.log_dir == log_dir
+
+
+class TestRPCWorkflowIntegration:
+    """Integration tests for RPC workflow endpoint execution."""
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_run_workflow_endpoint_basic(self, tmp_path):
+        """Should execute workflow via RPC endpoint with real worker processes."""
+        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+
+        try:
+            config = SchedulingConfig(replicas=1)
+            worker_ids = scheduler.create_workers(role="test", scheduler_config=config)
+            assert len(worker_ids) == 1
+
+            workers = scheduler.get_workers(role="test", timeout=30.0)
+            worker_id = workers[0].id
+
+            result = await scheduler.async_call_engine(
+                worker_id=worker_id,
+                method="run_workflow",
+                workflow="areal.tests.utils.TestWorkflow",
+                workflow_kwargs={},
+                data={"test_id": 123, "value": "test_data"},
+            )
+
+            assert result is not None
+            assert "input_ids" in result
+            assert "attention_mask" in result
+            assert "loss_mask" in result
+            assert "rewards" in result
+
+            from areal.tests.utils import TestWorkflow
+
+            workflow = TestWorkflow()
+            ref_result = await workflow.arun_episode(None, None)
+            assert result.keys() == ref_result.keys()
+            for key in result:
+                assert type(result[key]) is type(ref_result[key])
+
+        finally:
+            scheduler.delete_workers(role="test")
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_run_workflow_endpoint_multiple_calls(self, tmp_path):
+        """Should handle multiple sequential workflow calls via RPC endpoint."""
+        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+
+        try:
+            config = SchedulingConfig(replicas=1)
+            scheduler.create_workers(role="test", scheduler_config=config)
+
+            workers = scheduler.get_workers(role="test", timeout=30.0)
+            worker_id = workers[0].id
+
+            from areal.tests.utils import TestWorkflow
+
+            workflow = TestWorkflow()
+            ref_result = await workflow.arun_episode(None, None)
+
+            for i in range(3):
+                result = await scheduler.async_call_engine(
+                    worker_id=worker_id,
+                    method="run_workflow",
+                    workflow="areal.tests.utils.TestWorkflow",
+                    workflow_kwargs={},
+                    data={"test_id": i, "value": f"test_{i}"},
+                )
+
+                assert result is not None
+                assert result.keys() == ref_result.keys()
+                for key in result:
+                    assert type(result[key]) is type(ref_result[key])
+
+        finally:
+            scheduler.delete_workers(role="test")
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_run_workflow_serialization(self, tmp_path):
+        """Should correctly serialize and deserialize tensors through RPC."""
+        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+
+        try:
+            config = SchedulingConfig(replicas=1)
+            scheduler.create_workers(role="test", scheduler_config=config)
+
+            workers = scheduler.get_workers(role="test", timeout=30.0)
+            worker_id = workers[0].id
+
+            result = await scheduler.async_call_engine(
+                worker_id=worker_id,
+                method="run_workflow",
+                workflow="areal.tests.utils.TestWorkflow",
+                workflow_kwargs={},
+                data={"test_id": 456, "value": "serialization_test"},
+            )
+
+            assert result is not None
+            assert "input_ids" in result
+            assert "attention_mask" in result
+            assert "loss_mask" in result
+            assert "rewards" in result
+
+            import torch
+
+            assert isinstance(result["input_ids"], torch.Tensor)
+            assert isinstance(result["attention_mask"], torch.Tensor)
+            assert isinstance(result["loss_mask"], torch.Tensor)
+            assert isinstance(result["rewards"], torch.Tensor)
+
+            assert result["input_ids"].dtype == torch.long
+            assert result["attention_mask"].dtype == torch.bool
+            assert result["loss_mask"].dtype == torch.bool
+
+        finally:
+            scheduler.delete_workers(role="test")
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_run_workflow_with_kwargs(self, tmp_path):
+        """Should support workflow instantiation with custom kwargs."""
+        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+
+        try:
+            config = SchedulingConfig(replicas=1)
+            scheduler.create_workers(role="test", scheduler_config=config)
+
+            workers = scheduler.get_workers(role="test", timeout=30.0)
+            worker_id = workers[0].id
+
+            result = await scheduler.async_call_engine(
+                worker_id=worker_id,
+                method="run_workflow",
+                workflow="areal.tests.utils.TestWorkflow",
+                workflow_kwargs={},
+                data={"test_id": 789, "custom_param": "value"},
+            )
+
+            assert result is not None
+            assert "input_ids" in result
+            assert "attention_mask" in result
+            assert "loss_mask" in result
+            assert "rewards" in result
+
+        finally:
+            scheduler.delete_workers(role="test")

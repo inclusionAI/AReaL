@@ -208,6 +208,9 @@ filterwarnings = [
     "ignore::UserWarning:torch.*",
     "ignore::UserWarning:transformers.*",
 ]
+markers = [
+    "integration: marks tests as integration tests (real processes, slower)",
+]
 
 [tool.ruff]
 line-length = 88
