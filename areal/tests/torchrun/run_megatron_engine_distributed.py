@@ -179,18 +179,10 @@ def test_forward(model_type: str, alloc_mode: str, output: str | None = None):
         non_zero_logits = torch.count_nonzero(logits)
         masked_diff = diff.masked_fill(logits == 0, torch.finfo(logits.dtype).max)
         print(f"logits non-zero count: {torch.count_nonzero(logits)}")
-        print(
-            f"diff < 10 count: {torch.count_nonzero(masked_diff < 10)}, {torch.count_nonzero(masked_diff < 10) * 100 / non_zero_logits:.2f} percent."
-        )
-        print(
-            f"diff < 1 count: {torch.count_nonzero(masked_diff < 1)}, {torch.count_nonzero(masked_diff < 1) * 100 / non_zero_logits:.2f} percent."
-        )
-        print(
-            f"diff < 0.1 count: {torch.count_nonzero(masked_diff < 0.1)}, {torch.count_nonzero(masked_diff < 0.1) * 100 / non_zero_logits:.2f} percent."
-        )
-        print(
-            f"diff < 0.01 count: {torch.count_nonzero(masked_diff < 0.01)}, {torch.count_nonzero(masked_diff < 0.01) * 100 / non_zero_logits:.2f} percent."
-        )
+        for threshold in [10, 1, 0.1, 0.01]:
+            count = torch.count_nonzero(masked_diff < threshold)
+            percentage = count * 100 / non_zero_logits
+            print(f"diff < {threshold} count: {count}, {percentage:.2f} percent.")
         try:
             torch.testing.assert_close(
                 logits.to(torch.float32),

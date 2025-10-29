@@ -104,7 +104,7 @@ def test_simple_train(engine, mock_input):
     train_result = engine.train_batch(
         mock_input,
         loss_fn=mock_loss_fn,
-        loss_weight_fn=lambda x: torch.tensor(1.0, device="cuda"),
+        loss_weight_fn=lambda x: torch.tensor(1.0, device=engine.device),
     )
     engine.step_lr_scheduler()
     logger.info(f"Train done, result={train_result}")
