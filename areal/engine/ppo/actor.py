@@ -359,7 +359,7 @@ def grpo_loss_fn(
                 mask_flat, dtype=torch.bool, device=loss_mask.device
             )
             m2_full_flat[mask_flat] = m2_selected_mask
-            full_loss_mask = m2_full_flat.view_as(loss_mask) & loss_mask
+            full_loss_mask = m2_full_flat.view_as(loss_mask)
         loss_mask = full_loss_mask
 
     loss, stat = ppo_actor_loss_fn(
