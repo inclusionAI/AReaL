@@ -468,6 +468,9 @@ def configure(
         else:
             GLOBAL_TRACER.apply_config(config, rank=rank)
         tracer = GLOBAL_TRACER
+        logger.info(
+            f"Configured global PerfTracer: enabled={tracer.enabled}, rank={rank}"
+        )
     return tracer
 
 
