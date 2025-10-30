@@ -1,7 +1,8 @@
 import asyncio
+import importlib
 import os
 import uuid
-from typing import Callable
+from collections.abc import Callable
 
 import aiofiles
 import aiofiles.os
@@ -37,9 +38,9 @@ def default_data_extract_prompt_fn(data):
 class RLVRWorkflow(RolloutWorkflow):
     def __init__(
         self,
-        reward_fn,
+        reward_fn: Callable | str,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
@@ -59,6 +60,23 @@ class RLVRWorkflow(RolloutWorkflow):
             os.makedirs(self.dump_dir, exist_ok=True)
 
     async def arun_episode(self, engine: InferenceEngine, data):
+        # NOTE: tokenizer and reward_fn are not jsonifiable for remote execution,
+        # so we need to load it eagerly during execution.
+        if isinstance(self.tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            tokenizer = load_hf_tokenizer(self.tokenizer)
+            if tokenizer.pad_token_id not in self.gconfig.stop_token_ids:
+                self.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
+            if tokenizer.eos_token_id not in self.gconfig.stop_token_ids:
+                self.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
+            self.tokenizer = tokenizer
+
+        if isinstance(self.reward_fn, str):
+            module_path, fname = self.reward_fn.rsplit(".", 1)
+            module = importlib.import_module(module_path)
+            self.reward_fn = getattr(module, fname)
+
         input_ids = self.get_input_ids_fn(
             self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking
         )

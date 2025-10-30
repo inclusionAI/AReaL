@@ -16,7 +16,7 @@ from areal.api.cli_args import InferenceEngineConfig
 from areal.api.controller_api import DistributedBatch
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse, ParamSpec, WeightUpdateMeta
-from areal.api.scheduler_api import Job, Scheduler, ScheduleStrategy, Worker
+from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.controller.batch import DistributedBatchMemory
 from areal.core.async_task_runner import AsyncTaskRunner, TaskQueueFullError
 from areal.core.staleness_manager import StalenessManager
@@ -76,6 +76,7 @@ class RolloutController:
         config: InferenceEngineConfig,
         scheduler: Scheduler,
     ):
+        # FIXME: add seeding
         """Initialize the RolloutController.
 
         Parameters
@@ -120,7 +121,6 @@ class RolloutController:
         self,
         role: str,
         alloc_mode: AllocationMode,
-        schedule_strategy: ScheduleStrategy | None = None,
         *args,
         **kwargs,
     ):
@@ -148,7 +148,7 @@ class RolloutController:
         job = Job(
             replicas=alloc_mode.gen.dp_size,
             tasks=[self.config.scheduling_spec for _ in range(alloc_mode.gen.dp_size)],
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
         )
 

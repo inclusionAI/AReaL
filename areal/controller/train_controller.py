@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 import torch
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
@@ -16,7 +17,7 @@ from areal.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
-from areal.api.scheduler_api import Job, Scheduler, ScheduleStrategy, Worker
+from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.controller.batch import DistributedBatchMemory
 from areal.controller.rollout_controller import RolloutController
 from areal.platforms import current_platform
@@ -60,6 +61,7 @@ class TrainController:
         config: TrainEngineConfig,
         scheduler: Scheduler,
     ):
+        # FIXME: add seeding
         self.train_engine = train_engine
         self.config = config
         self.scheduler = scheduler
@@ -84,7 +86,6 @@ class TrainController:
         role: str,
         alloc_mode: AllocationMode,
         ft_spec: FinetuneSpec,
-        schedule_strategy: ScheduleStrategy,
         **kwargs,
     ):
         """Initialize environments for distributed training and load models.
@@ -99,8 +100,6 @@ class TrainController:
             Allocation mode configuration for distributed setup
         ft_spec : FinetuneSpec
             Finetune specification for model initialization
-        schedule_strategy : ScheduleStrategy
-            Strategy for scheduling workers
         **kwargs
             Additional keyword arguments passed to engine initialization
         """
@@ -123,7 +122,7 @@ class TrainController:
                 deepcopy(self.config.scheduling_spec)
                 for _ in range(alloc_mode.train.world_size)
             ],
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
         )
         # Create environment variables to mimic torchrun
@@ -369,6 +368,34 @@ class TrainController:
         ):
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
+
+    def prepare_batch(
+        self,
+        dataloader: StatefulDataLoader,
+        workflow_path: str,
+        workflow_kwargs: dict[str, Any],
+        should_accept_path: str | None = None,
+    ) -> DistributedBatch:
+        return self.rollout.prepare_batch(
+            dataloader=dataloader,
+            workflow_path=workflow_path,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_path=should_accept_path,
+        )
+
+    def rollout_batch(
+        self,
+        data: list[dict[str, Any]],
+        workflow_path: str,
+        workflow_kwargs: dict[str, Any],
+        should_accept_path: str | None = None,
+    ) -> DistributedBatch:
+        return self.rollout.rollout_batch(
+            data=data,
+            workflow_path=workflow_path,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_path=should_accept_path,
+        )
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         raise NotImplementedError()

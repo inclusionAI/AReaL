@@ -313,7 +313,7 @@ class MegatronEngineConfig:
 
 
 @dataclass
-class ScheduleStrategy:
+class SchedulingStrategy:
     type: str = field(
         default="separation", metadata={"choices": ["separation", "colocation"]}
     )
@@ -437,7 +437,7 @@ class TrainEngineConfig:
         ),
         metadata={"help": "train engine schedule specs"},
     )
-    scheduling_strategy: ScheduleStrategy = field(default_factory=ScheduleStrategy)
+    scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
 
 
 @dataclass
@@ -912,7 +912,7 @@ class InferenceEngineConfig:
         ),
         metadata={"help": "inference engine schedule specs"},
     )
-    scheduling_strategy: ScheduleStrategy = field(default_factory=ScheduleStrategy)
+    scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
 
 
 @dataclass

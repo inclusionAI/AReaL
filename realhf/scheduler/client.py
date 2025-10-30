@@ -160,7 +160,7 @@ def make(args: "BaseExperimentConfig", **kwargs) -> SchedulerClient:
         evaluator = kwargs.get("evaluator", None)
         return SlurmSchedulerClient(
             args,
-            args.schedule_strategy,
+            args.scheduling_strategy,
             evaluator,
             job_group_id,
             job_group_index,

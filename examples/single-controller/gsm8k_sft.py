@@ -3,7 +3,7 @@ import sys
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
-from areal.api.scheduler_api import ScheduleStrategy
+from areal.controller.batch import DistributedBatchMemory
 from areal.controller.train_controller import TrainController
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
@@ -50,7 +50,6 @@ def main(args):
         collate_fn=pad_sequences_to_tensors,
     )
 
-    # Initialize engine
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
@@ -70,77 +69,79 @@ def main(args):
         role="default",
         alloc_mode=allocation_mode,
         ft_spec=ft_spec,
-        schedule_strategy=ScheduleStrategy(),
         addr=None,
     )
 
-    # Run training.
     saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)
-    recover_info = recover_handler.load(
-        engine,
-        saver,
-        evaluator,
-        stats_logger,
-        train_dataloader,
-    )
-    start_step = (
-        recover_info.last_step_info.next().global_step
-        if recover_info is not None
-        else 0
-    )
 
-    total_epochs = config.total_train_epochs
+    try:
+        # Run training.
+        recover_info = recover_handler.load(
+            engine,
+            saver,
+            evaluator,
+            stats_logger,
+            train_dataloader,
+        )
+        start_step = (
+            recover_info.last_step_info.next().global_step
+            if recover_info is not None
+            else 0
+        )
 
-    global_step = 0
-    for epoch in range(total_epochs):
-        for step, data in enumerate(train_dataloader):
-            if global_step < start_step:
-                global_step += 1
-                continue
-            step_info = StepInfo(
-                global_step=global_step,
-                epoch=epoch,
-                epoch_step=step,
-                steps_per_epoch=len(train_dataloader),
-            )
+        total_epochs = config.total_train_epochs
 
-            with (
-                stats_tracker.record_timing("train_step"),
-            ):
-                engine.train_lm(data)
-                engine.step_lr_scheduler()
-
-            with stats_tracker.record_timing("save"):
-                saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
-
-            with stats_tracker.record_timing("checkpoint_for_recover"):
-                recover_handler.dump(
-                    engine,
-                    step_info,
-                    saver,
-                    evaluator,
-                    stats_logger,
-                    train_dataloader,
-                    tokenizer=tokenizer,
+        global_step = 0
+        for epoch in range(total_epochs):
+            for step, data in enumerate(train_dataloader):
+                if global_step < start_step:
+                    global_step += 1
+                    continue
+                step_info = StepInfo(
+                    global_step=global_step,
+                    epoch=epoch,
+                    epoch_step=step,
+                    steps_per_epoch=len(train_dataloader),
                 )
 
-            with stats_tracker.record_timing("eval"):
+                with (
+                    stats_tracker.record_timing("train_step"),
+                ):
+                    engine.train_lm(DistributedBatchMemory.from_dict(data))
+                    engine.step_lr_scheduler()
 
-                def evaluate_fn():
-                    for data in valid_dataloader:
-                        engine.evaluate_lm(data)
+                with stats_tracker.record_timing("save"):
+                    saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
 
-                evaluator.evaluate(evaluate_fn, epoch, step, global_step)
+                with stats_tracker.record_timing("checkpoint_for_recover"):
+                    recover_handler.dump(
+                        engine,
+                        step_info,
+                        saver,
+                        evaluator,
+                        stats_logger,
+                        train_dataloader,
+                        tokenizer=tokenizer,
+                    )
 
-            stats_logger.commit(epoch, step, global_step, engine.export_stats())
-            global_step += 1
+                with stats_tracker.record_timing("eval"):
 
-    stats_logger.close()
-    engine.destroy()
+                    def evaluate_fn():
+                        for data in valid_dataloader:
+                            engine.evaluate_lm(DistributedBatchMemory.from_dict(data))
+
+                    evaluator.evaluate(evaluate_fn, epoch, step, global_step)
+
+                stats_logger.commit(epoch, step, global_step, engine.export_stats())
+                global_step += 1
+
+    finally:
+        stats_logger.close()
+        engine.destroy()
 
 
 if __name__ == "__main__":

@@ -287,7 +287,7 @@ class LocalScheduler(Scheduler):
         schedulings = self._prepare_worker_specs(role, num_workers, job.tasks)
 
         # Determine scheduling strategy
-        strategy = job.schedule_strategy
+        strategy = job.scheduling_strategy
         if strategy is None:
             strategy_type = "separation"
             colocate_role = None

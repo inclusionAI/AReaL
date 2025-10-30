@@ -81,14 +81,14 @@ class SlurmSchedulerClient(SchedulerClient):
     def __init__(
         self,
         args,
-        schedule_strategy: str,
+        scheduling_strategy: str,
         evaluator: Optional[AutomaticEvaluator],
         job_group_id: str,
         job_group_index: int,
     ):
         super().__init__(args)
 
-        self.__schedule_strategy = schedule_strategy
+        self.__schedule_strategy = scheduling_strategy
 
         self.__pending_jobs: Dict[str, SlurmLaunchInfo] = dict()
         self.__committed_jobs: Dict[str, SlurmLaunchInfo] = dict()

@@ -11,7 +11,7 @@ import pytest
 import torch
 
 from areal.api.alloc_mode import ParallelStrategy
-from areal.api.cli_args import ScheduleStrategy, SchedulingSpec, TrainEngineConfig
+from areal.api.cli_args import SchedulingSpec, SchedulingStrategy, TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import (
     AllocationMode,
@@ -154,9 +154,9 @@ def ft_spec():
 
 
 @pytest.fixture
-def schedule_strategy():
-    """Provide a ScheduleStrategy for testing."""
-    return ScheduleStrategy(type="separation", target="")
+def scheduling_strategy():
+    """Provide a SchedulingStrategy for testing."""
+    return SchedulingStrategy(type="separation", target="")
 
 
 @pytest.fixture
@@ -196,13 +196,15 @@ class TestTrainControllerInitialization:
         assert controller.worker_is_dp_head == []
         assert controller.logger is None
 
-    def test_initialize(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_initialize(
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
+    ):
         """Test initialize method creates workers and engines."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         # Verify workers were created
@@ -248,14 +250,14 @@ class TestTrainControllerInitialization:
             )
 
     def test_identify_dp_heads(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test _identify_dp_heads correctly identifies DP head workers."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         # MockScheduler returns True for even-indexed workers
@@ -266,14 +268,14 @@ class TestTrainControllerInitialization:
 class TestTrainControllerDestroy:
     """Tests for TrainController cleanup and destruction."""
 
-    def test_destroy(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_destroy(self, train_controller, alloc_mode, ft_spec, scheduling_strategy):
         """Test destroy method cleans up resources."""
         # Initialize first
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         initial_worker_count = len(train_controller.workers)
@@ -288,14 +290,14 @@ class TestTrainControllerDestroy:
         assert "train_worker" in train_controller.scheduler.deleted_roles
 
     def test_destroy_handles_errors(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test destroy handles errors gracefully."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         # Make delete_workers raise an exception
@@ -315,14 +317,14 @@ class TestTrainControllerBatchOperations:
     """Tests for batch splitting and alignment operations."""
 
     def test_align_batches_with_dp_rebalance(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test _align_batches_with_dp with rebalance=True."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         batch = create_mock_distributed_batch(size=16)
@@ -336,14 +338,14 @@ class TestTrainControllerBatchOperations:
             assert isinstance(chunk, DistributedBatchMemory)
 
     def test_align_batches_with_dp_no_rebalance(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test _align_batches_with_dp with rebalance=False."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         batch = create_mock_distributed_batch(size=16)
@@ -413,13 +415,15 @@ class TestTrainControllerMergeResults:
 class TestTrainControllerRPCWrappers:
     """Tests for RPC wrapper methods."""
 
-    def test_train_mode(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_train_mode(
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
+    ):
         """Test train() method sets training mode."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         result = train_controller.train(mode=True)
@@ -431,13 +435,15 @@ class TestTrainControllerRPCWrappers:
         engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
         assert "train" in engine_calls
 
-    def test_eval_mode(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_eval_mode(
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
+    ):
         """Test eval() method sets evaluation mode."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         result = train_controller.eval()
@@ -449,13 +455,13 @@ class TestTrainControllerRPCWrappers:
         engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
         assert "train" in engine_calls
 
-    def test_forward(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_forward(self, train_controller, alloc_mode, ft_spec, scheduling_strategy):
         """Test forward() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         batch = create_mock_distributed_batch(size=8)
@@ -469,14 +475,14 @@ class TestTrainControllerRPCWrappers:
         assert "forward" in engine_calls
 
     def test_train_batch(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test train_batch() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         batch = create_mock_distributed_batch(size=8)
@@ -496,13 +502,15 @@ class TestTrainControllerRPCWrappers:
         engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
         assert "train_batch" in engine_calls
 
-    def test_eval_batch(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_eval_batch(
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
+    ):
         """Test eval_batch() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         batch = create_mock_distributed_batch(size=8)
@@ -523,14 +531,14 @@ class TestTrainControllerRPCWrappers:
         assert "eval_batch" in engine_calls
 
     def test_step_lr_scheduler(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test step_lr_scheduler() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         train_controller.step_lr_scheduler()
@@ -544,14 +552,14 @@ class TestTrainControllerPPOMethods:
     """Tests for PPO-specific methods."""
 
     def test_compute_logp(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test compute_logp() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         result = train_controller.compute_logp()
@@ -564,14 +572,14 @@ class TestTrainControllerPPOMethods:
         assert "compute_logp" in engine_calls
 
     def test_compute_advantages(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test compute_advantages() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         result = train_controller.compute_advantages()
@@ -583,13 +591,15 @@ class TestTrainControllerPPOMethods:
         engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
         assert "compute_advantages" in engine_calls
 
-    def test_ppo_update(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_ppo_update(
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
+    ):
         """Test ppo_update() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         batch = create_mock_distributed_batch(size=8)
@@ -606,13 +616,13 @@ class TestTrainControllerPPOMethods:
 class TestTrainControllerSFTMethods:
     """Tests for SFT-specific methods."""
 
-    def test_train_lm(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_train_lm(self, train_controller, alloc_mode, ft_spec, scheduling_strategy):
         """Test train_lm() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         batch = create_mock_distributed_batch(size=8)
@@ -626,14 +636,14 @@ class TestTrainControllerSFTMethods:
         assert "train_lm" in engine_calls
 
     def test_evaluate_lm(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test evaluate_lm() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         batch = create_mock_distributed_batch(size=8)
@@ -651,14 +661,14 @@ class TestTrainControllerWeightManagement:
     """Tests for weight management operations."""
 
     def test_set_version(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test set_version() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         train_controller.set_version(42)
@@ -668,14 +678,14 @@ class TestTrainControllerWeightManagement:
         assert "set_version" in engine_calls
 
     def test_get_version(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test get_version() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         version = train_controller.get_version()
@@ -688,14 +698,14 @@ class TestTrainControllerWeightManagement:
         assert "get_version" in engine_calls
 
     def test_update_weights(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test update_weights() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         meta = WeightUpdateMeta(type="disk", path="/tmp/weights")
@@ -705,13 +715,13 @@ class TestTrainControllerWeightManagement:
         engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
         assert "update_weights" in engine_calls
 
-    def test_save(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_save(self, train_controller, alloc_mode, ft_spec, scheduling_strategy):
         """Test save() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         meta = SaveLoadMeta(
@@ -723,13 +733,13 @@ class TestTrainControllerWeightManagement:
         engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
         assert "save" in engine_calls
 
-    def test_load(self, train_controller, alloc_mode, ft_spec, schedule_strategy):
+    def test_load(self, train_controller, alloc_mode, ft_spec, scheduling_strategy):
         """Test load() method."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         meta = SaveLoadMeta(
@@ -759,14 +769,14 @@ class TestTrainControllerCustomFunctionCall:
     """Tests for custom_function_call orchestration."""
 
     def test_custom_function_call_with_distributed_batch(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test custom_function_call with DistributedBatch argument."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         # Clear previous calls from initialization
@@ -785,14 +795,14 @@ class TestTrainControllerCustomFunctionCall:
         assert worker_calls == len(train_controller.workers)
 
     def test_custom_function_call_with_regular_args(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test custom_function_call with non-DistributedBatch arguments."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         # Clear previous calls
@@ -810,14 +820,14 @@ class TestTrainControllerCustomFunctionCall:
         )
 
     def test_custom_function_call_filters_dp_heads(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test custom_function_call only returns results from DP heads."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         batch = create_mock_distributed_batch(size=8)
@@ -831,14 +841,14 @@ class TestTrainControllerEdgeCases:
     """Tests for edge cases and error handling."""
 
     def test_empty_distributed_batch(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test handling of empty DistributedBatch."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         empty_batch = DistributedBatchMemory.from_dict({})
@@ -856,14 +866,14 @@ class TestTrainControllerEdgeCases:
             train_controller.create_process_group(parallel_strategy)
 
     def test_method_chaining(
-        self, train_controller, alloc_mode, ft_spec, schedule_strategy
+        self, train_controller, alloc_mode, ft_spec, scheduling_strategy
     ):
         """Test that train() and eval() support method chaining."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
             ft_spec=ft_spec,
-            schedule_strategy=schedule_strategy,
+            scheduling_strategy=scheduling_strategy,
         )
 
         # Should be able to chain calls

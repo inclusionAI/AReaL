@@ -9,8 +9,8 @@ import pytest
 
 from areal.api.scheduler_api import (
     Job,
-    ScheduleStrategy,
     SchedulingSpec,
+    SchedulingStrategy,
     Worker,
 )
 from areal.scheduler.exceptions import (
@@ -531,7 +531,7 @@ class TestWorkerCreation:
             replicas=2,
             role="critic",
             tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=2, port_count=2)],
-            schedule_strategy=ScheduleStrategy(type="colocation", target="actor"),
+            scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
         )
         critic_ids = scheduler.create_workers(critic_job)
 
@@ -673,7 +673,7 @@ class TestWorkerCreation:
             replicas=1,
             role="test",
             tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2)],
-            schedule_strategy=ScheduleStrategy(
+            scheduling_strategy=SchedulingStrategy(
                 type="colocation", target=""
             ),  # Missing target
         )

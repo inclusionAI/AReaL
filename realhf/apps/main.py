@@ -335,7 +335,7 @@ def main():
         choices=["local", "slurm", "ray"],
     )
     subparser.add_argument(
-        "--schedule_strategy",
+        "--scheduling_strategy",
         default="empty_first",
         choices=["empty_first", "allocated_first"],
         help="Schedule strategy for scheduler. Currently only effective in slurm mode. "
