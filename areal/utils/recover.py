@@ -226,10 +226,8 @@ class RecoverHandler:
             return
         if os.environ.get("AREAL_RECOVER_RUN", "0") != "1":
             return
-        if inference_engine is not None:
-            assert weight_update_meta is not None, (
-                "Inference engine requires weight update meta for recovery."
-            )
+        if inference_engine is not None and weight_update_meta is None:
+            raise ValueError("Weight update meta is required for recovery.")
 
         if isinstance(engine, TrainEngine):
             engine = {"default": engine}
@@ -269,10 +267,6 @@ class RecoverHandler:
                 f"This should not be a resumed experiment!"
             )
 
-    @property
-    def _weight_format(self) -> str:
-        return "dcp"
-
     def _save_checkpoint(
         self,
         engine: TrainEngine,
@@ -287,7 +281,7 @@ class RecoverHandler:
             self.config.fileroot,
             name=name,
         )
-        weight_format = self._weight_format
+        weight_format = "dcp"
         with_optim = True
         meta = SaveLoadMeta(
             path=path,
@@ -315,7 +309,7 @@ class RecoverHandler:
         )
         if not os.path.exists(path):
             raise FileNotFoundError(f"Checkpoint path {path} does not exist.")
-        weight_format = self._weight_format
+        weight_format = "dcp"
         with_optim = True
         meta = SaveLoadMeta(
             path=path,

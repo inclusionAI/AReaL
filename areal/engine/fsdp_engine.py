@@ -294,36 +294,6 @@ class FSDPEngine(BaseHFEngine):
             checkpoint_id=path,
         )
 
-    def convert_dcp_to_torch_save(self, dcp_path: str, torch_save_path: str):
-        """Convert DCP checkpoint to torch.save format."""
-        try:
-            from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
-
-            dcp_to_torch_save(dcp_path, torch_save_path)
-            self.logger.info(
-                f"Successfully converted DCP checkpoint from {dcp_path} to {torch_save_path}"
-            )
-        except ImportError:
-            self.logger.error(
-                "DCP format conversion utilities not available. Please ensure PyTorch >= 2.4.0"
-            )
-            raise RuntimeError("DCP format conversion requires PyTorch >= 2.4.0")
-
-    def convert_torch_save_to_dcp(self, torch_save_path: str, dcp_path: str):
-        """Convert torch.save checkpoint to DCP format."""
-        try:
-            from torch.distributed.checkpoint.format_utils import torch_save_to_dcp
-
-            torch_save_to_dcp(torch_save_path, dcp_path)
-            self.logger.info(
-                f"Successfully converted torch.save checkpoint from {torch_save_path} to {dcp_path}"
-            )
-        except ImportError:
-            self.logger.error(
-                "DCP format conversion utilities not available. Please ensure PyTorch >= 2.4.0"
-            )
-            raise RuntimeError("DCP format conversion requires PyTorch >= 2.4.0")
-
     def _apply_peft_wrapper(self):
         config = self.config
         if not config.target_modules or config.target_modules == ["all-linear"]:
