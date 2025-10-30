@@ -207,9 +207,10 @@ class PerfTracer:
     # Persistence helpers
     # ------------------------------------------------------------------
     def save(self) -> None:
+        if not self._enabled:
+            return
+
         with self._lock:
-            if not self._enabled:
-                return
             if not self._events:
                 return
             events = self._events
@@ -230,7 +231,7 @@ class PerfTracer:
                         os.fsync(fout.fileno())
             except OSError as exc:  # pragma: no cover - depends on filesystem
                 logger.error("Failed to append perf trace to %s: %s", output_path, exc)
-                self._events = events
+                self._events.extend(events)
 
     def reset(self) -> None:
         with self._lock:

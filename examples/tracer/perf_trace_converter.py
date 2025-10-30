@@ -82,7 +82,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.dump(chrome_trace, sys.stdout, ensure_ascii=False)
         sys.stdout.write("\n")
         sys.stdout.flush()
-        return 0
     return 0
 
 
