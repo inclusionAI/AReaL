@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import datetime
@@ -426,34 +427,30 @@ class TrainController:
 
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
         # Update all LocalInfEngine's local weight
-        save_meta = SaveLoadMeta(
-            path=meta.path,
-            weight_format="hf",
-            with_optim=False,
-            tokenizer=None,
-            processor=None,
+        self.save(
+            SaveLoadMeta(
+                path=meta.path,
+                weight_format="hf",
+                with_optim=False,
+                tokenizer=None,
+                processor=None,
+            )
+        )
+        update_name = names.update_weights_from_disk(
+            self.config.experiment_name,
+            self.config.trial_name,
+            self.get_version(),
+        )
+        name_resolve.add(
+            update_name,
+            str(datetime.now().timestamp()),
+            keepalive_ttl=120,
+            replace=True,
         )
 
-        async def _actor_save():
-            await self._async_custom_function_call("save", save_meta)
-            update_name = names.update_weights_from_disk(
-                self.config.experiment_name,
-                self.config.trial_name,
-                self.get_version(),
-            )
-            name_resolve.add(
-                update_name,
-                str(datetime.now().timestamp()),
-                keepalive_ttl=120,
-                replace=True,
-            )
-
-        async def _run():
-            rollout_load = self.rollout.update_weights_from_disk(meta)
-            actor_save = _actor_save()
-            await asyncio.gather(rollout_load, actor_save)
-
-        self._run_async_task(_run())
+        meta.clear_checkpoint = False
+        asyncio.run(self.rollout.update_weights_from_disk(meta))
+        shutil.rmtree(meta.path, ignore_errors=True)
 
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""

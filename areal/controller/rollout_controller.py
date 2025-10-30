@@ -260,51 +260,6 @@ class RolloutController:
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
         return worker
 
-    async def _run_workflow_on_worker(
-        self,
-        worker: Worker,
-        data: dict[str, Any],
-        workflow_path: str,
-        workflow_kwargs: dict[str, Any],
-        should_accept_path: str | None = None,
-    ) -> dict[str, Any] | None:
-        # Call run_workflow on worker via scheduler
-        # This will hit the /run_workflow endpoint
-        result = await self.scheduler.async_call_engine(
-            worker_id=worker.id,
-            method="run_workflow",
-            workflow=workflow_path,
-            workflow_kwargs=workflow_kwargs,
-            data=data,
-            should_accept_path=should_accept_path,
-            check_trajectory_format=self.config.check_trajectory_format,
-        )
-
-        # The RPCServer will return None if the
-        # trajectory is rejected.
-        if result is not None:
-            self.staleness_manager.on_rollout_accepted()
-            if self.config.enable_rollout_tracing:
-                stat = self.staleness_manager.get_stats()
-                self.logger.info(
-                    f"Finish and accept rollout. "
-                    f"Submit: {stat.submitted}, "
-                    f"running: {stat.running}, "
-                    f"accepted: {stat.accepted}."
-                )
-            return result
-        else:
-            self.staleness_manager.on_rollout_rejected()
-            if self.config.enable_rollout_tracing:
-                stat = self.staleness_manager.get_stats()
-                self.logger.info(
-                    f"Finish but reject rollout. "
-                    f"Submit: {stat.submitted}, "
-                    f"running: {stat.running}, "
-                    f"accepted: {stat.accepted}."
-                )
-            return None
-
     def submit(
         self,
         data: dict[str, Any],
@@ -340,6 +295,40 @@ class RolloutController:
             )
         )
 
+    async def _wait_callback(self, worker: Worker):
+        # Wait for a generation to return
+        result = "NO_RESULT"
+        tik = time.time()
+        while result == "NO_RESULT" and time.time() - tik < self.config.request_timeout:
+            result = await self.scheduler.async_call_engine(
+                worker.id, "wait_quiet", count=1, timeout=1, max_retries=1
+            )
+
+        # The RPCServer will return None if the
+        # trajectory is rejected.
+        if result is not None:
+            self.staleness_manager.on_rollout_accepted()
+            if self.config.enable_rollout_tracing:
+                stat = self.staleness_manager.get_stats()
+                self.logger.info(
+                    f"Finish and accept rollout. "
+                    f"Submit: {stat.submitted}, "
+                    f"running: {stat.running}, "
+                    f"accepted: {stat.accepted}."
+                )
+            return result
+        else:
+            self.staleness_manager.on_rollout_rejected()
+            if self.config.enable_rollout_tracing:
+                stat = self.staleness_manager.get_stats()
+                self.logger.info(
+                    f"Finish but reject rollout. "
+                    f"Submit: {stat.submitted}, "
+                    f"running: {stat.running}, "
+                    f"accepted: {stat.accepted}."
+                )
+            return None
+
     def _commit_one_to_runner(self):
         """Commit one pending input to task runner with staleness tracking."""
         task_input = self._pending_inputs.pop(0)
@@ -347,15 +336,20 @@ class RolloutController:
         # Choose worker via round-robin
         worker = self._choose_worker()
 
-        # Submit to AsyncTaskRunner
+        self.scheduler.call_engine(
+            worker.id,
+            "submit",
+            data=task_input.data,
+            workflow_path=task_input.workflow_path,
+            workflow_kwargs=task_input.workflow_kwargs,
+            should_accept_path=task_input.should_accept_path,
+        )
+
+        # Submit a wait callback to AsyncTaskRunner
         try:
             self.runner.submit(
-                self._run_workflow_on_worker,
+                self._wait_callback,
                 worker,
-                task_input.data,
-                task_input.workflow_path,
-                task_input.workflow_kwargs,
-                task_input.should_accept_path,
             )
         except TaskQueueFullError:
             raise queue.Full("Input queue full")
@@ -600,6 +594,7 @@ class RolloutController:
                 method="update_weights_from_distributed",
                 meta=meta,
                 param_specs=param_specs,
+                max_retries=1,
             )
             for worker in self.workers
         ]
@@ -611,6 +606,7 @@ class RolloutController:
                 worker_id=worker.id,
                 method="update_weights_from_disk",
                 meta=meta,
+                max_retries=1,
             )
             for worker in self.workers
         ]
@@ -634,6 +630,7 @@ class RolloutController:
                     worker_id=worker.id,
                     method="set_version",
                     version=version,
+                    max_retries=1,
                 )
             except Exception as e:
                 self.logger.error(f"Error setting version for worker {worker.id}: {e}")

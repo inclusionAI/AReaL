@@ -446,6 +446,14 @@ class LocalInfEngine:
         """
         return self.workflow_executor.wait(count, timeout=timeout)
 
+    def wait_quiet(
+        self, count: int, timeout: float | None = None
+    ) -> dict[str, Any] | None:
+        try:
+            return self.workflow_executor.wait(count, timeout=timeout)
+        except TimeoutError:
+            return "NO_RESULT"
+
     def rollout_batch(
         self,
         data: list[dict[str, Any]],

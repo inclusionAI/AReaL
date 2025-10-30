@@ -1,10 +1,11 @@
+import os
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any, Optional
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import InferenceEngineConfig
+from areal.api.cli_args import InferenceEngineConfig, SGLangConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     HttpGenerationResult,
@@ -17,7 +18,9 @@ from areal.api.io_struct import (
 )
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import RemoteInfEngine
+from areal.launcher.sglang_server import launch_server_cmd, wait_for_server
 from areal.platforms import current_platform
+from areal.utils.network import find_free_ports, gethostip
 
 
 class SGLangBackend:
@@ -188,12 +191,18 @@ class RemoteSGLangEngine(InferenceEngine):
         # Pure composition - create internal engine with SGLang backend
         self._engine = RemoteInfEngine(config, SGLangBackend())
 
+    def create_engine(self, engine_args):
+        engine_args["host"] = host_ip = gethostip()
+        engine_args["port"] = server_port = find_free_ports(1)[0]
+        cmd = SGLangConfig.build_cmd_from_args(engine_args)
+        self.server_process = launch_server_cmd(cmd)
+        wait_for_server(f"http://{host_ip}:{server_port}")
+        print(f"SGLang server launched at: http://{host_ip}:{server_port}")
+        os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{host_ip}:{server_port}"
+
     def configure(self, config):
         self.config = config
         self._engine.configure(config)
-
-    def create_engine(self, *args, **kwargs):
-        return self._engine.create_engine(*args, **kwargs)
 
     def destroy_engine(self, *args, **kwargs):
         return self._engine.destroy_engine(*args, **kwargs)
@@ -286,3 +295,11 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def continue_generation(self):
         return self._engine.continue_generation()
+
+    def wait_quiet(
+        self, count: int, timeout: float | None = None
+    ) -> dict[str, Any] | None:
+        try:
+            return self._engine.wait(count, timeout=timeout)
+        except TimeoutError:
+            return "NO_RESULT"

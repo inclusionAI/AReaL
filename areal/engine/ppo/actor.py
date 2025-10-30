@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
 
@@ -51,8 +51,8 @@ class PPOActor:
     @torch.no_grad()
     def compute_logp(
         self,
-        data: Dict[str, Any],
-        temperature: Optional[float] = None,
+        data: dict[str, Any],
+        temperature: float | None = None,
     ) -> torch.Tensor | None:
         def calc_logprobs(logits, input_data):
             labels = input_data.get(
@@ -69,7 +69,7 @@ class PPOActor:
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 
-    def compute_advantages(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
@@ -165,7 +165,7 @@ class PPOActor:
 
         return data
 
-    def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
+    def ppo_update(self, data: dict[str, Any]) -> list[dict[str, float]]:
         if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
             data, sampling_stat = dynamic_sampling(data, self.group_size)
 
@@ -174,78 +174,69 @@ class PPOActor:
         reward_score = data["rewards"]
         seqlens = attn_mask.sum(-1)
 
-        all_stats = []
         ########## Logging code starts ##########
-        result_denominators = {
-            "correct_n_seqs": (reward_score > 0).bool(),
-            "incorrect_n_seqs": (reward_score <= 0).bool(),
-        }
-        if self.config.log_agent_stats:
-            assert (
-                "begin_of_trajectory" in data
-            ), "'begin_of_trajectory' is expected to log agent statistics"
-            assert (
-                len(self.config.log_agent_stats_keys) > 0
-            ), "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
-            agent_denominator = (data["begin_of_trajectory"] > 0).bool()
-            result_denominators["agent"] = agent_denominator
-        global_denominators = dict(
-            n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
-            n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
-            n_valid_tokens=loss_mask.bool(),
-            **result_denominators,
-        )
-        stats_tracker.denominator(**global_denominators)
-        stats_tracker.stat(
-            correct_seq_len=seqlens.float(), denominator="correct_n_seqs"
-        )
-        stats_tracker.stat(
-            incorrect_seq_len=seqlens.float(), denominator="incorrect_n_seqs"
-        )
-
-        stats = dict(
-            advantages=data["advantages"],
-            kl_rewards=data["kl_rewards"],
-            final_reward=data["tot_rewards"],
-        )
-        stats_tracker.stat(**stats, denominator="n_valid_tokens")
-
-        prompt_lens = []
-        prompt_lens = data["attention_mask"].sum(-1) - data["loss_mask"].sum(-1)
-        seq_stats = dict(
-            no_eos_ratios=(seqlens == attn_mask.shape[-1]).float(),
-            task_reward=reward_score.float(),
-            prompt_len=prompt_lens.float(),
-            seq_len=seqlens.float(),
-        )
-        stats_tracker.stat(**seq_stats, denominator="n_seqs")
-        scalars = dict(
-            mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
-            eps_clip=self.config.eps_clip,
-        )
-        if self.config.c_clip is not None:
-            scalars["c_clip"] = self.config.c_clip
-            scalars["use_dual_clip"] = 1
-        else:
-            scalars["use_dual_clip"] = 0
-        if self.config.behav_imp_weight_cap is not None:
-            scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
-        stats_tracker.scalar(**scalars)
-
-        if self.config.log_agent_stats:
+        with stats_tracker.scope("ppo_actor"):
+            result_denominators = {
+                "correct_n_seqs": (reward_score > 0).bool(),
+                "incorrect_n_seqs": (reward_score <= 0).bool(),
+            }
+            if self.config.log_agent_stats:
+                assert "begin_of_trajectory" in data, (
+                    "'begin_of_trajectory' is expected to log agent statistics"
+                )
+                assert len(self.config.log_agent_stats_keys) > 0, (
+                    "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
+                )
+                agent_denominator = (data["begin_of_trajectory"] > 0).bool()
+                result_denominators["agent"] = agent_denominator
+            global_denominators = dict(
+                n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
+                n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
+                n_valid_tokens=loss_mask.bool(),
+                **result_denominators,
+            )
+            stats_tracker.denominator(**global_denominators)
             stats_tracker.stat(
-                **{k: data[k].float() for k in self.config.log_agent_stats_keys},
-                denominator="agent",
+                correct_seq_len=seqlens.float(), denominator="correct_n_seqs"
+            )
+            stats_tracker.stat(
+                incorrect_seq_len=seqlens.float(), denominator="incorrect_n_seqs"
             )
 
-        global_stats = stats_tracker.export(
-            reduce_group=self.engine.data_parallel_group
-        )
-        for k in global_denominators:
-            keys = list(global_stats.keys())
-            for k2 in keys:
-                if k2.endswith(k):
-                    global_stats.pop(k2)
+            stats = dict(
+                advantages=data["advantages"],
+                kl_rewards=data["kl_rewards"],
+                final_reward=data["tot_rewards"],
+            )
+            stats_tracker.stat(**stats, denominator="n_valid_tokens")
+
+            prompt_lens = []
+            prompt_lens = data["attention_mask"].sum(-1) - data["loss_mask"].sum(-1)
+            seq_stats = dict(
+                no_eos_ratios=(seqlens == attn_mask.shape[-1]).float(),
+                task_reward=reward_score.float(),
+                prompt_len=prompt_lens.float(),
+                seq_len=seqlens.float(),
+            )
+            stats_tracker.stat(**seq_stats, denominator="n_seqs")
+            scalars = dict(
+                mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
+                eps_clip=self.config.eps_clip,
+            )
+            if self.config.c_clip is not None:
+                scalars["c_clip"] = self.config.c_clip
+                scalars["use_dual_clip"] = 1
+            else:
+                scalars["use_dual_clip"] = 0
+            if self.config.behav_imp_weight_cap is not None:
+                scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
+            stats_tracker.scalar(**scalars)
+
+            if self.config.log_agent_stats:
+                stats_tracker.stat(
+                    **{k: data[k].float() for k in self.config.log_agent_stats_keys},
+                    denominator="agent",
+                )
         ########## Logging code ends ##########
 
         for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
@@ -257,24 +248,21 @@ class PPOActor:
             mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
         )
         for mb in mb_inputs.mbs:
-            train_stat = self.engine.train_batch(
-                mb,
-                loss_fn=functools.partial(
-                    grpo_loss_fn,
-                    temperature=self.temperature,
-                    eps_clip=self.config.eps_clip,
-                    eps_clip_higher=self.config.eps_clip_higher,
-                    c_clip=self.config.c_clip,
-                    behav_imp_weight_cap=self.config.behav_imp_weight_cap,
-                ),
-                loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
-            )
-            stats_tracker.scalar(**train_stat)
-            all_stats.append(
-                stats_tracker.export(reduce_group=self.engine.data_parallel_group)
-            )
-        all_stats[0].update(global_stats)
-        return all_stats
+            with stats_tracker.scope("ppo_update"):
+                train_stat = self.engine.train_batch(
+                    mb,
+                    loss_fn=functools.partial(
+                        grpo_loss_fn,
+                        temperature=self.temperature,
+                        eps_clip=self.config.eps_clip,
+                        eps_clip_higher=self.config.eps_clip_higher,
+                        c_clip=self.config.c_clip,
+                        behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                    ),
+                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+                )
+                stats_tracker.scalar(**train_stat)
+        return {}
 
 
 class FSDPPPOActor(FSDPEngine):
@@ -290,12 +278,11 @@ class FSDPPPOActor(FSDPEngine):
     def compute_advantages(self, *args, **kwargs):
         return self.actor.compute_advantages(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
+    def ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
         return self.actor.ppo_update(*args, **kwargs)
 
 
 class MegatronPPOActor(MegatronEngine):
-
     def __init__(self, config: PPOActorConfig):
         super().__init__(config)
         self.actor = PPOActor(config, self)
@@ -308,13 +295,13 @@ class MegatronPPOActor(MegatronEngine):
     def compute_advantages(self, *args, **kwargs) -> None:
         self.actor.compute_advantages(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
+    def ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
         return self.actor.ppo_update(*args, **kwargs)
 
 
 def grpo_loss_fn(
     logits: torch.Tensor,
-    input_data: Dict,
+    input_data: dict,
     temperature: float,
     eps_clip: float,
     eps_clip_higher: float | None,

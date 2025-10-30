@@ -2,11 +2,12 @@ import argparse
 import importlib
 import json
 import traceback
+from concurrent.futures import Future
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from areal.api.cli_args import BaseExperimentConfig
-from areal.api.engine_api import TrainEngine
+from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.platforms import current_platform
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging, name_resolve, seeding, stats_tracker
@@ -14,7 +15,7 @@ from areal.utils import logging, name_resolve, seeding, stats_tracker
 logger = logging.getLogger("SyncRPCServer")
 
 # Global engine instance - must be TrainEngine
-_engine: TrainEngine | None = None
+_engine: TrainEngine | InferenceEngine | None = None
 
 
 class SyncRPCHandler(BaseHTTPRequestHandler):
@@ -150,10 +151,12 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
                 engine_class = getattr(module, class_name)
 
                 # Validate that the class is a TrainEngine
-                if not issubclass(engine_class, TrainEngine):
+                if not issubclass(engine_class, TrainEngine) and not issubclass(
+                    engine_class, InferenceEngine
+                ):
                     raise TypeError(
-                        f"Engine class must be a subclass of TrainEngine, "
-                        f"got {engine_class}. Use async_rpc_server for InferenceEngine."
+                        f"Engine class must be a subclass of TrainEngine or InferenceEngine, "
+                        f"got {engine_class}.."
                     )
             except (ValueError, ImportError, AttributeError) as e:
                 logger.error(f"Failed to import engine '{engine_path}': {e}")
@@ -194,7 +197,7 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
 
     def _handle_call_engine_method(self) -> None:
         """
-        Call a method on the TrainEngine instance.
+        Call a method on the engine instance.
 
         Expected JSON payload:
         {
@@ -232,7 +235,7 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
 
             try:
                 should_bcast = kwargs.pop("_should_bcast", True)
-                if should_bcast:
+                if should_bcast and isinstance(_engine, TrainEngine):
                     logger.info(
                         f"Broadcasting data for TrainEngine method: {method_name}"
                     )
@@ -241,7 +244,6 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
                         tensor_container_to,
                     )
 
-                    # TODO: to device here
                     args = tensor_container_to(args, current_platform.current_device())
                     args = broadcast_tensor_container(
                         args,
@@ -266,12 +268,63 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            # Special case for `submit` on infernece engines
+            try:
+                if method_name == "submit" and isinstance(_engine, InferenceEngine):
+                    workflow_path = kwargs["workflow_path"]
+                    workflow_kwargs = kwargs["workflow_kwargs"]
+                    episode_data = kwargs["data"]
+                    should_accept_path = kwargs["should_accept_path"]
+
+                    # Deserialize episode_data (may contain tensors)
+                    episode_data = deserialize_value(episode_data)
+
+                    # Dynamic import workflow
+                    module_path, class_name = workflow_path.rsplit(".", 1)
+                    module = importlib.import_module(module_path)
+                    workflow_class = getattr(module, class_name)
+                    logger.info(f"Imported workflow class: {workflow_path}")
+
+                    # Instantiate workflow
+                    workflow_kwargs = deserialize_value(workflow_kwargs)
+                    workflow = workflow_class(**workflow_kwargs)
+                    logger.info(f"Workflow '{workflow_path}' instantiated successfully")
+
+                    should_accept = None
+                    if should_accept_path is not None:
+                        # Dynamic import filtering function
+                        module_path, fn_name = should_accept_path.rsplit(".", 1)
+                        module = importlib.import_module(module_path)
+                        should_accept = getattr(module, fn_name)
+                        logger.info(
+                            f"Imported filtering function: {should_accept_path}"
+                        )
+
+                    args = []
+                    kwargs = dict(
+                        data=episode_data,
+                        workflow=workflow,
+                        should_accept=should_accept,
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Worklow data conversion failed: {e}\n{traceback.format_exc()}"
+                )
+                self._send_json_response(
+                    {"error": f"workflow data conversion failed: {str(e)}"}, 500
+                )
+                return
+
             # Call method directly
             logger.info(f"Calling engine method: {method_name}")
             try:
                 # Get the method - will raise AttributeError if it doesn't exist
                 method = getattr(_engine, method_name)
                 result = method(*args, **kwargs)
+
+                # HACK: handle update weights future
+                if isinstance(result, Future):
+                    result = result.result()
 
                 # Serialize result (convert tensors to SerializedTensor dicts)
                 serialized_result = serialize_value(result)
@@ -305,6 +358,7 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
                 return
 
             # TrainEngine: reduce stats across data_parallel_group
+            assert isinstance(_engine, TrainEngine)
             result = stats_tracker.export(reduce_group=_engine.data_parallel_group)
             self._send_json_response({"status": "success", "result": result})
 

@@ -134,7 +134,43 @@ class SGLangLocalBackend:
         model_path : str
             Path to the model weights on disk
         """
+        # otherwise will encounter" eventloop is already running" issue
+        # def _run_in_thread():
+        #     print(11111111111111)
+        #     # Call SGLang's update_weights_from_disk method
+        #     try:
+        #         cur_loop = asyncio.get_event_loop()
+        #     except RuntimeError:
+        #         cur_loop = None
+        #     loop = asyncio.new_event_loop()
+        #     asyncio.set_event_loop(loop)
+        #     try:
+        #         # Call SGLang's update_weights_from_distributed method
+        # from sglang.srt.managers.io_struct import (
+        #     UpdateWeightFromDiskReqInput,
+        # )
         engine.update_weights_from_disk(model_path=model_path)
+        # obj = UpdateWeightFromDiskReqInput(
+        #     model_path=model_path,
+        #     abort_all_requests=False,
+        # )
+
+        # loop = asyncio.get_running_loop()
+        # future = asyncio.run_coroutine_threadsafe(
+        #     engine.tokenizer_manager.update_weights_from_disk(obj, None),
+        #     loop
+        # )
+        # return future.result()  # This blocks until complete
+        #         print(2222222222, flush=True)
+        #     finally:
+        #         asyncio.set_event_loop(cur_loop)
+        #         loop.close()
+
+        # from concurrent.futures import ThreadPoolExecutor
+
+        # with ThreadPoolExecutor() as executor:
+        #     future = executor.submit(_run_in_thread)
+        #     _ = future.result()
 
     def update_weight_xccl(
         self,
@@ -325,3 +361,8 @@ class LocalSGLangEngine(InferenceEngine):
     def resume(self):
         """Resume request submission for async rollout."""
         return self._engine.resume()
+
+    def wait_quiet(
+        self, count: int, timeout: float | None = None
+    ) -> dict[str, Any] | None:
+        return self._engine.wait_quiet(count=count, timeout=timeout)
