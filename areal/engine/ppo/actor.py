@@ -181,12 +181,14 @@ class PPOActor:
             "incorrect_n_seqs": (reward_score <= 0).bool(),
         }
         if self.config.log_agent_stats:
-            assert "begin_of_trajectory" in data, (
-                "'begin_of_trajectory' is expected to log agent statistics"
-            )
-            assert len(self.config.log_agent_stats_keys) > 0, (
-                "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
-            )
+            if "begin_of_trajectory" not in data:
+                raise RuntimeError(
+                    "'begin_of_trajectory' is expected to log agent statistics"
+                )
+            if len(self.config.log_agent_stats_keys) == 0:
+                raise RuntimeError(
+                    "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
+                )
             agent_denominator = (data["begin_of_trajectory"] > 0).bool()
             result_denominators["agent"] = agent_denominator
         global_denominators = dict(
@@ -451,7 +453,7 @@ def get_m2po_loss_mask(
     if num_to_mask > 0:
         loss_mask[:num_to_mask] = False
 
-    assert loss_mask.sum() > 0, (
-        "All tokens are masked out when getting the m2po loss mask."
-    )
+    if loss_mask.sum() == 0:
+        raise RuntimeError("All tokens are masked out when getting the m2po loss mask.")
+
     return loss_mask
