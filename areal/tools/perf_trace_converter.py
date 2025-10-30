@@ -44,7 +44,7 @@ def convert_jsonl_to_chrome_trace(
 
     if output_path is not None:
         destination = Path(output_path)
-        if destination.parent and not destination.parent.exists():
+        if destination.parent != Path(".") and not destination.parent.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("w", encoding="utf-8") as fout:
             json.dump(chrome_trace, fout, ensure_ascii=False)

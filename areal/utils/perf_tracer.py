@@ -222,6 +222,8 @@ class PerfTracer:
         if not self._enabled:
             return
 
+        # Save only on the last step of each interval (0-indexed).
+        # For example, if save_interval_steps=3, saves at steps 2, 5, 8, ...
         if (
             not force
             and step is not None
@@ -233,14 +235,13 @@ class PerfTracer:
         with self._lock:
             if not self._events:
                 return
+
             events = self._events
-            self._events = []
-
-            output_path = self._output_path
-
             serialized_events = [
                 json.dumps(event, ensure_ascii=False) for event in events
             ]
+            output_path = self._output_path
+
             try:
                 with _acquire_file_lock(output_path):
                     with open(output_path, "a", encoding="utf-8") as fout:
@@ -249,9 +250,9 @@ class PerfTracer:
                             fout.write("\n")
                         fout.flush()
                         os.fsync(fout.fileno())
+                self._events = []
             except OSError as exc:  # pragma: no cover - depends on filesystem
                 logger.error("Failed to append perf trace to %s: %s", output_path, exc)
-                self._events.extend(events)
 
     def reset(self) -> None:
         with self._lock:
@@ -425,7 +426,6 @@ def _default_trace_path(
         config.experiment_name,
         config.trial_name,
     )
-    os.makedirs(base_dir, exist_ok=True)
     return os.path.join(base_dir, filename)
 
 

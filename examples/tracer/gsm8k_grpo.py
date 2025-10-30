@@ -11,6 +11,7 @@ from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
+from areal.reward.math_parser import process_results
 from areal.utils import perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     cycle_dataloader,
@@ -27,8 +28,6 @@ from areal.workflow.rlvr import RLVRWorkflow
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    from areal.reward.math_parser import process_results
-
     return int(process_results(completions, answer)[0])
 
 
@@ -120,8 +119,7 @@ def main(args):
 
     # Configure performance tracer
     if config.perf_tracer is None:
-        raise ValueError("Performance tracer config must be provided.")
-    perf_tracer.configure(config.perf_tracer, rank=rank)
+        perf_tracer.configure(config.perf_tracer, rank=rank)
 
     # Run training.
     saver = Saver(config.saver, ft_spec)

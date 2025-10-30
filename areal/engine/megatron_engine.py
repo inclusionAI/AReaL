@@ -481,7 +481,8 @@ class MegatronEngine(TrainEngine):
         for rank_names in all_names:
             if len(named_tensors) != len(rank_names):
                 raise RuntimeError(
-                    f"mismatch names length: {len(named_tensors)} != {len(rank_names)}"
+                    "Named tensor count mismatch across expert parallel ranks: "
+                    f"expected {len(rank_names)} but got {len(named_tensors)}"
                 )
 
         gathered_params = [[] for _ in range(world_size)]
