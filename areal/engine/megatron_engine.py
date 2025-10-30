@@ -490,7 +490,8 @@ class MegatronEngine(TrainEngine):
         dist.all_gather_object(all_names, names, group=group)
 
         for rank_names in all_names:
-            assert len(named_tensors) == len(rank_names), (
+            valid = len(named_tensors) == len(rank_names)
+            assert valid, (
                 f"mismatch names length: {len(named_tensors)} != {len(rank_names)}"
             )
 
