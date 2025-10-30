@@ -5,7 +5,6 @@ import queue
 import random
 import time
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -90,9 +89,6 @@ class RolloutController:
         # Async task execution
         self.runner: AsyncTaskRunner | None = None
 
-        # Thread pool for weight updates
-        self.executor: ThreadPoolExecutor | None = None
-
         # Logging
         self.logger = None
 
@@ -157,9 +153,6 @@ class RolloutController:
             enable_tracing=self.config.enable_rollout_tracing,
         )
         self.runner.initialize(logger=self.logger)
-
-        # Initialize thread pool for weight updates
-        self.executor = ThreadPoolExecutor(max_workers=alloc_mode.gen.dp_size)
 
         # Initialize staleness manager for global capacity control
         max_concurrent_rollouts = (
@@ -240,11 +233,6 @@ class RolloutController:
             self.logger.error(f"Error deleting workers: {e}")
 
         self.workers.clear()
-
-        # Shutdown executor
-        if self.executor is not None:
-            self.executor.shutdown(wait=True)
-            self.executor = None
 
         self.logger.info("RolloutController destroyed")
 
@@ -592,104 +580,41 @@ class RolloutController:
             req=req,
         )
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
-        """Initialize the weight update process group for distributed weight updates.
+    async def init_weights_update_group(self, meta: WeightUpdateMeta) -> None:
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker_id=worker.id,
+                method="init_weights_update_group",
+                meta=meta,
+            )
+            for worker in self.workers
+        ]
+        await asyncio.gather(*tasks)
 
-        This method should be called before performing any weight updates to ensure
-        that the necessary communication groups are set up correctly across all workers.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Metadata containing information about the weight update, such as the
-            type of communication backend and allocation mode.
-
-        Returns
-        -------
-        Future[None]
-            A future object representing the asynchronous initialization operation.
-        """
-
-        async def _init_all_workers():
-            tasks = [
-                self.scheduler.async_call_engine(
-                    worker_id=worker.id,
-                    method="init_weights_update_group",
-                    meta=meta,
-                )
-                for worker in self.workers
-            ]
-            await asyncio.gather(*tasks)
-
-        def init_all_workers():
-            asyncio.run(_init_all_workers())
-
-        return self.executor.submit(init_all_workers)
-
-    def update_weights_from_distributed(
+    async def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
-    ) -> Future[None]:
-        """Update weights in the inference engine in a non-blocking manner from distributed memory.
+    ):
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker_id=worker.id,
+                method="update_weights_from_distributed",
+                meta=meta,
+                param_specs=param_specs,
+            )
+            for worker in self.workers
+        ]
+        await asyncio.gather(*tasks)
 
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Metadata containing information about the weight update
-        param_specs : list[ParamSpec]
-            A list of parameter specifications for the weights to be updated
-
-        Returns
-        -------
-        Future[None]
-            A future object representing the asynchronous weight update operation
-        """
-
-        async def _update_all_workers():
-            tasks = [
-                self.scheduler.call_engine(
-                    worker_id=worker.id,
-                    method="update_weights_from_distributed",
-                    meta=meta,
-                    param_specs=param_specs,
-                )
-                for worker in self.workers
-            ]
-            await asyncio.gather(*tasks)
-
-        def update_all_workers():
-            asyncio.run(_update_all_workers())
-
-        return self.executor.submit(update_all_workers)
-
-    def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
-        """Update weights in the inference engine from disk in a non-blocking manner.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Metadata containing information about the weight update
-
-        Returns
-        -------
-        Future[None]
-            A future object representing the asynchronous weight update operation
-        """
-
-        async def _update_all_workers():
-            tasks = [
-                self.scheduler.call_engine(
-                    worker_id=worker.id,
-                    method="update_weights_from_disk",
-                    meta=meta,
-                )
-                for worker in self.workers
-            ]
-            await asyncio.gather(*tasks)
-
-        def update_all_workers():
-            asyncio.run(_update_all_workers())
-
-        return self.executor.submit(update_all_workers)
+    async def update_weights_from_disk(self, meta: WeightUpdateMeta):
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker_id=worker.id,
+                method="update_weights_from_disk",
+                meta=meta,
+            )
+            for worker in self.workers
+        ]
+        await asyncio.gather(*tasks)
 
     def set_version(self, version: int) -> None:
         """Set the current weight version in the inference engine.

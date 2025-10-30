@@ -94,12 +94,12 @@ class LocalScheduler(Scheduler):
         if log_dir is not None:
             self.log_dir = Path(log_dir)
         else:
-            assert experiment_name is not None
-            assert trial_name is not None
-            assert fileroot is not None
             experiment_name = experiment_name or exp_config.experiment_name
             trial_name = trial_name or exp_config.trial_name
             fileroot = fileroot or exp_config.cluster.fileroot
+            assert experiment_name is not None
+            assert trial_name is not None
+            assert fileroot is not None
             self.log_dir = (
                 Path(fileroot)
                 / "logs"
@@ -456,6 +456,8 @@ class LocalScheduler(Scheduler):
 
         # Send HTTP request to configure workers
         for worker_rank, worker_info in enumerate(workers):
+            while not self._is_worker_ready(worker_info):
+                time.sleep(0.1)
             worker_id = worker_info.worker.id
             port = int(worker_info.worker.worker_ports[0])
             url = f"http://{worker_info.worker.ip}:{port}/configure"
@@ -477,22 +479,21 @@ class LocalScheduler(Scheduler):
                 )
 
                 if response.status_code == 200:
-                    result = response.json()
                     logger.info(f"Configuration successfully on worker '{worker_id}'")
-                    return result.get("result")
+                    continue
                 elif response.status_code == 400:
                     # Import error or bad request
                     error_detail = response.json().get("detail", "Unknown error")
-                    raise WorkerConfigurationError(worker_id, error_detail, 400)
+                    raise WorkerConfigurationError(worker_id, error_detail, str(400))
                 elif response.status_code == 500:
                     # Engine initialization failed
                     error_detail = response.json().get("detail", "Unknown error")
-                    raise WorkerConfigurationError(worker_id, error_detail, 500)
+                    raise WorkerConfigurationError(worker_id, error_detail, str(500))
                 else:
                     raise WorkerConfigurationError(
                         worker_id,
                         f"Unexpected status code: {response.status_code}",
-                        response.status_code,
+                        str(response.status_code),
                     )
 
             except httpx.ConnectError as e:
@@ -948,9 +949,6 @@ class LocalScheduler(Scheduler):
             # Special routing for workflow execution
             url = f"http://{worker_info.worker.ip}:{port}/run_workflow"
             # Serialize kwargs for workflow execution
-            payload = serialize_value(kwargs)
-        elif method == "configure":
-            url = f"http://{worker_info.worker.ip}:{port}/configure"
             payload = serialize_value(kwargs)
         elif method == "export_stats":
             url = f"http://{worker_info.worker.ip}:{port}/export_stats"

@@ -134,7 +134,6 @@ class SGLangLocalBackend:
         model_path : str
             Path to the model weights on disk
         """
-        # Call SGLang's update_weights_from_disk method
         engine.update_weights_from_disk(model_path=model_path)
 
     def update_weight_xccl(

@@ -2,7 +2,6 @@ import asyncio
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from typing import Any, Protocol
 
@@ -203,7 +202,7 @@ class LocalInfEngine:
         self.logger = logging.getLogger(f"[Local Inference Engine Rank {engine_id}]")
 
         # Initialize thread pool for non-blocking weight updates
-        self.executor = ThreadPoolExecutor(max_workers=1)
+        # FIXME: develop a principled update methods with/without thread pool
 
         # Initialize workflow executor
         self.workflow_executor = WorkflowExecutor(
@@ -219,9 +218,6 @@ class LocalInfEngine:
         if getattr(self, "workflow_executor"):
             self.workflow_executor.destroy()
             self.workflow_executor = None
-        if getattr(self, "executor"):
-            self.executor.shutdown()
-            self.executor = None
 
     def set_version(self, version: int):
         """Set the current weight version."""
@@ -339,19 +335,7 @@ class LocalInfEngine:
         )
         return response
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
-        """Initialize the weight update process group for distributed weight updates.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Metadata containing information about the weight update
-
-        Returns
-        -------
-        Future[None]
-            A future object representing the asynchronous initialization operation
-        """
+    def init_weights_update_group(self, meta: WeightUpdateMeta) -> None:
         assert meta.type == current_platform.communication_backend
         assert not self.distributed_weight_update_initialized, (
             "Weight update group already initialized."
@@ -362,47 +346,18 @@ class LocalInfEngine:
                 "Local inference engine is not initialized, "
                 "cannot init weight update group."
             )
-
-        # Compute rank offset for this engine
-        # For local engines, we assume single instance per process
-        rank_offset = 1  # Offset by 1 to leave rank 0 for the training engine
-
-        fut = self.executor.submit(
-            self._init_weights_update_group_sync, meta, rank_offset
-        )
-
-        def callback(fut):
-            self.logger.info(
-                f"Initialized {current_platform.communication_backend.upper()} group "
-                f"for distributed weight update for {meta.nccl_group_name}."
-            )
-            self.distributed_weight_update_initialized = True
-
-        fut.add_done_callback(callback)
-
-        return fut
-
-    def _init_weights_update_group_sync(self, meta: WeightUpdateMeta, rank_offset: int):
-        """Synchronously initialize weight update group in thread pool."""
+        # FIXME: get the real rank_offset from local process rank and tp size
+        rank_offset = 1
         self.backend.init_update_weight_group(self.engine, meta, rank_offset)
+        self.logger.info(
+            f"Initialized {current_platform.communication_backend.upper()} group "
+            f"for distributed weight update for {meta.nccl_group_name}."
+        )
+        self.distributed_weight_update_initialized = True
 
     def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
-    ) -> Future[None]:
-        """Update weights in the inference engine from distributed memory.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Metadata containing information about the weight update
-        param_specs : List[ParamSpec]
-            A list of parameter specifications for the weights to be updated
-
-        Returns
-        -------
-        Future[None]
-            A future object representing the asynchronous weight update operation
-        """
+    ):
         assert meta.type == current_platform.communication_backend
 
         if self.engine is None:
@@ -410,31 +365,9 @@ class LocalInfEngine:
                 "Local inference engine is not initialized, cannot update weights."
             )
 
-        fut = self.executor.submit(
-            self._update_weights_from_distributed_sync, meta, param_specs
-        )
-
-        return fut
-
-    def _update_weights_from_distributed_sync(
-        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
-    ):
-        """Synchronously update weights from distributed memory in thread pool."""
         self.backend.update_weight_xccl(self.engine, meta, param_specs)
 
-    def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
-        """Update weights in the inference engine from disk.
-
-        Parameters
-        ----------
-        meta : WeightUpdateMeta
-            Metadata containing information about the weight update
-
-        Returns
-        -------
-        Future[None]
-            A future object representing the asynchronous weight update operation
-        """
+    def update_weights_from_disk(self, meta: WeightUpdateMeta):
         assert meta.type == "disk"
 
         if self.engine is None:
@@ -442,30 +375,12 @@ class LocalInfEngine:
                 "Local inference engine is not initialized, cannot update weights."
             )
 
-        tik = time.perf_counter()
-
         # Validate experiment and trial names
         if self.config.experiment_name is None or self.config.trial_name is None:
             raise RuntimeError(
                 "Experiment and trial names must be set for disk-based weight updates."
             )
 
-        fut = self.executor.submit(self._update_weights_from_disk_sync, meta)
-
-        def callback(fut):
-            respond_time = fut.result()
-            self.logger.info(
-                f"Loading weights from disk done in "
-                f"{(time.perf_counter() - tik):.2f}s. "
-                f"Respond time: {respond_time:.2f}s."
-            )
-
-        fut.add_done_callback(callback)
-
-        return fut
-
-    def _update_weights_from_disk_sync(self, meta: WeightUpdateMeta) -> float:
-        """Synchronously update weights from disk in thread pool."""
         # Wait for training engine to signal that weights are ready
         update_name = names.update_weights_from_disk(
             self.config.experiment_name,
@@ -486,8 +401,6 @@ class LocalInfEngine:
         self.logger.info(
             f"Loading weights done in {(time.time() - load_timestamp) * 1000:.2f} ms"
         )
-
-        return load_timestamp - save_timestamp
 
     def submit(
         self,

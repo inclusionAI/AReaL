@@ -80,19 +80,19 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
                 return
 
             config = data.get("config")
-            if not config:
-                raise self._send_json_response(
-                    {"error": "Missing 'config' field in request"}, 400
+            if config is None:
+                self._send_json_response(
+                    {"detail": "Missing 'config' field in request"}, 400
                 )
             role = data.get("role")
-            if not role:
-                raise self._send_json_response(
-                    {"error": "Missing 'role' field in request"}, 400
+            if role is None:
+                self._send_json_response(
+                    {"detail": "Missing 'role' field in request"}, 400
                 )
             rank = data.get("rank")
-            if not rank:
-                raise self._send_json_response(
-                    {"error": "Missing 'rank' field in request"}, 400
+            if rank is None:
+                self._send_json_response(
+                    {"detail": "Missing 'rank' field in request"}, 400
                 )
 
             config = deserialize_value(config)
@@ -101,7 +101,13 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
             name_resolve.reconfigure(config.cluster.name_resolve)
 
             seeding.set_random_seed(config.seed, key=f"{role}{rank}")
-
+            self._send_json_response(
+                {
+                    "status": "success",
+                    "message": "Worker configured successful.",
+                    "result": None,
+                }
+            )
         except Exception as e:
             logger.error(
                 f"Unexpected error in configure: {e}\n{traceback.format_exc()}"
@@ -333,6 +339,10 @@ def main():
     except KeyboardInterrupt:
         logger.info("Shutting down sync RPC server")
         server.shutdown()
+    finally:
+        global _engine
+        if _engine is not None:
+            _engine.destroy()
 
 
 if __name__ == "__main__":

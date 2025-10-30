@@ -125,13 +125,28 @@ class TrainController:
         engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
-        asyncio.run(self._async_create_engines(engine_path))
-        asyncio.run(self._async_initialize_engines(ft_spec, **kwargs))
+        self._run_async_task(self._async_create_engines(engine_path))
+        self._run_async_task(self._async_initialize_engines(ft_spec, **kwargs))
 
         # Identify DP head workers
         self._identify_dp_heads()
 
         self.logger.info("TrainController initialization complete")
+
+    def _run_async_task(self, task):
+        def _run_in_thread():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(task)
+            finally:
+                new_loop.close()
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor() as executor:
+            future = executor.submit(_run_in_thread)
+            return future.result()
 
     async def _async_create_engines(self, engine_path: str):
         # Create engines on workers
@@ -187,7 +202,7 @@ class TrainController:
             ]
             return await asyncio.gather(*tasks)
 
-        self.workers_is_dp_head = asyncio.run(_get_dp_head())
+        self.workers_is_dp_head = self._run_async_task(_get_dp_head())
 
     def destroy(self):
         """Destroy the controller and release GPU memory of models.
@@ -209,11 +224,29 @@ class TrainController:
 
         self.logger.info("TrainController destroyed")
 
-    def custom_function_call(self, method: str, *args, **kwargs):
+    def _custom_function_call(self, method: str, *args, **kwargs):
         """Dispatch method call to appropriate workers based on input type.
 
         If any argument is a DistributedBatch, split data. Call only DP heads.
         """
+        dp_split_args, dp_split_kwargs = self._dispatch_inputs(*args, **kwargs)
+        results = self._run_async_task(
+            self._call_with_dispatched_inputs(method, dp_split_args, dp_split_kwargs)
+        )
+        # Only remain data from DP head.
+        results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
+        return self._merge_results(results, method)
+
+    async def _async_custom_function_call(self, method: str, *args, **kwargs):
+        dp_split_args, dp_split_kwargs = self._dispatch_inputs(*args, **kwargs)
+        results = await self._call_with_dispatched_inputs(
+            method, dp_split_args, dp_split_kwargs
+        )
+        # Only remain data from DP head.
+        results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
+        return self._merge_results(results, method)
+
+    def _dispatch_inputs(self, *args, **kwargs):
         # Find and split DistributedBatch arguments
         split_args = []
         for arg in args:
@@ -230,50 +263,51 @@ class TrainController:
                 split_kwargs[k] = self._align_batches_with_dp(v, rebalance=True)
             else:
                 split_kwargs[k] = [v] * self.parallel_strategy.dp_size
+        return split_args, split_kwargs
 
+    async def _call_with_dispatched_inputs(
+        self,
+        method: str,
+        dp_split_args: list[list[Any]],
+        dp_worker_kwargs: list[dict[str, Any]],
+    ):
         # Call all workers.
         # ONLY DP head workers get their data slice.
         # Other workers will get data by broadcasting in RPC server.
-        async def _call_all():
-            tasks = []
-            dp_idx = 0
-            for idx, worker in enumerate(self.workers):
-                if self.workers_is_dp_head[idx]:
-                    # Get this worker's slice of each argument
-                    worker_args = [splits[dp_idx] for splits in split_args]
-                    worker_kwargs = {
-                        k: splits[dp_idx] for k, splits in split_kwargs.items()
-                    }
+        tasks = []
+        dp_idx = 0
+        for idx, worker in enumerate(self.workers):
+            if self.workers_is_dp_head[idx]:
+                # Get this worker's slice of each argument
+                worker_args = [splits[dp_idx] for splits in dp_split_args]
+                worker_kwargs = {
+                    k: splits[dp_idx] for k, splits in dp_worker_kwargs.items()
+                }
 
-                    # Convert DistributedBatch to dict for RPC
-                    # FIXME: pass metadata instead of real tensors
-                    worker_args = [
-                        arg.get_data() if isinstance(arg, DistributedBatch) else arg
-                        for arg in worker_args
-                    ]
-                    worker_kwargs = {
-                        k: v.get_data() if isinstance(v, DistributedBatch) else v
-                        for k, v in worker_kwargs.items()
-                    }
-                    dp_idx += 1
-                else:
-                    worker_args = []
-                    worker_kwargs = {}
+                # Convert DistributedBatch to dict for RPC
+                # FIXME: pass metadata instead of real tensors
+                worker_args = [
+                    arg.get_data() if isinstance(arg, DistributedBatch) else arg
+                    for arg in worker_args
+                ]
+                worker_kwargs = {
+                    k: v.get_data() if isinstance(v, DistributedBatch) else v
+                    for k, v in worker_kwargs.items()
+                }
+                dp_idx += 1
+            else:
+                worker_args = []
+                worker_kwargs = {}
 
-                tasks.append(
-                    self.scheduler.async_call_engine(
-                        worker.id,
-                        method,
-                        *worker_args,
-                        **worker_kwargs,
-                    )
+            tasks.append(
+                self.scheduler.async_call_engine(
+                    worker.id,
+                    method,
+                    *worker_args,
+                    **worker_kwargs,
                 )
-            return await asyncio.gather(*tasks)
-
-        results = asyncio.run(_call_all())
-        # Only remain data from DP head.
-        results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
-        return self._merge_results(results, method)
+            )
+        return await asyncio.gather(*tasks)
 
     def _merge_results(self, results, method):
         """Merge results from DP head workers based on result type.
@@ -392,26 +426,34 @@ class TrainController:
 
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
         # Update all LocalInfEngine's local weight
-        fut = self.rollout.update_weights_from_disk(meta)
-        self.save(
-            SaveLoadMeta(
-                path=meta.path,
-                weight_format="hf",
-                with_optim=False,
-                tokenizer=None,
-                processor=None,
-            )
-        )
-        update_name = names.update_weights_from_disk(
-            self.config.experiment_name,
-            self.config.trial_name,
-            self.get_version(),
-        )
-        name_resolve.add(
-            update_name, str(datetime.now().timestamp()), keepalive_ttl=120
+        save_meta = SaveLoadMeta(
+            path=meta.path,
+            weight_format="hf",
+            with_optim=False,
+            tokenizer=None,
+            processor=None,
         )
 
-        fut.result()
+        async def _actor_save():
+            await self._async_custom_function_call("save", save_meta)
+            update_name = names.update_weights_from_disk(
+                self.config.experiment_name,
+                self.config.trial_name,
+                self.get_version(),
+            )
+            name_resolve.add(
+                update_name,
+                str(datetime.now().timestamp()),
+                keepalive_ttl=120,
+                replace=True,
+            )
+
+        async def _run():
+            rollout_load = self.rollout.update_weights_from_disk(meta)
+            actor_save = _actor_save()
+            await asyncio.gather(rollout_load, actor_save)
+
+        self._run_async_task(_run())
 
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""
@@ -439,7 +481,7 @@ class TrainController:
             ]
             return await asyncio.gather(*tasks)
 
-        results = asyncio.run(_call_all())
+        results = self._run_async_task(_call_all())
         # stats have been aggregated and synchronized.
         return results[0]
 
@@ -457,7 +499,7 @@ class TrainController:
         TrainController
             Returns self for method chaining
         """
-        self.custom_function_call("train", mode)
+        self._custom_function_call("train", mode)
         return self
 
     def eval(self):
@@ -480,7 +522,7 @@ class TrainController:
         version : int
             The weight version number to set
         """
-        self.custom_function_call("set_version", version)
+        self._custom_function_call("set_version", version)
 
     def get_version(self) -> int:
         """Get the current weight version in the training engine.
@@ -490,7 +532,7 @@ class TrainController:
         int
             The current weight version number
         """
-        return self.custom_function_call("get_version")
+        return self._custom_function_call("get_version")
 
     def save(self, meta: SaveLoadMeta):
         """Save model weights and optimizer states for later use.
@@ -500,7 +542,7 @@ class TrainController:
         meta : SaveLoadMeta
             Metadata containing information about where and how to save
         """
-        self.custom_function_call("save", meta)
+        self._custom_function_call("save", meta)
 
     def load(self, meta: SaveLoadMeta):
         """Load model weights and optimizer states from a file.
@@ -510,7 +552,7 @@ class TrainController:
         meta : SaveLoadMeta
             Metadata containing information about where and how to load
         """
-        self.custom_function_call("load", meta)
+        self._custom_function_call("load", meta)
 
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
@@ -519,7 +561,7 @@ class TrainController:
         (e.g., once per PPO step). It is separated from train_batch to allow
         for more flexible learning rate scheduling.
         """
-        self.custom_function_call("step_lr_scheduler")
+        self._custom_function_call("step_lr_scheduler")
 
     def forward(
         self,
@@ -553,7 +595,7 @@ class TrainController:
         Any or None
             The result produced by `post_hook` and `aggregate_fn`.
         """
-        return self.custom_function_call(
+        return self._custom_function_call(
             "forward",
             input_=input_,
             output_seqlens=output_seqlens,
@@ -593,7 +635,9 @@ class TrainController:
             Scalar statistics after training, e.g., the current learning rate,
             gradient norm, etc.
         """
-        return self.custom_function_call("train_batch", input_, loss_fn, loss_weight_fn)
+        return self._custom_function_call(
+            "train_batch", input_, loss_fn, loss_weight_fn
+        )
 
     def eval_batch(
         self,
@@ -627,7 +671,7 @@ class TrainController:
             A scalar loss or None. The evaluation statistics should be aggregated
             with `stats_tracker`.
         """
-        return self.custom_function_call("eval_batch", input_, loss_fn, loss_weight_fn)
+        return self._custom_function_call("eval_batch", input_, loss_fn, loss_weight_fn)
 
     # ==================== SFT RPC WRAPPERS ====================
     def train_lm(
@@ -652,7 +696,7 @@ class TrainController:
         Dict[str, float]
             Scalar statistics after training
         """
-        return self.custom_function_call("train_lm", input_, *args, **kwargs)
+        return self._custom_function_call("train_lm", input_, *args, **kwargs)
 
     def evaluate_lm(
         self,
@@ -676,7 +720,7 @@ class TrainController:
         torch.Tensor or None
             A scalar loss or None
         """
-        return self.custom_function_call("evaluate_lm", input_, *args, **kwargs)
+        return self._custom_function_call("evaluate_lm", input_, *args, **kwargs)
 
     # ==================== PPO RPC WRAPPERS ====================
     def compute_logp(
@@ -698,7 +742,7 @@ class TrainController:
         Any
             Log probabilities computed by the engine
         """
-        return self.custom_function_call("compute_logp", *args, **kwargs)
+        return self._custom_function_call("compute_logp", *args, **kwargs)
 
     def compute_advantages(
         self,
@@ -719,7 +763,7 @@ class TrainController:
         Any
             Advantages computed by the engine
         """
-        return self.custom_function_call("compute_advantages", *args, **kwargs)
+        return self._custom_function_call("compute_advantages", *args, **kwargs)
 
     def ppo_update(
         self,
@@ -737,4 +781,4 @@ class TrainController:
         Dict[str, float]
             Scalar statistics after PPO update
         """
-        return self.custom_function_call("ppo_update", input_)
+        return self._custom_function_call("ppo_update", input_)

@@ -387,17 +387,17 @@ async def configure(request: Request):
         data = orjson.loads(body)
 
         config = data.get("config")
-        if not config:
+        if config is None:
             raise HTTPException(
                 status_code=400, detail="Missing 'config' field in request"
             )
         role = data.get("role")
-        if not role:
+        if role is None:
             raise HTTPException(
                 status_code=400, detail="Missing 'role' field in request"
             )
         rank = data.get("rank")
-        if not rank:
+        if rank is None:
             raise HTTPException(
                 status_code=400, detail="Missing 'rank' field in request"
             )
@@ -406,9 +406,9 @@ async def configure(request: Request):
         config: BaseExperimentConfig
 
         name_resolve.reconfigure(config.cluster.name_resolve)
-
         seeding.set_random_seed(config.seed, key=f"{role}{rank}")
 
+        return {"status": "success", "result": None}
     except HTTPException:
         raise
     except Exception as e:
@@ -462,15 +462,22 @@ def main():
 
     logger.info(f"Starting async RPC server on {args.host}:{args.port}")
 
-    # Run uvicorn server with a single worker (required for GPU workloads)
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        workers=1,  # Single worker required for GPU memory management
-        log_level="info",
-        access_log=True,
-    )
+    try:
+        # Run uvicorn server with a single worker (required for GPU workloads)
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            workers=1,  # Single worker required for GPU memory management
+            log_level="info",
+            access_log=True,
+        )
+    finally:
+        global _engine
+        if _engine is not None:
+            assert isinstance(_engine, InferenceEngine)
+            _engine.destroy_engine()
+            _engine.destroy()
 
 
 if __name__ == "__main__":
