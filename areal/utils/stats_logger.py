@@ -35,16 +35,17 @@ class StatsLogger:
     def init(self):
         if dist.is_initialized() and dist.get_rank() != 0:
             return
+        
+        if self.config.wandb.wandb_base_url:
+            os.environ["WANDB_API_KEY"] = self.config.wandb.wandb_api_key
+        if self.config.wandb.wandb_api_key:
+            os.environ["WANDB_BASE_URL"] = self.config.wandb.wandb_base_url
 
         self.start_time = time.perf_counter()
         # wandb init, connect to remote wandb host
         if self.config.wandb.mode != "disabled":
             wandb.login()
 
-        if self.config.wandb.wandb_base_url:
-            os.environ["WANDB_API_KEY"] = self.config.wandb.wandb_api_key
-        if self.config.wandb.wandb_api_key:
-            os.environ["WANDB_BASE_URL"] = self.config.wandb.wandb_base_url
 
         suffix = self.config.wandb.id_suffix
         if suffix == "timestamp":
