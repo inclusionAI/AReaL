@@ -90,6 +90,7 @@ def engine():
     logger.info(f"mcore GPTModel initialized: {engine.model}")
     log_gpu_stats("initialize")
     yield engine
+    engine.destroy()
 
 
 def test_simple_forward(engine, mock_input):
@@ -101,7 +102,9 @@ def test_simple_forward(engine, mock_input):
 def test_simple_train(engine, mock_input):
     engine.train()
     train_result = engine.train_batch(
-        mock_input, loss_fn=mock_loss_fn, loss_weight_fn=lambda x: 1
+        mock_input,
+        loss_fn=mock_loss_fn,
+        loss_weight_fn=lambda x: torch.tensor(1.0, device=engine.device),
     )
     engine.step_lr_scheduler()
     logger.info(f"Train done, result={train_result}")
@@ -134,6 +137,7 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
 
 
 @torch.no_grad()
+@pytest.mark.slow
 def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     path = tmp_path_factory.mktemp("megatron_engine_dcp_test")
