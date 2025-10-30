@@ -229,6 +229,17 @@ class MegatronParallelStrategy(ParallelStrategy):
         },
     )
 
+    def __post_init__(self):
+        super().__post_init__()
+        vpp = self.virtual_pipeline_parallel_size
+        if vpp is not None:
+            if vpp <= 1:
+                self.virtual_pipeline_parallel_size = None
+            elif self.pipeline_parallel_size <= 1:
+                raise AllocationValidationError(
+                    "Virtual pipeline parallelism requires pipeline_parallel_size > 1."
+                )
+
     @staticmethod
     def parallelism_eq(this, other):
         """Compare Megatron parallelism configurations (excluding sequence parallelism)."""

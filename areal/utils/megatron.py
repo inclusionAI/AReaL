@@ -14,9 +14,9 @@ def all_gather_param(name: str, param: Parameter | Tensor):
     if "expert_bias" in name:
         return param
 
-    assert hasattr(
-        param, "tensor_model_parallel"
-    ), f"{name} does not have tensor_model_parallel attribute"
+    assert hasattr(param, "tensor_model_parallel"), (
+        f"{name} does not have tensor_model_parallel attribute"
+    )
     if (
         not param.tensor_model_parallel
         or getattr(param, "parallel_mode", None) == "duplicated"
@@ -80,9 +80,9 @@ def convert_qwen3moe_to_hf(
         head_dim = tf_config.hidden_size // tf_config.num_attention_heads
     value_num_per_group = tf_config.num_attention_heads // tf_config.num_query_groups
 
-    assert (
-        tf_config.num_query_groups is not None
-    ), "Qwen3-MoE models should have num_query_groups"
+    assert tf_config.num_query_groups is not None, (
+        "Qwen3-MoE models should have num_query_groups"
+    )
 
     decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
     match = re.match(decoder_layers_pattern, name)
@@ -148,7 +148,6 @@ def convert_qwen3moe_to_hf(
         if rest == "self_attention.linear_proj.weight":
             return [(f"model.layers.{layer_idx}.self_attn.o_proj.weight", param)]
         elif rest == "self_attention.linear_qkv.weight":
-
             param = param.view(
                 tf_config.num_query_groups, -1, head_dim, tf_config.hidden_size
             )
@@ -237,9 +236,9 @@ def convert_qwen2_to_hf(
         head_dim = tf_config.hidden_size // tf_config.num_attention_heads
     value_num_per_group = tf_config.num_attention_heads // tf_config.num_query_groups
 
-    assert (
-        tf_config.num_query_groups is not None
-    ), "Qwen2 models should have num_query_groups"
+    assert tf_config.num_query_groups is not None, (
+        "Qwen2 models should have num_query_groups"
+    )
 
     decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
     match = re.match(decoder_layers_pattern, name)
@@ -248,7 +247,6 @@ def convert_qwen2_to_hf(
         if rest == "self_attention.linear_proj.weight":
             return [(f"model.layers.{layer_idx}.self_attn.o_proj.weight", param)]
         elif rest == "self_attention.linear_qkv.weight":
-
             param = param.view(
                 tf_config.num_query_groups, -1, head_dim, tf_config.hidden_size
             )
@@ -326,66 +324,115 @@ def convert_to_hf(
 
 
 def get_named_parameters(model_module, num_experts):
-    ep_size = mpu.get_expert_model_parallel_world_size()
-    ep_rank = mpu.get_expert_model_parallel_rank()
-    if num_experts:
-        expert_offset = ep_rank * num_experts // ep_size
+    def _iter_single(single_module):
+        ep_size = mpu.get_expert_model_parallel_world_size()
+        ep_rank = mpu.get_expert_model_parallel_rank()
+        if num_experts:
+            expert_offset = ep_rank * num_experts // ep_size
+        else:
+            expert_offset = 0
 
-    # NOTE: vp_stage is always 0 when VP is not actually enabled
-    layer_offset = get_transformer_layer_offset(model_module.config)
-    for name, param in model_module.named_parameters():
-        # for model without ddp wrap
-        if not name.startswith("module.module."):
-            name = "module." + name
+        config = getattr(single_module, "config", None)
+        if config is None and hasattr(single_module, "module"):
+            config = getattr(single_module.module, "config", None)
+        if config is None:
+            raise AttributeError("Megatron module does not expose transformer config")
 
-        decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
-        match = re.match(decoder_layers_pattern, name)
-        if not match:
-            mtp_layers_pattern = r"module\.module\.mtp\.layers\.(\d+)\.(.+)"
-            match = re.match(mtp_layers_pattern, name)
+        vp_stage = getattr(single_module, "virtual_pipeline_model_parallel_rank", None)
+        if vp_stage is None and hasattr(single_module, "module"):
+            vp_stage = getattr(
+                single_module.module, "virtual_pipeline_model_parallel_rank", None
+            )
+        if vp_stage is None:
+            try:
+                vp_stage = mpu.get_virtual_pipeline_model_parallel_rank()
+            except AssertionError:
+                vp_stage = None
+
+        layer_offset = get_transformer_layer_offset(config, vp_stage=vp_stage)
+        for name, param in single_module.named_parameters():
+            # for model without ddp wrap
+            if not name.startswith("module.module."):
+                name = "module." + name
+
+            decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
+            match = re.match(decoder_layers_pattern, name)
             if not match:
-                yield name, param
+                mtp_layers_pattern = r"module\.module\.mtp\.layers\.(\d+)\.(.+)"
+                match = re.match(mtp_layers_pattern, name)
+                if not match:
+                    yield name, param
+                    continue
+
+                # mtp layer starts from layer 0
+                layer_idx, rest = match.groups()
+                expert_pattern = r"transformer_layer.mlp.experts\.(.+)\.weight(\d+)"
+                match = re.match(expert_pattern, rest)
+                if not match:
+                    yield name, param
+                    continue
+
+                rest, expert_idx = match.groups()
+                expert_idx = int(expert_idx) + expert_offset
+                yield (
+                    f"module.module.mtp.layers.{layer_idx}.transformer_layer.mlp.experts.{rest}.weight{expert_idx}",
+                    param,
+                )
                 continue
 
-            # mtp layer starts from layer 0
-            layer_idx, rest = match.groups()
-            expert_pattern = r"transformer_layer.mlp.experts\.(.+)\.weight(\d+)"
-            match = re.match(expert_pattern, rest)
-            if not match:
-                yield name, param
-                continue
-
-            rest, expert_idx = match.groups()
-            expert_idx = int(expert_idx) + expert_offset
-            yield f"module.module.mtp.layers.{layer_idx}.transformer_layer.mlp.experts.{rest}.weight{expert_idx}", param
-            continue
-
-        layer_idx, rest = match.groups()
-        layer_idx = int(layer_idx) + layer_offset
-
-        # this is hardcoded for te grouped matmul
-        expert_pattern = r"mlp.experts\.(.+)\.weight(\d+)"
-        match = re.match(expert_pattern, rest)
-        if match:
-            rest, expert_idx = match.groups()
-            expert_idx = int(expert_idx) + expert_offset
-            yield f"module.module.decoder.layers.{layer_idx}.mlp.experts.{rest}.weight{expert_idx}", param
-        else:
-            yield f"module.module.decoder.layers.{layer_idx}.{rest}", param
-
-    # treat expert bias as normal parameters
-    for name, buffer in model_module.named_buffers():
-        if "expert_bias" not in name:
-            continue
-        # for model without ddp wrap
-        if not name.startswith("module.module."):
-            name = "module." + name
-
-        decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
-        match = re.match(decoder_layers_pattern, name)
-        if not match:
-            yield name, buffer
-        else:
             layer_idx, rest = match.groups()
             layer_idx = int(layer_idx) + layer_offset
-            yield f"module.module.decoder.layers.{layer_idx}.{rest}", buffer
+
+            # this is hardcoded for te grouped matmul
+            expert_pattern = r"mlp.experts\.(.+)\.weight(\d+)"
+            match = re.match(expert_pattern, rest)
+            if match:
+                rest, expert_idx = match.groups()
+                expert_idx = int(expert_idx) + expert_offset
+                yield (
+                    f"module.module.decoder.layers.{layer_idx}.mlp.experts.{rest}.weight{expert_idx}",
+                    param,
+                )
+            else:
+                yield f"module.module.decoder.layers.{layer_idx}.{rest}", param
+
+        # treat expert bias as normal parameters
+        for name, buffer in single_module.named_buffers():
+            if "expert_bias" not in name:
+                continue
+            # for model without ddp wrap
+            if not name.startswith("module.module."):
+                name = "module." + name
+
+            decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
+            match = re.match(decoder_layers_pattern, name)
+            if not match:
+                yield name, buffer
+            else:
+                layer_idx, rest = match.groups()
+                layer_idx = int(layer_idx) + layer_offset
+                yield f"module.module.decoder.layers.{layer_idx}.{rest}", buffer
+
+    if isinstance(model_module, (list, tuple)):
+        try:
+            vp_world = mpu.get_virtual_pipeline_model_parallel_world_size()
+            original_vp_rank = mpu.get_virtual_pipeline_model_parallel_rank()
+        except AssertionError:
+            original_vp_rank = None
+            vp_world = None
+
+        for vpp_rank, single_module in enumerate(model_module):
+            if vp_world and vp_world > 1:
+                mpu.set_virtual_pipeline_model_parallel_rank(vpp_rank)
+            yield from _iter_single(single_module)
+
+        if (
+            vp_world
+            and vp_world > 1
+            and original_vp_rank is not None
+            and original_vp_rank >= 0
+        ):
+            mpu.set_virtual_pipeline_model_parallel_rank(original_vp_rank)
+        return
+
+    yield from _iter_single(model_module)

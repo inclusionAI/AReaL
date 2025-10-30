@@ -4,6 +4,7 @@ import gc
 import os
 from collections.abc import Callable
 from concurrent.futures import Future
+from contextlib import ExitStack
 from datetime import datetime
 from typing import Any
 
@@ -66,12 +67,47 @@ from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
 
+class VirtualPipelineModelCollection(list[nn.Module]):
+    """Container that aggregates multiple virtual pipeline model chunks."""
+
+    def named_parameters(self, *args, **kwargs):
+        for model in self:
+            yield from model.named_parameters(*args, **kwargs)
+
+    def parameters(self, *args, **kwargs):
+        for model in self:
+            yield from model.parameters(*args, **kwargs)
+
+    def named_buffers(self, *args, **kwargs):
+        for model in self:
+            yield from model.named_buffers(*args, **kwargs)
+
+    def buffers(self, *args, **kwargs):
+        for model in self:
+            yield from model.buffers(*args, **kwargs)
+
+    def zero_grad_buffer(self):
+        for model in self:
+            if hasattr(model, "zero_grad_buffer"):
+                model.zero_grad_buffer()
+
+    def train(self, mode: bool = True):
+        for model in self:
+            model.train(mode)
+        return self
+
+    def eval(self):
+        for model in self:
+            model.eval()
+        return self
+
+
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
         self.hf_config: PretrainedConfig
         self.tf_config: TransformerConfig
-        self.model = None
+        self.model: VirtualPipelineModelCollection | None = None
         self.dtype = getattr(torch, self.config.dtype)
         self.device = None
         self.optimizer_config = config.optimizer
@@ -139,50 +175,79 @@ class MegatronEngine(TrainEngine):
         self.hf_config, self.tf_config = make_hf_and_mcore_config(
             self.config.path, dtype=self.dtype, bridge=self.bridge
         )
+        # TODO: configure for VPP
         self.tf_config = configure_pipeline_layer_splits(
             self.parallel_strategy, self.hf_config, self.tf_config
         )
 
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
-            self.model = make_mcore_model(
+            model_chunks = make_mcore_model(
                 hf_config=self.hf_config,
                 tf_config=self.tf_config,
                 mcore_config=self.mcore_config,
                 bridge=self.bridge,
             )
+            self.model = VirtualPipelineModelCollection(model_chunks)
             self._load_model_from_hf(self.config.path)
 
-        module = self.model.module if isinstance(self.model, DDP) else self.model
-        total_params = sum(param.numel() for param in module.parameters())
+        assert self.model, "Megatron models failed to initialize."
+        modules = [m.module if isinstance(m, DDP) else m for m in self.model]
+        total_params = sum(
+            param.numel() for module in modules for param in module.parameters()
+        )
         self.logger.info(
-            f"Model parameter count: {total_params / 1e6:.2f}M, pp_stage={mpu.get_pipeline_model_parallel_rank()}"
+            f"Model parameter count: {total_params / 1e6:.2f}M, pp_stage={mpu.get_pipeline_model_parallel_rank()}, vpp_chunks={len(self.model)}"
         )
 
         if self.config.disable_dropout:
-            disable_dropout_in_model(self.model)
+            for model in self.model:
+                disable_dropout_in_model(model)
 
-        model_config = get_model_config(self.model)
+        # TODO: Check verl implementation
+        primary_model = self.model[0]
+        model_config = get_model_config(primary_model)
         # NOTE: It is recommended to set this option to True for RL training on MoE models for stability.
         if self.mcore_config.use_deterministic_algorithms:
             set_deterministic_algorithms(model_config)
 
-        if isinstance(self.model, DDP) and self.mcore_config.ddp.overlap_grad_reduce:
-            model_config.no_sync_func = self.model.no_sync
+        if self.mcore_config.ddp.overlap_grad_reduce:
+            if all(isinstance(model, DDP) for model in self.model):
+
+                def _stacked_no_sync():
+                    stack = ExitStack()
+                    for model in self.model:
+                        stack.enter_context(model.no_sync())
+                    return stack
+
+                model_config.no_sync_func = _stacked_no_sync
+            elif isinstance(primary_model, DDP):
+                model_config.no_sync_func = primary_model.no_sync
         if (
             self.mcore_config.ddp.overlap_param_gather
             and self.mcore_config.ddp.align_param_gather
         ):
-            model_config.param_sync_func = self.model.start_param_sync
+            if all(isinstance(model, DDP) for model in self.model):
+
+                def _start_param_sync_all():
+                    for model in self.model:
+                        model.start_param_sync()
+
+                model_config.param_sync_func = _start_param_sync_all
+            elif isinstance(primary_model, DDP):
+                model_config.param_sync_func = primary_model.start_param_sync
         model_config.finalize_model_grads_func = finalize_model_grads
         self.create_optimizer(ft_spec)
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
     ) -> MegatronParallelStrategy:
+        base_strategy = dataclasses.asdict(parallel_strategy)
+        vpp_size = self.mcore_config.virtual_pipeline_parallel_size
         return MegatronParallelStrategy(
             use_sequence_parallel=parallel_strategy.tensor_parallel_size > 1,
-            **dataclasses.asdict(parallel_strategy),
+            virtual_pipeline_parallel_size=vpp_size,
+            **base_strategy,
         )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
@@ -251,7 +316,7 @@ class MegatronEngine(TrainEngine):
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
             return
-        assert self.model is not None
+        assert self.model is not None and len(self.model) > 0
 
         assert self.optimizer_config.type in [
             "adam",
@@ -296,7 +361,7 @@ class MegatronEngine(TrainEngine):
 
         self.optimizer = get_megatron_optimizer(
             mcore_opt_config,
-            [self.model],
+            self.model,
             no_weight_decay_cond=lambda n, p: any(
                 k in n for k in ["bias", "ln.weight", "ln_f.weight"]
             ),
@@ -322,7 +387,7 @@ class MegatronEngine(TrainEngine):
         self.lr_scheduler = lr_scheduler
 
         self.checkpointer = MegatronCheckpointManager(
-            model=[self.model],
+            model=self.model,
             optimizer=self.optimizer,
             lr_scheduler=self.lr_scheduler,
             use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
@@ -379,7 +444,7 @@ class MegatronEngine(TrainEngine):
         if hasattr(self, "optimizer"):
             del self.optimizer
         if hasattr(self, "model"):
-            del self.model
+            self.model = None
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
@@ -394,6 +459,7 @@ class MegatronEngine(TrainEngine):
         self.process_group_initialized = False
 
     def train(self, mode: bool = True):
+        assert self.model is not None
         self.model.train(mode=mode)
         return self
 
@@ -756,7 +822,7 @@ class MegatronEngine(TrainEngine):
 
         save_weights_to_hf_with_mbridge_fast(
             bridge=self.bridge,
-            models=[self.model],
+            models=self.model,
             weights_path=path,
             base_model_path=base_model_path,
             max_shard_size_byte=int(3e9),
@@ -783,7 +849,7 @@ class MegatronEngine(TrainEngine):
         assert self.model is not None, "Model is not initialized."
         load_weights_from_hf_with_mbridge_fast(
             bridge=self.bridge,
-            models=[self.model],
+            models=self.model,
             weights_path=path,
             max_workers=None,
         )

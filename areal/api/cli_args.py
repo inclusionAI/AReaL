@@ -281,6 +281,15 @@ class MegatronEngineConfig:
     ddp: DistributedDataParallelConfig = field(
         default_factory=DistributedDataParallelConfig
     )
+    virtual_pipeline_parallel_size: int | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "Virtual pipeline parallel size for Megatron interleaved schedule. "
+                "Set to >1 to enable VPP; leave unset or <=1 to disable."
+            )
+        },
+    )
     # Don't use MegatronOptimizerConfig here because OmegaConf
     # does not recognize the annotation "torch.dtype"
     overlap_param_gather_with_optimizer_step: bool = False
