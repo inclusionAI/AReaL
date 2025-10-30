@@ -119,6 +119,8 @@ def main(args):
     )
 
     # Configure performance tracer
+    if config.perf_tracer is None:
+        raise ValueError("Performance tracer config must be provided.")
     perf_tracer.configure(config.perf_tracer, rank=rank)
 
     # Run training.

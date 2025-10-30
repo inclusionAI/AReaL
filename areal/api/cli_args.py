@@ -1213,7 +1213,10 @@ class BaseExperimentConfig:
     saver: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
-    perf_tracer: PerfTracerConfig = field(default_factory=PerfTracerConfig)
+    perf_tracer: PerfTracerConfig | None = field(
+        default=None,
+        metadata={"help": "Performance tracer configuration. None means disabled."},
+    )
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
