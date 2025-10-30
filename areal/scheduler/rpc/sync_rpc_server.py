@@ -5,10 +5,11 @@ import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
+from areal.api.cli_args import BaseExperimentConfig
 from areal.api.engine_api import TrainEngine
 from areal.platforms import current_platform
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
-from areal.utils import logging, stats_tracker
+from areal.utils import logging, name_resolve, seeding, stats_tracker
 
 logger = logging.getLogger("SyncRPCServer")
 
@@ -60,6 +61,8 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
             self._handle_call_engine_method()
         elif self.path == "/export_stats":
             self._handle_export_stats()
+        elif self.path == "/configure":
+            self._handle_configure()
         else:
             self._send_json_response({"error": f"Not found: {self.path}"}, 404)
 
@@ -69,6 +72,41 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
         self._send_json_response(
             {"status": "healthy", "engine_initialized": _engine is not None}
         )
+
+    def _handle_configure(self) -> None:
+        try:
+            data = self._read_json_body()
+            if data is None:
+                return
+
+            config = data.get("config")
+            if not config:
+                raise self._send_json_response(
+                    {"error": "Missing 'config' field in request"}, 400
+                )
+            role = data.get("role")
+            if not role:
+                raise self._send_json_response(
+                    {"error": "Missing 'role' field in request"}, 400
+                )
+            rank = data.get("rank")
+            if not rank:
+                raise self._send_json_response(
+                    {"error": "Missing 'rank' field in request"}, 400
+                )
+
+            config = deserialize_value(config)
+            config: BaseExperimentConfig
+
+            name_resolve.reconfigure(config.cluster.name_resolve)
+
+            seeding.set_random_seed(config.seed, key=f"{role}{rank}")
+
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in configure: {e}\n{traceback.format_exc()}"
+            )
+            self._send_json_response({"error": f"Internal server error: {str(e)}"}, 500)
 
     def _handle_create_engine(self) -> None:
         """

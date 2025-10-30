@@ -791,8 +791,8 @@ class SGLangConfig:
         sglang_config: "SGLangConfig",
         tp_size,
         base_gpu_id,
-        host,
-        port,
+        host=None,
+        port=None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
@@ -819,8 +819,6 @@ class SGLangConfig:
                 x.replace("-linear", "") for x in args["lora_target_modules"]
             ]
         args = dict(
-            host=host,
-            port=port,
             # Model and tokenizer
             tokenizer_path=sglang_config.model_path,
             tokenizer_mode="auto",
@@ -838,6 +836,10 @@ class SGLangConfig:
             dist_init_addr=dist_init_addr,
             **args,
         )
+        if host is not None:
+            args["host"] = host
+        if port is not None:
+            args["port"] = port
         if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"):
             raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
         return args

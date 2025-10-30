@@ -76,6 +76,7 @@ class RLVRWorkflow(RolloutWorkflow):
             module_path, fname = self.reward_fn.rsplit(".", 1)
             module = importlib.import_module(module_path)
             self.reward_fn = getattr(module, fname)
+            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
 
         input_ids = self.get_input_ids_fn(
             self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking

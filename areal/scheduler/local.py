@@ -14,6 +14,7 @@ import httpx
 import orjson
 import psutil
 
+from areal.api.cli_args import BaseExperimentConfig
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
 from areal.platforms import current_platform
 from areal.scheduler.exceptions import (
@@ -24,6 +25,7 @@ from areal.scheduler.exceptions import (
     PortAllocationError,
     RPCConnectionError,
     SchedulerError,
+    WorkerConfigurationError,
     WorkerCreationError,
     WorkerFailedError,
     WorkerNotFoundError,
@@ -70,6 +72,7 @@ class LocalScheduler(Scheduler):
     def __init__(
         self,
         gpu_devices: list[int] | None = None,
+        exp_config: BaseExperimentConfig | None = None,
         fileroot: str | None = None,
         experiment_name: str | None = None,
         trial_name: str | None = None,
@@ -94,6 +97,9 @@ class LocalScheduler(Scheduler):
             assert experiment_name is not None
             assert trial_name is not None
             assert fileroot is not None
+            experiment_name = experiment_name or exp_config.experiment_name
+            trial_name = trial_name or exp_config.trial_name
+            fileroot = fileroot or exp_config.cluster.fileroot
             self.log_dir = (
                 Path(fileroot)
                 / "logs"
@@ -101,7 +107,9 @@ class LocalScheduler(Scheduler):
                 / experiment_name
                 / trial_name
             )
-        self.cluster_name = cluster_name
+        self.cluster_name = cluster_name or exp_config.cluster.cluster_name
+        self.exp_config = exp_config
+
         self.startup_timeout = startup_timeout
         self.health_check_interval = health_check_interval
 
@@ -438,7 +446,6 @@ class LocalScheduler(Scheduler):
             logger.info(
                 f"Successfully created {len(workers)} workers for role '{role}'"
             )
-            return worker_ids
 
         except Exception as e:
             # Clean up any workers created before the failure
@@ -446,6 +453,73 @@ class LocalScheduler(Scheduler):
             if isinstance(e, SchedulerError):
                 raise
             raise WorkerCreationError(role, "Unexpected error", str(e)) from e
+
+        # Send HTTP request to configure workers
+        for worker_rank, worker_info in enumerate(workers):
+            worker_id = worker_info.worker.id
+            port = int(worker_info.worker.worker_ports[0])
+            url = f"http://{worker_info.worker.ip}:{port}/configure"
+
+            try:
+                response = self._http_client.post(
+                    url,
+                    content=orjson.dumps(
+                        serialize_value(
+                            dict(
+                                config=self.exp_config,
+                                role=worker_info.role,
+                                rank=worker_rank,
+                            )
+                        )
+                    ),
+                    headers={"Content-Type": "application/json"},
+                    timeout=300.0,
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(f"Configuration successfully on worker '{worker_id}'")
+                    return result.get("result")
+                elif response.status_code == 400:
+                    # Import error or bad request
+                    error_detail = response.json().get("detail", "Unknown error")
+                    raise WorkerConfigurationError(worker_id, error_detail, 400)
+                elif response.status_code == 500:
+                    # Engine initialization failed
+                    error_detail = response.json().get("detail", "Unknown error")
+                    raise WorkerConfigurationError(worker_id, error_detail, 500)
+                else:
+                    raise WorkerConfigurationError(
+                        worker_id,
+                        f"Unexpected status code: {response.status_code}",
+                        response.status_code,
+                    )
+
+            except httpx.ConnectError as e:
+                # Check if worker died
+                if worker_info.process.poll() is not None:
+                    stderr = self._read_log_tail(worker_info.log_file)
+                    raise WorkerFailedError(
+                        worker_id, worker_info.process.returncode, stderr
+                    ) from e
+                raise RPCConnectionError(
+                    worker_id, worker_info.worker.ip, port, str(e)
+                ) from e
+
+            except httpx.TimeoutException as e:
+                raise WorkerConfigurationError(
+                    worker_id, f"Request timed out: {e}"
+                ) from e
+
+            except WorkerConfigurationError:
+                raise
+
+            except Exception as e:
+                raise WorkerConfigurationError(
+                    worker_id, f"Unexpected error: {str(e)}"
+                ) from e
+
+        return worker_ids
 
     def get_workers(self, role: str, timeout: float | None = None) -> list[Worker]:
         """
@@ -874,6 +948,9 @@ class LocalScheduler(Scheduler):
             # Special routing for workflow execution
             url = f"http://{worker_info.worker.ip}:{port}/run_workflow"
             # Serialize kwargs for workflow execution
+            payload = serialize_value(kwargs)
+        elif method == "configure":
+            url = f"http://{worker_info.worker.ip}:{port}/configure"
             payload = serialize_value(kwargs)
         elif method == "export_stats":
             url = f"http://{worker_info.worker.ip}:{port}/export_stats"

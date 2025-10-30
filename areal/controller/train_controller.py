@@ -28,40 +28,12 @@ logger = logging.getLogger("TrainController")
 
 
 class TrainController:
-    """A centralized controller that manages multiple distributed TrainEngine workers.
-
-    TrainController serves as a high-level orchestrator for distributed training across
-    multiple concurrent workers, each running TrainEngine instances. It provides a
-    unified interface for coordinating training operations while abstracting away the
-    complexities of inter-worker communication and data distribution.
-
-    Key differences from TrainEngine:
-        - Operates at a higher abstraction level, managing multiple engine instances
-        - Does not directly perform collective communications (no rank and process group APIs)
-        - Uses `DistributedBatch` for data that spans multiple workers
-        - Provides centralized coordination for distributed training workflows
-
-    The controller handles workload distribution, synchronization, and aggregation
-    of results from the underlying TrainEngine workers, enabling scalable and
-    efficient distributed training.
-
-    Parameters
-    ----------
-    train_engine : type[TrainEngine]
-        The engine class (not instance) to instantiate on each worker
-    config : TrainEngineConfig
-        Configuration for training engines
-    scheduler : Scheduler
-        Scheduler for worker management
-    """
-
     def __init__(
         self,
         train_engine: type[TrainEngine],
         config: TrainEngineConfig,
         scheduler: Scheduler,
     ):
-        # FIXME: add seeding
         self.train_engine = train_engine
         self.config = config
         self.scheduler = scheduler
@@ -71,7 +43,7 @@ class TrainController:
         self.workers_is_dp_head: list[bool] = []  # Only DP head workers
         self.parallel_strategy: ParallelStrategy | None = None
 
-        self.rollout: RolloutController
+        self.rollout: RolloutController = None
         self.weight_update_group_initialized = False
 
         self._worker_role: str
@@ -312,6 +284,21 @@ class TrainController:
         first_result = results[0]
 
         # FIXME: should use a more general data conversion strategy
+        if isinstance(first_result, torch.Tensor):
+            # Assume that tensor shapes are [bs, seqlen, *]
+            max_length = max(tensor.shape[1] for tensor in results)
+            n_dim = first_result.ndim
+            padded_tensors = []
+            for tensor in results:
+                pad_mode = (
+                    (0,) * (2 * (n_dim - 2))
+                    + (0, max_length - tensor.shape[1])
+                    + (0, 0)
+                )
+                padded_tensor = torch.nn.functional.pad(tensor, pad_mode, value=0.0)
+                padded_tensors.append(padded_tensor)
+            return torch.cat(padded_tensors, dim=0)
+
         if isinstance(first_result, dict):
             if len(first_result) == 0:
                 return DistributedBatchMemory.from_dict({})

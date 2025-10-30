@@ -22,9 +22,10 @@ import uvicorn
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import ORJSONResponse
 
+from areal.api.cli_args import BaseExperimentConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
-from areal.utils import logging, stats_tracker
+from areal.utils import logging, name_resolve, seeding, stats_tracker
 
 logger = logging.getLogger("RPCServer")
 
@@ -287,6 +288,7 @@ async def run_workflow(request: Request):
             )
         # Instantiate workflow
         try:
+            workflow_kwargs = deserialize_value(workflow_kwargs)
             workflow = workflow_class(**workflow_kwargs)
             logger.info(f"Workflow '{workflow_path}' instantiated successfully")
         except Exception as e:
@@ -375,6 +377,42 @@ async def run_workflow(request: Request):
         raise
     except Exception as e:
         logger.error(f"Unexpected error in run_workflow: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.post("/configure")
+async def configure(request: Request):
+    try:
+        body = await request.body()
+        data = orjson.loads(body)
+
+        config = data.get("config")
+        if not config:
+            raise HTTPException(
+                status_code=400, detail="Missing 'config' field in request"
+            )
+        role = data.get("role")
+        if not role:
+            raise HTTPException(
+                status_code=400, detail="Missing 'role' field in request"
+            )
+        rank = data.get("rank")
+        if not rank:
+            raise HTTPException(
+                status_code=400, detail="Missing 'rank' field in request"
+            )
+
+        config = deserialize_value(config)
+        config: BaseExperimentConfig
+
+        name_resolve.reconfigure(config.cluster.name_resolve)
+
+        seeding.set_random_seed(config.seed, key=f"{role}{rank}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in configure: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 

@@ -20,6 +20,17 @@ class WorkerCreationError(SchedulerError):
         super().__init__(message)
 
 
+class WorkerConfigurationError(SchedulerError):
+    def __init__(self, worker_key: str, reason: str, details: str = ""):
+        self.worker_key = worker_key
+        self.reason = reason
+        self.details = details
+        message = f"Failed to configure worker '{worker_key}': {reason}"
+        if details:
+            message += f"\nDetails: {details}"
+        super().__init__(message)
+
+
 class WorkerFailedError(SchedulerError):
     """Raised when a worker process fails or exits unexpectedly."""
 

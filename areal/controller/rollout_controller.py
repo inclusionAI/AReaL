@@ -76,18 +76,6 @@ class RolloutController:
         config: InferenceEngineConfig,
         scheduler: Scheduler,
     ):
-        # FIXME: add seeding
-        """Initialize the RolloutController.
-
-        Parameters
-        ----------
-        inf_engine : type[InferenceEngine]
-            The inference engine class (not instance) to create on workers
-        config : InferenceEngineConfig
-            Configuration for the inference engines
-        scheduler : Scheduler
-            Scheduler for managing workers
-        """
         self.inf_engine = inf_engine
         self.config = config
         self.scheduler = scheduler
@@ -121,6 +109,7 @@ class RolloutController:
         self,
         role: str,
         alloc_mode: AllocationMode,
+        engine_args: dict[str, Any],
         *args,
         **kwargs,
     ):
@@ -156,6 +145,7 @@ class RolloutController:
         asyncio.run(
             self._async_initialize(
                 job,
+                engine_args,
                 *args,
                 **kwargs,
             )
@@ -183,7 +173,9 @@ class RolloutController:
             max_staleness=self.config.max_head_offpolicyness,
         )
 
-    async def _async_initialize(self, job: Job, *args, **kwargs):
+    async def _async_initialize(
+        self, job: Job, engine_args: dict[str, Any], *args, **kwargs
+    ):
         # Create workers via scheduler
         self.logger.info("Creating workers via scheduler...")
         worker_ids = self.scheduler.create_workers(job=job)
@@ -212,6 +204,13 @@ class RolloutController:
         self.logger.info("Engine created on all workers!")
 
         self.logger.info("Calling engine initialization...")
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker_id=worker.id, method="create_engine", engine_args=engine_args
+            )
+            for worker in self.workers
+        ]
+        await asyncio.gather(*tasks)
         tasks = [
             self.scheduler.async_call_engine(
                 worker_id=worker.id, method="initialize", *args, **kwargs
@@ -688,7 +687,7 @@ class RolloutController:
             await asyncio.gather(*tasks)
 
         def update_all_workers():
-            asyncio.run(_update_all_workers)
+            asyncio.run(_update_all_workers())
 
         return self.executor.submit(update_all_workers)
 
