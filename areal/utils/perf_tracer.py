@@ -94,6 +94,16 @@ def _normalize_category(category: CategoryLike) -> str:
     return PerfTraceCategory.MISC.value
 
 
+def _normalize_save_interval(value: int | None) -> int:
+    try:
+        interval = int(value) if value is not None else 1
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        interval = 1
+    if interval <= 0:
+        return 1
+    return interval
+
+
 class _NullContext(AbstractContextManager, AbstractAsyncContextManager):
     def __enter__(self):
         return self
@@ -124,6 +134,7 @@ class PerfTracer:
         self._thread_meta_emitted: set[int] = set()
         self._process_meta_emitted: set[int] = set()
         self._output_path = _default_trace_path(config)
+        self._save_interval_steps = _normalize_save_interval(config.save_interval_steps)
 
     # ------------------------------------------------------------------
     # Configuration helpers
@@ -145,6 +156,7 @@ class PerfTracer:
         self.set_rank(rank)
         self._output_path = _default_trace_path(config)
         self.set_enabled(config.enabled)
+        self._save_interval_steps = _normalize_save_interval(config.save_interval_steps)
 
     # ------------------------------------------------------------------
     # Core recording API
@@ -206,8 +218,16 @@ class PerfTracer:
     # ------------------------------------------------------------------
     # Persistence helpers
     # ------------------------------------------------------------------
-    def save(self) -> None:
+    def save(self, *, step: int | None = None, force: bool = False) -> None:
         if not self._enabled:
+            return
+
+        if (
+            not force
+            and step is not None
+            and self._save_interval_steps > 1
+            and ((step + 1) % self._save_interval_steps) != 0
+        ):
             return
 
         with self._lock:
@@ -240,6 +260,9 @@ class PerfTracer:
             self._process_meta_emitted = set()
             self._origin_ns = time.perf_counter_ns()
             self._enabled = self._config.enabled
+            self._save_interval_steps = _normalize_save_interval(
+                self._config.save_interval_steps
+            )
 
     # ------------------------------------------------------------------
     # Internal utilities
@@ -415,7 +438,7 @@ def _save_at_exit() -> None:
     if tracer is None or not tracer.enabled:
         return
     try:
-        tracer.save()
+        tracer.save(force=True)
     except Exception as exc:  # pragma: no cover
         logger.error("Failed to flush perf trace on exit: %s", exc, exc_info=True)
 
@@ -500,11 +523,11 @@ def instant(
     tracer.instant(name, category=category, args=args)
 
 
-def save() -> None:
+def save(*, step: int | None = None, force: bool = False) -> None:
     tracer = GLOBAL_TRACER
     if tracer is None:
         return
-    tracer.save()
+    tracer.save(step=step, force=force)
 
 
 __all__ = [

@@ -809,12 +809,13 @@ Refer to Megatron-LM documentation for implementation details.
 
 Configuration for perf tracer emission.
 
-| Parameter         | Type    | Default      | Description                                                                    |
-| ----------------- | ------- | ------------ | ------------------------------------------------------------------------------ |
-| `experiment_name` | string  | **Required** | -                                                                              |
-| `trial_name`      | string  | **Required** | -                                                                              |
-| `fileroot`        | string  | **Required** | -                                                                              |
-| `enabled`         | boolean | `False`      | Explicitly enable or disable perf tracing. Set to true to capture perf traces. |
+| Parameter             | Type    | Default      | Description                                                                                                                 |
+| --------------------- | ------- | ------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`     | string  | **Required** | -                                                                                                                           |
+| `trial_name`          | string  | **Required** | -                                                                                                                           |
+| `fileroot`            | string  | **Required** | -                                                                                                                           |
+| `enabled`             | boolean | `False`      | Explicitly enable or disable perf tracing. Set to true to capture perf traces.                                              |
+| `save_interval_steps` | integer | `1`          | Flush trace events to disk every N calls to save(step=...). A value of 1 writes on every step; values \<= 0 fall back to 1. |
 
 (section-scheduler)=
 

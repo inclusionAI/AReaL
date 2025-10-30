@@ -79,7 +79,7 @@ def main() -> None:
         if world_size > 1:
             dist.barrier()
     finally:
-        perf_tracer.save()
+        perf_tracer.save(force=True)
         if dist.is_initialized():
             dist.destroy_process_group()
 

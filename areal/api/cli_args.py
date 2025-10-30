@@ -975,6 +975,15 @@ class PerfTracerConfig:
             )
         },
     )
+    save_interval_steps: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Flush trace events to disk every N calls to save(step=...). "
+                "A value of 1 writes on every step; values <= 0 fall back to 1."
+            )
+        },
+    )
 
 
 @dataclass

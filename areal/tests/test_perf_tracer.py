@@ -287,6 +287,35 @@ def test_module_level_save_helper(tmp_path):
     assert "module-level-mark" in event_names
 
 
+def test_perf_tracer_respects_save_interval(tmp_path):
+    config = _make_config(tmp_path, experiment="interval", trial="steps")
+    config.save_interval_steps = 3
+    tracer = perf_tracer.PerfTracer(config, rank=0)
+    trace_path = _expected_trace_path(config)
+
+    for step in (0, 1):
+        tracer.instant(f"mark-{step}", args={"step": step})
+        tracer.save(step=step)
+        assert not trace_path.exists()
+
+    tracer.instant("mark-2", args={"step": 2})
+    tracer.save(step=2)
+    assert trace_path.exists()
+    events = _load_trace_events(trace_path)
+    names = {evt["name"] for evt in events if evt.get("ph") != "M"}
+    assert {"mark-0", "mark-1", "mark-2"}.issubset(names)
+
+    tracer.instant("mark-3", args={"step": 3})
+    tracer.save(step=3)
+    tracer.instant("mark-4", args={"step": 4})
+    tracer.save(step=4)
+    tracer.save(force=True)
+
+    events = _load_trace_events(trace_path)
+    names = {evt["name"] for evt in events if evt.get("ph") != "M"}
+    assert {"mark-3", "mark-4"}.issubset(names)
+
+
 def _run_perf_tracer_torchrun(tmp_path: Path, world_size: int) -> None:
     port = find_free_ports(1)[0]
     env = {

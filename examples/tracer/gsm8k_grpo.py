@@ -329,7 +329,7 @@ def main(args):
         # Resume rollout
         rollout.resume()
 
-        perf_tracer.save()
+        perf_tracer.save(step=global_step)
 
     stats_logger.close()
     eval_rollout.destroy()
@@ -337,6 +337,7 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
+    perf_tracer.save(force=True)
 
 
 if __name__ == "__main__":
