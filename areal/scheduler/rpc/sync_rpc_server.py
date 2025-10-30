@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from areal.api.engine_api import TrainEngine
+from areal.platforms import current_platform
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging, stats_tracker
 
@@ -191,12 +192,20 @@ class SyncRPCHandler(BaseHTTPRequestHandler):
                     logger.info(
                         f"Broadcasting data for TrainEngine method: {method_name}"
                     )
-                    from areal.utils.data import broadcast_tensor_container
+                    from areal.utils.data import (
+                        broadcast_tensor_container,
+                        tensor_container_to,
+                    )
 
+                    # TODO: to device here
+                    args = tensor_container_to(args, current_platform.current_device())
                     args = broadcast_tensor_container(
                         args,
                         src_rank=_engine.current_data_parallel_head(),
                         group=_engine.context_and_model_parallel_group,
+                    )
+                    kwargs = tensor_container_to(
+                        kwargs, current_platform.current_device()
                     )
                     kwargs = broadcast_tensor_container(
                         kwargs,

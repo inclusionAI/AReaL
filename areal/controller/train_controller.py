@@ -127,13 +127,17 @@ class TrainController:
             role=self._worker_role,
         )
         # Create environment variables to mimic torchrun
+        # FIXME: here master_addr and master_port only work in the local setting
+        port = find_free_ports(1)[0]
         for i, task in enumerate(job.tasks):
             task.env_vars["RANK"] = str(i)
             task.env_vars["WORLD_SIZE"] = str(alloc_mode.train.world_size)
-            task.env_vars["LOCAL_RANK"] = str(i)
+            task.env_vars["LOCAL_RANK"] = str(
+                0
+            )  # because we have only set 1 CUDA_VISIBLE_DEVICES for each process
             # TODO: find a real master addr with scheduler
             task.env_vars["MASTER_ADDR"] = "localhost"
-            task.env_vars["MASTER_PORT"] = str(find_free_ports(1)[0])
+            task.env_vars["MASTER_PORT"] = str(port)
 
         # Create workers via scheduler
         self.logger.info("Creating workers via scheduler...")

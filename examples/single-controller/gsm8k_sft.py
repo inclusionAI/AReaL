@@ -71,6 +71,7 @@ def main(args):
         alloc_mode=allocation_mode,
         ft_spec=ft_spec,
         schedule_strategy=ScheduleStrategy(),
+        addr=None,
     )
 
     # Run training.

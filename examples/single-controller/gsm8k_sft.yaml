@@ -38,9 +38,7 @@ model:
     type: worker
     port_count: 1
     gpu: 1
-    # AReaL will by default uses `python3 -m areal.scheduler.rpc.rpc_server --port {PORT}`
-    # where ${PORT} is dynamically allocated
-    # cmd: python3 -m areal.scheduler.rpc.rpc_server
+    cmd: python3 -m areal.scheduler.rpc.sync_rpc_server
 
 train_dataset:
   batch_size: 128

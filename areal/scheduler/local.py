@@ -4,6 +4,7 @@ import getpass
 import os
 import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -370,17 +371,23 @@ class LocalScheduler(Scheduler):
                 cmd.extend(["--port", str(ports[0])])
 
                 logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
+                if cmd[0].startswith("python"):
+                    cmd[0] = sys.executable
 
+                cmd = (
+                    " ".join(str(k) + "=" + str(v) for k, v in env.items())
+                    + " stdbuf -oL "
+                    + " ".join(cmd)
+                )
+                cmd = f"{cmd} 2>&1 | tee -a {log_file}"
                 # Spawn subprocess
                 try:
-                    with open(log_file, "w") as log_f:
-                        process = subprocess.Popen(
-                            cmd,
-                            env=env,
-                            stdout=log_f,
-                            stderr=subprocess.STDOUT,
-                            start_new_session=True,  # Create new process group
-                        )
+                    process = subprocess.Popen(
+                        cmd,
+                        shell=isinstance(cmd, str),
+                        stdout=sys.stdout,
+                        stderr=sys.stdout,
+                    )
                 except Exception as e:
                     self._cleanup_workers(workers)
                     raise WorkerCreationError(
