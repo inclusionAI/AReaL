@@ -94,14 +94,8 @@ def _normalize_category(category: CategoryLike) -> str:
     return PerfTraceCategory.MISC.value
 
 
-def _normalize_save_interval(value: int | None) -> int:
-    try:
-        interval = int(value) if value is not None else 1
-    except (TypeError, ValueError):  # pragma: no cover - defensive
-        interval = 1
-    if interval <= 0:
-        return 1
-    return interval
+def _normalize_save_interval(value: int) -> int:
+    return value if value > 0 else 1
 
 
 class _NullContext(AbstractContextManager, AbstractAsyncContextManager):

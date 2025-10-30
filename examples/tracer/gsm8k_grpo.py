@@ -118,7 +118,7 @@ def main(args):
     )
 
     # Configure performance tracer
-    if config.perf_tracer is None:
+    if config.perf_tracer is not None:
         perf_tracer.configure(config.perf_tracer, rank=rank)
 
     # Run training.
