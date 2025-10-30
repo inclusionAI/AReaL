@@ -252,7 +252,7 @@ def estimate_stage_parameter_buckets(
         if getattr(tf_conf, "moe_router_enable_expert_bias", False):
             router_params += num_moe_experts
 
-        expert_params = mlp_params(int(moe_hidden_size)) * max(num_local_experts, 1)
+        expert_params = mlp_params(int(moe_hidden_size)) * num_local_experts
 
         shared_size = getattr(tf_conf, "moe_shared_expert_intermediate_size", None)
         shared_params = mlp_params(int(shared_size)) if shared_size else 0.0
