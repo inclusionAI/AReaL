@@ -491,9 +491,7 @@ class MegatronEngine(TrainEngine):
 
         for rank_names in all_names:
             valid = len(named_tensors) == len(rank_names)
-            assert valid, (
-                f"mismatch names length: {len(named_tensors)} != {len(rank_names)}"
-            )
+            assert valid, f"mismatch length: {len(named_tensors)}!={len(rank_names)}"
 
         gathered_params = [[] for _ in range(world_size)]
         handles = []
@@ -734,9 +732,7 @@ class MegatronEngine(TrainEngine):
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            assert not meta.with_optim, (
-                "HF format does not support optimizer state saving, please use DCP format instead."
-            )
+            assert not meta.with_optim, "Please use DCP format for optimizer saving."
             self._save_model_to_hf(
                 meta.path,
                 tokenizer=meta.tokenizer,
