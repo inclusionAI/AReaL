@@ -1,6 +1,9 @@
 import math
 
 from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.pipeline_parallel_layer_layout import (
+    PipelineParallelLayerLayout,
+)
 from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import ParallelStrategy
@@ -52,12 +55,20 @@ def configure_pipeline_layer_splits(
         if idx == pp_size - 1:
             stage_layers.append("loss")
         layout.append(stage_layers)
+    layout = PipelineParallelLayerLayout(
+        layout=layout,
+        pipeline_model_parallel_size=pp_size,
+    )
 
     setattr(tf_config, "pipeline_model_parallel_layout", layout)
     if hasattr(tf_config, "num_layers_in_first_pipeline_stage"):
         setattr(tf_config, "num_layers_in_first_pipeline_stage", None)
     if hasattr(tf_config, "num_layers_in_last_pipeline_stage"):
         setattr(tf_config, "num_layers_in_last_pipeline_stage", None)
+    if hasattr(tf_config, "account_for_embedding_in_pipeline_split"):
+        setattr(tf_config, "account_for_embedding_in_pipeline_split", False)
+    if hasattr(tf_config, "account_for_loss_in_pipeline_split"):
+        setattr(tf_config, "account_for_loss_in_pipeline_split", False)
 
     stage_loads: list[float] = []
     cursor = 0
