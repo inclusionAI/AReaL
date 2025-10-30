@@ -168,7 +168,7 @@ def test_pipeline_layer_splits(model_name_or_path: str, n_pp: int):
     from areal.models.mcore.registry import make_hf_and_mcore_config
     from areal.utils.mcore.pipeline_parallel import configure_pipeline_layer_splits
 
-    parallel_strategy = ParallelStrategy
+    parallel_strategy = ParallelStrategy(pipeline_parallel_size=n_pp)
     bridge = mbridge.AutoBridge.from_pretrained(model_name_or_path)
     hf_config, tf_config = make_hf_and_mcore_config(model_name_or_path, bridge=bridge)
     tf_config = configure_pipeline_layer_splits(parallel_strategy, hf_config, tf_config)
