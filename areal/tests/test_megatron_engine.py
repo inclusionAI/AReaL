@@ -157,22 +157,3 @@ def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
     logger.info(f"Load done, time cost: {time.perf_counter() - start:.4f} seconds.")
     new = engine.forward(input_=mock_input)
     assert torch.allclose(old, new)
-
-
-@pytest.mark.parametrize("model_name_or_path", [])
-@pytest.mark.parametrize("n_pp", [2, 4, 5, 8])
-def test_pipeline_layer_splits(model_name_or_path: str, n_pp: int):
-    import mbridge
-
-    from areal.api.alloc_mode import ParallelStrategy
-    from areal.models.mcore.registry import make_hf_and_mcore_config
-    from areal.utils.mcore.pipeline_parallel import configure_pipeline_layer_splits
-
-    parallel_strategy = ParallelStrategy(pipeline_parallel_size=n_pp)
-    bridge = mbridge.AutoBridge.from_pretrained(model_name_or_path)
-    hf_config, tf_config = make_hf_and_mcore_config(model_name_or_path, bridge=bridge)
-    tf_config = configure_pipeline_layer_splits(parallel_strategy, hf_config, tf_config)
-    print(
-        f"model={model_name_or_path} n_pp={n_pp} \n"
-        f"tf_config.pipeline_model_parallel_layout={tf_config.pipeline_model_parallel_layout}"
-    )

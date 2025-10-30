@@ -153,6 +153,12 @@ class MegatronEngine(TrainEngine):
             )
             self._load_model_from_hf(self.config.path)
 
+        module = self.model.module if isinstance(self.model, DDP) else self.model
+        total_params = sum(param.numel() for param in module.parameters())
+        self.logger.info(
+            f"Model parameter count: {total_params / 1e6:.2f}M, pp_stage={mpu.get_pipeline_model_parallel_rank()}"
+        )
+
         if self.config.disable_dropout:
             disable_dropout_in_model(self.model)
 

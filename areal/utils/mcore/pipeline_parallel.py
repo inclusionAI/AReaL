@@ -59,9 +59,24 @@ def configure_pipeline_layer_splits(
     if hasattr(tf_config, "num_layers_in_last_pipeline_stage"):
         setattr(tf_config, "num_layers_in_last_pipeline_stage", None)
 
+    stage_loads: list[float] = []
+    cursor = 0
+    for idx, length in enumerate(stage_lengths):
+        load = 0.0
+        if idx == 0:
+            load += embedding_params
+        stage_end = min(cursor + length, len(layer_param_weights))
+        if stage_end > cursor:
+            load += sum(layer_param_weights[cursor:stage_end])
+        cursor = stage_end
+        if idx == pp_size - 1:
+            load += output_params
+        stage_loads.append(load)
+
     logger.info(
-        "Configured pipeline layout (per-stage decoder counts): %s (pp=%s)",
+        "Configured pipeline layout (per-stage decoder counts / params): %s / %s (pp=%s)",
         stage_lengths,
+        [f"{value / 1e6:.2f}M" for value in stage_loads],
         pp_size,
     )
     return tf_config
