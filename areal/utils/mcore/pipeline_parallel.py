@@ -229,7 +229,7 @@ def estimate_stage_parameter_buckets(
     if getattr(hf_conf, "embedding_bias", False):
         embedding_params += float(vocab_size)
 
-    output_params = float(vocab_size * hidden_size + vocab_size + hidden_size)
+    output_params = float(vocab_size * hidden_size)
     if getattr(hf_conf, "tie_word_embeddings", False):
         output_params = embedding_params
 
