@@ -48,6 +48,7 @@ def vllm_server():
             skip_tokenizer_init=False,
             model=MODEL_PATH,
             gpu_memory_utilization=0.1,
+            max_model_len=4096,
         ),
         host=HOST,
         port=PORT,
@@ -82,6 +83,8 @@ def _dummy_reward_fn(*args, **kwargs):
     not IS_VLLM_INSTALLED, reason="Skip the test because vllm is not installed."
 )
 @pytest.mark.parametrize("n_samples", [1, 2, 4])
+@pytest.mark.slow
+@pytest.mark.ci
 def test_remote_vllm_rollout(vllm_server, n_samples):
     from areal.engine.vllm_remote import RemotevLLMEngine
     from areal.workflow.rlvr import RLVRWorkflow
@@ -124,6 +127,8 @@ def test_remote_vllm_rollout(vllm_server, n_samples):
 @pytest.mark.parametrize("ofp", [1, 4, 16])
 @pytest.mark.parametrize("bs", [2, 4])
 @pytest.mark.parametrize("n_samples", [2, 1])
+@pytest.mark.slow
+@pytest.mark.ci
 def test_remote_vllm_staleness_control(vllm_server, bs, ofp, n_samples):
     from areal.engine.vllm_remote import RemotevLLMEngine
     from areal.workflow.rlvr import RLVRWorkflow
@@ -187,6 +192,8 @@ def test_remote_vllm_staleness_control(vllm_server, bs, ofp, n_samples):
 @pytest.mark.skipif(
     not IS_VLLM_INSTALLED, reason="Skip the test because vllm is not installed."
 )
+@pytest.mark.slow
+@pytest.mark.ci
 def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, vllm_server):
     # setup FSDP engine
     from areal.api.cli_args import OptimizerConfig, TrainEngineConfig
