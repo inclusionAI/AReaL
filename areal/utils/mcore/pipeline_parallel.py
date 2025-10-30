@@ -1,0 +1,293 @@
+import math
+
+from megatron.core.transformer import TransformerConfig
+from transformers import PretrainedConfig
+
+from areal.api.alloc_mode import ParallelStrategy
+from areal.utils import logging
+
+logger = logging.getLogger("MCore PipelineParallel")
+
+
+def configure_pipeline_layer_splits(
+    parallel_strategy: ParallelStrategy,
+    hf_config: PretrainedConfig,
+    tf_config: TransformerConfig,
+) -> TransformerConfig:
+    pp_size = parallel_strategy.pipeline_parallel_size
+    if pp_size <= 1:
+        return tf_config
+    total_layers = getattr(tf_config, "num_layers", None)
+    if not isinstance(total_layers, int) or total_layers <= 0:
+        return tf_config
+
+    layer_param_weights, embedding_params, output_params = (
+        estimate_stage_parameter_buckets(hf_config, tf_config)
+    )
+    if not layer_param_weights or all(weight <= 0 for weight in layer_param_weights):
+        return tf_config
+
+    if len(layer_param_weights) != total_layers:
+        total_layers = min(total_layers, len(layer_param_weights))
+        layer_param_weights = layer_param_weights[:total_layers]
+
+    stage_lengths = _compute_stage_layer_lengths(
+        layer_param_weights,
+        embedding_params,
+        output_params,
+        pp_size,
+    )
+    if not stage_lengths:
+        logger.warning(
+            "Falling back to default pipeline layout; unable to find valid stage partition."
+        )
+        return tf_config
+
+    layout: list[list[str]] = []
+    for idx, length in enumerate(stage_lengths):
+        stage_layers: list[str] = []
+        if idx == 0:
+            stage_layers.append("embedding")
+        stage_layers.extend(["decoder"] * length)
+        if idx == pp_size - 1:
+            stage_layers.append("loss")
+        layout.append(stage_layers)
+
+    setattr(tf_config, "pipeline_model_parallel_layout", layout)
+    if hasattr(tf_config, "num_layers_in_first_pipeline_stage"):
+        setattr(tf_config, "num_layers_in_first_pipeline_stage", None)
+    if hasattr(tf_config, "num_layers_in_last_pipeline_stage"):
+        setattr(tf_config, "num_layers_in_last_pipeline_stage", None)
+
+    logger.info(
+        "Configured pipeline layout (per-stage decoder counts): %s (pp=%s)",
+        stage_lengths,
+        pp_size,
+    )
+    return tf_config
+
+
+def _compute_stage_layer_lengths(
+    layer_param_weights: list[float],
+    embedding_params: float,
+    output_params: float,
+    pp_size: int,
+) -> list[int]:
+    total_layers = len(layer_param_weights)
+    if total_layers == 0 or pp_size <= 0:
+        return []
+
+    prefix_sums = [0.0]
+    for value in layer_param_weights:
+        prefix_sums.append(prefix_sums[-1] + float(value))
+
+    def segment_sum(start: int, end: int) -> float:
+        return prefix_sums[end] - prefix_sums[start]
+
+    stages = pp_size
+    dp = [[math.inf] * (total_layers + 1) for _ in range(stages + 1)]
+    choice = [[-1] * (total_layers + 1) for _ in range(stages + 1)]
+    dp[0][0] = 0.0
+
+    for stage in range(1, stages + 1):
+        base = 0.0
+        if stage == 1:
+            base = embedding_params
+        elif stage == stages:
+            base = output_params
+
+        for end in range(0, total_layers + 1):
+            for start in range(0, end + 1):
+                prev = dp[stage - 1][start]
+                if not math.isfinite(prev):
+                    continue
+                if stage not in (1, stages) and start == end:
+                    continue
+                load = base + segment_sum(start, end)
+                candidate = max(prev, load)
+                if candidate < dp[stage][end]:
+                    dp[stage][end] = candidate
+                    choice[stage][end] = start
+
+    if not math.isfinite(dp[stages][total_layers]):
+        return []
+
+    lengths = [0] * stages
+    idx = total_layers
+    for stage in range(stages, 0, -1):
+        split = choice[stage][idx]
+        if split < 0:
+            return []
+        lengths[stage - 1] = idx - split
+        idx = split
+
+    return lengths
+
+
+def estimate_stage_parameter_buckets(
+    hf_conf: PretrainedConfig, tf_conf: TransformerConfig
+) -> tuple[list[float], float, float]:
+    total_layers = getattr(tf_conf, "num_layers", None)
+    if not isinstance(total_layers, int) or total_layers <= 0:
+        total_layers = getattr(hf_conf, "num_hidden_layers", 0)
+    if not isinstance(total_layers, int) or total_layers <= 0:
+        return ([], 0.0, 0.0)
+
+    hidden_size = getattr(hf_conf, "hidden_size", None)
+    if hidden_size is None:
+        hidden_size = getattr(tf_conf, "hidden_size", None)
+    if hidden_size is None or hidden_size <= 0:
+        return ([], 0.0, 0.0)
+
+    intermediate_size = getattr(
+        hf_conf,
+        "intermediate_size",
+        getattr(tf_conf, "ffn_hidden_size", hidden_size * 4),
+    )
+    num_heads = getattr(
+        hf_conf, "num_attention_heads", getattr(tf_conf, "num_attention_heads", 1)
+    )
+    num_kv_heads = getattr(
+        hf_conf,
+        "num_key_value_heads",
+        getattr(tf_conf, "num_query_groups", num_heads),
+    )
+    head_dim = getattr(hf_conf, "head_dim", None)
+    if head_dim is None:
+        kv_channels = getattr(tf_conf, "kv_channels", None)
+        if kv_channels:
+            head_dim = kv_channels
+        else:
+            head_dim = hidden_size // max(num_heads, 1)
+
+    attention_bias = bool(
+        getattr(hf_conf, "attention_bias", False)
+        or getattr(tf_conf, "add_bias_linear", False)
+    )
+    add_bias_linear = bool(getattr(tf_conf, "add_bias_linear", False))
+    gated_linear_unit = bool(getattr(tf_conf, "gated_linear_unit", False))
+
+    def mlp_params(intermediate: int | None) -> float:
+        if not intermediate or intermediate <= 0:
+            return 0.0
+        proj = hidden_size * intermediate
+        gate = hidden_size * intermediate if gated_linear_unit else 0.0
+        down = intermediate * hidden_size
+        bias = 0.0
+        if add_bias_linear:
+            bias = (2 if gated_linear_unit else 1) * intermediate + hidden_size
+        return float(proj + gate + down + bias)
+
+    q_params = hidden_size * (num_heads * head_dim)
+    kv_proj = num_kv_heads * head_dim
+    k_params = hidden_size * kv_proj
+    v_params = hidden_size * kv_proj
+    o_params = hidden_size * hidden_size
+    attn_bias_params = 0.0
+    if attention_bias:
+        attn_bias_params = (num_heads * head_dim) + (2 * kv_proj) + hidden_size
+
+    attn_and_norm = (
+        q_params
+        + k_params
+        + v_params
+        + o_params
+        + attn_bias_params
+        + (2.0 * hidden_size)
+    )
+    dense_mlp = mlp_params(int(intermediate_size))
+    dense_layer_params = float(attn_and_norm + dense_mlp)
+
+    vocab_size = getattr(hf_conf, "vocab_size", 0)
+    embedding_params = float(vocab_size * hidden_size)
+    if getattr(hf_conf, "embedding_bias", False):
+        embedding_params += float(vocab_size)
+
+    output_params = float(vocab_size * hidden_size + vocab_size + hidden_size)
+    if getattr(hf_conf, "tie_word_embeddings", False):
+        output_params = float(vocab_size + hidden_size)
+
+    layer_weights: list[float] = [dense_layer_params] * total_layers
+
+    num_moe_experts = getattr(tf_conf, "num_moe_experts", None)
+    if num_moe_experts is None:
+        num_moe_experts = getattr(hf_conf, "num_experts", None)
+    if num_moe_experts:
+        moe_hidden_size = getattr(tf_conf, "moe_ffn_hidden_size", None)
+        if moe_hidden_size is None:
+            moe_hidden_size = getattr(hf_conf, "moe_intermediate_size", None)
+        if moe_hidden_size is None:
+            moe_hidden_size = intermediate_size
+
+        expert_parallel_size = getattr(tf_conf, "expert_model_parallel_size", 1) or 1
+        num_local_experts = math.ceil(num_moe_experts / max(expert_parallel_size, 1))
+
+        router_params = hidden_size * num_moe_experts
+        if getattr(tf_conf, "moe_router_enable_expert_bias", False):
+            router_params += num_moe_experts
+
+        expert_params = mlp_params(int(moe_hidden_size)) * max(num_local_experts, 1)
+
+        shared_size = getattr(tf_conf, "moe_shared_expert_intermediate_size", None)
+        shared_params = mlp_params(int(shared_size)) if shared_size else 0.0
+
+        moe_layer_params = float(
+            attn_and_norm + router_params + expert_params + shared_params
+        )
+
+        def normalize_idx(value: int) -> int | None:
+            if not isinstance(value, int):
+                return None
+            if 0 <= value < total_layers:
+                return value
+            if 1 <= value <= total_layers:
+                return value - 1
+            return None
+
+        moe_layer_indices: set[int] = set()
+        freq_candidates = (
+            getattr(tf_conf, "moe_layer_freq", None),
+            getattr(hf_conf, "moe_layer_freq", None),
+            getattr(hf_conf, "decoder_sparse_step", None),
+        )
+
+        for freq in freq_candidates:
+            if freq is None:
+                continue
+            if isinstance(freq, int):
+                step = abs(freq)
+                if step == 0:
+                    continue
+                if step == 1:
+                    moe_layer_indices.update(range(total_layers))
+                else:
+                    for idx in range(step - 1, total_layers, step):
+                        moe_layer_indices.add(idx)
+            elif isinstance(freq, (list, tuple, set)):
+                for raw in freq:
+                    idx = normalize_idx(raw)
+                    if idx is not None:
+                        moe_layer_indices.add(idx)
+
+        explicit_moe_layers = getattr(hf_conf, "moe_layers", None)
+        if isinstance(explicit_moe_layers, (list, tuple, set)):
+            for raw in explicit_moe_layers:
+                idx = normalize_idx(raw)
+                if idx is not None:
+                    moe_layer_indices.add(idx)
+
+        mlp_only_layers = getattr(hf_conf, "mlp_only_layers", None)
+        if isinstance(mlp_only_layers, (list, tuple, set)):
+            for raw in mlp_only_layers:
+                idx = normalize_idx(raw)
+                if idx is not None and idx in moe_layer_indices:
+                    moe_layer_indices.discard(idx)
+
+        if not moe_layer_indices and num_moe_experts:
+            moe_layer_indices.update(range(total_layers))
+
+        for idx in moe_layer_indices:
+            if 0 <= idx < total_layers:
+                layer_weights[idx] = moe_layer_params
+
+    return (layer_weights, embedding_params, output_params)
