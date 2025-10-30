@@ -772,9 +772,7 @@ class MegatronEngine(TrainEngine):
 
     def load(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            assert not meta.with_optim, (
-                "HF format does not support optimizer state loading, please use DCP format instead."
-            )
+            assert not meta.with_optim, "Please use DCP format for optimizer loading."
             self._load_model_from_hf(meta.path)
         elif meta.weight_format == "dcp":
             self.checkpointer.load_checkpoint(meta.path, with_optimizer=meta.with_optim)
