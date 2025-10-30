@@ -3,9 +3,14 @@ import os
 import sys
 from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import dataclass, field
+import json
+import re
+from concurrent.futures import ProcessPoolExecutor
 
 import torch.distributed as dist
 from openai.types.chat import ChatCompletion
+from openai import AsyncOpenAI
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
@@ -17,7 +22,6 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.proxy import (
-    PatchedAsyncOpenAI,
     ProxyServer,
     ProxySession,
 )
@@ -33,14 +37,32 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
+from areal.experimental.openai.agent.math.math_agent import run_agent_return_reward
+# from areal.experimental.openai.agent.math.multi_agent_math_workflow import run_agent_return_reward
+
+
+# def simplified_gsm8k_reward_fn(completions: str, answer: str):
+#     from areal.reward.math_parser import process_results
+
+#     return int(process_results(completions, answer)[0])
+
+# # chat
+# async def run_agent_return_reward(data) -> float:
+#     real_data = data["real_data"]
+#     gconfig: GenerationHyperparameters = data["gconfig"]
+#     async with AsyncOpenAI() as client:
+#         completion: ChatCompletion = await client.chat.completions.create(
+#                 messages=real_data["messages"],
+#                 model="default",
+#                 **gconfig.to_openai_args_dict(),
+#             )
+#     reward = float(
+#         simplified_gsm8k_reward_fn(completion.choices[0].message.content, real_data["answer"])
+#     )
+#     return reward
+
 
 logger = logging.getLogger("GSM8K GRPO Proxy Example")
-
-
-def simplified_gsm8k_reward_fn(completions: str, answer: str):
-    from areal.reward.math_parser import process_results
-
-    return int(process_results(completions, answer)[0])
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
@@ -48,61 +70,46 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
     return int(process_results(completions, answer)[0])
 
+# pickle used by ProcessPoolExecutor can not serialize a local function, so we need a global function
+def sync_run_task(data, proxy_addr):
+    async def run_task(data, proxy_addr):
+        try:
+            async with ProxySession(base_url=proxy_addr) as session:
+                session_id = session.session_id
+                reward = await run_agent_return_reward(data)
+                await session.set_reward(reward)
+        except Exception as e:
+            logger.error(f"Error in sync_run_task: {e}")
+            error_message = f"API call failed. Exception: {e}"
+            return error_message, None, 0.0
 
-class BasicOpenAIAgent:
-    def __init__(
-        self,
-        proxy_server_url: str,
-        gconfig: GenerationHyperparameters,
-        reward_fn: callable,
-    ):
-        self.proxy_server_url = proxy_server_url
-        self.gconfig = gconfig
-        self.reward_fn = reward_fn
-        self.client = PatchedAsyncOpenAI(base_url=proxy_server_url)
-
-    async def run_agent(self, messages: list[dict], answer: str) -> tuple[float, str]:
-        async with ProxySession(base_url=self.proxy_server_url) as session:
-            session_id = session.session_id
-            completion: ChatCompletion = await self.client.chat.completions.create(
-                messages=messages,
-                model="default",  # no need to pass
-                **self.gconfig.to_openai_args_dict(),
-            )
-            reward = float(
-                self.reward_fn(completion.choices[0].message.content, answer)
-            )
-            await session.set_reward(reward)
-            return reward, session_id
-
+        return None, session_id, reward
+    return asyncio.run(run_task(data=data, proxy_addr=proxy_addr))
 
 class ProxyRLVRWorkflow(RolloutWorkflow):
     def __init__(
         self,
-        reward_fn: Callable,
         gconfig: GenerationHyperparameters,
         proxy_server: ProxyServer,
+        process_pool_executor: ProcessPoolExecutor = None,
         rollout_stat_scope: str = "rollout",
     ):
         self.proxy_server = proxy_server
-
+        self.api_version = "v1"
         self.n_samples = gconfig.n_samples
-        gconfig.n_samples = 1
-        self.agent = BasicOpenAIAgent(
-            proxy_server_url=f"{proxy_server.public_addr}/v1",
-            gconfig=gconfig,
-            reward_fn=reward_fn,
-        )
         self.rollout_stat_scope = rollout_stat_scope
+        self.process_pool_executor = process_pool_executor
+        self.gconfig = gconfig
 
     async def arun_episode(self, engine: InferenceEngine, data):
-        results = await asyncio.gather(
-            *[
-                self.agent.run_agent(data["messages"], data["answer"])
-                for _ in range(self.n_samples)
-            ]
-        )
-        rewards, session_ids = zip(*results)
+        futures = [self.process_pool_executor.submit(sync_run_task, data, f"{self.proxy_server.public_addr}/{self.api_version}") for _ in range(self.n_samples)]
+        results = await asyncio.gather(*[asyncio.wrap_future(future) for future in futures])
+        error_message, session_ids, rewards = zip(*results)
+        if any(error_message):
+            for msg in error_message:
+                if msg is not None:
+                    logger.error(f"Error in run_agent: {msg}")
+            raise RuntimeError("One or more tasks failed in run_agent.")
 
         for reward in rewards:
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
@@ -110,9 +117,16 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
         return await self.proxy_server.get_completions(session_ids=session_ids)
 
 
+@dataclass
+class ProxyAgentConfig(GRPOConfig):
+    tool_call_parser: str = field(
+        default="qwen25",
+    )
+
+
 def main(args):
-    config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
+    config, _ = load_expr_config(args, ProxyAgentConfig)
+    config: ProxyAgentConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
@@ -177,7 +191,7 @@ def main(args):
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
-    client = ArealOpenAI(engine=rollout, tokenizer=tokenizer)
+    client = ArealOpenAI(engine=rollout, tokenizer=tokenizer, tool_call_parser=config.tool_call_parser)
 
     free_port = find_free_ports(1)[0]
     proxy_server = ProxyServer(port=free_port, client=client)
@@ -190,15 +204,14 @@ def main(args):
     logger.info(f"Found {len(all_addresses)} proxy servers: {all_addresses}")
     dist.barrier(device_ids=[actor.device.index])
 
+    # TODO: move to config
+    process_pool_executor = ProcessPoolExecutor(max_workers=128)
+
     workflow = ProxyRLVRWorkflow(
-        reward_fn=simplified_gsm8k_reward_fn,
         gconfig=config.gconfig,
         rollout_stat_scope="rollout",
         proxy_server=proxy_server,
-        # enable_thinking=False,
-        # dump_dir=os.path.join(
-        #     StatsLogger.get_log_path(config.stats_logger), "generated"
-        # ),
+        process_pool_executor=process_pool_executor,
     )
     eval_workflow = RLVRWorkflow(
         reward_fn=gsm8k_reward_fn,

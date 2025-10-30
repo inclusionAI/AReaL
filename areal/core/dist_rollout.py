@@ -56,7 +56,7 @@ def redistribute(
     all_data = []
     for d in all_gathered:
         bs = get_batch_size(d)
-        assert bs % granularity == 0
+        assert bs % granularity == 0, f"Batch size {bs} not divisible by granularity {granularity}"
         all_data += [
             _slice_tensor_dict(d, i, i + granularity) for i in range(0, bs, granularity)
         ]
@@ -123,13 +123,13 @@ class DistRolloutCoordinator:
         Dict[str, Any]
             Redistributed and broadcast batch available on all ranks
         """
-        if batch is not None:
-            redist = redistribute(
-                batch,
-                granularity=granularity,
-                group=self.train_engine.data_parallel_group,
-            )
-            batch = redist.data
+        # if batch is not None:
+        #     redist = redistribute(
+        #         batch,
+        #         granularity=granularity,
+        #         group=self.train_engine.data_parallel_group,
+        #     )
+        #     batch = redist.data
 
         dist.barrier(device_ids=[current_platform.current_device()])
         current_platform.synchronize()
