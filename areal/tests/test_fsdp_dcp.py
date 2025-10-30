@@ -35,6 +35,7 @@ def _run_test_with_torchrun(test_type: str, alloc_mode: str, output: str):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 def test_fsdp_dcp_distributed_simple(tmp_path_factory):
     if current_platform.device_count() < 2:
         pytest.skip("Distributed test requires 2 GPUs to run")
@@ -43,6 +44,7 @@ def test_fsdp_dcp_distributed_simple(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 def test_fsdp_dcp_distributed_train(tmp_path_factory):
     if current_platform.device_count() < 2:
         pytest.skip("Distributed test requires 2 GPUs to run")
