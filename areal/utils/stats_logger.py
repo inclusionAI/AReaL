@@ -1,7 +1,7 @@
 import getpass
 import os
 import time
-from typing import Dict, List
+from dataclasses import asdict
 
 import swanlab
 import torch.distributed as dist
@@ -13,12 +13,12 @@ from areal.api.cli_args import BaseExperimentConfig, StatsLoggerConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.utils import logging
 from areal.utils.printing import tabulate_stats
+from areal.version import version_info
 
 logger = logging.getLogger("StatsLogger", "system")
 
 
 class StatsLogger:
-
     def __init__(self, config: BaseExperimentConfig, ft_spec: FinetuneSpec):
         if isinstance(config, StatsLoggerConfig):
             raise ValueError(
@@ -50,6 +50,12 @@ class StatsLogger:
         if suffix == "timestamp":
             suffix = time.strftime("%Y_%m_%d_%H_%M_%S")
 
+        exp_config_dict = asdict(self.exp_config)
+        exp_config_dict["git_commit_id"] = version_info.commit
+        exp_config_dict["git_branch"] = version_info.branch
+        exp_config_dict["git_is_dirty"] = version_info.is_dirty
+        exp_config_dict["version"] = version_info.full_version_with_dirty_description
+
         wandb.init(
             mode=self.config.wandb.mode,
             entity=self.config.wandb.entity,
@@ -60,7 +66,7 @@ class StatsLogger:
             or f"{self.config.experiment_name}_{self.config.trial_name}",
             notes=self.config.wandb.notes,
             tags=self.config.wandb.tags,
-            config=self.exp_config,  # save all experiment config to wandb
+            config=exp_config_dict,  # save all experiment config to wandb
             dir=self.get_log_path(self.config),
             force=True,
             id=f"{self.config.experiment_name}_{self.config.trial_name}_{suffix}",
@@ -79,7 +85,7 @@ class StatsLogger:
             project=swanlab_config.project or self.config.experiment_name,
             experiment_name=swanlab_config.name or self.config.trial_name + "_train",
             # NOTE: change from swanlab_config.config to log all experiment config, to be tested
-            config=self.exp_config,
+            config=exp_config_dict,
             logdir=self.get_log_path(self.config),
             mode=swanlab_config.mode,
         )
@@ -107,7 +113,7 @@ class StatsLogger:
         if self.summary_writer is not None:
             self.summary_writer.close()
 
-    def commit(self, epoch: int, step: int, global_step: int, data: Dict | List[Dict]):
+    def commit(self, epoch: int, step: int, global_step: int, data: dict | list[dict]):
         if dist.is_initialized() and mpu.is_initialized():
             if mpu.get_pipeline_model_parallel_world_size() > 1:
                 # log info only exist in last pipeline rank
@@ -121,15 +127,15 @@ class StatsLogger:
         if dist.is_initialized() and dist.get_rank() != 0:
             return
         logger.info(
-            f"Epoch {epoch+1}/{self.ft_spec.total_train_epochs} "
-            f"Step {step+1}/{self.ft_spec.steps_per_epoch} "
+            f"Epoch {epoch + 1}/{self.ft_spec.total_train_epochs} "
+            f"Step {step + 1}/{self.ft_spec.steps_per_epoch} "
             f"Train step {global_step + 1}/{self.ft_spec.total_train_steps} done."
         )
-        if isinstance(data, Dict):
+        if isinstance(data, dict):
             data = [data]
         log_step = max(global_step, self._last_commit_step + 1)
         for i, item in enumerate(data):
-            logger.info(f"Stats ({i+1}/{len(data)}):")
+            logger.info(f"Stats ({i + 1}/{len(data)}):")
             self.print_stats(item)
             wandb.log(item, step=log_step + i)
             swanlab.log(item, step=log_step + i)
@@ -138,7 +144,7 @@ class StatsLogger:
                     self.summary_writer.add_scalar(f"{key}", val, log_step + i)
         self._last_commit_step = log_step + len(data) - 1
 
-    def print_stats(self, stats: Dict[str, float]):
+    def print_stats(self, stats: dict[str, float]):
         logger.info("\n" + tabulate_stats(stats))
 
     @staticmethod
