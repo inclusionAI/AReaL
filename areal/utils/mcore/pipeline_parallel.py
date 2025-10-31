@@ -236,8 +236,6 @@ def estimate_stage_parameter_buckets(
     layer_weights: list[float] = [dense_layer_params] * total_layers
 
     num_moe_experts = getattr(tf_conf, "num_moe_experts", None)
-    if num_moe_experts is None:
-        num_moe_experts = getattr(hf_conf, "num_experts", None)
     if num_moe_experts:
         moe_hidden_size = getattr(tf_conf, "moe_ffn_hidden_size", None)
         if moe_hidden_size is None:
