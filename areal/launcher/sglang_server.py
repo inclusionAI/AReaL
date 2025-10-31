@@ -133,9 +133,10 @@ class SGLangServerWrapper:
         gpus_per_server = self.allocation_mode.gen_instance_size
         cross_nodes = False
         if gpus_per_server > self.n_gpus_per_node:
-            assert gpus_per_server % self.n_gpus_per_node == 0, (
-                "Cross-nodes SGLang only supports utilizing all gpus in one node"
-            )
+            if gpus_per_server % self.n_gpus_per_node != 0:
+                raise ValueError(
+                    "Cross-nodes SGLang only supports utilizing all gpus in one node"
+                )
             cross_nodes = True
             node_rank = int(os.environ["AREAL_SGLANG_MULTI_NODE_RANK"])
             master_addr = os.environ["AREAL_SGLANG_MULTI_NODE_MASTER_ADDR"]
