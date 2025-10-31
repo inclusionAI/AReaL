@@ -578,7 +578,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: "RolloutWorkflow" | None = None,
+        workflow: "RolloutWorkflow" = None,
         workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
     ):

@@ -9,14 +9,10 @@ import traceback
 import uuid
 from collections import defaultdict
 from io import StringIO
-from typing import Dict, List
 
 from areal.extension.asystem.functioncall.base.utils import load_jsonl, logger
-from realhf.base import logging
 
 SINGLE_CASE_EXEC_TIMEOUT = 6
-
-logger = logging.getLogger("function call")
 
 
 def capture_stdout(code):
@@ -34,7 +30,6 @@ def capture_stdout(code):
 
 
 def call_verify(problem, generation, debug, timeout=SINGLE_CASE_EXEC_TIMEOUT):
-
     tmp_id = str(uuid.uuid4())
     input_data = {
         "sample": problem,
@@ -63,7 +58,7 @@ def call_verify(problem, generation, debug, timeout=SINGLE_CASE_EXEC_TIMEOUT):
     )
     try:
         pro.wait(200)
-    except Exception as e:
+    except Exception:
         pass
     try:
         os.killpg(os.getpgid(pro.pid), signal.SIGTERM)
@@ -72,9 +67,9 @@ def call_verify(problem, generation, debug, timeout=SINGLE_CASE_EXEC_TIMEOUT):
 
     result = {"result": [False], "info": {}}
     try:
-        with open(f"/tmp/{tmp_id}-output.json", "r") as f:
+        with open(f"/tmp/{tmp_id}-output.json") as f:
             result = json.load(f)
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         logger.warning(
             f"{problem['query_id']}: Failed to parse generated answers. FileNotFoundError. Set 0 reward."
         )
@@ -90,7 +85,7 @@ def call_verify(problem, generation, debug, timeout=SINGLE_CASE_EXEC_TIMEOUT):
 
     execution_time = time.time() - start_time
     logger.info(
-        f'[call_verify] query_id: {problem["query_id"]}, start_time: {str(start_time)}, Time elapsed: {execution_time * 1000:.0f} ms'
+        f"[call_verify] query_id: {problem['query_id']}, start_time: {str(start_time)}, Time elapsed: {execution_time * 1000:.0f} ms"
     )
     return result["result"], result["info"]
 
@@ -112,7 +107,7 @@ def code_verify(id2info, generateds, query_ids, debug=False):
 
     for run_result in run_results:
         curr_res, metadata = run_result
-        if any(x != True for x in curr_res):
+        if any(not x for x in curr_res):
             final_results.append(0)
         else:
             final_results.append(1)

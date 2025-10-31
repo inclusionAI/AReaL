@@ -431,11 +431,15 @@ class TrainEngineConfig:
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
-    scheduling_spec: SchedulingSpec = field(
-        default_factory=lambda: SchedulingSpec(
-            cmd="python -m areal.scheduler.rpc.rpc_server"
+
+    scheduling_specs: tuple[SchedulingSpec, SchedulingSpec] = field(
+        default_factory=lambda: (
+            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
         ),
-        metadata={"help": "train engine schedule specs"},
+        metadata={
+            "help": "train engine schedule specs, first is worker, second is engine"
+        },
     )
     scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
 
@@ -908,11 +912,14 @@ class InferenceEngineConfig:
             "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
         },
     )
-    scheduling_spec: SchedulingSpec = field(
-        default_factory=lambda: SchedulingSpec(
-            cmd="python -m areal.scheduler.rpc.rpc_server"
+    scheduling_specs: tuple[SchedulingSpec, SchedulingSpec] = field(
+        default_factory=lambda: (
+            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
         ),
-        metadata={"help": "inference engine schedule specs"},
+        metadata={
+            "help": "inference engine schedule specs, first is worker, second is engine"
+        },
     )
     scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
 

@@ -4,13 +4,10 @@ import ast
 import asyncio
 import os
 import re
-from typing import Dict, List, Tuple
 
 import aiohttp
-import requests
 from transformers import AutoTokenizer
 
-import areal.base.logging as logging
 from areal.extension.asystem.functioncall.code.verify import code_verify
 from areal.extension.asystem.functioncall.ifeval.verify import ifeval_verify
 from areal.extension.asystem.functioncall.logic.verify import logic_verify
@@ -19,6 +16,7 @@ from areal.extension.asystem.functioncall.swe.local_verify import (
     swe_verify as local_swe_verify,
 )
 from areal.extension.asystem.functioncall.swe.verify import swe_verify
+from areal.utils import logging
 from areal.utils.errors import FrameworkError
 
 logger = logging.getLogger("__name__")
@@ -27,8 +25,8 @@ logger = logging.getLogger("__name__")
 async def reward_fn(
     prompt: str,
     completion: str,
-    prompt_ids: List[int],
-    completion_ids: List[int],
+    prompt_ids: list[int],
+    completion_ids: list[int],
     **kwargs,
 ):
     # prompt: prompt string (the task this data needs to complete)
@@ -116,7 +114,7 @@ def extract_content(input_text):
         return input_text
 
 
-async def general_verify(id2info, responses: List[str], query_ids: List) -> List[float]:
+async def general_verify(id2info, responses: list[str], query_ids: list) -> list[float]:
     assert len(responses) == len(query_ids), (
         len(responses),
         len(query_ids),
@@ -181,9 +179,9 @@ async def general_verify(id2info, responses: List[str], query_ids: List) -> List
 
         rewards = [res["embedding"][0] for res in api_responses]
 
-        assert len(rewards) == len(
-            prompts
-        ), f"Expected {len(prompts)} general rewards, but got {len(rewards)}."
+        assert len(rewards) == len(prompts), (
+            f"Expected {len(prompts)} general rewards, but got {len(rewards)}."
+        )
 
         logger.info(
             f"general reward call finished, request count: {len(prompts)}, result count: {rewards}"

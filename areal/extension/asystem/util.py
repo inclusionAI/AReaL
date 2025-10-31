@@ -7,7 +7,7 @@ import torch
 from datasets import Dataset
 from torch.utils.data import Sampler
 
-from realhf.base import logging
+from areal.utils import logging
 
 logger = logging.getLogger("Utils")
 

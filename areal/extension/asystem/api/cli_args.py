@@ -1,10 +1,19 @@
-from dataclasses import MISSING, dataclass, field
+from dataclasses import dataclass, field
 
-from areal.api.cli_args import GRPOConfig as BaseGRPOConfig
-from areal.api.cli_args import InferenceEngineConfig, SchedulerConfig
+from omegaconf import MISSING
+
+from areal.api.cli_args import (
+    BaseExperimentConfig,
+    EvaluatorConfig,
+    GenerationHyperparameters,
+    InferenceEngineConfig,
+    SaverConfig,
+    SchedulerConfig,
+)
 from areal.api.cli_args import TrainEngineConfig as BaseTrainEngineConfig
 
 
+@dataclass
 class RemoteHybridInferenceConfig(InferenceEngineConfig):
     model_path: str = field(
         default=MISSING,
@@ -145,6 +154,7 @@ class RemoteMegatronEngineConfig:
     )
 
 
+@dataclass
 class TrainEngineConfig(BaseTrainEngineConfig):
     hybrid_engine: RemoteMegatronEngineConfig = field(
         default_factory=RemoteMegatronEngineConfig
@@ -173,7 +183,7 @@ class RecoverConfig:
 
 
 @dataclass
-class BaseExperimentConfigExtension:
+class BaseExperimentConfigExtension(BaseExperimentConfig):
     enable_colocate_mode: bool = field(
         default=False, metadata={"help": "Enable colocate mode."}
     )
@@ -186,9 +196,28 @@ class BaseExperimentConfigExtension:
         default_factory=SchedulerConfig, metadata={"help": "Scheduler config."}
     )
 
+    # 删除 saver 属性
+    saver: SaverConfig | None = field(
+        default=None, metadata={"help": "Saver configuration (disabled in ASystem)"}
+    )
+
+    # 删除 evaluator 属性
+    evaluator: EvaluatorConfig | None = field(
+        default=None, metadata={"help": "Evaluator configuration (disabled in ASystem)"}
+    )
+
 
 @dataclass
-class GRPOConfig(BaseGRPOConfig, BaseExperimentConfigExtension):
+class GRPOConfig(BaseExperimentConfigExtension):
+    async_training: bool = field(
+        default=True,
+        metadata={
+            "help": "Enable asynchronous training between rollout and policy update."
+        },
+    )
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
     rollout: RemoteHybridInferenceConfig = field(
         default_factory=RemoteHybridInferenceConfig
     )

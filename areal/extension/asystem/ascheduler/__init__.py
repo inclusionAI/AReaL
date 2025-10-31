@@ -8,10 +8,9 @@ from typing import Any
 
 import requests
 
-from realhf.base import logging
-
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.extension.asystem.ascheduler.rpc_client import RPCClient
+from areal.utils import logging
 from areal.utils.errors import FrameworkError
 
 logger = logging.getLogger(__name__)
@@ -59,7 +58,6 @@ class AsystemScheduler(Scheduler):
     """
 
     def __init__(self, config: dict[str, Any]):
-        super().__init__(config)
         self.real_package_path = os.environ.get("REAL_PACKAGE_PATH", "")
         assert self.real_package_path != ""
         self.worker_infos = []
@@ -217,13 +215,6 @@ class AsystemScheduler(Scheduler):
                     logger.error(f"Error stopping job {job_name}: {e}")
             self.submitted_jobs.clear()
 
-    def create_engine(self, worker_id: str, engine_obj: Any, init_config: Any = None):
-        """
-        远程创建engine实例
-        """
-        logger.info(f"Creating engine on worker {worker_id}")
-        return self.rpc_client.create_engine(worker_id, engine_obj, init_config)
-
     def call_engine(self, worker_id: str, method: str, *args, **kwargs):
         """
         数据面调用
@@ -231,13 +222,57 @@ class AsystemScheduler(Scheduler):
         logger.info(f"Calling '{method}' on worker {worker_id}")
         return self.rpc_client.call_engine(worker_id, method, 3, *args, **kwargs)
 
-    def call_engine_with_serialized_data(self, worker_id: str, serialized_data: bytes):
+    async def async_call_engine(
+        self, worker_id: str, method: str, *args, **kwargs
+    ) -> Any:
         """
-        数据面调用（带序列化数据）
+        Async version of call_engine for calling engine methods asynchronously.
+
+        This is useful for concurrent operations or when integrating with async frameworks.
+
+        Args:
+            worker_id: ID of the worker hosting the engine (e.g., "rollout/0").
+            method: Name of the method to call on the engine.
+            *args: Positional arguments to pass to the method.
+            **kwargs: Keyword arguments to pass to the method.
+
+        Returns:
+            Result from the engine method call.
+
+        Raises:
+            WorkerNotFoundError: If the specified worker doesn't exist.
+            WorkerFailedError: If the worker process has failed.
+            EngineCallError: If the method call fails.
         """
-        logger.info(f"Calling on worker {worker_id} with serialized data")
-        return self.rpc_client.call_engine_with_serialized_data(
-            worker_id, serialized_data, 3
+        logger.info(f"Async calling '{method}' on worker {worker_id}")
+        return await self.rpc_client.async_call_engine(
+            worker_id, method, 3, *args, **kwargs
+        )
+
+    async def create_engine(self, worker_id: str, engine: str, *args, **kwargs) -> Any:
+        """
+        Create an engine instance on a remote worker.
+
+        The engine parameter is a string import path (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
+        that will be dynamically imported and instantiated on the worker.
+
+        Args:
+            worker_id: ID of the worker to create the engine on (e.g., "rollout/0").
+            engine: Import path to the engine class (e.g., "areal.engine.ppo.actor.FSDPPPOActor").
+            *args: Positional arguments passed to engine initialization.
+            **kwargs: Keyword arguments passed to engine initialization.
+
+        Returns:
+            Result from engine initialization.
+
+        Raises:
+            WorkerNotFoundError: If the specified worker doesn't exist.
+            WorkerFailedError: If the worker process has failed.
+            EngineCreationError: If engine creation or initialization fails.
+        """
+        logger.info(f"Async creating engine '{engine}' on worker {worker_id}")
+        return await self.rpc_client.async_create_engine(
+            worker_id, engine, *args, **kwargs
         )
 
     def cleanup(self):

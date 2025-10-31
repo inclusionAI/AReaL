@@ -7,11 +7,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 from transformers import PreTrainedTokenizerFast
 
-from realhf.base import logging
-
 from areal.api.cli_args import RecoverConfig
 from areal.api.io_struct import SaveLoadMeta
 from areal.extension.asystem.controller import TrainController
+from areal.utils import logging
 from areal.utils.errors import FrameworkError
 
 logger = logging.getLogger("recover")

@@ -1,10 +1,10 @@
 # 用来在 trainer 退出时清理相关 Job，适用于 AIStudio
 # AIStudio 侧需要把 aistudio_pre_stop.py 复制到 /workspace/bin，作为 pre stop hook 执行。
 
-import logging
-
 import requests
 from requests import RequestException
+
+from areal.utils import logging
 
 logger = logging.getLogger("cleanupjobs")
 
