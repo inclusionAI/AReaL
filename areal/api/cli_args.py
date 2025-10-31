@@ -415,6 +415,10 @@ class PPOActorConfig(TrainEngineConfig):
     temperature: float = field(
         default=1.0, metadata={"help": "Temperature during generation."}
     )
+    # M2PO
+    m2_threshold: float | None = field(
+        default=None, metadata={"help": "The second momentum threshold for M2PO."}
+    )
     # Reward
     reward_norm: NormConfig | None = field(
         default=None,
