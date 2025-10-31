@@ -343,11 +343,11 @@ class WorkflowExecutor:
 
     def destroy(self):
         """Shutdown the workflow executor and clean up resources."""
+        # Get tracer, preferring instance-level but falling back to global
         tracer = self._request_tracer
         if tracer is None:
             tracer = perf_tracer.get_request_tracer()
-            if tracer is not None:
-                self._request_tracer = tracer
+        # Flush if a tracer was found
         if tracer is not None:
             tracer.flush(force=True)
         self.runner.destroy()
@@ -491,6 +491,7 @@ class WorkflowExecutor:
                     "mark_execution_end",
                     status="failed",
                     should_accept=None,
+                    rejection_reason="workflow_exception",
                     staleness=stats,
                 )
                 if self.logger is not None:
