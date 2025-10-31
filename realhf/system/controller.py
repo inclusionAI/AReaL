@@ -127,7 +127,7 @@ class Controller:
         setup: system_api.ExperimentConfig,
         verbose=False,
     ):
-        # SchedulingSpec and connecting to workers.
+        # Scheduling and connecting to workers.
         workers_configs = [
             (k, getattr(setup, k), getattr(scheduling, k))
             for k in WORKER_TYPES
@@ -142,7 +142,7 @@ class Controller:
                 raise ValueError(
                     f"Configuration and scheduling mismatch. "
                     f"Number of worker configurations: {len(worker_setups)}, "
-                    f"SchedulingSpec configs: {schedules}."
+                    f"Scheduling configs: {schedules}."
                 )
 
         for name, config, schedule in workers_configs:
@@ -153,7 +153,7 @@ class Controller:
             )
             if len(config) != count:
                 logger.error(
-                    "SchedulingSpec and config mismatch, interrupting all workers."
+                    "Scheduling and config mismatch, interrupting all workers."
                 )
                 self.interrupt()
                 raise IndexError(
