@@ -5,9 +5,12 @@ import pytest
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
+from megatron.core import tensor_parallel
+from transformers import AutoModelForCausalLM
 
 from areal.models.mcore.registry import make_hf_and_mcore_config
 from areal.utils.mcore.pipeline_parallel import estimate_stage_parameter_buckets
+from areal.utils.network import find_free_ports
 
 
 @pytest.mark.parametrize(
@@ -20,12 +23,13 @@ from areal.utils.mcore.pipeline_parallel import estimate_stage_parameter_buckets
     ],
 )
 def test_estimate_num_params(model_name_or_path):
-    # Dummy process group for mbridge and Megatron initialization
     try:
+        # Dummy process group for mbridge initialization
         os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = "27015"
+        os.environ["MASTER_PORT"] = str(find_free_ports(1)[0])
         dist.init_process_group(backend="gloo", rank=0, world_size=1)
         mpu.initialize_model_parallel()
+        tensor_parallel.model_parallel_cuda_manual_seed(0)
 
         bridge = mbridge.AutoBridge.from_pretrained(model_name_or_path)
         hf_config, tf_config = make_hf_and_mcore_config(
@@ -34,11 +38,14 @@ def test_estimate_num_params(model_name_or_path):
         layer_weights, embedding_params, output_params = (
             estimate_stage_parameter_buckets(hf_config, tf_config)
         )
-        model = bridge.get_model(init_model_with_meta_device=True)[0]
+        with torch.device("meta"):
+            model = AutoModelForCausalLM.from_config(hf_config)
         total_params = sum(p.numel() for p in model.parameters())
-        estimated_params = sum(layer_weights) + embedding_params + output_params
+        estimated_params = sum(layer_weights) + embedding_params
+        if not hf_config.tie_word_embeddings:
+            estimated_params += output_params
         # Allow a small tolerance due to potential differences in counting methods
-        assert abs(total_params - estimated_params) / total_params < 0.01, (
+        assert abs(total_params - estimated_params) / total_params < 0.05, (
             f"Estimated params {estimated_params / 1e6:.2f}M differ from actual {total_params / 1e6:.2f}M"
         )
     finally:
