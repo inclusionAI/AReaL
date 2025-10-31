@@ -17,7 +17,7 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.core.async_task_runner import AsyncTaskRunner, TaskQueueFullError
 from areal.core.staleness_manager import StalenessManager
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
-from areal.utils import logging
+from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 
 if TYPE_CHECKING:
@@ -527,6 +527,15 @@ class WorkflowExecutor:
         if self.config.enable_rollout_tracing:
             self.logger.info("Rollout results are ready!")
 
+        perf_tracer.instant(
+            "workflow_executor.wait",
+            category="scheduler",
+            args={
+                "queue_size": self.runner.get_output_queue_size(),
+                "pending_results": len(self._pending_results),
+            },
+        )
+
         # Extract requested number of results
         results = self._pending_results[:count]
         self._pending_results = self._pending_results[count:]
@@ -549,6 +558,11 @@ class WorkflowExecutor:
         See :meth:`~areal.api.engine_api.InferenceEngine.rollout_batch` for
         detailed documentation.
         """
+        perf_tracer.instant(
+            "workflow_executor.rollout_batch",
+            category="scheduler",
+            args={"data": len(data)},
+        )
         for item in data:
             self.submit(
                 data=item,
@@ -581,6 +595,11 @@ class WorkflowExecutor:
                 < self.runner.max_queue_size
             ):
                 data = next(self.data_generator)
+                perf_tracer.instant(
+                    "workflow_executor.prepare_batch",
+                    category="scheduler",
+                    args={"data": len(data)},
+                )
                 for item in data:
                     try:
                         self.submit(

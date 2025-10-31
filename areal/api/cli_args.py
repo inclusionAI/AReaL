@@ -415,6 +415,10 @@ class PPOActorConfig(TrainEngineConfig):
     temperature: float = field(
         default=1.0, metadata={"help": "Temperature during generation."}
     )
+    # M2PO
+    m2_threshold: float | None = field(
+        default=None, metadata={"help": "The second momentum threshold for M2PO."}
+    )
     # Reward
     reward_norm: NormConfig | None = field(
         default=None,
@@ -961,6 +965,32 @@ class StatsLoggerConfig:
 
 
 @dataclass
+class PerfTracerConfig:
+    """Configuration for perf tracer emission."""
+
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
+    fileroot: str = MISSING
+    enabled: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Explicitly enable or disable perf tracing. Set to true to capture perf traces."
+            )
+        },
+    )
+    save_interval_steps: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Flush trace events to disk every N calls to save(step=...). "
+                "A value of 1 writes on every step; values <= 0 fall back to 1."
+            )
+        },
+    )
+
+
+@dataclass
 class NameResolveConfig:
     """Configuration for distributed name resolution and service discovery."""
 
@@ -1196,6 +1226,10 @@ class BaseExperimentConfig:
     saver: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
+    perf_tracer: PerfTracerConfig | None = field(
+        default=None,
+        metadata={"help": "Performance tracer configuration. None means disabled."},
+    )
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)

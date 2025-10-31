@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import getpass
 import json
 import os
 import threading
@@ -11,11 +12,12 @@ from contextlib import (
     contextmanager,
 )
 from enum import Enum
-from typing import Any, cast
+from typing import Any
 
+from areal.api.cli_args import PerfTracerConfig
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("PerfTracer")
 
 try:  # pragma: no cover - platform specific
     import fcntl
@@ -24,7 +26,6 @@ except ImportError:  # pragma: no cover
 
 
 _THREAD_LOCAL = threading.local()
-_UNSET = object()
 
 
 class PerfTraceCategory(str, Enum):
@@ -79,23 +80,6 @@ def _acquire_file_lock(path: str):
             fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
-def _load_existing_trace(path: str) -> dict[str, Any]:
-    try:
-        with open(path, encoding="utf-8") as fin:
-            return json.load(fin)
-    except FileNotFoundError:
-        return {}
-    except json.JSONDecodeError:
-        logger.warning("Existing perf trace at %s is invalid; overwriting", path)
-        return {}
-
-
-def _strtobool(value: str | None) -> bool:
-    if value is None:
-        return False
-    return value.lower() in {"1", "true", "t", "yes", "y", "on"}
-
-
 def _normalize_category(category: CategoryLike) -> str:
     if category is None:
         return PerfTraceCategory.MISC.value
@@ -108,6 +92,10 @@ def _normalize_category(category: CategoryLike) -> str:
             return alias.value
         return category
     return PerfTraceCategory.MISC.value
+
+
+def _normalize_save_interval(value: int) -> int:
+    return value if value > 0 else 1
 
 
 class _NullContext(AbstractContextManager, AbstractAsyncContextManager):
@@ -127,27 +115,20 @@ class _NullContext(AbstractContextManager, AbstractAsyncContextManager):
 class PerfTracer:
     """A lightweight tracer that emits Chrome Trace compatible JSON."""
 
-    def __init__(
-        self,
-        *,
-        enabled: bool = False,
-        output_path: str | None = None,
-        rank: int | None = None,
-        aggregate: bool = False,
-    ) -> None:
-        self._enabled = enabled
-        self._output_path: str | None = None
+    def __init__(self, config: PerfTracerConfig, *, rank: int) -> None:
+        if rank < 0:
+            raise ValueError("rank must be a non-negative integer")
+        self._config = config
+        self._enabled = config.enabled
         self._rank = rank
-        self._aggregate = aggregate
         self._events: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._pid = os.getpid()
         self._origin_ns = time.perf_counter_ns()
         self._thread_meta_emitted: set[int] = set()
         self._process_meta_emitted: set[int] = set()
-        self._user_output_path: str | None = None
-        if output_path:
-            self.set_output(output_path, rank=rank)
+        self._output_path = _default_trace_path(config)
+        self._save_interval_steps = _normalize_save_interval(config.save_interval_steps)
 
     # ------------------------------------------------------------------
     # Configuration helpers
@@ -157,73 +138,19 @@ class PerfTracer:
         return self._enabled
 
     def set_enabled(self, flag: bool) -> None:
-        self._enabled = bool(flag)
+        self._enabled = flag
 
-    def set_aggregate(self, flag: bool) -> None:
-        aggregate = bool(flag)
-        if self._aggregate == aggregate:
-            return
-        self._aggregate = aggregate
-        if aggregate and fcntl is None:
-            logger.warning(
-                "PerfTracer aggregation is enabled on a platform without `fcntl` "
-                "(e.g., Windows). Concurrent writes may lead to corrupted trace files."
-            )
-        if self._user_output_path is not None:
-            # Re-resolve the output path to adjust rank suffix usage
-            self.set_output(self._user_output_path, rank=self._rank)
+    def set_rank(self, rank: int) -> None:
+        if rank < 0:
+            raise ValueError("rank must be a non-negative integer")
+        self._rank = rank
 
-    def set_rank(self, rank: int | None) -> None:
-        new_rank = int(rank) if rank is not None else None
-        if self._rank == new_rank:
-            return
-        self._rank = new_rank
-        if self._user_output_path is not None:
-            # Re-resolve the output path to adjust rank suffix usage
-            self.set_output(self._user_output_path)
-
-    def set_output(
-        self,
-        path: str,
-        *,
-        rank: int | None = None,
-        make_parent: bool = True,
-    ) -> str:
-        if not path:
-            raise ValueError("path must be a non-empty string")
-
-        self._user_output_path = path
-        path = os.path.expanduser(path)
-
-        if os.path.isdir(path):
-            base_path = os.path.join(path, "perf_trace.json")
-        else:
-            base_path = path
-
-        if rank is not None:
-            self._rank = rank
-
-        rank_to_use = self._rank
-
-        use_rank_suffix = rank_to_use is not None and not self._aggregate
-        final_path = (
-            self._apply_rank_suffix(base_path, rank_to_use)
-            if use_rank_suffix
-            else base_path
-        )
-        parent = os.path.dirname(final_path)
-        if parent and make_parent:
-            os.makedirs(parent, exist_ok=True)
-        self._output_path = final_path
-        return final_path
-
-    @staticmethod
-    def _apply_rank_suffix(path: str, rank: int | None) -> str:
-        if rank is None:
-            return path
-        root, ext = os.path.splitext(path)
-        suffix = f".rank{rank}"
-        return f"{root}{suffix}{ext}" if ext else f"{root}{suffix}"
+    def apply_config(self, config: PerfTracerConfig, *, rank: int) -> None:
+        self._config = config
+        self.set_rank(rank)
+        self._output_path = _default_trace_path(config)
+        self.set_enabled(config.enabled)
+        self._save_interval_steps = _normalize_save_interval(config.save_interval_steps)
 
     # ------------------------------------------------------------------
     # Core recording API
@@ -285,52 +212,41 @@ class PerfTracer:
     # ------------------------------------------------------------------
     # Persistence helpers
     # ------------------------------------------------------------------
-    def save(self, path: str | None = None, *, reset: bool = True) -> str | None:
+    def save(self, *, step: int | None = None, force: bool = False) -> None:
         if not self._enabled:
-            return None
+            return
+
+        # Save only on the last step of each interval (0-indexed).
+        # For example, if save_interval_steps=3, saves at steps 2, 5, 8, ...
+        if (
+            not force
+            and step is not None
+            and self._save_interval_steps > 1
+            and ((step + 1) % self._save_interval_steps) != 0
+        ):
+            return
 
         with self._lock:
-            events = list(self._events)
-            if not events:
-                return None
+            if not self._events:
+                return
 
-        output_path = path
-        if output_path is not None:
-            output_path = self.set_output(output_path)
-        elif self._output_path is None:
-            logger.warning(
-                "PerfTracer.save called without an output path; skipping write"
-            )
-            return None
-        else:
+            events = self._events
+            serialized_events = [
+                json.dumps(event, ensure_ascii=False) for event in events
+            ]
             output_path = self._output_path
 
-        payload = {
-            "traceEvents": events,
-            "displayTimeUnit": "ms",
-        }
-
-        try:
-            if self._aggregate:
+            try:
                 with _acquire_file_lock(output_path):
-                    existing = _load_existing_trace(output_path)
-                    combined = dict(existing) if existing else {}
-                    existing_events = list(combined.get("traceEvents", []))
-                    existing_events.extend(events)
-                    combined["traceEvents"] = existing_events
-                    combined.setdefault("displayTimeUnit", "ms")
-                    with open(output_path, "w", encoding="utf-8") as fout:
-                        json.dump(combined, fout, ensure_ascii=False)
-            else:
-                with open(output_path, "w", encoding="utf-8") as fout:
-                    json.dump(payload, fout, ensure_ascii=False)
-        except OSError as exc:  # pragma: no cover - depends on filesystem
-            logger.error("Failed to write perf trace to %s: %s", output_path, exc)
-            return None
-
-        if reset:
-            self.reset()
-        return output_path
+                    with open(output_path, "a", encoding="utf-8") as fout:
+                        for line in serialized_events:
+                            fout.write(line)
+                            fout.write("\n")
+                        fout.flush()
+                        os.fsync(fout.fileno())
+                self._events = []
+            except OSError as exc:  # pragma: no cover - depends on filesystem
+                logger.error("Failed to append perf trace to %s: %s", output_path, exc)
 
     def reset(self) -> None:
         with self._lock:
@@ -338,6 +254,10 @@ class PerfTracer:
             self._thread_meta_emitted = set()
             self._process_meta_emitted = set()
             self._origin_ns = time.perf_counter_ns()
+            self._enabled = self._config.enabled
+            self._save_interval_steps = _normalize_save_interval(
+                self._config.save_interval_steps
+            )
 
     # ------------------------------------------------------------------
     # Internal utilities
@@ -371,22 +291,11 @@ class PerfTracer:
         tid = event.get("tid")
         if isinstance(tid, int):
             self._ensure_thread_metadata(tid)
-        if self._aggregate and self._rank is not None:
-            pid = self._pid
-            event["pid"] = pid
-            self._ensure_process_metadata(pid)
-            if event.get("ph") != "M":
-                args = event.setdefault("args", {})
-                if "rank" not in args:
-                    try:
-                        args["rank"] = int(self._rank)
-                    except (TypeError, ValueError):
-                        args["rank"] = self._rank
-        elif self._aggregate and self._rank is None:
-            logger.warning(
-                "PerfTracer aggregation enabled but rank is not set; "
-                "call configure(..., rank=<rank>) to avoid merged lanes"
-            )
+        event["pid"] = self._pid
+        self._ensure_process_metadata(self._pid)
+        if event.get("ph") != "M":
+            args = event.setdefault("args", {})
+            args.setdefault("rank", self._rank)
         with self._lock:
             self._events.append(event)
 
@@ -409,10 +318,7 @@ class PerfTracer:
         if pid in self._process_meta_emitted:
             return
         self._process_meta_emitted.add(pid)
-        if self._rank is not None:
-            rank_label = f"Rank {self._rank}, Process"
-        else:
-            rank_label = "Process"
+        rank_label = f"Rank {self._rank}, Process"
         process_name_event = {
             "name": "process_name",
             "ph": "M",
@@ -423,7 +329,7 @@ class PerfTracer:
             "name": "process_sort_index",
             "ph": "M",
             "pid": pid,
-            "args": {"sort_index": self._rank if self._rank is not None else pid},
+            "args": {"sort_index": self._rank},
         }
         with self._lock:
             self._events.extend([process_name_event, sort_event])
@@ -502,31 +408,31 @@ def _thread_id() -> int:
     return tid
 
 
-def _init_tracer_from_env() -> PerfTracer:
-    path = os.getenv("AREAL_PERF_TRACE_PATH")
-    enabled = _strtobool(os.getenv("AREAL_PERF_TRACE_ENABLED")) or bool(path)
-    aggregate = _strtobool(os.getenv("AREAL_PERF_TRACE_AGGREGATE"))
-    tracer = PerfTracer(enabled=enabled, aggregate=aggregate)
-    if path:
-        try:
-            tracer.set_output(path)
-        except ValueError:
-            logger.warning(
-                "AREAL_PERF_TRACE_PATH is set but invalid (%s); tracing disabled",
-                path,
-            )
-            tracer.set_enabled(False)
-    return tracer
+def _default_trace_path(
+    config: PerfTracerConfig,
+    *,
+    filename: str = "traces.jsonl",
+) -> str:
+    base_dir = os.path.join(
+        os.path.expanduser(os.path.expandvars(config.fileroot)),
+        "logs",
+        getpass.getuser(),
+        config.experiment_name,
+        config.trial_name,
+    )
+    return os.path.join(base_dir, filename)
 
 
-GLOBAL_TRACER = _init_tracer_from_env()
+GLOBAL_TRACER: PerfTracer | None = None
+_GLOBAL_TRACER_LOCK = threading.Lock()
 
 
 def _save_at_exit() -> None:
-    if not GLOBAL_TRACER.enabled:
+    tracer = GLOBAL_TRACER
+    if tracer is None or not tracer.enabled:
         return
     try:
-        GLOBAL_TRACER.save(reset=False)
+        tracer.save(force=True)
     except Exception as exc:  # pragma: no cover
         logger.error("Failed to flush perf trace on exit: %s", exc, exc_info=True)
 
@@ -537,27 +443,45 @@ atexit.register(_save_at_exit)
 # ----------------------------------------------------------------------
 # Module-level convenience functions
 # ----------------------------------------------------------------------
+def _require_configured_tracer() -> PerfTracer:
+    tracer = GLOBAL_TRACER
+    if tracer is None:
+        raise RuntimeError(
+            "PerfTracer is not configured. Call perf_tracer.configure(...) first."
+        )
+    return tracer
+
+
 def get_tracer() -> PerfTracer:
-    return GLOBAL_TRACER
+    return _require_configured_tracer()
 
 
 def configure(
+    config: PerfTracerConfig,
     *,
-    enabled: bool | None = None,
-    output_path: str | None = None,
-    rank: int | None | object = _UNSET,
-    aggregate: bool | None = None,
+    rank: int,
 ) -> PerfTracer:
-    tracer = get_tracer()
-    if aggregate is not None:
-        tracer.set_aggregate(aggregate)
-    if rank is not _UNSET:
-        tracer.set_rank(cast(int | None, rank))
-    if output_path is not None:
-        tracer.set_output(output_path)
-    if enabled is not None:
-        tracer.set_enabled(enabled)
+    global GLOBAL_TRACER
+    with _GLOBAL_TRACER_LOCK:
+        if GLOBAL_TRACER is None:
+            GLOBAL_TRACER = PerfTracer(config, rank=rank)
+        else:
+            GLOBAL_TRACER.apply_config(config, rank=rank)
+        tracer = GLOBAL_TRACER
+        logger.info(
+            f"Configured global PerfTracer: enabled={tracer.enabled}, rank={rank}"
+        )
     return tracer
+
+
+def reset() -> None:
+    """Clear the global tracer so the next configure() call reinitializes it."""
+    global GLOBAL_TRACER
+    with _GLOBAL_TRACER_LOCK:
+        tracer = GLOBAL_TRACER
+        GLOBAL_TRACER = None
+    if tracer is not None:
+        tracer.reset()
 
 
 def trace_scope(
@@ -566,7 +490,10 @@ def trace_scope(
     category: CategoryLike = None,
     args: dict[str, Any] | None = None,
 ):
-    return GLOBAL_TRACER.trace_scope(name, category=category, args=args)
+    tracer = GLOBAL_TRACER
+    if tracer is None:
+        return _NullContext()
+    return tracer.trace_scope(name, category=category, args=args)
 
 
 def atrace_scope(
@@ -575,7 +502,10 @@ def atrace_scope(
     category: CategoryLike = None,
     args: dict[str, Any] | None = None,
 ):
-    return GLOBAL_TRACER.atrace_scope(name, category=category, args=args)
+    tracer = GLOBAL_TRACER
+    if tracer is None:
+        return _NullContext()
+    return tracer.atrace_scope(name, category=category, args=args)
 
 
 def instant(
@@ -584,11 +514,17 @@ def instant(
     category: CategoryLike = None,
     args: dict[str, Any] | None = None,
 ) -> None:
-    GLOBAL_TRACER.instant(name, category=category, args=args)
+    tracer = GLOBAL_TRACER
+    if tracer is None:
+        return
+    tracer.instant(name, category=category, args=args)
 
 
-def save(path: str | None = None, *, reset: bool = True) -> str | None:
-    return GLOBAL_TRACER.save(path, reset=reset)
+def save(*, step: int | None = None, force: bool = False) -> None:
+    tracer = GLOBAL_TRACER
+    if tracer is None:
+        return
+    tracer.save(step=step, force=force)
 
 
 __all__ = [
@@ -598,6 +534,7 @@ __all__ = [
     "GLOBAL_TRACER",
     "get_tracer",
     "configure",
+    "reset",
     "trace_scope",
     "atrace_scope",
     "instant",
