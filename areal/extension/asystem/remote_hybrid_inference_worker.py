@@ -2,10 +2,11 @@ import asyncio
 import json
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional
 
 import aiohttp
 import requests
@@ -14,7 +15,6 @@ import uvloop
 from tensordict import TensorDict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import RemoteHybridInferenceConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     ModelRequest,
@@ -22,12 +22,12 @@ from areal.api.io_struct import (
     RolloutStat,
     WeightUpdateMeta,
 )
-
-from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.extension.asystem.api.cli_args import RemoteHybridInferenceConfig
 from areal.extension.asystem.util import wait_future_ordered
+from areal.utils import logging, seeding
+from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.errors import EngineError, FrameworkError
 from areal.utils.http import arequest_with_retry, get_default_connector
-from realhf.base import logging, seeding
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
@@ -156,7 +156,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         self.input_queue = Queue(maxsize=self.qsize)
         self.output_queue = Queue(maxsize=self.qsize)
 
-        self.rollout_tasks: Dict[str, asyncio.Task] = {}
+        self.rollout_tasks: dict[str, asyncio.Task] = {}
         self.executor = ProcessPoolExecutor(max_workers=1)
         self.rollout_thread = threading.Thread(target=self._rollout_thread)
         self.rollout_thread.start()
@@ -463,7 +463,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             )
         elif meta.type == "nccl" or meta.type == "astate":
             load_timestamp = time.time_ns()
-            logger.info(f"Begin update weights.")
+            logger.info("Begin update weights.")
 
             def update_single_server(addr):
                 try:
@@ -532,7 +532,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
     def submit(
         self,
-        data: Union[List[Dict[str, Any]], Dict[str, Any]],
+        data: list[dict[str, Any]] | dict[str, Any],
         workflow: "RolloutWorkflow",
     ) -> None:
         try:
@@ -548,7 +548,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             )
 
     def submit_batch(
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow"
+        self, data: list[dict[str, Any]], workflow: "RolloutWorkflow"
     ) -> None:
         try:
             self.input_queue.put_nowait(data, workflow)
@@ -561,11 +561,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
+        workflow_builder: Callable | None = None,
         should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             self.input_queue.put_nowait(data, workflow)
         except Full:
@@ -645,8 +645,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             raise FrameworkError(
                 "FrameworkError",
                 "InferenceWorkError",
-                f"Timed out waiting for {count} rollouts, "
-                f"only received {accepted}.",
+                f"Timed out waiting for {count} rollouts, only received {accepted}.",
             )
         with self.lock:
             results, self.result_cache = (
@@ -658,8 +657,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         return padded
 
     def rollout(  # only dp head accept this request
-        self, data: List[Dict[str, Any]], workflow: "RolloutWorkflow", *args, **kwargs
-    ) -> Dict[str, Any]:
+        self, data: list[dict[str, Any]], workflow: "RolloutWorkflow", *args, **kwargs
+    ) -> dict[str, Any]:
         """Submit a batch of requests to the inference engine and wait for the results."""
         if self.config.batch_requests is True:
             self.submit_batch(data, workflow)
