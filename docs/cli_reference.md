@@ -74,6 +74,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 - [DistributedDataParallel Configuration](section-distributed-data-parallel)
 - [MegatronEngine Configuration](section-megatron-engine)
 - [PerfTracer Configuration](section-perf-tracer)
+- [RequestTracer Configuration](section-request-tracer)
 - [Scheduler Configuration](section-scheduler)
 
 ______________________________________________________________________
@@ -810,13 +811,25 @@ Refer to Megatron-LM documentation for implementation details.
 
 Configuration for perf tracer emission.
 
-| Parameter             | Type    | Default      | Description                                                                                                                 |
-| --------------------- | ------- | ------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `experiment_name`     | string  | **Required** | -                                                                                                                           |
-| `trial_name`          | string  | **Required** | -                                                                                                                           |
-| `fileroot`            | string  | **Required** | -                                                                                                                           |
-| `enabled`             | boolean | `False`      | Explicitly enable or disable perf tracing. Set to true to capture perf traces.                                              |
-| `save_interval_steps` | integer | `1`          | Flush trace events to disk every N calls to save(step=...). A value of 1 writes on every step; values \<= 0 fall back to 1. |
+| Parameter         | Type                                                    | Default      | Description                                                                                                                 |
+| ----------------- | ------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name` | string                                                  | **Required** | -                                                                                                                           |
+| `trial_name`      | string                                                  | **Required** | -                                                                                                                           |
+| `fileroot`        | string                                                  | **Required** | -                                                                                                                           |
+| `enabled`         | boolean                                                 | `False`      | Explicitly enable or disable perf tracing. Set to true to capture perf traces.                                              |
+| `save_interval`   | integer                                                 | `1`          | Flush trace events to disk every N calls to save(step=...). A value of 1 writes on every step; values \<= 0 fall back to 1. |
+| `request_tracer`  | [`RequestTracerConfig`](section-request-tracer) \| None | `None`       | Request tracing configuration.                                                                                              |
+
+(section-request-tracer)=
+
+## RequestTracer Configuration
+
+Configuration for per-request lifecycle tracing.
+
+| Parameter         | Type    | Default | Description                                                                                                            |
+| ----------------- | ------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `enabled`         | boolean | `False` | Enable per-request lifecycle tracing alongside perf events. When true, request metadata is captured to requests.jsonl. |
+| `flush_threshold` | integer | `256`   | Flush request trace records once this many entries are ready. Values \<= 0 fall back to 1.                             |
 
 (section-scheduler)=
 

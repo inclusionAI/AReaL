@@ -47,6 +47,10 @@ def main(args):
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
+    # Configure performance tracer
+    if config.perf_tracer is not None:
+        perf_tracer.configure(config.perf_tracer, rank=rank)
+
     # Create dataset and dataloaders
     train_dataset = get_custom_dataset(
         split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
@@ -116,10 +120,6 @@ def main(args):
             StatsLogger.get_log_path(config.stats_logger), "generated-eval"
         ),
     )
-
-    # Configure performance tracer
-    if config.perf_tracer is not None:
-        perf_tracer.configure(config.perf_tracer, rank=rank)
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
