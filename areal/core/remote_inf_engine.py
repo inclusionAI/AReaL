@@ -606,7 +606,8 @@ class RemoteInfEngine:
             # Update LoRA state if this was a LoRA update
             if meta.use_lora:
                 self.lora_initialized = True
-            shutil.rmtree(meta.path, ignore_errors=True)
+            if meta.clear_checkpoint_after_load:
+                shutil.rmtree(meta.path, ignore_errors=True)
 
         fut.add_done_callback(callback)
 

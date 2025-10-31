@@ -3,6 +3,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 import uvloop
 import yaml
@@ -312,6 +313,52 @@ class MegatronEngineConfig:
 
 
 @dataclass
+class SchedulingStrategy:
+    type: str = field(
+        default="separation", metadata={"choices": ["separation", "colocation"]}
+    )
+    target: str | None = field(
+        default=None, metadata={"help": "The target role to be colocated with"}
+    )
+
+
+@dataclass
+class SchedulingSpec:
+    cpu: int = field(default=0, metadata={"help": "Number of CPU cores required"})
+    gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
+    mem: int = field(default=0, metadata={"help": "Amount of memory (GB) required"})
+    port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
+    image: str = field(
+        default="", metadata={"help": "Docker/Singularity container image to use"}
+    )
+    type: str = field(
+        default="worker",
+        metadata={
+            "help": "Task type (e.g., worker, engine)",
+            "choices": ["worker", "engine"],
+        },
+    )
+    env_vars: dict[str, str] = field(
+        default_factory=dict,
+        metadata={"help": "Environment variables for the container"},
+    )
+    # cmd
+    cmd: str | None = field(
+        default=None,
+        metadata={
+            "help": "Command to execute inside the container. Defaults to AReaL's RPC server."
+        },
+    )
+    # slurm configurations from "https://slurm.schedmd.com/sbatch.html"
+    nodelist: str | None = None
+    exclude: str | None = None
+    partition: str | None = None
+    time_limit: str | None = None  # see  "--time" option for format
+    begin: str | None = None  # see "--begin" option for format
+    deadline: str | None = None  # see "--deadline" option for format
+
+
+@dataclass
 class TrainEngineConfig:
     """Core configuration for model training, including optimization and backend settings."""
 
@@ -383,6 +430,18 @@ class TrainEngineConfig:
     peft_type: str = field(
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
+    )
+    scheduling_specs: tuple[SchedulingSpec, SchedulingSpec] | None = field(
+        default=None,
+        metadata={
+            "help": "Resources required by the work process/container and the engine. Used by TrainController."
+        },
+    )
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "Scheduling strategy of the worker. Used by TrainController."
+        },
     )
 
 
@@ -590,6 +649,21 @@ class vLLMConfig:
         return args
 
     @staticmethod
+    def build_cmd_from_args(args: dict[str, Any]):
+        # convert to flags
+        flags = []
+        for k, v in args.items():
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_', '-')}")
+            elif isinstance(v, list):
+                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
+            else:
+                flags.append(f"--{k.replace('_', '-')} {v}")
+        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
+
+    @staticmethod
     def build_cmd(
         vllm_config: "vLLMConfig",
         tp_size,
@@ -604,18 +678,7 @@ class vLLMConfig:
             port=port,
             dist_init_addr=dist_init_addr,
         )
-        # convert to flags
-        flags = []
-        for k, v in args.items():
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_', '-')}")
-            elif isinstance(v, list):
-                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
-            else:
-                flags.append(f"--{k.replace('_', '-')} {v}")
-        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
+        return vLLMConfig.build_cmd_from_args(args)
 
 
 @dataclass
@@ -713,6 +776,10 @@ class SGLangConfig:
             node_rank=node_rank,
         )
 
+        return SGLangConfig.build_cmd_from_args(args)
+
+    @staticmethod
+    def build_cmd_from_args(args: dict[str, Any]):
         # convert to flags
         flags = []
         for k, v in args.items():
@@ -733,8 +800,8 @@ class SGLangConfig:
         sglang_config: "SGLangConfig",
         tp_size,
         base_gpu_id,
-        host,
-        port,
+        host=None,
+        port=None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
@@ -750,19 +817,17 @@ class SGLangConfig:
                 enable_multithread_load=sglang_config.enable_multithread_load,
                 enable_fast_load=sglang_config.enable_fast_load,
             )
-            args.pop("enable_multithread_load", None)
-            args.pop("enable_fast_load", None)
             args["model_loader_extra_config"] = json.dumps(
                 model_loader_extra_config, separators=(",", ":")
             )
+        args.pop("enable_multithread_load", None)
+        args.pop("enable_fast_load", None)
         # Map "all-linear" to "all"
         if "lora_target_modules" in args and args["lora_target_modules"]:
             args["lora_target_modules"] = [
                 x.replace("-linear", "") for x in args["lora_target_modules"]
             ]
         args = dict(
-            host=host,
-            port=port,
             # Model and tokenizer
             tokenizer_path=sglang_config.model_path,
             tokenizer_mode="auto",
@@ -780,6 +845,10 @@ class SGLangConfig:
             dist_init_addr=dist_init_addr,
             **args,
         )
+        if host is not None:
+            args["host"] = host
+        if port is not None:
+            args["port"] = port
         if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"):
             raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
         return args
@@ -846,6 +915,18 @@ class InferenceEngineConfig:
         default=0.0,
         metadata={
             "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
+        },
+    )
+    scheduling_specs: tuple[SchedulingSpec, SchedulingSpec] | None = field(
+        default=None,
+        metadata={
+            "help": "Resources required by the work process/container and the engine. Used by RolloutController."
+        },
+    )
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "Scheduling strategy of the worker. Used by RolloutController."
         },
     )
 
