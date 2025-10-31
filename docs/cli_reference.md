@@ -73,6 +73,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 
 - [DistributedDataParallel Configuration](section-distributed-data-parallel)
 - [MegatronEngine Configuration](section-megatron-engine)
+- [PerfTracer Configuration](section-perf-tracer)
 - [Scheduler Configuration](section-scheduler)
 
 ______________________________________________________________________
@@ -83,27 +84,28 @@ ______________________________________________________________________
 
 Base configuration class for all experiment types with common settings.
 
-| Parameter            | Type                                        | Default      | Description                                                                                                                |
-| -------------------- | ------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `experiment_name`    | string                                      | **Required** | Name of the experiment (no '\_' or '/'). Required.                                                                         |
-| `trial_name`         | string                                      | **Required** | Name of the trial (no '-' or '/'). Required.                                                                               |
-| `cluster`            | [`ClusterSpecConfig`](section-cluster)      | **Required** | Cluster specification. Mainly used by slurm.                                                                               |
-| `allocation_mode`    | string                                      | `""`         | GPU parallel strategy allocation mode. Options: manual/heuristic or pattern-based.                                         |
-| `seed`               | integer                                     | `1`          | Random seed for reproducibility.                                                                                           |
-| `total_train_epochs` | integer                                     | `1`          | Total number of epochs to train the model.                                                                                 |
-| `total_train_steps`  | integer \| None                             | `None`       | Terminate training after this number of steps. For benchmarking purposes only. None indicates normal training.             |
-| `total_train_n_seqs` | integer \| None                             | `None`       | Terminate training after consuming this number of samples. For benchmarking purposes only. None indicates normal training. |
-| `tokenizer_path`     | string                                      | `""`         | Path to the tokenizer.                                                                                                     |
-| `train_dataset`      | [`DatasetConfig`](section-dataset)          | **Required** | -                                                                                                                          |
-| `valid_dataset`      | [`DatasetConfig`](section-dataset) \| None  | `None`       | -                                                                                                                          |
-| `saver`              | [`SaverConfig`](section-saver)              | **Required** | -                                                                                                                          |
-| `evaluator`          | [`EvaluatorConfig`](section-evaluator)      | **Required** | -                                                                                                                          |
-| `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger) | **Required** | -                                                                                                                          |
-| `recover`            | [`RecoverConfig`](section-recover)          | **Required** | -                                                                                                                          |
-| `sglang`             | [`SGLangConfig`](section-sg-lang)           | **Required** | -                                                                                                                          |
-| `vllm`               | [`vLLMConfig`](section-v-llm)               | **Required** | -                                                                                                                          |
-| `launcher`           | [`LauncherConfig`](section-launcher)        | **Required** | -                                                                                                                          |
-| `scheduler`          | [`SchedulerConfig`](section-scheduler)      | **Required** | -                                                                                                                          |
+| Parameter            | Type                                              | Default      | Description                                                                                                                |
+| -------------------- | ------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`    | string                                            | **Required** | Name of the experiment (no '\_' or '/'). Required.                                                                         |
+| `trial_name`         | string                                            | **Required** | Name of the trial (no '-' or '/'). Required.                                                                               |
+| `cluster`            | [`ClusterSpecConfig`](section-cluster)            | **Required** | Cluster specification. Mainly used by slurm.                                                                               |
+| `allocation_mode`    | string                                            | `""`         | GPU parallel strategy allocation mode. Options: manual/heuristic or pattern-based.                                         |
+| `seed`               | integer                                           | `1`          | Random seed for reproducibility.                                                                                           |
+| `total_train_epochs` | integer                                           | `1`          | Total number of epochs to train the model.                                                                                 |
+| `total_train_steps`  | integer \| None                                   | `None`       | Terminate training after this number of steps. For benchmarking purposes only. None indicates normal training.             |
+| `total_train_n_seqs` | integer \| None                                   | `None`       | Terminate training after consuming this number of samples. For benchmarking purposes only. None indicates normal training. |
+| `tokenizer_path`     | string                                            | `""`         | Path to the tokenizer.                                                                                                     |
+| `train_dataset`      | [`DatasetConfig`](section-dataset)                | **Required** | -                                                                                                                          |
+| `valid_dataset`      | [`DatasetConfig`](section-dataset) \| None        | `None`       | -                                                                                                                          |
+| `saver`              | [`SaverConfig`](section-saver)                    | **Required** | -                                                                                                                          |
+| `evaluator`          | [`EvaluatorConfig`](section-evaluator)            | **Required** | -                                                                                                                          |
+| `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger)       | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer) \| None | `None`       | Performance tracer configuration. None means disabled.                                                                     |
+| `recover`            | [`RecoverConfig`](section-recover)                | **Required** | -                                                                                                                          |
+| `sglang`             | [`SGLangConfig`](section-sg-lang)                 | **Required** | -                                                                                                                          |
+| `vllm`               | [`vLLMConfig`](section-v-llm)                     | **Required** | -                                                                                                                          |
+| `launcher`           | [`LauncherConfig`](section-launcher)              | **Required** | -                                                                                                                          |
+| `scheduler`          | [`SchedulerConfig`](section-scheduler)            | **Required** | -                                                                                                                          |
 
 (section-grpo)=
 
@@ -128,6 +130,7 @@ experiments.
 | `saver`              | [`SaverConfig`](section-saver)                                    | **Required** | -                                                                                                                          |
 | `evaluator`          | [`EvaluatorConfig`](section-evaluator)                            | **Required** | -                                                                                                                          |
 | `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger)                       | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer) \| None                 | `None`       | Performance tracer configuration. None means disabled.                                                                     |
 | `recover`            | [`RecoverConfig`](section-recover)                                | **Required** | -                                                                                                                          |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)                                 | **Required** | -                                                                                                                          |
 | `vllm`               | [`vLLMConfig`](section-v-llm)                                     | **Required** | -                                                                                                                          |
@@ -161,6 +164,7 @@ Configuration for Proximal Policy Optimization (PPO) reinforcement learning expe
 | `saver`              | [`SaverConfig`](section-saver)                                    | **Required** | -                                                                                                                          |
 | `evaluator`          | [`EvaluatorConfig`](section-evaluator)                            | **Required** | -                                                                                                                          |
 | `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger)                       | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer) \| None                 | `None`       | Performance tracer configuration. None means disabled.                                                                     |
 | `recover`            | [`RecoverConfig`](section-recover)                                | **Required** | -                                                                                                                          |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)                                 | **Required** | -                                                                                                                          |
 | `vllm`               | [`vLLMConfig`](section-v-llm)                                     | **Required** | -                                                                                                                          |
@@ -179,28 +183,29 @@ Configuration for Proximal Policy Optimization (PPO) reinforcement learning expe
 
 Configuration for Reward Model (RW) training experiments.
 
-| Parameter            | Type                                        | Default      | Description                                                                                                                |
-| -------------------- | ------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `experiment_name`    | string                                      | **Required** | Name of the experiment (no '\_' or '/'). Required.                                                                         |
-| `trial_name`         | string                                      | **Required** | Name of the trial (no '-' or '/'). Required.                                                                               |
-| `cluster`            | [`ClusterSpecConfig`](section-cluster)      | **Required** | Cluster specification. Mainly used by slurm.                                                                               |
-| `allocation_mode`    | string                                      | `""`         | GPU parallel strategy allocation mode. Options: manual/heuristic or pattern-based.                                         |
-| `seed`               | integer                                     | `1`          | Random seed for reproducibility.                                                                                           |
-| `total_train_epochs` | integer                                     | `1`          | Total number of epochs to train the model.                                                                                 |
-| `total_train_steps`  | integer \| None                             | `None`       | Terminate training after this number of steps. For benchmarking purposes only. None indicates normal training.             |
-| `total_train_n_seqs` | integer \| None                             | `None`       | Terminate training after consuming this number of samples. For benchmarking purposes only. None indicates normal training. |
-| `tokenizer_path`     | string                                      | `""`         | Path to the tokenizer.                                                                                                     |
-| `train_dataset`      | [`DatasetConfig`](section-dataset)          | **Required** | -                                                                                                                          |
-| `valid_dataset`      | [`DatasetConfig`](section-dataset) \| None  | `None`       | -                                                                                                                          |
-| `saver`              | [`SaverConfig`](section-saver)              | **Required** | -                                                                                                                          |
-| `evaluator`          | [`EvaluatorConfig`](section-evaluator)      | **Required** | -                                                                                                                          |
-| `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger) | **Required** | -                                                                                                                          |
-| `recover`            | [`RecoverConfig`](section-recover)          | **Required** | -                                                                                                                          |
-| `sglang`             | [`SGLangConfig`](section-sg-lang)           | **Required** | -                                                                                                                          |
-| `vllm`               | [`vLLMConfig`](section-v-llm)               | **Required** | -                                                                                                                          |
-| `launcher`           | [`LauncherConfig`](section-launcher)        | **Required** | -                                                                                                                          |
-| `scheduler`          | [`SchedulerConfig`](section-scheduler)      | **Required** | -                                                                                                                          |
-| `model`              | [`TrainEngineConfig`](section-train-engine) | **Required** | -                                                                                                                          |
+| Parameter            | Type                                              | Default      | Description                                                                                                                |
+| -------------------- | ------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`    | string                                            | **Required** | Name of the experiment (no '\_' or '/'). Required.                                                                         |
+| `trial_name`         | string                                            | **Required** | Name of the trial (no '-' or '/'). Required.                                                                               |
+| `cluster`            | [`ClusterSpecConfig`](section-cluster)            | **Required** | Cluster specification. Mainly used by slurm.                                                                               |
+| `allocation_mode`    | string                                            | `""`         | GPU parallel strategy allocation mode. Options: manual/heuristic or pattern-based.                                         |
+| `seed`               | integer                                           | `1`          | Random seed for reproducibility.                                                                                           |
+| `total_train_epochs` | integer                                           | `1`          | Total number of epochs to train the model.                                                                                 |
+| `total_train_steps`  | integer \| None                                   | `None`       | Terminate training after this number of steps. For benchmarking purposes only. None indicates normal training.             |
+| `total_train_n_seqs` | integer \| None                                   | `None`       | Terminate training after consuming this number of samples. For benchmarking purposes only. None indicates normal training. |
+| `tokenizer_path`     | string                                            | `""`         | Path to the tokenizer.                                                                                                     |
+| `train_dataset`      | [`DatasetConfig`](section-dataset)                | **Required** | -                                                                                                                          |
+| `valid_dataset`      | [`DatasetConfig`](section-dataset) \| None        | `None`       | -                                                                                                                          |
+| `saver`              | [`SaverConfig`](section-saver)                    | **Required** | -                                                                                                                          |
+| `evaluator`          | [`EvaluatorConfig`](section-evaluator)            | **Required** | -                                                                                                                          |
+| `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger)       | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer) \| None | `None`       | Performance tracer configuration. None means disabled.                                                                     |
+| `recover`            | [`RecoverConfig`](section-recover)                | **Required** | -                                                                                                                          |
+| `sglang`             | [`SGLangConfig`](section-sg-lang)                 | **Required** | -                                                                                                                          |
+| `vllm`               | [`vLLMConfig`](section-v-llm)                     | **Required** | -                                                                                                                          |
+| `launcher`           | [`LauncherConfig`](section-launcher)              | **Required** | -                                                                                                                          |
+| `scheduler`          | [`SchedulerConfig`](section-scheduler)            | **Required** | -                                                                                                                          |
+| `model`              | [`TrainEngineConfig`](section-train-engine)       | **Required** | -                                                                                                                          |
 
 (section-sft)=
 
@@ -208,28 +213,29 @@ Configuration for Reward Model (RW) training experiments.
 
 Configuration for Supervised Fine-Tuning (SFT) experiments.
 
-| Parameter            | Type                                        | Default      | Description                                                                                                                |
-| -------------------- | ------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `experiment_name`    | string                                      | **Required** | Name of the experiment (no '\_' or '/'). Required.                                                                         |
-| `trial_name`         | string                                      | **Required** | Name of the trial (no '-' or '/'). Required.                                                                               |
-| `cluster`            | [`ClusterSpecConfig`](section-cluster)      | **Required** | Cluster specification. Mainly used by slurm.                                                                               |
-| `allocation_mode`    | string                                      | `""`         | GPU parallel strategy allocation mode. Options: manual/heuristic or pattern-based.                                         |
-| `seed`               | integer                                     | `1`          | Random seed for reproducibility.                                                                                           |
-| `total_train_epochs` | integer                                     | `1`          | Total number of epochs to train the model.                                                                                 |
-| `total_train_steps`  | integer \| None                             | `None`       | Terminate training after this number of steps. For benchmarking purposes only. None indicates normal training.             |
-| `total_train_n_seqs` | integer \| None                             | `None`       | Terminate training after consuming this number of samples. For benchmarking purposes only. None indicates normal training. |
-| `tokenizer_path`     | string                                      | `""`         | Path to the tokenizer.                                                                                                     |
-| `train_dataset`      | [`DatasetConfig`](section-dataset)          | **Required** | -                                                                                                                          |
-| `valid_dataset`      | [`DatasetConfig`](section-dataset) \| None  | `None`       | -                                                                                                                          |
-| `saver`              | [`SaverConfig`](section-saver)              | **Required** | -                                                                                                                          |
-| `evaluator`          | [`EvaluatorConfig`](section-evaluator)      | **Required** | -                                                                                                                          |
-| `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger) | **Required** | -                                                                                                                          |
-| `recover`            | [`RecoverConfig`](section-recover)          | **Required** | -                                                                                                                          |
-| `sglang`             | [`SGLangConfig`](section-sg-lang)           | **Required** | -                                                                                                                          |
-| `vllm`               | [`vLLMConfig`](section-v-llm)               | **Required** | -                                                                                                                          |
-| `launcher`           | [`LauncherConfig`](section-launcher)        | **Required** | -                                                                                                                          |
-| `scheduler`          | [`SchedulerConfig`](section-scheduler)      | **Required** | -                                                                                                                          |
-| `model`              | [`TrainEngineConfig`](section-train-engine) | **Required** | -                                                                                                                          |
+| Parameter            | Type                                              | Default      | Description                                                                                                                |
+| -------------------- | ------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`    | string                                            | **Required** | Name of the experiment (no '\_' or '/'). Required.                                                                         |
+| `trial_name`         | string                                            | **Required** | Name of the trial (no '-' or '/'). Required.                                                                               |
+| `cluster`            | [`ClusterSpecConfig`](section-cluster)            | **Required** | Cluster specification. Mainly used by slurm.                                                                               |
+| `allocation_mode`    | string                                            | `""`         | GPU parallel strategy allocation mode. Options: manual/heuristic or pattern-based.                                         |
+| `seed`               | integer                                           | `1`          | Random seed for reproducibility.                                                                                           |
+| `total_train_epochs` | integer                                           | `1`          | Total number of epochs to train the model.                                                                                 |
+| `total_train_steps`  | integer \| None                                   | `None`       | Terminate training after this number of steps. For benchmarking purposes only. None indicates normal training.             |
+| `total_train_n_seqs` | integer \| None                                   | `None`       | Terminate training after consuming this number of samples. For benchmarking purposes only. None indicates normal training. |
+| `tokenizer_path`     | string                                            | `""`         | Path to the tokenizer.                                                                                                     |
+| `train_dataset`      | [`DatasetConfig`](section-dataset)                | **Required** | -                                                                                                                          |
+| `valid_dataset`      | [`DatasetConfig`](section-dataset) \| None        | `None`       | -                                                                                                                          |
+| `saver`              | [`SaverConfig`](section-saver)                    | **Required** | -                                                                                                                          |
+| `evaluator`          | [`EvaluatorConfig`](section-evaluator)            | **Required** | -                                                                                                                          |
+| `stats_logger`       | [`StatsLoggerConfig`](section-stats-logger)       | **Required** | -                                                                                                                          |
+| `perf_tracer`        | [`PerfTracerConfig`](section-perf-tracer) \| None | `None`       | Performance tracer configuration. None means disabled.                                                                     |
+| `recover`            | [`RecoverConfig`](section-recover)                | **Required** | -                                                                                                                          |
+| `sglang`             | [`SGLangConfig`](section-sg-lang)                 | **Required** | -                                                                                                                          |
+| `vllm`               | [`vLLMConfig`](section-v-llm)                     | **Required** | -                                                                                                                          |
+| `launcher`           | [`LauncherConfig`](section-launcher)              | **Required** | -                                                                                                                          |
+| `scheduler`          | [`SchedulerConfig`](section-scheduler)            | **Required** | -                                                                                                                          |
+| `model`              | [`TrainEngineConfig`](section-train-engine)       | **Required** | -                                                                                                                          |
 
 (section-fsdp-engine)=
 
@@ -797,6 +803,20 @@ Refer to Megatron-LM documentation for implementation details.
 | `recompute_num_layers`                     | integer \| None                                                      | `1`          | -           |
 | `distribute_saved_activations`             | boolean \| None                                                      | `None`       | -           |
 | `recompute_modules`                        | list of string \| None                                               | `None`       | -           |
+
+(section-perf-tracer)=
+
+## PerfTracer Configuration
+
+Configuration for perf tracer emission.
+
+| Parameter             | Type    | Default      | Description                                                                                                                 |
+| --------------------- | ------- | ------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_name`     | string  | **Required** | -                                                                                                                           |
+| `trial_name`          | string  | **Required** | -                                                                                                                           |
+| `fileroot`            | string  | **Required** | -                                                                                                                           |
+| `enabled`             | boolean | `False`      | Explicitly enable or disable perf tracing. Set to true to capture perf traces.                                              |
+| `save_interval_steps` | integer | `1`          | Flush trace events to disk every N calls to save(step=...). A value of 1 writes on every step; values \<= 0 fall back to 1. |
 
 (section-scheduler)=
 
