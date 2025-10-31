@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+import torch.distributed.checkpoint as dcp
 import torch.distributed.nn.functional as dist_F
 from peft import (
     LoraConfig,
@@ -49,6 +50,7 @@ from areal.utils.data import (
 )
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
+from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
@@ -205,24 +207,22 @@ class FSDPEngine(BaseHFEngine):
         if meta.weight_format == "hf":
             self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
         elif meta.weight_format == "dcp":
-            # TODO: implement DCP save/load for FSDP
-            raise NotImplementedError("DCP format saving is not implemented yet. ")
+            self._save_to_dcp(meta.path, meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
-        if meta.with_optim:
+        if meta.with_optim and meta.weight_format == "hf":
             self.save_optimizer_state(meta.path)
 
     def load(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
             self._load_model_from_hf(meta.path)
         elif meta.weight_format == "dcp":
-            # TODO: implement DCP save/load for FSDP
-            raise NotImplementedError("DCP format loading is not implemented yet. ")
+            self._load_from_dcp(meta.path, meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
-        if meta.with_optim:
+        if meta.with_optim and meta.weight_format == "hf":
             self.load_optimizer_state(meta.path)
 
     def _save_model_to_hf(
@@ -265,6 +265,33 @@ class FSDPEngine(BaseHFEngine):
             full_state,
             self.cpu_offload,
             tie_word_embeddings=self.model_config.tie_word_embeddings,
+        )
+
+    def _save_to_dcp(
+        self,
+        path: str,
+        with_optim: bool,
+    ):
+        """Save model in PyTorch Distributed Checkpoint (DCP) format."""
+        if self.model is None:
+            raise RuntimeError("Model not initialized")
+
+        os.makedirs(path, exist_ok=True)
+
+        dcp_state = DCPState(self.model, self.optimizer if with_optim else None)
+        state_dict = {"dcp": dcp_state}
+        dcp.save(state_dict, checkpoint_id=path)
+
+    def _load_from_dcp(self, path: str, with_optim: bool):
+        """Load model from Distributed Checkpoint (DCP) format."""
+        if self.model is None:
+            raise RuntimeError("Model not initialized")
+
+        dcp_state = DCPState(self.model, self.optimizer if with_optim else None)
+        state_dict = {"dcp": dcp_state}
+        dcp.load(
+            state_dict=state_dict,
+            checkpoint_id=path,
         )
 
     def _apply_peft_wrapper(self):

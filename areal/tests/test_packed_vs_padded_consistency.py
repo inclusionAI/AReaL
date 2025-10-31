@@ -134,7 +134,6 @@ def mock_padded_vlm_data(model_path):
         image_tokens = []
 
         for _ in range(num_images):
-
             VISION_H = random.randint(4, 32) * 28
             VISION_W = random.randint(4, 32) * 28
 
@@ -205,7 +204,7 @@ def mock_padded_vlm_data(model_path):
 
 @pytest.mark.parametrize(
     "model_path",
-    [QWEN25_VL_PATH, GEMMA3_PATH],
+    [pytest.param(QWEN25_VL_PATH), pytest.param(GEMMA3_PATH, marks=pytest.mark.slow)],
 )
 def test_vlm_consistency(model_path):
     os.environ["RANK"] = str(0)

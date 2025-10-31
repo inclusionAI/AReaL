@@ -3,7 +3,7 @@ import asyncio
 import copy
 import re
 import uuid
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import torch
 from tensordict import TensorDict
@@ -22,8 +22,8 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 
-from .prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT
-from .tool_manager import ToolCallStatus, ToolManager
+from prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT  # isort: skip
+from tool_manager import ToolCallStatus, ToolManager  # isort: skip
 
 logger = logging.getLogger("TIR workflow")
 
@@ -53,7 +53,7 @@ class TIRWorkflow(RolloutWorkflow):
         tir_config: TIRConfig,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
-        dump_dir: Optional[str] = None,
+        dump_dir: str | None = None,
     ):
         super().__init__()
         self.reward_fn = reward_fn
@@ -88,7 +88,7 @@ class TIRWorkflow(RolloutWorkflow):
         return f"\n```output\n{res}\n```\n"
 
     async def arun_episode(
-        self, engine: InferenceEngine, data: Dict[str, Any]
+        self, engine: InferenceEngine, data: dict[str, Any]
     ) -> TensorDict:
         """Run a complete TIR inference episode.
         :param engine: The inference engine.
@@ -263,7 +263,7 @@ class TIRWorkflow(RolloutWorkflow):
         input_ids: list[int],
         max_len: int,
         waiting_for_tool_start: bool,
-    ) -> Tuple[ModelResponse, str]:
+    ) -> tuple[ModelResponse, str]:
         """Generate response with tool call detection support"""
 
         # Select stop condition based on state flag
@@ -290,14 +290,14 @@ class TIRWorkflow(RolloutWorkflow):
         resp = await engine.agenerate(req)
         return resp, resp.stop_reason
 
-    def _detect_tool_start_marker(self, text: str) -> Optional[str]:
+    def _detect_tool_start_marker(self, text: str) -> str | None:
         """Detect if text ends with tool start marker"""
         for marker in self.start_markers:
             if text.endswith(marker):
                 return marker
         return None
 
-    def _execute_tools(self, response: str) -> Tuple[str, ToolCallStatus]:
+    def _execute_tools(self, response: str) -> tuple[str, ToolCallStatus]:
         """Execute tool call"""
         # Call execute_tool_call
         tool_results = self.tool_manager.execute_tool_call(response)

@@ -2,7 +2,7 @@ import argparse
 import copy
 import os
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -61,7 +61,7 @@ def mock_input(
     min_seqlen=1,
     max_seqlen=1024,
     device=current_platform.device_type,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -105,17 +105,18 @@ def make_engine(model_type, allocation_mode, mb_spec, init_optimizer=False):
 
 def make_fsdp_engine(model_type, allocation_mode, mb_spec, init_optimizer=False):
     engine_config = TrainEngineConfig(
-        experiment_name=f"test",
+        experiment_name="test",
         trial_name="test",
         mb_spec=mb_spec,
         path=MODEL_PATHS[model_type],
         optimizer=OptimizerConfig() if init_optimizer else None,
     )
     alloc_mode = AllocationMode.from_str(allocation_mode)
-    # ignore other parallel strategy (not supported in fsdp)
-    alloc_mode.train.data_parallel_size = (
-        alloc_mode.train.world_size // alloc_mode.train.context_parallel_size
-    )
+    # ignore parallel strategy for a stable forward output
+    alloc_mode.train.data_parallel_size *= alloc_mode.train.world_size
+    alloc_mode.train.pipeline_parallel_size = 1
+    alloc_mode.train.tensor_parallel_size = 1
+    alloc_mode.train.context_parallel_size = 1
     engine = FSDPEngine(engine_config)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine.create_process_group(parallel_strategy=alloc_mode.train)
@@ -123,7 +124,7 @@ def make_fsdp_engine(model_type, allocation_mode, mb_spec, init_optimizer=False)
     return engine
 
 
-def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None):
+def test_forward(model_type: str, alloc_mode: str, output: str | None = None):
     rank = int(os.environ["RANK"])
 
     mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
@@ -153,9 +154,8 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
     logits_list = [torch.empty_like(logits) for _ in range(model_parallel_world_size)]
     dist.all_gather(logits_list, logits, group=model_parallel_group)
 
-    assert all(
-        torch.equal(logits, logits_list[0]) for logits in logits_list
-    ), "Logits should be the same across all model parallel ranks."
+    is_equal = all(torch.equal(logits, logits_list[0]) for logits in logits_list)
+    assert is_equal, "Logits should be the same across all model parallel ranks."
 
     # make FSDP engine, and check if the difference between FSDP and megatron engine
     fsdp_engine = make_fsdp_engine("qwen3", alloc_mode, mb_spec)
@@ -178,18 +178,10 @@ def test_forward(model_type: str, alloc_mode: str, output: Optional[str] = None)
         non_zero_logits = torch.count_nonzero(logits)
         masked_diff = diff.masked_fill(logits == 0, torch.finfo(logits.dtype).max)
         print(f"logits non-zero count: {torch.count_nonzero(logits)}")
-        print(
-            f"diff < 10 count: {torch.count_nonzero(masked_diff < 10)}, {torch.count_nonzero(masked_diff < 10) * 100/non_zero_logits:.2f} percent."
-        )
-        print(
-            f"diff < 1 count: {torch.count_nonzero(masked_diff < 1)}, {torch.count_nonzero(masked_diff < 1) * 100/non_zero_logits:.2f} percent."
-        )
-        print(
-            f"diff < 0.1 count: {torch.count_nonzero(masked_diff < 0.1)}, {torch.count_nonzero(masked_diff < 0.1) * 100/non_zero_logits:.2f} percent."
-        )
-        print(
-            f"diff < 0.01 count: {torch.count_nonzero(masked_diff < 0.01)}, {torch.count_nonzero(masked_diff < 0.01) * 100/non_zero_logits:.2f} percent."
-        )
+        for threshold in [10, 1, 0.1, 0.01]:
+            count = torch.count_nonzero(masked_diff < threshold)
+            percentage = count * 100 / non_zero_logits
+            print(f"diff < {threshold} count: {count}, {percentage:.2f} percent.")
         try:
             torch.testing.assert_close(
                 logits.to(torch.float32),
@@ -223,7 +215,7 @@ def mock_loss_fn(logits: torch.Tensor, input_data) -> torch.Tensor:
     return torch.mean(logprobs)
 
 
-def test_train(model_type: str, alloc_mode: str, output: Optional[str] = None):
+def test_train(model_type: str, alloc_mode: str, output: str | None = None):
     print(f"running train test: model_type={model_type} alloc_mode={alloc_mode}")
     rank = int(os.environ["RANK"])
 
@@ -257,9 +249,8 @@ def test_train(model_type: str, alloc_mode: str, output: Optional[str] = None):
 
 
 def test_train_dcp_save_load(
-    model_type: str, alloc_mode: str, output: Optional[str] = None
+    model_type: str, alloc_mode: str, output: str | None = None
 ):
-
     print(
         f"running test_train_dcp_save_load(model_type={model_type} alloc_mode={alloc_mode})"
     )
@@ -363,9 +354,8 @@ def test_train_dcp_save_load(
 
 
 def test_simple_dcp_save_load(
-    model_type: str, alloc_mode: str, output: Optional[str] = None
+    model_type: str, alloc_mode: str, output: str | None = None
 ):
-
     print(
         f"running test_simple_dcp_save_load(model_type={model_type} alloc_mode={alloc_mode})"
     )
@@ -382,8 +372,6 @@ def test_simple_dcp_save_load(
     engine = make_engine(model_type, alloc_mode, mb_spec, init_optimizer=True)
 
     seeding.set_random_seed(0, key=f"trainer{rank}")
-
-    input_ = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
     print(f"rank {rank} is_data_parallel_head()={engine.is_data_parallel_head()}")
 
     save_load_meta = SaveLoadMeta(
