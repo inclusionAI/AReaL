@@ -66,14 +66,12 @@ class VersionInfo:
                 .decode("utf-8")
                 .strip()
             )
-            try:
-                subprocess.check_call(
-                    ["git", "diff-index", "--quiet", "HEAD", "--"],
-                    stderr=subprocess.DEVNULL,
-                    cwd=Path(__file__).parent,
-                )
-            except subprocess.CalledProcessError:
-                self.__is_dirty__ = True
+            git_diff_result = subprocess.run(
+                ["git", "diff-index", "--quiet", "HEAD", "--"],
+                stderr=subprocess.DEVNULL,
+                cwd=Path(__file__).parent,
+            )
+            self.__is_dirty__ = git_diff_result.returncode != 0
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
