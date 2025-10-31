@@ -1,9 +1,5 @@
 """Core components for AREAL."""
 
-from .local_inf_engine import (
-    LocalInfBackendProtocol,
-    LocalInfEngine,
-)
 from .remote_inf_engine import (
     RemoteInfBackendProtocol,
     RemoteInfEngine,
@@ -15,8 +11,6 @@ from .workflow_executor import (
 )
 
 __all__ = [
-    "LocalInfBackendProtocol",
-    "LocalInfEngine",
     "RemoteInfBackendProtocol",
     "RemoteInfEngine",
     "StalenessManager",
