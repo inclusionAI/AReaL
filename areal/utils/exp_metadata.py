@@ -24,7 +24,7 @@ def save_experiment_metadata(
 ) -> str:
     """Save experiment metadata including commit id to a JSON file."""
     metadata_dir = get_metadata_dir(fileroot, experiment_name, trial_name)
-    metadata_file = os.path.join(metadata_dir, "experiment_metadata.json")
+    metadata_file = os.path.join(metadata_dir, "version.json")
 
     metadata = {
         "commit_id": version_info.commit,
@@ -51,7 +51,7 @@ def load_experiment_metadata(
 ) -> dict | None:
     """Load experiment metadata from a JSON file."""
     metadata_dir = get_metadata_dir(fileroot, experiment_name, trial_name)
-    metadata_file = os.path.join(metadata_dir, "experiment_metadata.json")
+    metadata_file = os.path.join(metadata_dir, "version.json")
 
     if not os.path.exists(metadata_file):
         return None
