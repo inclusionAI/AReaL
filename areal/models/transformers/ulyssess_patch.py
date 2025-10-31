@@ -115,9 +115,9 @@ def apply_monkey_patch(
             model.config.text_config.num_key_value_heads,
         )
 
-    assert (
-        num_attention_heads % ulysses_sp_size == 0
-    ), f"num_attention_heads {num_attention_heads} must be divisible by ulysses_sp_size {ulysses_sp_size}"
+    assert num_attention_heads % ulysses_sp_size == 0, (
+        f"num_attention_heads {num_attention_heads} must be divisible by ulysses_sp_size {ulysses_sp_size}"
+    )
     assert (
         num_key_value_heads % ulysses_sp_size == 0
         or ulysses_sp_size % num_key_value_heads == 0
@@ -140,6 +140,13 @@ def apply_monkey_patch(
             "attn_class": "Qwen2VLAttention",
             "model_class": "Qwen2VLTextModel",
             "patch_module": "areal.models.transformers.qwen2_vl",
+            "patch_attn_func": "ulysses_flash_attn_forward",
+        },
+        "qwen3_vl": {
+            "module": "transformers.models.qwen3_vl.modeling_qwen3_vl",
+            "attn_class": "Qwen3VLTextAttention",
+            "model_class": "Qwen3VLTextModel",
+            "patch_module": "areal.models.transformers.qwen3_vl",
             "patch_attn_func": "ulysses_flash_attn_forward",
         },
     }
