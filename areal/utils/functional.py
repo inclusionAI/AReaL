@@ -1,6 +1,6 @@
 import functools
 import warnings
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import torch
@@ -130,7 +130,7 @@ def gather_logprobs_entropy(
 @torch.no_grad()
 def masked_normalization(
     x: torch.Tensor,
-    mask: Optional[torch.Tensor] = None,
+    mask: torch.Tensor | None = None,
     dim=None,
     unbiased=False,
     eps=1e-5,
@@ -175,10 +175,11 @@ def ppo_actor_loss_fn(
     advantages: torch.Tensor,
     eps_clip: float,
     loss_mask: torch.Tensor,
-    eps_clip_higher: Optional[float] = None,
-    c_clip: Optional[float] = None,
-    behav_imp_weight_cap: Optional[float] = None,
-) -> Tuple[torch.Tensor, Dict]:
+    eps_clip_higher: float | None = None,
+    c_clip: float | None = None,
+    behav_imp_weight_cap: float | None = None,
+    importance_sampling_level: str = "token",
+) -> tuple[torch.Tensor, dict]:
     """
     When decoupled loss is disabled:
     1. if recompute logp, both old_logprobs and proximal_logprobs are recomputed logp;
@@ -186,9 +187,54 @@ def ppo_actor_loss_fn(
 
     When decoupled loss is enabled, proximal_logprobs is the recomputed logp,
     old_logprobs is produced by the inference engine.
+
+    Args:
+        importance_sampling_level: Level at which to compute importance sampling ratios.
+            - 'token': Per-token ratios
+            - 'sequence': Sequence-level geometric mean of per-token ratios (GSPO)
     """
     loss_mask_count = loss_mask.count_nonzero() or 1
-    ratio = torch.where(loss_mask, torch.exp(logprobs - proximal_logprobs), 0)
+
+    if importance_sampling_level == "sequence":
+        # GSPO: Compute sequence-level geometric mean of probability ratios
+        # Geometric mean = exp(mean(log(ratios))) = exp(mean(log_ratio))
+        log_ratio = logprobs - proximal_logprobs
+
+        # Handle both 1D (packed) and 2D (padded) tensor shapes
+        if log_ratio.ndim == 1:
+            # For 1D tensors (packed sequences), treat as single sequence
+            # Input shape: [total_tokens]
+            seq_log_ratio_mean = torch.where(loss_mask, log_ratio, 0.0).sum() / (
+                loss_mask.sum().clamp(min=1)
+            )
+            # All tokens in the sequence get the same geometric mean ratio
+            ratio = torch.exp(seq_log_ratio_mean).expand_as(log_ratio)
+            # Apply mask
+            ratio = torch.where(loss_mask, ratio, 0.0)
+        else:
+            # For 2D tensors (padded sequences)
+            # Input shape: [batch_size, seq_len]
+            # Compute mean log ratio over sequence length for each sample
+            seq_log_ratio_mean = torch.where(loss_mask, log_ratio, 0.0).sum(dim=1) / (
+                loss_mask.sum(dim=1).clamp(min=1)
+            )
+            # Broadcast back to original shape: each sequence gets its own geometric mean ratio
+            ratio = torch.exp(seq_log_ratio_mean.unsqueeze(1).expand_as(log_ratio))
+            # Apply mask
+            ratio = torch.where(loss_mask, ratio, 0.0)
+
+        # sum token advantages per sequence.
+        # use sum instead of mean because later we divide by total valid tokens.
+        advantages = advantages.sum(dim=-1, keepdim=True).expand_as(log_ratio)
+
+    elif importance_sampling_level == "token":
+        # Standard PPO: per-token ratio
+        ratio = torch.where(loss_mask, torch.exp(logprobs - proximal_logprobs), 0)
+    else:
+        raise ValueError(
+            f"Invalid importance_sampling_level: {importance_sampling_level}. "
+            "Must be 'token' or 'sequence'."
+        )
 
     clipped_ratio = torch.clamp(
         ratio,
@@ -249,9 +295,9 @@ def ppo_critic_loss_fn(
     old_value: torch.FloatTensor,
     target_value: torch.FloatTensor,
     value_eps_clip: float,
-    loss_mask: Optional[torch.Tensor] = None,
+    loss_mask: torch.Tensor | None = None,
     loss_fn_type: str = "mse",
-) -> Tuple[torch.Tensor, Dict]:
+) -> tuple[torch.Tensor, dict]:
     """Compute PPO critic loss function given padded batch inputs.
 
     There is no shape requirements for the inputs, but they must have the same shape.
@@ -312,8 +358,8 @@ def ppo_critic_loss_fn(
 
 
 def dynamic_sampling(
-    data: Dict[str, Any], group_size: int
-) -> Tuple[Dict[str, Any], Dict[str, int]]:
+    data: dict[str, Any], group_size: int
+) -> tuple[dict[str, Any], dict[str, int]]:
     """Filter samples by group when all rewards in a group are equal.
 
     Assumes samples of the same group are adjacent in the batch.
@@ -362,7 +408,7 @@ def dynamic_sampling(
     n_group_filtered = int(num_groups - n_group_kept)
 
     # Apply mask row-wise across tensors that share the same batch dimension
-    filtered: Dict[str, Any] = {}
+    filtered: dict[str, Any] = {}
     for k, v in data.items():
         if torch.is_tensor(v) and v.shape[:1] == (batch_size,):
             filtered[k] = v[mask]
@@ -374,11 +420,11 @@ def dynamic_sampling(
 
 # code modified from VERL: https://github.com/volcengine/verl/blob/main/verl/workers/reward_manager/dapo.py
 def reward_overlong_penalty(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     overlong_tokens: int,
     overlong_penalty_factor: float,
     max_response_length: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     reward_score = data["rewards"]
     input_ids = data["input_ids"]
     response_lengths = (data["loss_mask"].sum(dim=-1)).long()
