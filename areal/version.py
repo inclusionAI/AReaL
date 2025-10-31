@@ -1,4 +1,5 @@
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -44,6 +45,7 @@ class VersionInfo:
             )
         return version
 
+    @lru_cache(maxsize=1)
     def _populate_version_info(self):
         try:
             self.__branch__ = (
