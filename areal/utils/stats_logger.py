@@ -51,10 +51,12 @@ class StatsLogger:
             suffix = time.strftime("%Y_%m_%d_%H_%M_%S")
 
         exp_config_dict = asdict(self.exp_config)
-        exp_config_dict["git_commit_id"] = version_info.commit
-        exp_config_dict["git_branch"] = version_info.branch
-        exp_config_dict["git_is_dirty"] = version_info.is_dirty
-        exp_config_dict["version"] = version_info.full_version_with_dirty_description
+        exp_config_dict["version_info"] = {
+            "commit_id": version_info.commit,
+            "branch": version_info.branch,
+            "is_dirty": version_info.is_dirty,
+            "version": version_info.full_version_with_dirty_description,
+        }
 
         wandb.init(
             mode=self.config.wandb.mode,
