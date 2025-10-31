@@ -162,9 +162,10 @@ class SlurmLauncher:
         if env_vars is None:
             env_vars = dict()
         n_gpus_per_task = n_gpus_per_node // ntasks_per_node
-        assert current_platform.device_control_env_var not in env_vars, (
-            f"{current_platform.device_control_env_var} should be automatically resolved by Launcher instead of manually assigned."
-        )
+        if current_platform.device_control_env_var in env_vars:
+            raise ValueError(
+                f"{current_platform.device_control_env_var} should be automatically resolved by Launcher instead of manually assigned."
+            )
 
         srun_cmds = []
         for i in range(count):

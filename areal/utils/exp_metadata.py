@@ -9,7 +9,9 @@ from areal.version import version_info
 
 def get_metadata_dir(fileroot: str, experiment_name: str, trial_name: str) -> str:
     """Get the directory path for storing experiment metadata."""
-    path = os.path.join(fileroot, "logs", getpass.getuser(), experiment_name, trial_name)
+    path = os.path.join(
+        fileroot, "logs", getpass.getuser(), experiment_name, trial_name
+    )
     os.makedirs(path, exist_ok=True)
     return path
 
