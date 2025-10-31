@@ -22,6 +22,7 @@ from areal.utils.data import concat_padded_tensors, cycle_dataloader
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
+    from areal.utils.perf_tracer import RequestTracer
 
 
 def check_trajectory_format(
@@ -213,6 +214,13 @@ class _RolloutTaskInput:
     data: dict[str, Any]
     workflow: RolloutWorkflow
     should_accept: Callable | None = None
+    request_id: int | None = None
+
+
+@dataclass
+class _RolloutResult:
+    trajectory: dict[str, Any]
+    request_id: int | None = None
 
 
 class WorkflowExecutor:
@@ -269,7 +277,7 @@ class WorkflowExecutor:
 
         # Create the generic async task runner
         qsize = config.queue_size or self.max_concurrent_rollouts * 16
-        self.runner = AsyncTaskRunner[dict[str, Any] | None](
+        self.runner = AsyncTaskRunner[_RolloutResult | None](
             max_queue_size=qsize,
             enable_tracing=config.enable_rollout_tracing,
         )
@@ -278,8 +286,9 @@ class WorkflowExecutor:
         self._expected_trajectory_keys: set | None = None
 
         # Cache for tracking inputs and accepted/rejected results
-        self._pending_results: list[dict[str, Any]] = []
+        self._pending_results: list[_RolloutResult] = []
         self._pending_inputs: list[_RolloutTaskInput] = []
+        self._request_tracer: RequestTracer | None = None
 
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start the async task runner.
@@ -294,7 +303,13 @@ class WorkflowExecutor:
             from distributed state.
         """
         if logger is None:
-            logger = logging.getLogger(__name__)
+            dist_ready = dist.is_initialized()
+            name = (
+                f"WorkflowExecutor Rank {dist.get_rank()}"
+                if dist_ready
+                else "WorkflowExecutor"
+            )
+            logger = logging.getLogger(name)
         self.logger = logger
 
         # Initialize staleness manager if not provided
@@ -324,9 +339,17 @@ class WorkflowExecutor:
 
         # Initialize the generic async task runner
         self.runner.initialize(logger=logger)
+        self._request_tracer = perf_tracer.get_request_tracer()
 
     def destroy(self):
         """Shutdown the workflow executor and clean up resources."""
+        tracer = self._request_tracer
+        if tracer is None:
+            tracer = perf_tracer.get_request_tracer()
+            if tracer is not None:
+                self._request_tracer = tracer
+        if tracer is not None:
+            tracer.flush(force=True)
         self.runner.destroy()
 
     def get_capacity(self):
@@ -340,6 +363,12 @@ class WorkflowExecutor:
         version = self.inference_engine.get_version()
         capacity = self.staleness_manager.get_capacity(version)
         return capacity
+
+    def _trace(self, request_id: int | None, method: str, **kwargs) -> None:
+        tracer = self._request_tracer
+        if tracer is None or request_id is None:
+            return
+        getattr(tracer, method)(request_id, **kwargs)
 
     def _create_workflow_task(
         self, task_input: _RolloutTaskInput
@@ -363,63 +392,110 @@ class WorkflowExecutor:
 
         async def _execute_workflow():
             """Execute workflow.arun_episode and apply AReaL-specific logic."""
-            # Execute the workflow
-            traj = await task_input.workflow.arun_episode(
-                self.inference_engine, task_input.data
-            )
+            request_id = task_input.request_id
+            self._trace(request_id, "mark_execution_start")
 
-            # Trajectory format checking
-            if self.config.check_trajectory_format and traj is not None:
-                check_trajectory_format(
-                    traj,
-                    expected_keys=self._expected_trajectory_keys,
-                    logger=self.logger,
-                )
-                # Track expected keys for consistency checking
-                if isinstance(traj, dict) and "input_ids" in traj:
-                    if self._expected_trajectory_keys is None:
-                        self._expected_trajectory_keys = set(traj.keys())
-                        self.logger.info(
-                            f"Trajectory format check: tracking keys "
-                            f"{self._expected_trajectory_keys}"
-                        )
+            traj: dict[str, Any] | None = None
+            should_accept_result: bool | None = None
+            rejection_reason: str | None = None
 
-            # Convert InteractionWithTokenLogpReward to tensor dict if needed
-            if isinstance(traj, dict) and all(
-                isinstance(v, InteractionWithTokenLogpReward) for v in traj.values()
-            ):
-                traj = concat_padded_tensors(
-                    [v.to_tensor_dict() for v in traj.values()]
+            try:
+                traj = await task_input.workflow.arun_episode(
+                    self.inference_engine, task_input.data
                 )
 
-            assert traj is None or isinstance(traj, dict), traj
-
-            # Apply should_accept filtering
-            should_accept_traj = traj is not None and (
-                task_input.should_accept is None or task_input.should_accept(traj)
-            )
-
-            # Notify staleness manager
-            if should_accept_traj:
-                self.staleness_manager.on_rollout_accepted()
-                if self.config.enable_rollout_tracing:
-                    stat = self.staleness_manager.get_stats()
-                    self.logger.info(
-                        f"Finish and accept rollout. "
-                        f"Submit: {stat.submitted}, "
-                        f"running: {stat.running}, "
-                        f"accepted: {stat.accepted}."
+                # Trajectory format checking
+                if self.config.check_trajectory_format and traj is not None:
+                    check_trajectory_format(
+                        traj,
+                        expected_keys=self._expected_trajectory_keys,
+                        logger=self.logger,
                     )
-                return traj
-            else:
+                    # Track expected keys for consistency checking
+                    if isinstance(traj, dict) and "input_ids" in traj:
+                        if self._expected_trajectory_keys is None:
+                            self._expected_trajectory_keys = set(traj.keys())
+                            self.logger.info(
+                                "Trajectory format check: tracking keys %s",
+                                self._expected_trajectory_keys,
+                            )
+
+                # Convert InteractionWithTokenLogpReward to tensor dict if needed
+                if isinstance(traj, dict) and all(
+                    isinstance(v, InteractionWithTokenLogpReward) for v in traj.values()
+                ):
+                    traj = concat_padded_tensors(
+                        [v.to_tensor_dict() for v in traj.values()]
+                    )
+
+                assert traj is None or isinstance(traj, dict), traj
+
+                if traj is None:
+                    should_accept_traj = False
+                    rejection_reason = "workflow_returned_none"
+                else:
+                    if task_input.should_accept is None:
+                        should_accept_result = True
+                    else:
+                        should_accept_result = bool(task_input.should_accept(traj))
+                    should_accept_traj = bool(should_accept_result)
+                    if not should_accept_traj and task_input.should_accept is not None:
+                        rejection_reason = "should_accept_false"
+
+                if should_accept_traj:
+                    self.staleness_manager.on_rollout_accepted()
+                    stats = self.staleness_manager.get_stats()
+                    self._trace(
+                        request_id,
+                        "mark_execution_end",
+                        status="accepted",
+                        should_accept=should_accept_result,
+                        staleness=stats,
+                    )
+                    if self.config.enable_rollout_tracing:
+                        self.logger.info(
+                            "Finish and accept rollout. Submit: %s, running: %s, accepted: %s.",
+                            stats.submitted,
+                            stats.running,
+                            stats.accepted,
+                        )
+                    return _RolloutResult(
+                        request_id=request_id,
+                        trajectory=traj,
+                    )
+
                 self.staleness_manager.on_rollout_rejected()
+                stats = self.staleness_manager.get_stats()
+                self._trace(
+                    request_id,
+                    "mark_execution_end",
+                    status="rejected",
+                    should_accept=should_accept_result,
+                    rejection_reason=rejection_reason,
+                    staleness=stats,
+                )
                 if self.config.enable_rollout_tracing:
-                    stat = self.staleness_manager.get_stats()
                     self.logger.info(
-                        f"Finish but reject rollout. "
-                        f"Submit: {stat.submitted}, "
-                        f"running: {stat.running}, "
-                        f"accepted: {stat.accepted}."
+                        "Finish but reject rollout. Submit: %s, running: %s, accepted: %s.",
+                        stats.submitted,
+                        stats.running,
+                        stats.accepted,
+                    )
+                return None
+
+            except Exception as exc:  # pragma: no cover - workflow execution errors
+                self.staleness_manager.on_rollout_rejected()
+                stats = self.staleness_manager.get_stats()
+                self._trace(
+                    request_id,
+                    "mark_execution_end",
+                    status="failed",
+                    should_accept=None,
+                    staleness=stats,
+                )
+                if self.logger is not None:
+                    self.logger.error(
+                        "Workflow execution failed: %s", exc, exc_info=True
                     )
                 return None
 
@@ -440,11 +516,17 @@ class WorkflowExecutor:
         # Create workflow if builder provided
         if workflow is None:
             workflow = workflow_builder()
+
+        request_id = None
+        current_tracer = self._request_tracer
+        if current_tracer is not None:
+            request_id = current_tracer.register_submission()
         self._pending_inputs.append(
             _RolloutTaskInput(
                 data=data,
                 workflow=workflow,
                 should_accept=should_accept,
+                request_id=request_id,
             )
         )
 
@@ -454,7 +536,13 @@ class WorkflowExecutor:
         workflow_fn = self._create_workflow_task(task_input)
         try:
             self.runner.submit(workflow_fn)
+            self._trace(task_input.request_id, "mark_enqueued")
         except TaskQueueFullError:
+            self._trace(
+                task_input.request_id,
+                "mark_dropped",
+                reason="input_queue_full",
+            )
             # Convert RuntimeError from AsyncTaskRunner to queue.Full for
             # backward compatibility
             raise queue.Full("Input queue full. Please increase queue_size.")
@@ -544,7 +632,12 @@ class WorkflowExecutor:
         random.shuffle(results)
 
         # Concatenate into batch tensor format
-        return concat_padded_tensors(results)
+        trajectories: list[dict[str, Any]] = []
+        for result in results:
+            self._trace(result.request_id, "mark_consumed")
+            trajectories.append(result.trajectory)
+
+        return concat_padded_tensors(trajectories)
 
     def rollout_batch(
         self,

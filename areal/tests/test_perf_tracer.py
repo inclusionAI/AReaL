@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from areal.api.cli_args import PerfTracerConfig
+from areal.api.cli_args import PerfTracerConfig, RequestTracerConfig
 from areal.platforms import current_platform
 from areal.utils import perf_tracer
 from areal.utils.network import find_free_ports
@@ -39,6 +39,18 @@ def _expected_trace_path(config: PerfTracerConfig) -> Path:
         / config.experiment_name
         / config.trial_name
         / "traces.jsonl"
+    )
+
+
+def _expected_request_trace_path(config: PerfTracerConfig) -> Path:
+    base_dir = Path(os.path.expanduser(config.fileroot))
+    return (
+        base_dir
+        / "logs"
+        / getpass.getuser()
+        / config.experiment_name
+        / config.trial_name
+        / "requests.jsonl"
     )
 
 
@@ -289,7 +301,7 @@ def test_module_level_save_helper(tmp_path):
 
 def test_perf_tracer_respects_save_interval(tmp_path):
     config = _make_config(tmp_path, experiment="interval", trial="steps")
-    config.save_interval_steps = 3
+    config.save_interval = 3
     tracer = perf_tracer.PerfTracer(config, rank=0)
     trace_path = _expected_trace_path(config)
 
@@ -314,6 +326,36 @@ def test_perf_tracer_respects_save_interval(tmp_path):
     events = _load_trace_events(trace_path)
     names = {evt["name"] for evt in events if evt.get("ph") != "M"}
     assert {"mark-3", "mark-4"}.issubset(names)
+
+
+def test_request_tracer_configuration(tmp_path):
+    config = _make_config(tmp_path, experiment="request", trial="enabled")
+    config.request_tracer = RequestTracerConfig(enabled=True, flush_threshold=1)
+    tracer = perf_tracer.PerfTracer(config, rank=0)
+
+    request_tracer = tracer.request_tracer
+    assert request_tracer is not None
+
+    request_id = request_tracer.register_submission()
+    request_tracer.mark_execution_start(request_id)
+    request_tracer.mark_execution_end(
+        request_id,
+        status="accepted",
+        should_accept=True,
+    )
+    request_tracer.mark_consumed(request_id)
+    tracer.save(force=True)
+
+    request_path = _expected_request_trace_path(config)
+    assert request_path.exists()
+    payload = [json.loads(line) for line in request_path.read_text().splitlines()]
+    assert any(entry["status"] == "accepted" for entry in payload)
+
+    updated = _make_config(tmp_path, experiment="request", trial="enabled")
+    updated.request_tracer = RequestTracerConfig(enabled=False)
+    tracer.apply_config(updated, rank=1)
+    assert tracer.request_tracer is None
+    assert tracer._rank == 1  # noqa: SLF001
 
 
 def _run_perf_tracer_torchrun(tmp_path: Path, world_size: int) -> None:
