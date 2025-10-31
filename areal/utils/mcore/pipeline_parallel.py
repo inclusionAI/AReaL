@@ -6,20 +6,24 @@ from megatron.core.transformer.pipeline_parallel_layer_layout import (
 )
 from transformers import PretrainedConfig
 
-from areal.api.alloc_mode import ParallelStrategy
+from areal.api.alloc_mode import MegatronParallelStrategy
 from areal.utils import logging
 
 logger = logging.getLogger("MCore PipelineParallel")
 
 
 def configure_pipeline_layer_splits(
-    parallel_strategy: ParallelStrategy,
+    parallel_strategy: MegatronParallelStrategy,
     hf_config: PretrainedConfig,
     tf_config: TransformerConfig,
 ) -> TransformerConfig:
     pp_size = parallel_strategy.pipeline_parallel_size
+    vpp_size = parallel_strategy.virtual_pipeline_model_parallel_size or 1
+
     if pp_size <= 1:
         return tf_config
+
+    total_stages = pp_size * vpp_size
     total_layers = getattr(tf_config, "num_layers", None)
     if not isinstance(total_layers, int) or total_layers <= 0:
         return tf_config
@@ -38,7 +42,7 @@ def configure_pipeline_layer_splits(
         layer_param_weights,
         embedding_params,
         output_params,
-        pp_size,
+        total_stages,
     )
     if not stage_lengths:
         logger.warning(
@@ -52,7 +56,7 @@ def configure_pipeline_layer_splits(
         if idx == 0:
             stage_layers.append("embedding")
         stage_layers.extend(["decoder"] * length)
-        if idx == pp_size - 1:
+        if idx == total_stages - 1:
             stage_layers.append("loss")
         layout.append(stage_layers)
     layout = PipelineParallelLayerLayout(
@@ -80,15 +84,16 @@ def configure_pipeline_layer_splits(
         if stage_end > cursor:
             load += sum(layer_param_weights[cursor:stage_end])
         cursor = stage_end
-        if idx == pp_size - 1:
+        if idx == total_stages - 1:
             load += output_params
         stage_loads.append(load)
 
     logger.info(
-        "Configured pipeline layout (per-stage decoder counts / params): %s / %s (pp=%s)",
+        "Configured pipeline layout (per-stage decoder counts / params): %s / %s (pp=%s, vpp=%s)",
         stage_lengths,
         [f"{value / 1e6:.2f}M" for value in stage_loads],
         pp_size,
+        vpp_size,
     )
     return tf_config
 
