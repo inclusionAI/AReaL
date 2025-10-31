@@ -69,7 +69,7 @@ def kill_process_tree(parent_pid, include_parent: bool = True, skip_pid: int = N
 
 def launch_server_cmd(command: list[str]) -> subprocess.Popen:
     """
-    Execute a shell command and return its process handle.
+    Launch inference server in a new process and return its process handle.
     """
     # Replace newline continuations and split the command string.
     logger.info(f"Launch command: {' '.join(command)}")
