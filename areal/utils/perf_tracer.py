@@ -64,6 +64,13 @@ _PERF_TRACE_FILENAME = "traces.jsonl"
 _REQUEST_TRACE_FILENAME = "requests.jsonl"
 
 
+def _rank_qualified_filename(filename: str, rank: int | None) -> str:
+    if rank is None:
+        return filename
+    root, ext = os.path.splitext(filename)
+    return f"{root}-r{rank}{ext}"
+
+
 def _maybe_duration(start: float | None, end: float | None) -> float | None:
     if start is None or end is None:
         return None
@@ -92,6 +99,7 @@ def _default_trace_path(
     config: PerfTracerConfig,
     *,
     filename: str = _PERF_TRACE_FILENAME,
+    rank: int | None = None,
 ) -> str:
     base_dir = os.path.join(
         os.path.expanduser(os.path.expandvars(config.fileroot)),
@@ -100,7 +108,7 @@ def _default_trace_path(
         config.experiment_name,
         config.trial_name,
     )
-    return os.path.join(base_dir, filename)
+    return os.path.join(base_dir, _rank_qualified_filename(filename, rank))
 
 
 def _normalize_flush_threshold(config: RequestTracerConfig) -> int:
@@ -315,8 +323,7 @@ class RequestTracer:
             with _acquire_file_lock(self._output_path):
                 with open(self._output_path, "a", encoding="utf-8") as fout:
                     for line in lines:
-                        fout.write(line)
-                        fout.write("\n")
+                        fout.write(f"{line}\n")
                     fout.flush()
                     os.fsync(fout.fileno())
         except OSError as exc:  # pragma: no cover - depends on filesystem
@@ -455,7 +462,7 @@ class PerfTracer:
         self._origin_ns = time.perf_counter_ns()
         self._thread_meta_emitted: set[int] = set()
         self._process_meta_emitted: set[int] = set()
-        self._output_path = _default_trace_path(config)
+        self._output_path = _default_trace_path(config, rank=rank)
         self._save_interval = _normalize_save_interval(config)
         self._request_tracer: RequestTracer | None = None
         self._configure_request_tracer(config, rank=rank)
@@ -479,7 +486,11 @@ class PerfTracer:
         request_cfg = getattr(config, "request_tracer", None)
         enabled = bool(request_cfg and getattr(request_cfg, "enabled", False))
         if enabled:
-            output_path = _default_trace_path(config, filename=_REQUEST_TRACE_FILENAME)
+            output_path = _default_trace_path(
+                config,
+                filename=_REQUEST_TRACE_FILENAME,
+                rank=rank,
+            )
             if self._request_tracer is None:
                 self._request_tracer = RequestTracer(
                     request_cfg,
@@ -500,7 +511,7 @@ class PerfTracer:
     def apply_config(self, config: PerfTracerConfig, *, rank: int) -> None:
         self._config = config
         self.set_rank(rank)
-        self._output_path = _default_trace_path(config)
+        self._output_path = _default_trace_path(config, rank=rank)
         self.set_enabled(config.enabled)
         self._save_interval = _normalize_save_interval(config)
         self._configure_request_tracer(config, rank=rank)
@@ -601,8 +612,7 @@ class PerfTracer:
                 with _acquire_file_lock(output_path):
                     with open(output_path, "a", encoding="utf-8") as fout:
                         for line in serialized_events:
-                            fout.write(line)
-                            fout.write("\n")
+                            fout.write(f"{line}\n")
                         fout.flush()
                         os.fsync(fout.fileno())
                 self._events = []
