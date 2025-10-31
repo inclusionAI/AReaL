@@ -54,6 +54,7 @@ from areal.utils.mcore.determinisitc import set_deterministic_algorithms
 from areal.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
 )
+from areal.utils.mcore.pipeline_parallel import configure_pipeline_layer_splits
 from areal.utils.megatron import (
     all_gather_param,
     convert_to_hf,
@@ -138,6 +139,10 @@ class MegatronEngine(TrainEngine):
         self.hf_config, self.tf_config = make_hf_and_mcore_config(
             self.config.path, dtype=self.dtype, bridge=self.bridge
         )
+        self.tf_config = configure_pipeline_layer_splits(
+            self.parallel_strategy, self.hf_config, self.tf_config
+        )
+
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
             self.model = make_mcore_model(
@@ -147,6 +152,12 @@ class MegatronEngine(TrainEngine):
                 bridge=self.bridge,
             )
             self._load_model_from_hf(self.config.path)
+
+        module = self.model.module if isinstance(self.model, DDP) else self.model
+        total_params = sum(param.numel() for param in module.parameters())
+        self.logger.info(
+            f"Model parameter count: {total_params / 1e6:.2f}M, pp_stage={mpu.get_pipeline_model_parallel_rank()}"
+        )
 
         if self.config.disable_dropout:
             disable_dropout_in_model(self.model)
