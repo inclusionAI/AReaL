@@ -45,9 +45,8 @@ def test_estimate_num_params(model_name_or_path):
         if not hf_config.tie_word_embeddings:
             estimated_params += output_params
         # Allow a small tolerance due to potential differences in counting methods
-        assert abs(total_params - estimated_params) / total_params < 0.05, (
-            f"Estimated params {estimated_params / 1e6:.2f}M differ from actual {total_params / 1e6:.2f}M"
-        )
+        rdiff = abs(total_params - estimated_params) / total_params
+        assert rdiff < 0.05
     finally:
         mpu.destroy_model_parallel()
         dist.destroy_process_group()
