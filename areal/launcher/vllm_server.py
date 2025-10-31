@@ -26,7 +26,7 @@ logger = logging.getLogger("vLLMServer Wrapper")
 
 def launch_server_cmd(command: str, custom_env: dict | None = None) -> subprocess.Popen:
     """
-    Execute a shell command and return its process handle.
+    Launch inference server in a new process and return its process handle.
     """
     # Replace newline continuations and split the command string.
     command = command.replace("\\\n", " ").replace("\\", " ")
