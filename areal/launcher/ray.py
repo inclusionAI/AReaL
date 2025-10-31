@@ -92,8 +92,9 @@ class RayLauncher:
         env_vars: dict | None = None,
         placement_group: PlacementGroup | None = None,
         bundle_index: int = -1,
-        kwargs: dict[str, str]
-        | None = None,  # keyword arguments to pass to the function
+        kwargs: (
+            dict[str, str] | None
+        ) = None,  # keyword arguments to pass to the function
     ):
         if kwargs is None:
             kwargs = {}
@@ -156,13 +157,15 @@ class RayLauncher:
                 f"Count {count} is not divisible by nodes {nodes}. "
                 "Please ensure that count is a multiple of nodes."
             )
-        assert len(list_args) == count, (
-            f"Length of list_args {len(list_args)} does not match count {count}."
-        )
-        if list_kwargs is not None:
-            assert len(list_kwargs) == count, (
-                f"Length of list_kwargs {len(list_kwargs)} does not match count {count}."
+        if len(list_args) != count:
+            raise ValueError(
+                f"Length of list_args {len(list_args)} does not match count {count}."
             )
+        if list_kwargs is not None:
+            if len(list_kwargs) != count:
+                raise ValueError(
+                    f"Length of list_kwargs {len(list_kwargs)} does not match count {count}."
+                )
 
         tasks_per_node = count // nodes
         gpus_per_node = gpus_per_task * tasks_per_node
