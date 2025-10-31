@@ -24,14 +24,14 @@ from areal.utils.network import find_free_ports, gethostip
 logger = logging.getLogger("vLLMServer Wrapper")
 
 
-def launch_server_cmd(command: str, custom_env: dict | None = None) -> subprocess.Popen:
+def launch_server_cmd(
+    command: list[str], custom_env: dict | None = None
+) -> subprocess.Popen:
     """
     Execute a shell command and return its process handle.
     """
     # Replace newline continuations and split the command string.
-    command = command.replace("\\\n", " ").replace("\\", " ")
-    logger.info(f"Launch command: {command}")
-    parts = command.split()
+    logger.info(f"Launch command: {' '.join(command)}")
     _env = os.environ.copy()
     # To avoid DirectoryNotEmpty error caused by triton
     triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
@@ -44,8 +44,7 @@ def launch_server_cmd(command: str, custom_env: dict | None = None) -> subproces
     if custom_env is not None:
         _env.update(custom_env)
     return subprocess.Popen(
-        parts,
-        text=True,
+        command,
         env=_env,
         stdout=sys.stdout,
         stderr=subprocess.STDOUT,

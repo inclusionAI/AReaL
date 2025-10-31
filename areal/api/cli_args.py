@@ -3,6 +3,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 import uvloop
 import yaml
@@ -531,6 +532,24 @@ class PPOCriticConfig(TrainEngineConfig):
     )
 
 
+def get_py_cmd(module: str, args: dict[str, Any]):
+    # convert to flags
+    cmd = ["python3", "-m", module]
+    for k, v in args.items():
+        if v is None or v is False or v == "" or (isinstance(v, list) and not v):
+            continue
+        flag = f"--{k.replace('_', '-')}"
+        if v is True:
+            cmd.append(flag)
+        elif isinstance(v, list):
+            cmd.append(flag)
+            cmd.extend(map(str, v))
+        else:
+            cmd.append(flag)
+            cmd.append(str(v))
+    return cmd
+
+
 @dataclass
 class vLLMConfig:
     """Configuration for vLLM runtime. Refer to:
@@ -592,6 +611,10 @@ class vLLMConfig:
         return args
 
     @staticmethod
+    def build_cmd_from_args(args: dict[str, Any]):
+        return get_py_cmd("areal.thirdparty.vllm.areal_vllm_server", args)
+
+    @staticmethod
     def build_cmd(
         vllm_config: "vLLMConfig",
         tp_size: int,
@@ -608,18 +631,7 @@ class vLLMConfig:
             port=port,
             dist_init_addr=dist_init_addr,
         )
-        # convert to flags
-        flags = []
-        for k, v in args.items():
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_', '-')}")
-            elif isinstance(v, list):
-                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
-            else:
-                flags.append(f"--{k.replace('_', '-')} {v}")
-        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
+        return vLLMConfig.build_cmd_from_args(args)
 
 
 @dataclass
@@ -717,28 +729,19 @@ class SGLangConfig:
             node_rank=node_rank,
         )
 
-        # convert to flags
-        flags = []
-        for k, v in args.items():
-            if is_version_less("sglang", "0.4.10.post2") and "max_loaded_loras" in k:
-                continue
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_', '-')}")
-            elif isinstance(v, list):
-                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
-            else:
-                flags.append(f"--{k.replace('_', '-')} {v}")
-        return f"python3 -m sglang.launch_server {' '.join(flags)}"
+        return SGLangConfig.build_cmd_from_args(args)
+
+    @staticmethod
+    def build_cmd_from_args(args: dict[str, Any]):
+        return get_py_cmd("sglang.launch_server", args)
 
     @staticmethod
     def build_args(
         sglang_config: "SGLangConfig",
-        tp_size,
-        base_gpu_id,
-        host,
-        port,
+        tp_size: int,
+        base_gpu_id: int,
+        host: str | None = None,
+        port: str | None = None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
@@ -754,19 +757,17 @@ class SGLangConfig:
                 enable_multithread_load=sglang_config.enable_multithread_load,
                 enable_fast_load=sglang_config.enable_fast_load,
             )
-            args.pop("enable_multithread_load", None)
-            args.pop("enable_fast_load", None)
             args["model_loader_extra_config"] = json.dumps(
                 model_loader_extra_config, separators=(",", ":")
             )
+        args.pop("enable_multithread_load", None)
+        args.pop("enable_fast_load", None)
         # Map "all-linear" to "all"
         if "lora_target_modules" in args and args["lora_target_modules"]:
             args["lora_target_modules"] = [
                 x.replace("-linear", "") for x in args["lora_target_modules"]
             ]
         args = dict(
-            host=host,
-            port=port,
             # Model and tokenizer
             tokenizer_path=sglang_config.model_path,
             tokenizer_mode="auto",
@@ -784,8 +785,14 @@ class SGLangConfig:
             dist_init_addr=dist_init_addr,
             **args,
         )
+        if host is not None:
+            args["host"] = host
+        if port is not None:
+            args["port"] = port
         if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"):
             raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
+        if is_version_less("sglang", "0.4.10.post2"):
+            args.pop("max_loaded_loras", None)
         return args
 
 

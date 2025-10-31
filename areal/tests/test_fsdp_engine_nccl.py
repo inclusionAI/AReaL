@@ -57,14 +57,11 @@ def sglang_server_nccl():
         port=PORT,
         dist_init_addr=f"{HOST}:{DIST_PORT}",
     )
-    full_command = f"{cmd} --port {PORT}"
-    full_command = full_command.replace("\\\n", " ").replace("\\", " ")
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
 
-    print(f"full_command to start sglang server: {full_command}", flush=True)
+    print(f"full_command to start sglang server: {cmd}", flush=True)
     process = subprocess.Popen(
-        full_command.split(),
-        text=True,
+        cmd,
         stdout=sys.stdout,
         stderr=sys.stdout,
     )
