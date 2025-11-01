@@ -53,6 +53,7 @@ def vllm_server():
         host=HOST,
         port=PORT,
         tp_size=1,
+        pp_size=1,
         dist_init_addr=f"{HOST}:{DIST_PORT}",
     )
     # Launch process
