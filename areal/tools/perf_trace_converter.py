@@ -90,7 +90,10 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "output",
         type=str,
         nargs="?",
-        help="Optional output path for the Chrome Trace JSON file (stdout if omitted)",
+        help=(
+            "Optional output path for the Chrome Trace JSON file "
+            "(defaults to ./traces.json; pass '-' for stdout)"
+        ),
     )
     parser.add_argument(
         "--display-time-unit",
@@ -103,12 +106,19 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
+    emit_stdout = args.output == "-"
+    if args.output is None:
+        destination: str | os.PathLike[str] | None = Path.cwd() / "traces.json"
+    elif emit_stdout:
+        destination = None
+    else:
+        destination = args.output
     chrome_trace = convert_jsonl_to_chrome_trace(
         args.input,
-        args.output,
+        destination,
         display_time_unit=args.display_time_unit,
     )
-    if args.output is None:
+    if emit_stdout:
         json.dump(chrome_trace, sys.stdout, ensure_ascii=False)
         sys.stdout.write("\n")
         sys.stdout.flush()
