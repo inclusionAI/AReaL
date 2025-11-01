@@ -302,10 +302,10 @@ class RequestTracer:
                 self._records.pop(request_id, None)
                 self._ready.discard(request_id)
 
-        payload = [record.to_dict() for (_, record, _) in to_flush]
-        lines = [json.dumps(item, ensure_ascii=False) for item in payload]
-
         try:
+            payload = [record.to_dict() for (_, record, _) in to_flush]
+            lines = [json.dumps(item, ensure_ascii=False) for item in payload]
+
             parent = os.path.dirname(self._output_path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
@@ -314,7 +314,7 @@ class RequestTracer:
                     fout.write(f"{line}\n")
                 fout.flush()
                 os.fsync(fout.fileno())
-        except OSError as exc:  # pragma: no cover - depends on filesystem
+        except (OSError, TypeError) as exc:  # pragma: no cover - depends on filesystem
             logger.error(
                 "Failed to append request trace to %s: %s",
                 self._output_path,
@@ -561,12 +561,12 @@ class PerfTracer:
             events_to_write: list[dict[str, Any]] = self._events
             self._events = []
 
-        serialized_events = [
-            json.dumps(event, ensure_ascii=False) for event in events_to_write
-        ]
-        output_path = self._output_path
-
         try:
+            serialized_events = [
+                json.dumps(event, ensure_ascii=False) for event in events_to_write
+            ]
+            output_path = self._output_path
+
             parent = os.path.dirname(output_path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
@@ -575,10 +575,10 @@ class PerfTracer:
                     fout.write(f"{line}\n")
                 fout.flush()
                 os.fsync(fout.fileno())
-        except OSError as exc:  # pragma: no cover - depends on filesystem
+        except (OSError, TypeError) as exc:  # pragma: no cover - depends on filesystem
             logger.error("Failed to append perf trace to %s: %s", output_path, exc)
             with self._lock:
-                self._events = events_to_write + self._events
+                self._events[0:0] = events_to_write
 
     def reset(self) -> None:
         if self._request_tracer is not None:
