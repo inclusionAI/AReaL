@@ -1,0 +1,4 @@
+FastMCP
+pydantic
+starlette
+terminal_bench

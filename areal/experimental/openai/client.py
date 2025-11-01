@@ -165,7 +165,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             input_ids=prompt_token_ids,
             gconfig=gconfig,
             rid=str(uuid.uuid4()),
-            metadata=metadata if metadata is not NOT_GIVEN else {},
+            metadata=metadata if not is_omitted(metadata) else {},
             tokenizer=self.tokenizer,
         )
 
@@ -276,6 +276,27 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         if input is NOT_GIVEN or input is None:
             raise ValueError("input is required for Responses.create")
 
+        def _convert_tool_output_format(item: dict) -> dict:
+            """Convert custom tool output format to standard chat template format.
+
+            Converts from: {'call_id': ..., 'output': ..., 'type': 'function_call_output'}
+            To: {'role': 'tool', 'content': ..., 'tool_call_id': ...}
+            """
+            if (
+                item
+                and item.get("output")
+                and item.get("type") == "function_call_output"
+            ):
+                converted = {
+                    "role": "tool",
+                    "content": item["output"],
+                }
+                # Add tool_call_id if present
+                if "call_id" in item:
+                    converted["tool_call_id"] = item["call_id"]
+                return converted
+            return item
+
         def _build_messages_list(item: ResponseInputItemParam) -> list[dict]:
             messages_list = []
             if "content" in item:
@@ -286,13 +307,17 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 elif isinstance(item["content"], Iterable):
                     for content in item["content"]:
                         if isinstance(content, dict):
-                            messages_list.append(deepcopy(content))
+                            # Convert tool output format if needed
+                            converted = _convert_tool_output_format(content)
+                            messages_list.append(deepcopy(converted))
                         else:
                             raise ValueError("Unsupported content format")
                 else:
                     raise ValueError("Unsupported input item format")
             else:
-                messages_list.append(deepcopy(item))
+                # Convert tool output format if needed
+                converted = _convert_tool_output_format(item)
+                messages_list.append(deepcopy(converted))
             return messages_list
 
         if isinstance(input, str):
@@ -335,7 +360,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         temp = 1.0 if temperature is NOT_GIVEN else (temperature or 0.0)
         top_p_val = 1.0 if top_p is NOT_GIVEN else (top_p or 1.0)
         max_new_tokens = 512
-        if max_output_tokens is not NOT_GIVEN and max_output_tokens is not None:
+        if not is_omitted(max_output_tokens):
             max_new_tokens = max_output_tokens
 
         stop = kwargs.get("stop", None)
@@ -359,7 +384,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             input_ids=prompt_token_ids,
             gconfig=gconfig,
             rid=str(uuid.uuid4()),
-            metadata=metadata if metadata is not NOT_GIVEN else {},
+            metadata=metadata if not is_omitted(metadata) else {},
             tokenizer=self.tokenizer,
         )
 
@@ -420,14 +445,14 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             created_at=current_time,
             error=None,
             incomplete_details=None,
-            instructions=None if instructions is NOT_GIVEN else instructions,
-            metadata=None if metadata is NOT_GIVEN else metadata,
+            instructions=None if is_omitted(instructions) else instructions,
+            metadata=None if is_omitted(metadata) else metadata,
             model="None",
             object="response",
             output=resp_output,
             parallel_tool_calls=False,
             temperature=temp,
-            tool_choice=tool_choice if tool_choice is not NOT_GIVEN else "none",
+            tool_choice=tool_choice if not is_omitted(tool_choice) else "none",
             tools=tools,
             top_p=top_p_val,
             background=None,
@@ -751,3 +776,13 @@ class ArealOpenAI(AsyncOpenAI):
             "export_responses is deprecated. Please use export_interactions instead."
         )
         return self.export_interactions(style)
+
+
+def is_omitted(value) -> bool:
+    """Check if a value is NOT_GIVEN or Omit type."""
+    if value is NOT_GIVEN or value is None:
+        return True
+    # Check by class name to handle both NotGiven and Omit
+    if hasattr(value, "__class__"):
+        return value.__class__.__name__ in ("NotGiven", "Omit")
+    return False
