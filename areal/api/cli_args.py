@@ -312,6 +312,52 @@ class MegatronEngineConfig:
 
 
 @dataclass
+class SchedulingStrategy:
+    type: str = field(
+        default="separation", metadata={"choices": ["separation", "colocation"]}
+    )
+    target: str | None = field(
+        default=None, metadata={"help": "The target role to be colocated with"}
+    )
+
+
+@dataclass
+class SchedulingSpec:
+    cpu: int = field(default=0, metadata={"help": "Number of CPU cores required"})
+    gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
+    mem: int = field(default=0, metadata={"help": "Amount of memory (GB) required"})
+    port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
+    image: str = field(
+        default="", metadata={"help": "Docker/Singularity container image to use"}
+    )
+    type: str = field(
+        default="worker",
+        metadata={
+            "help": "Task type (e.g., worker, engine)",
+            "choices": ["worker", "engine"],
+        },
+    )
+    env_vars: dict[str, str] = field(
+        default_factory=dict,
+        metadata={"help": "Environment variables for the container"},
+    )
+    # cmd
+    cmd: str | None = field(
+        default=None,
+        metadata={
+            "help": "Command to execute inside the container. Defaults to AReaL's RPC server."
+        },
+    )
+    # slurm configurations from "https://slurm.schedmd.com/sbatch.html"
+    nodelist: str | None = None
+    exclude: str | None = None
+    partition: str | None = None
+    time_limit: str | None = None  # see  "--time" option for format
+    begin: str | None = None  # see "--begin" option for format
+    deadline: str | None = None  # see "--deadline" option for format
+
+
+@dataclass
 class TrainEngineConfig:
     """Core configuration for model training, including optimization and backend settings."""
 
@@ -383,6 +429,18 @@ class TrainEngineConfig:
     peft_type: str = field(
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
+    )
+    scheduling_specs: tuple[SchedulingSpec, SchedulingSpec] | None = field(
+        default=None,
+        metadata={
+            "help": "Resources required by the work process/container and the engine. Used by TrainController."
+        },
+    )
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "Scheduling strategy of the worker. Used by TrainController."
+        },
     )
 
 
@@ -846,6 +904,18 @@ class InferenceEngineConfig:
         default=0.0,
         metadata={
             "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
+        },
+    )
+    scheduling_specs: tuple[SchedulingSpec, SchedulingSpec] | None = field(
+        default=None,
+        metadata={
+            "help": "Resources required by the work process/container and the engine. Used by RolloutController."
+        },
+    )
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "Scheduling strategy of the worker. Used by RolloutController."
         },
     )
 
