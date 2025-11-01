@@ -277,49 +277,54 @@ class RequestTracer:
 
     def flush(self, force: bool = False) -> None:
         with self._lock:
-            records: list[RequestRecord] = []
-            ids_to_write: list[int] = []
             if force:
-                ids = list(self._records.keys())
+                candidate_ids = list(self._records.keys())
             else:
-                ids = list(self._ready)
-            if not ids:
+                candidate_ids = list(self._ready)
+            if not candidate_ids:
                 return
-            for request_id in ids:
+
+            to_flush: list[tuple[int, RequestRecord, bool]] = []
+            for request_id in candidate_ids:
                 record = self._records.get(request_id)
                 if record is None:
                     self._ready.discard(request_id)
                     continue
                 if not force and not record.is_ready_to_flush():
                     continue
-                records.append(record)
-                ids_to_write.append(request_id)
-            if not records:
-                return
-            lines = [
-                json.dumps(record.to_dict(), ensure_ascii=False) for record in records
-            ]
-            try:
-                parent = os.path.dirname(self._output_path)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
-                with open(self._output_path, "a", encoding="utf-8") as fout:
-                    for line in lines:
-                        fout.write(f"{line}\n")
-                    fout.flush()
-                    os.fsync(fout.fileno())
-            except OSError as exc:  # pragma: no cover - depends on filesystem
-                logger.error(
-                    "Failed to append request trace to %s: %s",
-                    self._output_path,
-                    exc,
-                )
+                was_ready = request_id in self._ready
+                to_flush.append((request_id, record, was_ready))
+
+            if not to_flush:
                 return
 
-            # Drop persisted records only after a successful write.
-            for request_id in ids_to_write:
+            for request_id, _, _ in to_flush:
                 self._records.pop(request_id, None)
                 self._ready.discard(request_id)
+
+        payload = [record.to_dict() for (_, record, _) in to_flush]
+        lines = [json.dumps(item, ensure_ascii=False) for item in payload]
+
+        try:
+            parent = os.path.dirname(self._output_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(self._output_path, "a", encoding="utf-8") as fout:
+                for line in lines:
+                    fout.write(f"{line}\n")
+                fout.flush()
+                os.fsync(fout.fileno())
+        except OSError as exc:  # pragma: no cover - depends on filesystem
+            logger.error(
+                "Failed to append request trace to %s: %s",
+                self._output_path,
+                exc,
+            )
+            with self._lock:
+                for request_id, record, was_ready in to_flush:
+                    self._records[request_id] = record
+                    if was_ready:
+                        self._ready.add(request_id)
 
     def reset(self) -> None:
         self.flush(force=True)
@@ -553,27 +558,27 @@ class PerfTracer:
         with self._lock:
             if not self._events:
                 return
-
-            events = self._events
-            serialized_events = [
-                json.dumps(event, ensure_ascii=False) for event in events
-            ]
-            output_path = self._output_path
-
-            try:
-                parent = os.path.dirname(output_path)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
-                with open(output_path, "a", encoding="utf-8") as fout:
-                    for line in serialized_events:
-                        fout.write(f"{line}\n")
-                    fout.flush()
-                    os.fsync(fout.fileno())
-            except OSError as exc:  # pragma: no cover - depends on filesystem
-                logger.error("Failed to append perf trace to %s: %s", output_path, exc)
-                return
-
+            events_to_write: list[dict[str, Any]] = self._events
             self._events = []
+
+        serialized_events = [
+            json.dumps(event, ensure_ascii=False) for event in events_to_write
+        ]
+        output_path = self._output_path
+
+        try:
+            parent = os.path.dirname(output_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(output_path, "a", encoding="utf-8") as fout:
+                for line in serialized_events:
+                    fout.write(f"{line}\n")
+                fout.flush()
+                os.fsync(fout.fileno())
+        except OSError as exc:  # pragma: no cover - depends on filesystem
+            logger.error("Failed to append perf trace to %s: %s", output_path, exc)
+            with self._lock:
+                self._events = events_to_write + self._events
 
     def reset(self) -> None:
         if self._request_tracer is not None:
