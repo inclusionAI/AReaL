@@ -30,27 +30,39 @@ def _make_config(
     )
 
 
-def _expected_trace_path(config: PerfTracerConfig) -> Path:
+def _expected_trace_path(
+    config: PerfTracerConfig,
+    *,
+    rank: int,
+) -> Path:
     base_dir = Path(os.path.expanduser(config.fileroot))
+    filename = f"traces-r{rank}.jsonl"
     return (
         base_dir
         / "logs"
         / getpass.getuser()
         / config.experiment_name
         / config.trial_name
-        / "traces.jsonl"
+        / "perf_tracer"
+        / filename
     )
 
 
-def _expected_request_trace_path(config: PerfTracerConfig) -> Path:
+def _expected_request_trace_path(
+    config: PerfTracerConfig,
+    *,
+    rank: int,
+) -> Path:
     base_dir = Path(os.path.expanduser(config.fileroot))
+    filename = f"requests-r{rank}.jsonl"
     return (
         base_dir
         / "logs"
         / getpass.getuser()
         / config.experiment_name
         / config.trial_name
-        / "requests.jsonl"
+        / "request_tracer"
+        / filename
     )
 
 
@@ -70,18 +82,10 @@ def test_module_level_helpers_require_configuration():
         perf_tracer.get_tracer()
 
 
-@pytest.mark.parametrize("override_rank", [None, 1])
-def test_perf_tracer_records_events_and_save(tmp_path, override_rank):
+def test_perf_tracer_records_events_and_save(tmp_path):
     config = _make_config(tmp_path, experiment="unit", trial="scope")
-    base_rank = 0
-    tracer = perf_tracer.PerfTracer(config, rank=base_rank)
-    if override_rank is None:
-        expected_rank = base_rank
-    else:
-        tracer.set_rank(override_rank)
-        expected_rank = override_rank
-
-    assert tracer._rank == expected_rank  # noqa: SLF001
+    tracer = perf_tracer.PerfTracer(config, rank=0)
+    assert tracer._rank == 0  # noqa: SLF001
 
     with tracer.trace_scope(
         "unit-block",
@@ -92,7 +96,7 @@ def test_perf_tracer_records_events_and_save(tmp_path, override_rank):
     tracer.instant("outer-mark")
 
     tracer.save()
-    saved_path = _expected_trace_path(config)
+    saved_path = _expected_trace_path(config, rank=0)
     assert saved_path.exists()
 
     events = _load_trace_events(saved_path)
@@ -100,7 +104,7 @@ def test_perf_tracer_records_events_and_save(tmp_path, override_rank):
     assert {"unit-block", "inner-mark", "outer-mark"}.issubset(event_names)
 
 
-def test_perf_tracer_aggregate_combines_ranks(tmp_path):
+def test_perf_tracer_emits_separate_rank_logs(tmp_path):
     config0 = _make_config(
         tmp_path,
         enabled=True,
@@ -112,8 +116,8 @@ def test_perf_tracer_aggregate_combines_ranks(tmp_path):
         pass
     tracer0.instant("rank0-mark", args={"rank": 0})
     tracer0.save()
-    saved_path = _expected_trace_path(config0)
-    assert saved_path.exists()
+    saved_path_rank0 = _expected_trace_path(config0, rank=0)
+    assert saved_path_rank0.exists()
 
     config1 = _make_config(
         tmp_path,
@@ -127,36 +131,48 @@ def test_perf_tracer_aggregate_combines_ranks(tmp_path):
     tracer1_thread.clear()
     tracer1.instant("rank1-mark", args={"rank": 1})
     tracer1.save()
-    saved_path_rank1 = _expected_trace_path(config1)
-    assert saved_path_rank1 == saved_path
+    saved_path_rank1 = _expected_trace_path(config1, rank=1)
+    assert saved_path_rank1.exists()
 
-    events = _load_trace_events(saved_path)
-    event_names = {evt["name"] for evt in events if evt["ph"] != "M"}
-    assert {"rank0-step", "rank0-mark", "rank1-mark"}.issubset(event_names)
-    pid_values = {evt["pid"] for evt in events if evt["ph"] != "M"}
-    assert pid_values == {tracer0._pid, tracer1._pid}  # noqa: SLF001
-    rank_values = {evt["args"].get("rank") for evt in events if evt["ph"] != "M"}
-    assert {0, 1}.issubset(rank_values)
-    meta_by_pid = {
-        (evt["pid"], evt["args"].get("name"))
-        for evt in events
-        if evt["ph"] == "M" and evt["name"] == "process_name"
-    }
-    assert (
-        tracer0._pid,
-        "Rank 0, Process",
-    ) in meta_by_pid  # noqa: SLF001
-    assert (
-        tracer1._pid,
-        "Rank 1, Process",
-    ) in meta_by_pid  # noqa: SLF001
-    sort_meta = {
-        evt["pid"]: evt["args"].get("sort_index")
-        for evt in events
-        if evt["ph"] == "M" and evt["name"] == "process_sort_index"
-    }
-    assert sort_meta[tracer0._pid] == 0  # noqa: SLF001
-    assert sort_meta[tracer1._pid] == 1  # noqa: SLF001
+    events_rank0 = _load_trace_events(saved_path_rank0)
+    events_rank1 = _load_trace_events(saved_path_rank1)
+
+    def _non_meta(events: list[dict]) -> list[dict]:
+        return [evt for evt in events if evt.get("ph") != "M"]
+
+    def _meta(events: list[dict], name: str) -> list[dict]:
+        return [
+            evt for evt in events if evt.get("ph") == "M" and evt.get("name") == name
+        ]
+
+    event_names_rank0 = {evt["name"] for evt in _non_meta(events_rank0)}
+    event_names_rank1 = {evt["name"] for evt in _non_meta(events_rank1)}
+    assert {"rank0-step", "rank0-mark"}.issubset(event_names_rank0)
+    assert {"rank1-mark"}.issubset(event_names_rank1)
+
+    ranks_rank0 = {evt["args"].get("rank") for evt in _non_meta(events_rank0)}
+    ranks_rank1 = {evt["args"].get("rank") for evt in _non_meta(events_rank1)}
+    assert ranks_rank0 == {0}
+    assert ranks_rank1 == {1}
+
+    pid_rank0 = {evt["pid"] for evt in _non_meta(events_rank0)}
+    pid_rank1 = {evt["pid"] for evt in _non_meta(events_rank1)}
+    assert pid_rank0 == {tracer0._pid}  # noqa: SLF001
+    assert pid_rank1 == {tracer1._pid}  # noqa: SLF001
+
+    process_name_rank0 = _meta(events_rank0, "process_name")
+    process_name_rank1 = _meta(events_rank1, "process_name")
+    assert any(
+        evt["args"].get("name") == "Rank 0, Process" for evt in process_name_rank0
+    )
+    assert any(
+        evt["args"].get("name") == "Rank 1, Process" for evt in process_name_rank1
+    )
+
+    sort_meta_rank0 = _meta(events_rank0, "process_sort_index")
+    sort_meta_rank1 = _meta(events_rank1, "process_sort_index")
+    assert any(evt["args"].get("sort_index") == 0 for evt in sort_meta_rank0)
+    assert any(evt["args"].get("sort_index") == 1 for evt in sort_meta_rank1)
 
 
 @pytest.mark.asyncio
@@ -181,7 +197,7 @@ async def test_global_tracer_configure_roundtrip(tmp_path):
         pass
 
     tracer.save()
-    saved_path = _expected_trace_path(config)
+    saved_path = _expected_trace_path(config, rank=0)
     assert saved_path.exists()
     events = _load_trace_events(saved_path)
     event_names = {evt["name"] for evt in events if evt["ph"] != "M"}
@@ -232,7 +248,7 @@ async def test_async_multi_request_cross_phase_trace(tmp_path):
     )
 
     tracer.save()
-    saved_path = _expected_trace_path(config)
+    saved_path = _expected_trace_path(config, rank=0)
     assert saved_path.exists()
     events = [evt for evt in _load_trace_events(saved_path) if evt.get("ph") != "M"]
 
@@ -263,23 +279,17 @@ async def test_async_multi_request_cross_phase_trace(tmp_path):
     assert overlap
 
 
-def test_configure_preserves_output_path_when_rank_changes(tmp_path):
+def test_configure_rejects_repeated_calls(tmp_path):
     config = _make_config(tmp_path, experiment="ranked", trial="zero")
-    tracer = perf_tracer.configure(
+    perf_tracer.configure(
         config,
         rank=0,
     )
-    expected_path = _expected_trace_path(config)
-    first_path = Path(tracer._output_path or "")  # noqa: SLF001
-    assert first_path == expected_path
-
-    perf_tracer.configure(
-        config,
-        rank=1,
-    )
-    second_path = Path(tracer._output_path or "")  # noqa: SLF001
-    assert second_path == expected_path
-    assert tracer._rank == 1  # noqa: SLF001
+    with pytest.raises(RuntimeError):
+        perf_tracer.configure(
+            config,
+            rank=1,
+        )
 
 
 def test_module_level_save_helper(tmp_path):
@@ -291,9 +301,9 @@ def test_module_level_save_helper(tmp_path):
     perf_tracer.instant("module-level-mark", args={"flag": True})
 
     perf_tracer.save()
-    saved_path = _expected_trace_path(config)
+    saved_path = _expected_trace_path(config, rank=0)
     assert saved_path.exists()
-    assert saved_path == _expected_trace_path(config)
+    assert saved_path == _expected_trace_path(config, rank=0)
     events = _load_trace_events(saved_path)
     event_names = {evt["name"] for evt in events if evt.get("ph") != "M"}
     assert "module-level-mark" in event_names
@@ -303,7 +313,7 @@ def test_perf_tracer_respects_save_interval(tmp_path):
     config = _make_config(tmp_path, experiment="interval", trial="steps")
     config.save_interval = 3
     tracer = perf_tracer.PerfTracer(config, rank=0)
-    trace_path = _expected_trace_path(config)
+    trace_path = _expected_trace_path(config, rank=0)
 
     for step in (0, 1):
         tracer.instant(f"mark-{step}", args={"step": step})
@@ -346,16 +356,15 @@ def test_request_tracer_configuration(tmp_path):
     request_tracer.mark_consumed(request_id)
     tracer.save(force=True)
 
-    request_path = _expected_request_trace_path(config)
+    request_path = _expected_request_trace_path(config, rank=0)
     assert request_path.exists()
     payload = [json.loads(line) for line in request_path.read_text().splitlines()]
     assert any(entry["status"] == "accepted" for entry in payload)
 
     updated = _make_config(tmp_path, experiment="request", trial="enabled")
     updated.request_tracer = RequestTracerConfig(enabled=False)
-    tracer.apply_config(updated, rank=1)
-    assert tracer.request_tracer is None
-    assert tracer._rank == 1  # noqa: SLF001
+    tracer_disabled = perf_tracer.PerfTracer(updated, rank=1)
+    assert tracer_disabled.request_tracer is None
 
 
 def _run_perf_tracer_torchrun(tmp_path: Path, world_size: int) -> None:
@@ -396,9 +405,15 @@ def test_perf_tracer_torchrun_multi_rank(tmp_path, world_size):
         fileroot=str(tmp_path),
         enabled=True,
     )
-    trace_path = _expected_trace_path(config)
-    assert trace_path.exists()
-    payload = _load_trace_events(trace_path)
+    trace_paths = [
+        _expected_trace_path(config, rank=rank) for rank in range(world_size)
+    ]
+    for path in trace_paths:
+        assert path.exists()
+
+    payload: list[dict] = []
+    for path in trace_paths:
+        payload.extend(_load_trace_events(path))
     ranks_seen = {
         evt["args"].get("rank") for evt in payload if evt["name"] == "torchrun-step"
     }

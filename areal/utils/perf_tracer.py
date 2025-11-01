@@ -9,7 +9,6 @@ import time
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
-    contextmanager,
 )
 from dataclasses import dataclass
 from enum import Enum
@@ -19,11 +18,6 @@ from areal.api.cli_args import PerfTracerConfig, RequestTracerConfig
 from areal.utils import logging
 
 logger = logging.getLogger("PerfTracer")
-
-try:  # pragma: no cover - platform specific
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None
 
 
 _THREAD_LOCAL = threading.local()
@@ -64,9 +58,7 @@ _PERF_TRACE_FILENAME = "traces.jsonl"
 _REQUEST_TRACE_FILENAME = "requests.jsonl"
 
 
-def _rank_qualified_filename(filename: str, rank: int | None) -> str:
-    if rank is None:
-        return filename
+def _rank_qualified_filename(filename: str, rank: int) -> str:
     root, ext = os.path.splitext(filename)
     return f"{root}-r{rank}{ext}"
 
@@ -98,8 +90,9 @@ def _normalize_category(category: CategoryLike) -> str:
 def _default_trace_path(
     config: PerfTracerConfig,
     *,
+    rank: int,
     filename: str = _PERF_TRACE_FILENAME,
-    rank: int | None = None,
+    subdir: str | None = None,
 ) -> str:
     base_dir = os.path.join(
         os.path.expanduser(os.path.expandvars(config.fileroot)),
@@ -108,6 +101,8 @@ def _default_trace_path(
         config.experiment_name,
         config.trial_name,
     )
+    if subdir:
+        base_dir = os.path.join(base_dir, subdir)
     return os.path.join(base_dir, _rank_qualified_filename(filename, rank))
 
 
@@ -198,20 +193,6 @@ class RequestTracer:
         self._flush_threshold = _normalize_flush_threshold(config)
         self._output_path = output_path
 
-    def apply_config(
-        self,
-        config: RequestTracerConfig,
-        *,
-        output_path: str,
-        rank: int,
-    ) -> None:
-        self.flush(force=True)
-        with self._lock:
-            self._config = config
-            self._rank = rank
-            self._flush_threshold = _normalize_flush_threshold(config)
-            self._output_path = output_path
-
     def register_submission(self) -> int:
         now = time.perf_counter()
         with self._lock:
@@ -295,46 +276,55 @@ class RequestTracer:
             self.flush()
 
     def flush(self, force: bool = False) -> None:
-        records: list[RequestRecord] = []
         with self._lock:
             if force:
-                ids = list(self._records.keys())
+                candidate_ids = list(self._records.keys())
             else:
-                ids = list(self._ready)
-            if not ids:
+                candidate_ids = list(self._ready)
+            if not candidate_ids:
                 return
-            for request_id in ids:
+
+            to_flush: list[tuple[int, RequestRecord, bool]] = []
+            for request_id in candidate_ids:
                 record = self._records.get(request_id)
                 if record is None:
                     self._ready.discard(request_id)
                     continue
                 if not force and not record.is_ready_to_flush():
                     continue
-                records.append(record)
+                was_ready = request_id in self._ready
+                to_flush.append((request_id, record, was_ready))
+
+            if not to_flush:
+                return
+
+            for request_id, _, _ in to_flush:
                 self._records.pop(request_id, None)
                 self._ready.discard(request_id)
-        if not records:
-            return
-        lines = [json.dumps(record.to_dict(), ensure_ascii=False) for record in records]
+
         try:
+            payload = [record.to_dict() for (_, record, _) in to_flush]
+            lines = [json.dumps(item, ensure_ascii=False) for item in payload]
+
             parent = os.path.dirname(self._output_path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with _acquire_file_lock(self._output_path):
-                with open(self._output_path, "a", encoding="utf-8") as fout:
-                    for line in lines:
-                        fout.write(f"{line}\n")
-                    fout.flush()
-                    os.fsync(fout.fileno())
-        except OSError as exc:  # pragma: no cover - depends on filesystem
+            with open(self._output_path, "a", encoding="utf-8") as fout:
+                for line in lines:
+                    fout.write(f"{line}\n")
+                fout.flush()
+                os.fsync(fout.fileno())
+        except (OSError, TypeError) as exc:  # pragma: no cover - depends on filesystem
             logger.error(
-                "Failed to append request trace to %s: %s", self._output_path, exc
+                "Failed to append request trace to %s: %s",
+                self._output_path,
+                exc,
             )
             with self._lock:
-                for record in records:
-                    self._records[record.request_id] = record
-                    if record.is_ready_to_flush():
-                        self._ready.add(record.request_id)
+                for request_id, record, was_ready in to_flush:
+                    self._records[request_id] = record
+                    if was_ready:
+                        self._ready.add(request_id)
 
     def reset(self) -> None:
         self.flush(force=True)
@@ -343,27 +333,6 @@ class RequestTracer:
             self._ready.clear()
             self._next_id = 0
             self._flush_threshold = _normalize_flush_threshold(self._config)
-
-
-@contextmanager
-def _acquire_file_lock(path: str):
-    """Best-effort advisory lock for cross-rank aggregation."""
-
-    if fcntl is None:
-        yield
-        return
-
-    lock_path = f"{path}.lock"
-    parent = os.path.dirname(lock_path)
-    if parent and not os.path.isdir(parent):
-        os.makedirs(parent, exist_ok=True)
-
-    with open(lock_path, "w", encoding="utf-8") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 class _NullContext(AbstractContextManager, AbstractAsyncContextManager):
@@ -462,7 +431,11 @@ class PerfTracer:
         self._origin_ns = time.perf_counter_ns()
         self._thread_meta_emitted: set[int] = set()
         self._process_meta_emitted: set[int] = set()
-        self._output_path = _default_trace_path(config, rank=rank)
+        self._output_path = _default_trace_path(
+            config,
+            rank=rank,
+            subdir="perf_tracer",
+        )
         self._save_interval = _normalize_save_interval(config)
         self._request_tracer: RequestTracer | None = None
         self._configure_request_tracer(config, rank=rank)
@@ -477,11 +450,6 @@ class PerfTracer:
     def set_enabled(self, flag: bool) -> None:
         self._enabled = flag
 
-    def set_rank(self, rank: int) -> None:
-        if rank < 0:
-            raise ValueError("rank must be a non-negative integer")
-        self._rank = rank
-
     def _configure_request_tracer(self, config: PerfTracerConfig, *, rank: int) -> None:
         request_cfg = getattr(config, "request_tracer", None)
         enabled = bool(request_cfg and getattr(request_cfg, "enabled", False))
@@ -490,6 +458,7 @@ class PerfTracer:
                 config,
                 filename=_REQUEST_TRACE_FILENAME,
                 rank=rank,
+                subdir="request_tracer",
             )
             if self._request_tracer is None:
                 self._request_tracer = RequestTracer(
@@ -498,23 +467,11 @@ class PerfTracer:
                     rank=rank,
                 )
             else:
-                self._request_tracer.apply_config(
-                    request_cfg,
-                    output_path=output_path,
-                    rank=rank,
-                )
+                raise RuntimeError("Request tracer is already configured")
         else:
             if self._request_tracer is not None:
                 self._request_tracer.flush(force=True)
             self._request_tracer = None
-
-    def apply_config(self, config: PerfTracerConfig, *, rank: int) -> None:
-        self._config = config
-        self.set_rank(rank)
-        self._output_path = _default_trace_path(config, rank=rank)
-        self.set_enabled(config.enabled)
-        self._save_interval = _normalize_save_interval(config)
-        self._configure_request_tracer(config, rank=rank)
 
     @property
     def request_tracer(self) -> RequestTracer | None:
@@ -601,23 +558,27 @@ class PerfTracer:
         with self._lock:
             if not self._events:
                 return
+            events_to_write: list[dict[str, Any]] = self._events
+            self._events = []
 
-            events = self._events
+        try:
             serialized_events = [
-                json.dumps(event, ensure_ascii=False) for event in events
+                json.dumps(event, ensure_ascii=False) for event in events_to_write
             ]
             output_path = self._output_path
 
-            try:
-                with _acquire_file_lock(output_path):
-                    with open(output_path, "a", encoding="utf-8") as fout:
-                        for line in serialized_events:
-                            fout.write(f"{line}\n")
-                        fout.flush()
-                        os.fsync(fout.fileno())
-                self._events = []
-            except OSError as exc:  # pragma: no cover - depends on filesystem
-                logger.error("Failed to append perf trace to %s: %s", output_path, exc)
+            parent = os.path.dirname(output_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(output_path, "a", encoding="utf-8") as fout:
+                for line in serialized_events:
+                    fout.write(f"{line}\n")
+                fout.flush()
+                os.fsync(fout.fileno())
+        except (OSError, TypeError) as exc:  # pragma: no cover - depends on filesystem
+            logger.error("Failed to append perf trace to %s: %s", output_path, exc)
+            with self._lock:
+                self._events[0:0] = events_to_write
 
     def reset(self) -> None:
         if self._request_tracer is not None:
@@ -629,7 +590,6 @@ class PerfTracer:
             self._origin_ns = time.perf_counter_ns()
             self._enabled = self._config.enabled
             self._save_interval = _normalize_save_interval(self._config)
-        self._configure_request_tracer(self._config, rank=self._rank)
 
     # ------------------------------------------------------------------
     # Internal utilities
@@ -760,18 +720,19 @@ def configure(
 ) -> PerfTracer:
     global GLOBAL_TRACER
     with _GLOBAL_TRACER_LOCK:
-        if GLOBAL_TRACER is None:
-            GLOBAL_TRACER = PerfTracer(config, rank=rank)
-        else:
-            GLOBAL_TRACER.apply_config(config, rank=rank)
-        tracer = GLOBAL_TRACER
+        if GLOBAL_TRACER is not None:
+            raise RuntimeError(
+                "PerfTracer has already been configured. Call perf_tracer.reset() "
+                "before configuring again."
+            )
+        GLOBAL_TRACER = PerfTracer(config, rank=rank)
         logger.info(
             "Configured global PerfTracer: enabled=%s, request_tracing=%s, rank=%s",
-            tracer.enabled,
-            tracer.request_tracer is not None,
+            GLOBAL_TRACER.enabled,
+            GLOBAL_TRACER.request_tracer is not None,
             rank,
         )
-    return tracer
+        return GLOBAL_TRACER
 
 
 def reset() -> None:
