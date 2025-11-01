@@ -151,6 +151,8 @@ perf_tracer:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   enabled: true
+  request_tracer:
+    enabled: true
 
 launcher:
   inference_server_cpus_per_gpu: 4
