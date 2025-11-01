@@ -21,6 +21,7 @@ from areal.api.cli_args import (
 )
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
+from areal.utils.exp_metadata import save_experiment_metadata
 from areal.utils.launcher import (
     JobException,
     JobInfo,
@@ -281,6 +282,14 @@ def local_main(config, run_id: int = 0):
         f"trial_name={config.trial_name}, fileroot={config.cluster.fileroot}, "
         f"run_id={run_id}, is_recover_run={is_recover_run}"
     )
+
+    if not is_recover_run:
+        metadata_file = save_experiment_metadata(
+            config.cluster.fileroot,
+            config.experiment_name,
+            config.trial_name,
+        )
+        logger.info(f"Saved experiment metadata to {metadata_file}")
 
     server_addrs = []
     if alloc_mode.gen_backend in ("sglang", "vllm"):

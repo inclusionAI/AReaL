@@ -5,7 +5,6 @@ import re
 import subprocess
 import sys
 import time
-from typing import Dict, List, Tuple
 
 import areal.utils.logging as logging
 from areal.api.alloc_mode import AllocationMode, AllocationType
@@ -19,7 +18,8 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names
+from areal.utils import name_resolve, names
+from areal.utils.exp_metadata import save_experiment_metadata
 from areal.utils.launcher import (
     JobException,
     JobInfo,
@@ -53,7 +53,7 @@ class SlurmLauncher:
         self.container_type = container_type
 
         # slurm_job_id -> JobInfo
-        self.jobs: Dict[int, JobInfo] = {}
+        self.jobs: dict[int, JobInfo] = {}
         self.job_names = []
 
     @property
@@ -93,7 +93,7 @@ class SlurmLauncher:
     def submit_array(
         self,
         job_name: str,
-        cmd: List[str] | str,
+        cmd: list[str] | str,
         count: int,
         nodes: int,
         n_gpus_per_node: int,
@@ -102,7 +102,7 @@ class SlurmLauncher:
         container_image: str,
         srun_additional_args: str = "",
         container_mounts: str | None = None,
-        env_vars: Dict | List[Dict] | None = None,
+        env_vars: dict | list[dict] | None = None,
         nodelist: str | None = None,
         exclude: str | None = None,
     ):
@@ -162,9 +162,10 @@ class SlurmLauncher:
         if env_vars is None:
             env_vars = dict()
         n_gpus_per_task = n_gpus_per_node // ntasks_per_node
-        assert (
-            current_platform.device_control_env_var not in env_vars
-        ), f"{current_platform.device_control_env_var} should be automatically resolved by Launcher instead of manually assigned."
+        if current_platform.device_control_env_var in env_vars:
+            raise ValueError(
+                f"{current_platform.device_control_env_var} should be automatically resolved by Launcher instead of manually assigned."
+            )
 
         srun_cmds = []
         for i in range(count):
@@ -178,9 +179,7 @@ class SlurmLauncher:
                 _env_vars = env_vars
 
             if self.container_type == "apptainer":
-                env_string = " ".join(
-                    "--env {}={}".format(k, v) for k, v in _env_vars.items()
-                )
+                env_string = " ".join(f"--env {k}={v}" for k, v in _env_vars.items())
                 apptainer_cmd = APPTAINER_CMD_TEMPLATE.format(
                     container_mounts=container_mounts or "",
                     container_env_strings=env_string,
@@ -199,7 +198,7 @@ class SlurmLauncher:
                 )
             elif self.container_type == "none":
                 env_string = "--export=" + ",".join(
-                    "{}={}".format(k, v) for k, v in _env_vars.items()
+                    f"{k}={v}" for k, v in _env_vars.items()
                 )
                 srun_additional_args = srun_additional_args + " " + env_string
                 srun_cmd = SRUN_CMD_TEMPLATE.format(
@@ -300,7 +299,7 @@ class SlurmLauncher:
         job_id = self.find_job_id(job_name)
         return self.jobs[job_id] if job_id else None
 
-    def find_all(self, job_name_regex=".*") -> List[JobInfo]:
+    def find_all(self, job_name_regex=".*") -> list[JobInfo]:
         """Finds jobs.
 
         Args:
@@ -319,8 +318,8 @@ class SlurmLauncher:
 
     def _find_job_with_status(
         self,
-        status: List[JobState],
-    ) -> List[JobInfo]:
+        status: list[JobState],
+    ) -> list[JobInfo]:
         """Finds jobs with the given status.
 
         Args:
@@ -335,12 +334,12 @@ class SlurmLauncher:
     def wait(
         self,
         timeout=None,
-        check_status: Tuple[JobState, ...] = (
+        check_status: tuple[JobState, ...] = (
             JobState.CANCELLED,
             JobState.FAILED,
             JobState.NOT_FOUND,
         ),
-        remove_status: Tuple[JobState, ...] = (JobState.COMPLETED,),
+        remove_status: tuple[JobState, ...] = (JobState.COMPLETED,),
         update=False,
     ):
         """Waits until all jobs submitted via this client instance finish."""
@@ -432,6 +431,15 @@ def slurm_main(config, run_id: int = 0):
     n_gpus_per_node = config.cluster.n_gpus_per_node
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
+
+    if not is_recover_run:
+        metadata_file = save_experiment_metadata(
+            config.cluster.fileroot,
+            config.experiment_name,
+            config.trial_name,
+        )
+        logger.info(f"Saved experiment metadata to {metadata_file}")
+
     n_backend_nodes = 0
 
     if allocation_mode.gen_backend in ("sglang", "vllm"):
@@ -458,7 +466,7 @@ def slurm_main(config, run_id: int = 0):
             },
         }
 
-        def _build_llm_server_plan(backend: str, spec: Dict):
+        def _build_llm_server_plan(backend: str, spec: dict):
             # Returns: cmds, env_vars_list, n_nodes, n_servers
 
             if backend not in backend_spec:
@@ -552,8 +560,8 @@ def slurm_main(config, run_id: int = 0):
     def _build_trainer_cmds(
         trainer_n_nodes: int,
         nproc_per_node: int,
-        additional_bash_cmds: List[str] | None = None,
-    ) -> List[str]:
+        additional_bash_cmds: list[str] | None = None,
+    ) -> list[str]:
         extra_args = " ".join(sys.argv[1:])
         trainer_cmds = []
         for i in range(trainer_n_nodes):
