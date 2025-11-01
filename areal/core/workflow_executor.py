@@ -20,10 +20,7 @@ from areal.core.staleness_manager import StalenessManager
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
-from areal.utils.dynamic_import import (
-    import_callable_from_string,
-    import_class_from_string,
-)
+from areal.utils.dynamic_import import import_from_string
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
@@ -433,11 +430,22 @@ class WorkflowExecutor:
                     f"Got workflow={workflow!r}, but workflow_kwargs=None."
                 )
             try:
-                workflow_class = import_class_from_string(workflow)
-            except (ValueError, ImportError, AttributeError, TypeError) as e:
+                workflow_class = import_from_string(workflow)
+            except (ValueError, ImportError, AttributeError) as e:
                 raise ValueError(
                     f"Failed to import workflow from string {workflow!r}: {e}"
                 ) from e
+
+            if not isinstance(workflow_class, type):
+                raise TypeError(
+                    f"Imported object {workflow_class} from {workflow!r} is not a class"
+                )
+
+            if not issubclass(workflow_class, RolloutWorkflow):
+                raise TypeError(
+                    f"Imported class {workflow_class} from {workflow!r} "
+                    f"is not a subclass of RolloutWorkflow"
+                )
 
             try:
                 return workflow_class(**workflow_kwargs)
@@ -479,11 +487,15 @@ class WorkflowExecutor:
 
         if isinstance(should_accept, str):
             try:
-                func = import_callable_from_string(should_accept)
-            except (ValueError, ImportError, AttributeError, TypeError) as e:
+                func = import_from_string(should_accept)
+            except (ValueError, ImportError, AttributeError) as e:
                 raise ValueError(
-                    f"Failed to import should_accept callable from string {should_accept!r}: {e}"
+                    f"Failed to import should_accept from string {should_accept!r}: {e}"
                 ) from e
+            if not callable(func):
+                raise TypeError(
+                    f"Imported object {func} from {should_accept!r} is not callable"
+                )
             return func
 
         raise TypeError(
