@@ -2,7 +2,6 @@ import json
 import os
 import signal
 import time
-from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
@@ -60,8 +59,7 @@ class AsystemScheduler(Scheduler):
     def __init__(self, config: dict[str, Any]):
         self.real_package_path = os.environ.get("REAL_PACKAGE_PATH", "")
         assert self.real_package_path != ""
-        self.worker_infos = []
-        self.submitted_jobs = {}  # job_name -> job_uid
+        self.submitted_jobs = {}  # role -> job_uid
         self.extra_envs = config.get("extra_envs", {})
 
         # Initialize Asystem client attributes
@@ -72,9 +70,6 @@ class AsystemScheduler(Scheduler):
         self.endpoint = config.get("endpoint", DEFAULT_ASYSTEM_SERVER_URL).rstrip("/")
         self.api_url = self.endpoint + API_BASE_PATH
         self._session = requests.Session()
-        self._submission_counter = 0
-        self._worker_registry = {}  # worker_id -> worker_info mapping
-        self._addrs = {}
         self.n_gpus_per_node = int(config.get("n_gpus_per_node", "8"))
         # Initialize RPCClient for create_engine and call_engine
         self.rpc_client = RPCClient()
@@ -104,7 +99,7 @@ class AsystemScheduler(Scheduler):
 
     def batch_cleanup_jobs(self, signum):
         logger.info(f"signum {signum} received: handle_signals starts")
-        for job_name, job_uid in self.submitted_jobs.items():
+        for role, job_uid in self.submitted_jobs.items():
             try:
                 self.stop_job(job_uid)
                 logger.info(f"Stopped job: {job_uid}")
@@ -134,7 +129,7 @@ class AsystemScheduler(Scheduler):
         for container in job.tasks:
             assert container.gpu <= self.n_gpus_per_node
 
-        assert job.role in ("train", "rollout", "ref")
+        assert job.role in ("train", "infer", "actor", "rollout", "ref")
 
         # 提交作业到Asystem
         job_info = self.submit_job(job)
@@ -154,9 +149,16 @@ class AsystemScheduler(Scheduler):
                 "FrameworkError", "SchedulerError", f"Failed to submit job: {job_info}"
             )
 
-    def get_workers(self, worker_key, timeout: float = 300.0) -> list[Worker]:
+    def get_workers(self, role: str, timeout: float = 300.0) -> list[Worker]:
         """
         等待并返回worker列表，包含调度结果，比如ip和engine ports
+
+        Args:
+            role: Worker role name (e.g., "rollout", "actor")
+            timeout: Maximum time to wait for workers to be ready (None = use default)
+
+        Returns:
+            List of Worker objects
         """
         logger.info(f"Waiting for workers to be ready (timeout: {timeout}s)")
 
@@ -165,54 +167,34 @@ class AsystemScheduler(Scheduler):
             return []
 
         # 等待作业启动
-        server_infos = self.wait_for_jobs(worker_key, self.submitted_jobs, timeout)
+        job_info = self.wait_for_jobs(role, self.submitted_jobs, timeout)
+        logger.info(f"Got {len(job_info)} workers ready")
+        return [worker for worker in job_info.values()]
 
-        # 转换为Worker对象列表
-        worker_objects = []
-        for instance_id, info in server_infos.items():
-            worker = Worker(
-                id=instance_id,
-                ip=info.get("ip", ""),
-            )
-
-            # 添加端口信息 - 优先处理ports数组，兼容单个port字段
-            if "ports" in info and info["ports"]:
-                # 处理端口数组（新格式）
-                worker.ports.extend([str(p) for p in info["ports"]])
-            elif "port" in info:
-                # 处理单个端口（兼容格式）
-                worker.ports.append(str(info["port"]))
-
-            worker_objects.append(worker)
-
-        self.worker_infos = [
-            (w.id, w.ip, w.ports[0] if w.ports else "") for w in worker_objects
-        ]
-        logger.info(f"Got {len(worker_objects)} workers ready")
-
-        return worker_objects
-
-    def delete_workers(self, name: str = None):
+    def delete_workers(self, role: str | None = None):
         """
         Stops a running job.
+
+        Args:
+            role: Specific role to delete. If None, all workers are deleted.
         """
-        if name:
+        if role:
             # 停止指定的作业
-            job_uid = self.submitted_jobs.get(name)
+            job_uid = self.submitted_jobs.get(role)
             if job_uid is not None:
                 self.stop_job(job_uid)
-                del self.submitted_jobs[name]
-                logger.info(f"Stopped job: {name}")
+                del self.submitted_jobs[role]
+                logger.info(f"Stopped job: {role}")
             else:
-                logger.warning(f"Job {name} not found")
+                logger.warning(f"Job {role} not found")
         else:
             # 停止所有作业
-            for job_name, job_uid in self.submitted_jobs.items():
+            for role, job_uid in self.submitted_jobs.items():
                 try:
                     self.stop_job(job_uid)
-                    logger.info(f"Stopped job: {job_name}")
+                    logger.info(f"Stopped job: {role}")
                 except Exception as e:
-                    logger.error(f"Error stopping job {job_name}: {e}")
+                    logger.error(f"Error stopping job {role}: {e}")
             self.submitted_jobs.clear()
 
     def call_engine(self, worker_id: str, method: str, *args, **kwargs):
@@ -285,7 +267,6 @@ class AsystemScheduler(Scheduler):
                 logger.info(f"Cleaning up job {job_name} with UID: {job_uid}")
                 self.stop_job(job_uid)
             self.submitted_jobs.clear()
-            self.worker_infos.clear()
             logger.info("Cleanup completed successfully")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
@@ -318,7 +299,6 @@ class AsystemScheduler(Scheduler):
         """Generate unique job name"""
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         job_name = f"{self.expr_name}_{self.trial_name}:{timestamp}"
-        self._submission_counter += 1
         return job_name
 
     def _build_asystem_payload(self, job: Job) -> dict[str, Any]:
@@ -347,7 +327,7 @@ class AsystemScheduler(Scheduler):
                     "ROLE": job.role,
                     "ASTRA_SHARED_PATH": f"{self.storage_prefix}/astate_shared_storage",
                     "WORK_MODE": "GENERATION" if job.role == "rollout" else "TRAINING",
-                    "IMAGE": spec.container_image,
+                    "IMAGE": spec.image,
                 }
                 combined_envs.update(custom_envs)
 
@@ -355,9 +335,9 @@ class AsystemScheduler(Scheduler):
                     spec.cmd
                     if spec.cmd
                     else (
-                        f"bash {self.real_package_path}/areal/scheduler/scripts/launch-worker.sh"
+                        f"bash {self.real_package_path}/areal/extension/asystem/ascheduler/scripts/launch-worker.sh"
                         if spec.type == "worker"
-                        else f"bash {self.real_package_path}/areal/scheduler/scripts/launch-hybrid-server.sh"
+                        else f"bash {self.real_package_path}/areal/extension/asystem/ascheduler/scripts/launch-hybrid-server.sh"
                     )
                 )
                 container = {
@@ -365,7 +345,7 @@ class AsystemScheduler(Scheduler):
                     "command": ["/bin/sh"],
                     "args": ["-c", cmd],
                     "env": combined_envs,
-                    "image": spec.container_image,
+                    "image": spec.image,
                     "resourceRequirement": {
                         "cpu": spec.cpu,
                         "memoryMB": spec.mem,
@@ -382,6 +362,13 @@ class AsystemScheduler(Scheduler):
             "containerSpecList": containers,
         }
 
+        if job.scheduling_strategy and job.scheduling_strategy.type == "colocation":
+            assert self.submitted_jobs.get(job.scheduling_strategy.target) is not None
+            # convert role to uid
+            job.scheduling_strategy.target = self.submitted_jobs.get(
+                job.scheduling_strategy.target
+            )
+
         # 构建最终payload
         payload = {
             "jobName": job_name,
@@ -389,32 +376,18 @@ class AsystemScheduler(Scheduler):
             "labels": labels,
             "asystemWorkerGroups": [worker_group],
             "scheduleStrategy": (
-                job.schedule_strategy if job.schedule_strategy else None
+                job.scheduling_strategy if job.scheduling_strategy else None
             ),
         }
-        if job.schedule_strategy is not None:
-            payload["scheduleStrategy"] = asdict(job.schedule_strategy)
+        if job.scheduling_strategy is not None:
+            payload["scheduleStrategy"] = {
+                "type": job.scheduling_strategy.type,
+                "uid": job.scheduling_strategy.target,
+            }
 
         logger.info(f"schedule payload: {payload}")
 
         return payload
-
-    def _register_worker_info(self, worker_id: str, worker_info: dict[str, Any]):
-        """注册worker信息到本地注册表"""
-        self._worker_registry[worker_id] = worker_info
-
-        # Register worker with RPCClient for create_engine and call_engine
-        ip = worker_info.get("ip")
-        ports = worker_info.get("ports", [])
-        if ip and ports:
-            port = ports[0]  # Use first port for RPC
-            self.rpc_client.register(worker_id, ip, port)
-
-        logger.debug(f"Registered worker {worker_id}: {worker_info}")
-
-    def _get_worker_info_by_id(self, worker_id: str) -> dict[str, Any] | None:
-        """根据worker_id获取worker信息"""
-        return self._worker_registry.get(worker_id)
 
     def submit_job(self, job: Job) -> dict[str, Any]:
         """
@@ -444,16 +417,23 @@ class AsystemScheduler(Scheduler):
             )
 
     def wait_for_jobs(
-        self, worker_key, submitted_jobs: dict[str, str], timeout: float = 300.0
-    ) -> dict[str, dict[str, Any]]:
+        self, role: str, submitted_jobs: dict[str, str], timeout: float = 300.0
+    ) -> dict[str, Worker]:
         """
         等待作业启动并返回服务器信息
+
+        Args:
+            role: Worker role name (e.g., "rollout", "actor")
+            submitted_jobs: Dictionary mapping role names to job UIDs
+            timeout: Maximum time to wait for jobs to start
+
+        Returns:
+            Dictionary mapping worker instance IDs to server information
         """
         if not submitted_jobs:
             raise SchedulerError("No jobs have been submitted yet")
 
         start_time = time.time()
-        job_server_infos = {}
 
         while True:
             # 检查超时
@@ -464,19 +444,21 @@ class AsystemScheduler(Scheduler):
                     f"Timeout waiting for jobs to start after {timeout} seconds",
                 )
 
-            job_uid = submitted_jobs.get(worker_key)
+            job_uid = submitted_jobs.get(role)
             if not job_uid:
-                raise Exception(f"cannot find worker key: {worker_key}")
+                raise Exception(f"cannot find job for role: {role}")
 
             response = self._request("GET", f"AsystemJobs/{job_uid}")
-            job_info = response.json()
-            status = job_info.get("status", "UNKNOWN")
+            job_info_dict = response.json()
+            status = job_info_dict.get("status", "UNKNOWN")
             logger.debug(f"Job {job_uid} status: {status}")
             if status == "RUNNING":
                 # 解析资源分布信息
-                self._parse_job_infos(job_uid, job_info, job_server_infos)
-                logger.info(f"All jobs are running. Server infos: {job_server_infos}")
-                return job_server_infos
+                job_info = self._parse_job_infos(
+                    job_uid, job_info_dict
+                )  # str -> Worker
+                logger.info(f"All jobs are running. Server infos: {job_info}")
+                return job_info
             elif status in ["FAILED", "CANCELLED"]:
                 raise FrameworkError(
                     "FrameworkError",
@@ -489,48 +471,49 @@ class AsystemScheduler(Scheduler):
     def _parse_job_infos(
         self,
         job_uid: str,
-        job_info: dict[str, Any],
-        server_infos: dict[str, dict[str, Any]],
-    ):
+        job_info_dict: dict[str, Any],
+    ) -> dict[str, Worker]:
         """解析作业的资源分布信息，包括WorkerGroupStatuses中的端口信息"""
-
+        job_info = {}
         # 首先处理WorkerGroupStatuses（包含端口信息）
-        worker_group_statuses = job_info.get("workerGroupStatuses", [])
+        worker_group_statuses = job_info_dict.get("workerGroupStatuses", [])
 
         for group_idx, worker_group in enumerate(worker_group_statuses):
             # WorkerGroupStatus是WorkerStatus数组
             for worker_index, worker_status in enumerate(worker_group):
-                self._parse_worker_status(
+                status = self._parse_worker_status(
                     job_uid,
                     worker_status,
                     worker_index,
-                    server_infos,
                 )
+                job_info.update(status)
+
+        return job_info
 
     def _parse_worker_status(
         self,
         job_uid: str,
         worker_status: dict[str, Any],
         worker_index: int,
-        server_infos: dict[str, dict[str, Any]],
-    ):
+    ) -> dict[str, Worker]:
         """解析单个WorkerStatus"""
         instance_id = f"{job_uid}_worker_{worker_index}"
         ip = worker_status.get("ip", "")
-
+        job_info = {}
         # 解析容器状态和端口 - 应用新的端口选择逻辑
         container_statuses = worker_status.get("containerStatuses", [])
         ports_list = self._parse_ports_list(container_statuses)
-        server_info = {"ip": ip, "ports": ports_list[1]}
-        server_infos[instance_id] = server_info
-
-        engine_info = {"ip": ip, "ports": ports_list[0]}
-        # 注册worker信息到本地注册表，供create_engine和call_engine使用
-        self._register_worker_info(instance_id, engine_info)
-
-        logger.debug(
-            f"Parsed worker {instance_id}: engine: {engine_info}, server_info: {server_infos}"
+        job_info[instance_id] = Worker(
+            id=instance_id,
+            ip=ip,
+            worker_ports=ports_list[0],
+            engine_ports=ports_list[1],
         )
+
+        # 注册worker信息到本地注册表，供create_engine和call_engine使用, 0号端口为服务端口
+        self.rpc_client.register(instance_id, ip, ports_list[0][0])
+
+        return job_info
 
     def _parse_ports_list(self, container_statuses: list) -> list:
         """
@@ -548,6 +531,8 @@ class AsystemScheduler(Scheduler):
         return ports_list
 
     def stop_job(self, job_uid: str):
+        # hack
+        return
         """停止作业"""
         logger.info(f"Stopping job with UID: {job_uid}")
 

@@ -5,15 +5,14 @@ the base TrainController and overrides the initialize method.
 """
 
 import asyncio
-from copy import deepcopy
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import AllocationMode, FinetuneSpec
 from areal.api.scheduler_api import Job, Scheduler
 from areal.controller.train_controller import TrainController as BaseTrainController
+from areal.extension.asystem.remote_hybrid_train_worker import RemoteMegatronInitConfig
 from areal.utils import logging
-from areal.utils.network import find_free_ports
 
 logger = logging.getLogger("TrainController")
 
@@ -72,35 +71,15 @@ class TrainController(BaseTrainController):
         # Store configuration
         self._worker_role = role
         self.alloc_mode = alloc_mode
-
-        if alloc_mode.gen_backend == "sglang":
-            self.config.scheduling_spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
-            self.config.scheduling_spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
-
         self.parallel_strategy = alloc_mode.train
 
         # Create job for scheduler
         job = Job(
             replicas=alloc_mode.train.world_size,
-            tasks=[
-                deepcopy(self.config.scheduling_spec)
-                for _ in range(alloc_mode.train.world_size)
-            ],
+            tasks=list(self.config.scheduling_specs),
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
         )
-        # Create environment variables to mimic torchrun
-        # FIXME: here master_addr and master_port only work in the local setting
-        port = find_free_ports(1)[0]
-        for i, task in enumerate(job.tasks):
-            task.env_vars["RANK"] = str(i)
-            task.env_vars["WORLD_SIZE"] = str(alloc_mode.train.world_size)
-            task.env_vars["LOCAL_RANK"] = str(
-                0
-            )  # because we have only set 1 CUDA_VISIBLE_DEVICES for each process
-            # TODO: find a real master addr with scheduler
-            task.env_vars["MASTER_ADDR"] = "localhost"
-            task.env_vars["MASTER_PORT"] = str(port)
 
         # Create workers via scheduler
         self.logger.info("Creating workers via scheduler...")
@@ -118,9 +97,45 @@ class TrainController(BaseTrainController):
 
         # Create and initialize engines on workers
         asyncio.run(self._async_create_engines(engine_path))
-        asyncio.run(self._async_initialize_engines(ft_spec, **kwargs))
+        asyncio.run(self._async_initialize(job, ft_spec, **kwargs))
 
         # Identify DP head workers
-        self._identify_dp_heads()
+        # todo: @chucai, implement this, record rank info in hybrid train worker and implement is_data_parallel_head...
+        # self._identify_dp_heads()
 
         self.logger.info("TrainController initialization complete")
+
+    async def _async_initialize(self, job: Job, ft_spec: FinetuneSpec, **kwargs):
+        # Initialize engines
+        self.logger.info("Calling engine initialization...")
+        init_configs = self._build_engine_initialize_config(
+            enable_colocate_mode=job.scheduling_strategy.type == "colocation"
+        )
+
+        assert len(init_configs) == len(self.workers)
+
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker.id, "initialize", init_config, _should_bcast=False
+            )
+            for worker, init_config in zip(self.workers, init_configs)
+        ]
+
+        await asyncio.gather(*tasks)
+        self.logger.info("All engines are initialized!")
+
+    def _build_engine_initialize_config(
+        self, enable_colocate_mode: bool
+    ) -> list[RemoteMegatronInitConfig]:
+        server_addrs = [
+            f"{worker.ip}:{worker.engine_ports[0]}" for worker in self.workers
+        ]
+        return [
+            RemoteMegatronInitConfig(
+                server_addrs=server_addrs,
+                global_rank=index,
+                world_size=self.alloc_mode.train.world_size,
+                enable_colocate_mode=enable_colocate_mode,
+            )
+            for index, worker in enumerate(self.workers)
+        ]

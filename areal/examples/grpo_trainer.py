@@ -2,22 +2,25 @@ import json
 import os
 import pprint
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import (
+    SchedulingStrategy,
     load_expr_config,
 )
 from areal.api.io_struct import AllocationMode, FinetuneSpec
 from areal.extension.asystem.api.cli_args import GRPOConfig
 from areal.extension.asystem.ascheduler import AsystemScheduler
-from areal.extension.asystem.controller import RolloutController
+from areal.extension.asystem.controller import RolloutController, TrainController
 from areal.extension.asystem.recover import latest_checkpoint, periodic_checkpoint
 from areal.extension.asystem.remote_hybrid_inference_worker import (
     RemoteHybridInferenceWorker,
 )
-from areal.extension.asystem.util import ShuffleSampler
+from areal.extension.asystem.remote_hybrid_train_worker import RemoteHybridTrainWorker
+from areal.extension.asystem.util import ShuffleSampler, wait_future_ordered
 from areal.utils import logging
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
@@ -112,7 +115,6 @@ def main(args):
             sampler=ShuffleSampler(train_dataset),
             collate_fn=custom_collate_fn,
         )
-
         ############################## recover #########################################
         recover_meta_info_path = config.recover.recover_meta_info_path
         enable_recover = True
@@ -154,18 +156,6 @@ def main(args):
 
         stats_logger = StatsLogger(
             config,
-            # StatsLoggerConfig(
-            #     experiment_name=config.experiment_name,
-            #     trial_name=config.trial_name,
-            #     fileroot=config.stats_logger.fileroot,
-            #     wandb=WandBConfig(
-            #         mode=config.stats_logger.wandb.mode,
-            #         id_suffix=config.stats_logger.wandb.id_suffix,
-            #     ),
-            #     tensorboard=TensorBoardConfig(
-            #         path=config.stats_logger.tensorboard.path
-            #     ),
-            # ),
             ft_spec,
         )
 
@@ -177,31 +167,29 @@ def main(args):
         inference_config.pp_size = allocate_mode.gen.pp_size
         inference_config.storage_path = f"{config.rollout.storage_path}/{config.experiment_name}/{config.trial_name}"
         inference_config.seed = config.seed
+        inference_config.scheduling_strategy = (
+            SchedulingStrategy(type="colocation", target="actor")
+            if config.enable_colocate_mode
+            else inference_config.scheduling_strategy
+        )
+
         rollout = RolloutController(
-            RemoteHybridInferenceWorker(inference_config),
+            RemoteHybridInferenceWorker,
             inference_config,
             scheduler,
         )
 
-        # actor = TrainController(
-        #     RemoteHybridTrainWorker(config.actor),
-        #     TrainControllerConfig(
-        #         experiment_name=config.experiment_name,
-        #         trial_name=config.trial_name,
-        #         allocation_mode=config.allocation_mode,
-        #         enable_colocate_mode=config.enable_colocate_mode,
-        #         group_size=config.actor.hybrid_engine.group_size,
-        #         storage_prefix=config.storage_prefix,
-        #     ),
-        #     scheduler,
-        # )
-        #
-        # # engine initialize
-        # # initialize actor first for colocation mode
-        # # actor.initialize()
-        # # rollout.initialize(colocate_with=actor if config.enable_colocate_mode else None)
-        #
-        # ref = None
+        actor = TrainController(
+            RemoteHybridTrainWorker,
+            config.actor,
+            scheduler,
+        )
+
+        allocation_mode = AllocationMode.from_str(config.allocation_mode)
+
+        # rollout.initialize(role="rollout", alloc_mode=allocation_mode)
+        # actor.initialize(role="actor", alloc_mode=allocation_mode, ft_spec=ft_spec)
+        ref = None
         # if config.actor.hybrid_engine.wrap_policy.kl_ctl > 0:
         #     ref = DistributedReferenceController(
         #         RemoteHybridTrainWorker(config.ref),
@@ -216,60 +204,64 @@ def main(args):
         #         scheduler,
         #     )
         #     # ref.initialize()
-        #
-        # # 共卡：actor -> rollout 按顺序，reference 可以并行。
-        # # 分卡：actor、rollout、reference 三者并行。
-        #
-        # # helper function for initializing Reference controller
-        # def init_ref_controller_helper(ref):
-        #     if ref is not None:
-        #         logger.info("ref is not none, initializing reference controller")
-        #         ref.initialize()
-        #
-        # # helper function for initializing Train Controller (actor) & Rollout Controller
-        # def init_train_and_rollout_controller_helper(actor, rollout):
-        #     logger.info("initializing trainer controller and rollout controller")
-        #     actor.initialize()
-        #     rollout.initialize(
-        #         colocate_with=actor if config.enable_colocate_mode else None
-        #     )
-        #
-        # # helper function for initializing Rollout controller
-        # def init_rollout_controller_helper(rollout):
-        #     logger.info("initializing rollout controller")
-        #     rollout.initialize(
-        #         colocate_with=actor if config.enable_colocate_mode else None
-        #     )
-        #
-        # if config.enable_colocate_mode:
-        #     logger.info(
-        #         f"initializing all controllers in colocation mode {config.enable_colocate_mode}"
-        #     )
-        #     with ThreadPoolExecutor(max_workers=2) as executor:
-        #         futures = [
-        #             executor.submit(
-        #                 init_train_and_rollout_controller_helper, actor, rollout
-        #             ),
-        #             executor.submit(init_ref_controller_helper, ref),
-        #         ]
-        #         wait_future_ordered(futures)
-        #     logger.info(
-        #         f"initialized all controllers in colocation mode {config.enable_colocate_mode}"
-        #     )
-        # else:
-        #     logger.info(
-        #         f"initializing all controllers in colocation mode {config.enable_colocate_mode}"
-        #     )
-        #     with ThreadPoolExecutor(max_workers=3) as executor:
-        #         futures = [
-        #             executor.submit(actor.initialize),
-        #             executor.submit(init_rollout_controller_helper, rollout),
-        #             executor.submit(init_ref_controller_helper, ref),
-        #         ]
-        #         wait_future_ordered(futures)
-        #     logger.info(
-        #         f"initialized all controllers in colocation mode {config.enable_colocate_mode}"
-        #     )
+
+        # 共卡：actor -> rollout 按顺序，reference 可以并行。
+        # 分卡：actor、rollout、reference 三者并行。
+
+        # helper function for initializing Train Controller (actor) & Rollout Controller
+        def init_train_and_rollout_controller_helper(actor, rollout):
+            logger.info("initializing trainer controller and rollout controller")
+            actor.initialize(role="actor", alloc_mode=allocation_mode, ft_spec=ft_spec)
+            rollout.initialize(role="rollout", alloc_mode=allocation_mode)
+
+        if config.enable_colocate_mode:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(
+                        init_train_and_rollout_controller_helper, actor, rollout
+                    ),
+                ]
+                if ref is not None:
+                    futures.append(
+                        executor.submit(
+                            ref.initialize,
+                            role="ref",
+                            alloc_mode=allocation_mode,
+                            ft_spec=ft_spec,
+                        )
+                    )
+
+                wait_future_ordered(futures)
+            logger.info(
+                f"initialized all controllers in colocation mode {config.enable_colocate_mode}"
+            )
+        else:
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = [
+                    executor.submit(
+                        actor.initialize,
+                        role="actor",
+                        alloc_mode=allocation_mode,
+                        ft_spec=ft_spec,
+                    ),
+                    executor.submit(
+                        rollout.initialize, role="rollout", alloc_mode=allocation_mode
+                    ),
+                ]
+                if ref is not None:
+                    futures.append(
+                        executor.submit(
+                            ref.initialize,
+                            role="ref",
+                            alloc_mode=allocation_mode,
+                            ft_spec=ft_spec,
+                        )
+                    )
+
+                wait_future_ordered(futures)
+            logger.info(
+                f"initialized all controllers in colocation mode {config.enable_colocate_mode}"
+            )
         #
         # if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
         #     config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)

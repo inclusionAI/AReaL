@@ -22,6 +22,7 @@ export GLOO_TIMEOUT_SECONDS=1800
 #   WORKER_INDEX_OFFSET: offset from WORKER_INDEX
 #   WORKER_TOTAL_COUNT: total worker count of worker groups which have same worker type
 #   REAL_PACKAGE_PATH: package path in shared storage
+#   PORT_LIST: comma-separated list of ports (use first port for RPC server)
 
 if [[ "${WORKER_INDEX_OFFSET}" != "" ]]; then
     WORKER_INDEX=$((WORKER_INDEX + WORKER_INDEX_OFFSET))
@@ -39,7 +40,17 @@ WPROCS_IN_JOB='{wprocs_in_job}'
 WPROC_OFFSET='{wproc_offset}'
 WORKER_TYPE=${ROLE}-${TYPE}
 
-WORKER_COMMAND="/usr/bin/python -u -m areal.scheduler.rpc.rpc_server --worker-type ${WORKER_TYPE} --worker-index ${WORKER_INDEX}"
+# 从 PORT_LIST 环境变量获取端口号，使用第一个端口作为 RPC server 端口
+if [[ -n "${PORT_LIST}" ]]; then
+    # 将逗号分隔的端口列表转换为数组
+    IFS=',' read -ra PORTS <<< "${PORT_LIST}"
+    # 获取第一个端口
+    FIRST_PORT="${PORTS[0]}"
+    # 添加到 WORKER_COMMAND
+    WORKER_COMMAND="/usr/bin/python -u -m areal.scheduler.rpc.async_rpc_server --worker-type ${WORKER_TYPE} --worker-index ${WORKER_INDEX} --port ${FIRST_PORT}"
+else
+    WORKER_COMMAND="/usr/bin/python -u -m areal.scheduler.rpc.async_rpc_server --worker-type ${WORKER_TYPE} --worker-index ${WORKER_INDEX}"
+fi
 
 #log output to local worker dir
 LOCAL_WORKER_DIR=/home/admin/logs/experiment/
