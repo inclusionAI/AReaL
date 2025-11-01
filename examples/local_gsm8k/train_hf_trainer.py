@@ -28,17 +28,29 @@ def load_model_and_tokenizer(model_path: str, device: str = "auto"):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    # Force CPU usage - MPS has memory issues
-    device = "cpu"
-    # Disable MPS
-    import os
-    os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
-    torch.backends.mps.is_available = lambda: False
+    # Auto-detect device if not specified
+    if device == "auto":
+        # Check for MPS (macOS only) - safe check for Windows compatibility
+        try:
+            mps_available = torch.backends.mps.is_available() if hasattr(torch.backends, 'mps') else False
+        except (AttributeError, RuntimeError):
+            mps_available = False
+        
+        if mps_available:
+            device = "mps"
+            print("Auto-detected: Using MPS (Metal Performance Shaders) backend")
+        elif torch.cuda.is_available():
+            device = "cuda"
+            print("Auto-detected: Using CUDA backend")
+        else:
+            device = "cpu"
+            print("Auto-detected: Using CPU backend")
+    else:
+        print(f"Using specified device: {device}")
     
-    print(f"Using device: {device} (MPS disabled)")
-    
-    # For MPS, use float32
+    # Load model with appropriate dtype and device handling
     if device == "mps":
+        # For MPS, use float32 (bfloat16 not supported)
         torch_dtype = torch.float32
         # Load on CPU first, then move to MPS
         model = AutoModelForCausalLM.from_pretrained(
@@ -47,7 +59,17 @@ def load_model_and_tokenizer(model_path: str, device: str = "auto"):
             trust_remote_code=True,
         )
         model = model.to("mps")
+    elif device == "cuda":
+        # For CUDA, use bfloat16 for better performance
+        torch_dtype = torch.bfloat16
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch_dtype,
+            device_map=device,
+            trust_remote_code=True,
+        )
     else:
+        # For CPU, use float32
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
             trust_remote_code=True,
@@ -124,8 +146,24 @@ def train(
 ):
     """Train model using HuggingFace Trainer."""
     
+    # Determine actual device to use
+    actual_device = device
+    if device == "auto":
+        # Check for MPS (macOS only) - safe check for Windows compatibility
+        try:
+            mps_available = torch.backends.mps.is_available() if hasattr(torch.backends, 'mps') else False
+        except (AttributeError, RuntimeError):
+            mps_available = False
+        
+        if mps_available:
+            actual_device = "mps"
+        elif torch.cuda.is_available():
+            actual_device = "cuda"
+        else:
+            actual_device = "cpu"
+    
     # Load model and tokenizer
-    model, tokenizer = load_model_and_tokenizer(model_path, device=device)
+    model, tokenizer = load_model_and_tokenizer(model_path, device=actual_device)
     
     # Prepare dataset
     dataset = prepare_dataset(tokenizer, max_length=max_length, max_samples=max_samples)
@@ -150,8 +188,8 @@ def train(
         "logging_steps": 10,
         "save_steps": save_steps,
         "save_total_limit": 2,
-        "bf16": torch.cuda.is_available(),  # Use bf16 on CUDA
-        "fp16": False,  # Don't use fp16 on MPS
+        "bf16": actual_device == "cuda",  # Use bf16 on CUDA
+        "fp16": False,  # Don't use fp16 (use bf16 on CUDA, float32 on MPS/CPU)
         "gradient_checkpointing": True,
         "max_grad_norm": 1.0,
         "push_to_hub": False,
