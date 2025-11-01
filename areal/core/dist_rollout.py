@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -20,13 +21,13 @@ from areal.utils.datapack import ffd_allocate
 
 @dataclass
 class RedistributedData:
-    all_data: List[Dict[str, Any]]
-    data: Dict[str, Any]
+    all_data: list[dict[str, Any]]
+    data: dict[str, Any]
     rank: int
-    group_indices: List[List[int]]
+    group_indices: list[list[int]]
 
 
-def _slice_tensor_dict(data: Dict[str, Any], start: int, end: int) -> Dict[str, Any]:
+def _slice_tensor_dict(data: dict[str, Any], start: int, end: int) -> dict[str, Any]:
     """Slices tensors in a dictionary along the first dimension."""
     sliced_data = {}
     batch_size = -1
@@ -41,7 +42,7 @@ def _slice_tensor_dict(data: Dict[str, Any], start: int, end: int) -> Dict[str, 
 
 
 def redistribute(
-    data: Dict[str, Any], granularity: int = 1, group=None
+    data: dict[str, Any], granularity: int = 1, group=None
 ) -> RedistributedData:
     """Redistribute a batch across a process group.
 
@@ -65,7 +66,7 @@ def redistribute(
 
     # Remove pad positions
     for d in all_data:
-        l = d["attention_mask"].sum(-1).max().item()
+        _length = d["attention_mask"].sum(-1).max().item()
         attn_mask_shape = d["attention_mask"].shape
         for k, v in d.items():
             if (
@@ -73,7 +74,7 @@ def redistribute(
                 and len(v.shape) >= 2
                 and v.shape[:2] == attn_mask_shape[:2]
             ):
-                d[k] = v[:, :l]
+                d[k] = v[:, :_length]
 
     # No capacity limit leads to balanced partition across this group
     group_indices = ffd_allocate(
@@ -92,15 +93,14 @@ def redistribute(
 
 class DistRolloutCoordinator:
     def __init__(self, rollout_engine: InferenceEngine, train_engine: TrainEngine):
-
         self.rollout_engine = rollout_engine
         self.train_engine = train_engine
 
     def _broadcast_and_redistribute_batch(
         self,
-        batch: Dict[str, Any] | None,
+        batch: dict[str, Any] | None,
         granularity: int = 1,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Broadcast and redistribute batch across distributed workers.
 
         This helper encapsulates:
@@ -147,12 +147,12 @@ class DistRolloutCoordinator:
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         granularity: int = 1,
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+        workflow: RolloutWorkflow | None | type[RolloutWorkflow] | str = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept: Callable[[dict[str, Any]], bool] | str | None = None,
+    ) -> dict[str, Any]:
         """Generate rollout batch with distributed coordination (synchronous).
 
         This method orchestrates distributed rollout generation:
@@ -172,11 +172,11 @@ class DistRolloutCoordinator:
             - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
             - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
             - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow, optional
+        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
             Workflow defining rollout logic
-        workflow_builder : Callable, optional
-            Builder function for workflow
-        should_accept : Callable, optional
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept : Callable[[Dict[str, Any]], bool] | str, optional
             Filter function for accepting samples
 
         Returns
@@ -195,7 +195,7 @@ class DistRolloutCoordinator:
             batch = self.rollout_engine.rollout_batch(
                 data,
                 workflow=workflow,
-                workflow_builder=workflow_builder,
+                workflow_kwargs=workflow_kwargs,
                 should_accept=should_accept,
             )
             batch = tensor_container_to(batch, current_platform.current_device())
@@ -206,10 +206,10 @@ class DistRolloutCoordinator:
         self,
         dataloader: StatefulDataLoader,
         granularity: int = 1,
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+        workflow: RolloutWorkflow | None | type[RolloutWorkflow] | str = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept: Callable[[dict[str, Any]], bool] | str | None = None,
+    ) -> dict[str, Any]:
         """Prepare async rollout batch with distributed coordination.
 
         Similar to rollout_batch but uses prepare_batch for async training,
@@ -226,11 +226,11 @@ class DistRolloutCoordinator:
             - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
             - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
             - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow, optional
+        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
             Workflow defining rollout logic
-        workflow_builder : Callable, optional
-            Builder function for workflow
-        should_accept : Callable, optional
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept : Callable[[Dict[str, Any]], bool] | str, optional
             Filter function for accepting samples based on staleness
 
         Returns
@@ -249,7 +249,7 @@ class DistRolloutCoordinator:
             batch = self.rollout_engine.prepare_batch(
                 dataloader,
                 workflow=workflow,
-                workflow_builder=workflow_builder,
+                workflow_kwargs=workflow_kwargs,
                 should_accept=should_accept,
             )
             batch = tensor_container_to(batch, current_platform.current_device())
