@@ -649,21 +649,6 @@ class vLLMConfig:
         return args
 
     @staticmethod
-    def build_cmd_from_args(args: dict[str, Any]):
-        # convert to flags
-        flags = []
-        for k, v in args.items():
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_', '-')}")
-            elif isinstance(v, list):
-                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
-            else:
-                flags.append(f"--{k.replace('_', '-')} {v}")
-        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
-
-    @staticmethod
     def build_cmd(
         vllm_config: "vLLMConfig",
         tp_size,
@@ -678,7 +663,18 @@ class vLLMConfig:
             port=port,
             dist_init_addr=dist_init_addr,
         )
-        return vLLMConfig.build_cmd_from_args(args)
+        # convert to flags
+        flags = []
+        for k, v in args.items():
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_', '-')}")
+            elif isinstance(v, list):
+                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
+            else:
+                flags.append(f"--{k.replace('_', '-')} {v}")
+        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
 
 
 @dataclass
@@ -800,8 +796,8 @@ class SGLangConfig:
         sglang_config: "SGLangConfig",
         tp_size,
         base_gpu_id,
-        host=None,
-        port=None,
+        host,
+        port,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
@@ -813,6 +809,8 @@ class SGLangConfig:
                 raise RuntimeError(
                     "Customized model loading requires exact SGLang version 0.5.2"
                 )
+            args.pop("enable_multithread_load", None)
+            args.pop("enable_fast_load", None)
             model_loader_extra_config = dict(
                 enable_multithread_load=sglang_config.enable_multithread_load,
                 enable_fast_load=sglang_config.enable_fast_load,
@@ -820,14 +818,14 @@ class SGLangConfig:
             args["model_loader_extra_config"] = json.dumps(
                 model_loader_extra_config, separators=(",", ":")
             )
-        args.pop("enable_multithread_load", None)
-        args.pop("enable_fast_load", None)
         # Map "all-linear" to "all"
         if "lora_target_modules" in args and args["lora_target_modules"]:
             args["lora_target_modules"] = [
                 x.replace("-linear", "") for x in args["lora_target_modules"]
             ]
         args = dict(
+            host=host,
+            port=port,
             # Model and tokenizer
             tokenizer_path=sglang_config.model_path,
             tokenizer_mode="auto",
@@ -845,13 +843,20 @@ class SGLangConfig:
             dist_init_addr=dist_init_addr,
             **args,
         )
-        if host is not None:
-            args["host"] = host
-        if port is not None:
-            args["port"] = port
-        if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"):
-            raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
-        return args
+        # convert to flags
+        flags = []
+        for k, v in args.items():
+            if is_version_less("sglang", "0.4.10.post2") and "max_loaded_loras" in k:
+                continue
+            if v is None or v is False or v == "":
+                continue
+            if v is True:
+                flags.append(f"--{k.replace('_', '-')}")
+            elif isinstance(v, list):
+                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
+            else:
+                flags.append(f"--{k.replace('_', '-')} {v}")
+        return f"python3 -m sglang.launch_server {' '.join(flags)}"
 
 
 @dataclass

@@ -7,7 +7,6 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from typing import Optional
 
 import psutil
 import requests
@@ -70,7 +69,7 @@ def kill_process_tree(parent_pid, include_parent: bool = True, skip_pid: int = N
 
 def launch_server_cmd(command: str) -> subprocess.Popen:
     """
-    Launch inference server in a new process and return its process handle.
+    Execute a shell command and return its process handle.
     """
     # Replace newline continuations and split the command string.
     command = command.replace("\\\n", " ").replace("\\", " ")
@@ -90,7 +89,7 @@ def launch_server_cmd(command: str) -> subprocess.Popen:
     )
 
 
-def wait_for_server(base_url: str, timeout: Optional[int] = None) -> None:
+def wait_for_server(base_url: str, timeout: int | None = None) -> None:
     """Wait for the server to be ready by polling the /v1/models endpoint.
 
     Args:
@@ -137,9 +136,9 @@ class SGLangServerWrapper:
         gpus_per_server = self.allocation_mode.gen_instance_size
         cross_nodes = False
         if gpus_per_server > self.n_gpus_per_node:
-            assert (
-                gpus_per_server % self.n_gpus_per_node == 0
-            ), "Cross-nodes SGLang only supports utilizing all gpus in one node"
+            assert gpus_per_server % self.n_gpus_per_node == 0, (
+                "Cross-nodes SGLang only supports utilizing all gpus in one node"
+            )
             cross_nodes = True
             node_rank = int(os.environ["AREAL_SGLANG_MULTI_NODE_RANK"])
             master_addr = os.environ["AREAL_SGLANG_MULTI_NODE_MASTER_ADDR"]
