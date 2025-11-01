@@ -3,8 +3,8 @@ import pathlib
 import re
 import sys
 import time
+from collections.abc import Callable
 from functools import partial
-from typing import Callable, Dict, List, Optional
 
 import ray
 import ray.exceptions
@@ -24,7 +24,8 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.platforms import current_platform, is_npu_available
-from areal.utils import logging, name_resolve, names
+from areal.utils import name_resolve, names
+from areal.utils.exp_metadata import save_experiment_metadata
 from areal.utils.launcher import (
     JobException,
     JobState,
@@ -84,16 +85,16 @@ class RayLauncher:
         job_name: str,
         file_path: str,
         func_name: str,
-        args: List[str],  # arguments to pass to the function
+        args: list[str],  # arguments to pass to the function
         gpus: int,
         cpus: int,
         mem: int,  # MB
-        env_vars: Optional[Dict] = None,
-        placement_group: Optional[PlacementGroup] = None,
+        env_vars: dict | None = None,
+        placement_group: PlacementGroup | None = None,
         bundle_index: int = -1,
-        kwargs: Optional[
-            Dict[str, str]
-        ] = None,  # keyword arguments to pass to the function
+        kwargs: (
+            dict[str, str] | None
+        ) = None,  # keyword arguments to pass to the function
     ):
         if kwargs is None:
             kwargs = {}
@@ -136,13 +137,13 @@ class RayLauncher:
         func_name: str,
         count: int,
         nodes: int,
-        list_args: List[List],
+        list_args: list[list],
         gpus_per_task: int,
         cpus_per_task: int,
         mem_per_task: int,  # MB
-        list_kwargs: List[Dict] | None = None,
-        env_vars: Optional[Dict] = None,
-        env_hook: Optional[Callable[[PlacementGroup], List[Dict]]] = None,
+        list_kwargs: list[dict] | None = None,
+        env_vars: dict | None = None,
+        env_hook: Callable[[PlacementGroup], list[dict]] | None = None,
     ):
         """Submit an array of jobs to Ray with ray placement groups.
 
@@ -156,13 +157,15 @@ class RayLauncher:
                 f"Count {count} is not divisible by nodes {nodes}. "
                 "Please ensure that count is a multiple of nodes."
             )
-        assert (
-            len(list_args) == count
-        ), f"Length of list_args {len(list_args)} does not match count {count}."
+        if len(list_args) != count:
+            raise ValueError(
+                f"Length of list_args {len(list_args)} does not match count {count}."
+            )
         if list_kwargs is not None:
-            assert (
-                len(list_kwargs) == count
-            ), f"Length of list_kwargs {len(list_kwargs)} does not match count {count}."
+            if len(list_kwargs) != count:
+                raise ValueError(
+                    f"Length of list_kwargs {len(list_kwargs)} does not match count {count}."
+                )
 
         tasks_per_node = count // nodes
         gpus_per_node = gpus_per_task * tasks_per_node
@@ -260,7 +263,7 @@ class RayLauncher:
         else:
             logger.warning(f"Job {job_name} not found in running jobs.")
 
-    def stop_all(self, force: bool = False, pattern: Optional[str] = None):
+    def stop_all(self, force: bool = False, pattern: str | None = None):
         """Stop all jobs with pattern matched."""
         job_names = list(self.jobs.keys())
         if pattern:
@@ -363,6 +366,15 @@ def ray_main(config, run_id: int = 0):
 
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
+
+    if not is_recover_run:
+        metadata_file = save_experiment_metadata(
+            config.cluster.fileroot,
+            config.experiment_name,
+            config.trial_name,
+        )
+        logger.info(f"Saved experiment metadata to {metadata_file}")
+
     sglang_addrs = []
     n_sglang_nodes = 0
     vllm_addrs = []
@@ -390,7 +402,7 @@ def ray_main(config, run_id: int = 0):
 
         def sglang_env_hook(
             n_tasks: int, task_group_size: int, placement_group: PlacementGroup
-        ) -> List[Dict]:
+        ) -> list[dict]:
             master_addrs = []
             master_ports = []
             for i in range(0, n_tasks, task_group_size):
@@ -510,11 +522,10 @@ def ray_main(config, run_id: int = 0):
         # In ray, we launch trainer in the granularity of processes (1 GPU per process)
         # We amend environment variable similar to torchrun to ensure correct initialization of
         # torch distributed.
-        def torch_env_hook(n_tasks: int, placement_group: PlacementGroup) -> List[Dict]:
+        def torch_env_hook(n_tasks: int, placement_group: PlacementGroup) -> list[dict]:
             host_ip, port = get_placement_group_master_ip_and_port(placement_group)
             logger.info(
-                f"Amend torch distributed env vars: "
-                f"MASTER_ADDR={host_ip}, PORT={port}"
+                f"Amend torch distributed env vars: MASTER_ADDR={host_ip}, PORT={port}"
             )
             env_vars = []
             for i in range(n_tasks):
