@@ -117,7 +117,13 @@ class SimpleTrainer:
         
         # Setup device
         if device == "auto":
-            if torch.backends.mps.is_available():
+            # Check for MPS (macOS only) - safe check for Windows compatibility
+            try:
+                mps_available = torch.backends.mps.is_available() if hasattr(torch.backends, 'mps') else False
+            except (AttributeError, RuntimeError):
+                mps_available = False
+            
+            if mps_available:
                 self.device = torch.device("mps")
                 logger.info("Using MPS (Metal Performance Shaders) backend")
             elif torch.cuda.is_available():
@@ -308,9 +314,15 @@ class SimpleTrainer:
                     self.optimizer.zero_grad()
                     continue
                 
-                # Clear MPS cache periodically to prevent memory buildup
+                # Clear device cache periodically to prevent memory buildup
                 if self.device.type == "mps" and global_step % 10 == 0:
-                    torch.mps.empty_cache()
+                    try:
+                        if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+                            torch.mps.empty_cache()
+                    except (AttributeError, RuntimeError):
+                        pass  # MPS not available on this platform
+                elif self.device.type == "cuda" and global_step % 10 == 0:
+                    torch.cuda.empty_cache()
                 
                 # Scale loss by gradient accumulation steps
                 loss = loss / self.gradient_accumulation_steps

@@ -321,7 +321,7 @@ def test_model(
         _log(f"Generated (from tokens only, for verification):\n{generated_text_from_tokens}")
         _log(f"Correct Answer (full):\n{correct_answer}")
         _log(f"Extracted -> GT: {gt_extracted} | Pred: {pred_extracted}")
-        _log(f"Result: {'✓ CORRECT' if is_correct else '✗ INCORRECT'}")
+        _log(f"Result: {'[CORRECT]' if is_correct else '[INCORRECT]'}")
     
     accuracy = correct / len(results) * 100
     _log(f"\n{'='*60}")
