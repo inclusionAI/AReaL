@@ -92,6 +92,7 @@ def _default_trace_path(
     *,
     rank: int,
     filename: str = _PERF_TRACE_FILENAME,
+    subdir: str | None = None,
 ) -> str:
     base_dir = os.path.join(
         os.path.expanduser(os.path.expandvars(config.fileroot)),
@@ -100,6 +101,8 @@ def _default_trace_path(
         config.experiment_name,
         config.trial_name,
     )
+    if subdir:
+        base_dir = os.path.join(base_dir, subdir)
     return os.path.join(base_dir, _rank_qualified_filename(filename, rank))
 
 
@@ -423,7 +426,11 @@ class PerfTracer:
         self._origin_ns = time.perf_counter_ns()
         self._thread_meta_emitted: set[int] = set()
         self._process_meta_emitted: set[int] = set()
-        self._output_path = _default_trace_path(config, rank=rank)
+        self._output_path = _default_trace_path(
+            config,
+            rank=rank,
+            subdir="perf_tracer",
+        )
         self._save_interval = _normalize_save_interval(config)
         self._request_tracer: RequestTracer | None = None
         self._configure_request_tracer(config, rank=rank)
@@ -446,6 +453,7 @@ class PerfTracer:
                 config,
                 filename=_REQUEST_TRACE_FILENAME,
                 rank=rank,
+                subdir="request_tracer",
             )
             if self._request_tracer is None:
                 self._request_tracer = RequestTracer(

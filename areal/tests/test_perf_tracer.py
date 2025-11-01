@@ -43,6 +43,7 @@ def _expected_trace_path(
         / getpass.getuser()
         / config.experiment_name
         / config.trial_name
+        / "perf_tracer"
         / filename
     )
 
@@ -60,6 +61,7 @@ def _expected_request_trace_path(
         / getpass.getuser()
         / config.experiment_name
         / config.trial_name
+        / "request_tracer"
         / filename
     )
 
