@@ -67,7 +67,8 @@ def inference_engine(request):
     sglang_config = SGLangConfig(
         skip_tokenizer_init=True,
         model_path=MODEL_PATH,
-        mem_fraction_static=0.1,
+        mem_fraction_static=0.2,
+        context_length=128,
     )
     sglang_args = SGLangConfig.build_args(
         sglang_config=sglang_config,
@@ -82,7 +83,8 @@ def inference_engine(request):
     vllm_config = vLLMConfig(
         skip_tokenizer_init=False,
         model=MODEL_PATH,
-        gpu_memory_utilization=0.1,
+        gpu_memory_utilization=0.2,
+        max_model_len=128,
     )
     vllm_args = vLLMConfig.build_args(
         vllm_config=vllm_config,
