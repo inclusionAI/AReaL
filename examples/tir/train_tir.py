@@ -22,7 +22,7 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
-from .tir_workflow import TIRGRPOConfig, TIRWorkflow
+from tir_workflow import TIRGRPOConfig, TIRWorkflow  # isort: skip
 
 logger = logging.getLogger("TIR Training")
 

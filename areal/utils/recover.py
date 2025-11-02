@@ -227,10 +227,8 @@ class RecoverHandler:
             return
         if os.environ.get("AREAL_RECOVER_RUN", "0") != "1":
             return
-        if inference_engine is not None:
-            assert weight_update_meta is not None, (
-                "Inference engine requires weight update meta for recovery."
-            )
+        if inference_engine is not None and weight_update_meta is None:
+            raise ValueError("Weight update meta is required for recovery.")
 
         if isinstance(engine, (TrainEngine, TrainController)):
             engine = {"default": engine}
@@ -270,12 +268,6 @@ class RecoverHandler:
                 f"This should not be a resumed experiment!"
             )
 
-    def _get_weight_format(self, engine: TrainEngine) -> str:
-        from areal.engine.megatron_engine import MegatronEngine
-
-        # TODO: Enable DCP format for FSDP
-        return "dcp" if isinstance(engine, MegatronEngine) else "hf"
-
     def _save_checkpoint(
         self,
         engine: TrainEngine,
@@ -290,7 +282,7 @@ class RecoverHandler:
             self.config.fileroot,
             name=name,
         )
-        weight_format = self._get_weight_format(engine)
+        weight_format = "dcp"
         with_optim = True
         meta = SaveLoadMeta(
             path=path,
@@ -318,7 +310,7 @@ class RecoverHandler:
         )
         if not os.path.exists(path):
             raise FileNotFoundError(f"Checkpoint path {path} does not exist.")
-        weight_format = self._get_weight_format(engine)
+        weight_format = "dcp"
         with_optim = True
         meta = SaveLoadMeta(
             path=path,

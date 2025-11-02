@@ -38,7 +38,7 @@ model:
     type: worker
     port_count: 1
     gpu: 1
-    cmd: python3 -m areal.scheduler.rpc.sync_rpc_server
+    cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 train_dataset:
   batch_size: 128

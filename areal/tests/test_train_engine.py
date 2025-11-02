@@ -1,7 +1,7 @@
 """Test script for Engine implementation."""
 
 import os
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 import torch
@@ -23,7 +23,7 @@ def mock_input(
     min_seqlen=10,
     max_seqlen=20,
     device=current_platform.device_type,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -67,7 +67,7 @@ def get_engine(engine_type: str, model_path: str):
     return engine
 
 
-def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
+def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
     """Mock loss function for testing."""
     return torch.mean(logits)
 
@@ -144,6 +144,36 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
     save_load_meta = SaveLoadMeta(
         path=path,
         weight_format="hf",
+        tokenizer=tokenizer,
+        with_optim=True,
+        base_model_path=None,
+    )
+
+    engine.config.mb_spec = MicroBatchSpec(n_mbs=1, max_tokens_per_mb=100)
+    old = engine.forward(input_=mock_input)
+    engine.save(save_load_meta)
+
+    for name, param in engine.model.named_parameters():
+        param.zero_()
+
+    engine.load(save_load_meta)
+    new = engine.forward(input_=mock_input)
+    assert torch.allclose(old, new)
+
+
+@torch.no_grad()
+def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
+    from areal.experimental.autotp_engine import DeepSpeedAutoTPEngine
+
+    if isinstance(engine, DeepSpeedAutoTPEngine):
+        print("AutoTP engine does not support DCP save/load for now.")
+        return
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+    path = tmp_path_factory.mktemp("dcp_engine_test")
+    save_load_meta = SaveLoadMeta(
+        path=path,
+        weight_format="dcp",
         tokenizer=tokenizer,
         with_optim=True,
         base_model_path=None,

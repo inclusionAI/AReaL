@@ -980,7 +980,7 @@ class BaseExperimentConfig:
     partition: str = field(
         default="dev", metadata={"help": "SLURM partition for running the experiment."}
     )
-    scheduling_strategy: str = field(
+    schedule_strategy: str = field(
         default="empty_first", metadata={"help": "Resource scheduling strategy."}
     )
     wandb: WandBConfig = field(

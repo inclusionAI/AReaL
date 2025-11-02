@@ -170,7 +170,7 @@ class AsyncTaskRunner(Generic[T]):
         self.max_queue_size = max_queue_size
         self.poll_wait_time = poll_wait_time
         self.poll_sleep_time = poll_sleep_time
-        self._enable_tracing = enable_tracing
+        self.enable_tracing = enable_tracing
 
         # Thread control
         self.exiting = threading.Event()
@@ -188,21 +188,12 @@ class AsyncTaskRunner(Generic[T]):
         self.result_cache: list[_TimedResult[T]] = []
 
         # Thread exception handling
-        self._lock = threading.Lock()
+        self._thread_exception_lock = threading.Lock()
         self._thread_exception: Exception | None = None
 
         # Will be set in initialize()
         self.logger = None
         self.thread: threading.Thread | None = None
-
-    def set_enable_tracing(self, enabled: bool):
-        with self._lock:
-            self._enable_tracing = enabled
-
-    @property
-    def enable_tracing(self):
-        with self._lock:
-            return self._enable_tracing
 
     def initialize(self, logger=None):
         """Initialize and start the background thread.
@@ -240,7 +231,7 @@ class AsyncTaskRunner(Generic[T]):
         RuntimeError
             If the background thread has died due to an exception.
         """
-        with self._lock:
+        with self._thread_exception_lock:
             if self._thread_exception is not None:
                 raise RuntimeError(
                     "AsyncTaskRunner thread has died due to an exception. "
@@ -256,7 +247,7 @@ class AsyncTaskRunner(Generic[T]):
             uvloop.run(self._run_async_loop())
         except Exception as e:
             # Store exception for thread-safe access
-            with self._lock:
+            with self._thread_exception_lock:
                 self._thread_exception = e
             if self.logger:
                 self.logger.error(
@@ -348,7 +339,7 @@ class AsyncTaskRunner(Generic[T]):
                         )
                         if self.enable_tracing and self.logger:
                             self.logger.info(
-                                f"AsyncTaskRunner: Completed task ID: {tid}. "
+                                f"AsyncTaskRunner: Completed task {tid}. "
                                 f"Running: {len(running_tasks)}"
                             )
                     except queue.Full:

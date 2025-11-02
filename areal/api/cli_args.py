@@ -433,7 +433,7 @@ class TrainEngineConfig:
     )
     scheduling_spec: SchedulingSpec = field(
         default_factory=lambda: SchedulingSpec(
-            cmd="python -m areal.scheduler.rpc.sync_rpc_server"
+            cmd="python -m areal.scheduler.rpc.rpc_server"
         ),
         metadata={"help": "train engine schedule specs"},
     )
@@ -910,7 +910,7 @@ class InferenceEngineConfig:
     )
     scheduling_spec: SchedulingSpec = field(
         default_factory=lambda: SchedulingSpec(
-            cmd="python -m areal.scheduler.rpc.async_rpc_server"
+            cmd="python -m areal.scheduler.rpc.rpc_server"
         ),
         metadata={"help": "inference engine schedule specs"},
     )

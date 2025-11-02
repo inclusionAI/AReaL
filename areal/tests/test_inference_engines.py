@@ -1,4 +1,4 @@
-"""Unified test suite for inference engines (vLLM and SGLang, both local and remote)."""
+"""Test suite for remote inference engines (vLLM and SGLang)."""
 
 import os
 import subprocess
@@ -45,27 +45,11 @@ def _dummy_reward_fn(*args, **kwargs):
 
 
 @pytest.fixture(
-    params=[
-        # ("vllm", "remote"),
-        # ("vllm", "local"),
-        ("sglang", "remote"),
-        # ("sglang", "local"),
-    ],
-    ids=[
-        # "vllm-remote",
-        # "vllm-local",
-        "sglang-remote",
-        # "sglang-local",
-    ],
+    params=[("vllm", "remote"), ("sglang", "remote")],
+    ids=["vllm-remote", "sglang-remote"],
 )
 def inference_engine(request):
-    """Unified fixture that provides any inference engine (vLLM/SGLang, local/remote).
-
-    This fixture:
-    1. Launches the appropriate server (for remote) or prepares engine args (for local)
-    2. Yields engine metadata for test initialization
-    3. Cleans up resources after all tests complete
-    """
+    """Fixture for remote inference engines only (vLLM and SGLang)."""
     backend, mode = request.param
 
     # Skip if vLLM is not installed
@@ -74,13 +58,15 @@ def inference_engine(request):
 
     from areal.utils import seeding
 
-    expr_name = f"test_{mode}_{backend}_engine"
+    expr_name = f"test_remote_{backend}_engine"
     trial_name = "trial_0"
 
     seeding.set_random_seed(1, expr_name)
 
     port, dist_port = network.find_free_ports(2)
     host = network.gethostip()
+
+    # Configure SGLang
     sglang_config = SGLangConfig(
         skip_tokenizer_init=True,
         model_path=MODEL_PATH,
@@ -94,6 +80,8 @@ def inference_engine(request):
         port=port,
         dist_init_addr=f"{host}:{dist_port}",
     )
+
+    # Configure vLLM
     vllm_config = vLLMConfig(
         skip_tokenizer_init=False,
         model=MODEL_PATH,
@@ -105,85 +93,59 @@ def inference_engine(request):
         host=host,
         port=port,
     )
+
     config = InferenceEngineConfig(
         experiment_name=expr_name,
         trial_name=trial_name,
     )
 
-    # Initialize engine based on backend and mode
-    if mode == "remote":
-        # Launch server
+    # Launch remote server and initialize engine
+    if backend == "vllm":
+        from areal.engine.vllm_remote import RemotevLLMEngine
 
-        if backend == "vllm":
-            from areal.engine.vllm_remote import RemotevLLMEngine
+        cmd = vLLMConfig.build_cmd_from_args(vllm_args)
+        engine_class = RemotevLLMEngine
+    else:  # sglang
+        from areal.engine.sglang_remote import RemoteSGLangEngine
 
-            cmd = vLLMConfig.build_cmd_from_args(vllm_args)
-            engine_class = RemotevLLMEngine
-        else:  # sglang
-            from areal.engine.sglang_remote import RemoteSGLangEngine
+        cmd = SGLangConfig.build_cmd_from_args(sglang_args)
+        engine_class = RemoteSGLangEngine
 
-            cmd = SGLangConfig.build_cmd_from_args(sglang_args)
-            engine_class = RemoteSGLangEngine
-
-        # Launch process
-        cmd = cmd.replace("\\\n", " ").replace("\\", " ")
-        process = subprocess.Popen(
-            cmd.split(),
-            text=True,
-            stdout=sys.stdout,
-            stderr=sys.stdout,
-        )
-        base_url = f"http://{host}:{port}"
-        tik = time.time()
-        while time.time() - tik < RUN_SERVER_TIMEOUT:
-            if check_server_health(base_url):
-                break
-            time.sleep(1)
-        if time.time() - tik > RUN_SERVER_TIMEOUT:
-            process.terminate()
-            raise RuntimeError(f"{backend.upper()} server launch failed")
-
-        # Set environment for remote engine
-        os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{host}:{port}"
-
-        engine = engine_class(config)
-
-        yield {
-            "engine": engine,
-            "backend": backend,
-            "mode": mode,
-            "expr_name": expr_name,
-            "trial_name": trial_name,
-            "host": host,
-            "port": port,
-        }
-
-        # Cleanup
+    # Launch process
+    cmd = cmd.replace("\\\n", " ").replace("\\", " ")
+    process = subprocess.Popen(
+        cmd.split(),
+        text=True,
+        stdout=sys.stdout,
+        stderr=sys.stdout,
+    )
+    base_url = f"http://{host}:{port}"
+    tik = time.time()
+    while time.time() - tik < RUN_SERVER_TIMEOUT:
+        if check_server_health(base_url):
+            break
+        time.sleep(1)
+    if time.time() - tik > RUN_SERVER_TIMEOUT:
         process.terminate()
+        raise RuntimeError(f"{backend.upper()} server launch failed")
 
-    else:  # local
-        if backend == "vllm":
-            from areal.engine.vllm_local import LocalvLLMEngine
+    # Set environment for remote engine
+    os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{host}:{port}"
 
-            engine_args = vllm_args
-            engine_class = LocalvLLMEngine
-        else:  # sglang
-            from areal.engine.sglang_local import LocalSGLangEngine
+    engine = engine_class(config)
 
-            engine_args = sglang_args
-            engine_class = LocalSGLangEngine
+    yield {
+        "engine": engine,
+        "backend": backend,
+        "mode": mode,
+        "expr_name": expr_name,
+        "trial_name": trial_name,
+        "host": host,
+        "port": port,
+    }
 
-        engine = engine_class(config)
-        engine.create_engine(engine_args=engine_args)
-
-        yield {
-            "engine": engine,
-            "backend": backend,
-            "mode": mode,
-            "expr_name": expr_name,
-            "trial_name": trial_name,
-        }
-        engine.destroy_engine()
+    # Cleanup
+    process.terminate()
 
 
 # ============================================================================
