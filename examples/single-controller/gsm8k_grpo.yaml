@@ -28,7 +28,7 @@ rollout:
     type: worker
     port_count: 1
     gpu: 1
-    cmd: python3 -m areal.scheduler.rpc.sync_rpc_server
+    cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 gconfig:
   n_samples: 4
@@ -81,7 +81,7 @@ actor:
     type: worker
     port_count: 1
     gpu: 1
-    cmd: python3 -m areal.scheduler.rpc.sync_rpc_server
+    cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 ref:
   experiment_name: ${experiment_name}
@@ -101,7 +101,7 @@ ref:
     type: worker
     port_count: 1
     gpu: 1
-    cmd: python3 -m areal.scheduler.rpc.sync_rpc_server
+    cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 # SGLang
 sglang:
