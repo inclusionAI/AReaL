@@ -50,7 +50,7 @@ docker run -it --name areal-node1 \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
-pip install -e .
+pip install -e .[cuda]
 ```
 
 ### Option 2: Custom Environment Installation
