@@ -147,7 +147,12 @@ def packed_context_parallel_forward(
             f"Error occurred in packed context parallel forward pass on model {model} "
             f"with input_ids shape {input_ids_rmpad.shape} and packed_seq_params {packed_seq_params}."
         ) from e
+
+    model_vp_stage = getattr(model, "vp_stage", None)
+    is_pipeline_last_stage = mpu.is_pipeline_last_stage(
+        ignore_virtual=False, vp_stage=model_vp_stage
+    )
     output = postprocess_packed_seqs_context_parallel(
-        output_orig, cu_seqlens, mpu.is_pipeline_last_stage()
+        output_orig, cu_seqlens, is_pipeline_last_stage
     )
     return output

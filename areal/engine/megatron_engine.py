@@ -923,7 +923,10 @@ class MegatronEngine(TrainEngine):
             forward_step_count += 1
             output = packed_context_parallel_forward(model, batch)
 
-            if mpu.is_pipeline_last_stage():
+            model_vp_stage = getattr(model, "vp_stage", None)
+            if mpu.is_pipeline_last_stage(
+                ignore_virtual=False, vp_stage=model_vp_stage
+            ):
                 output = unpad_logits(
                     output,
                     padding_length=padding_length,
@@ -1005,7 +1008,10 @@ class MegatronEngine(TrainEngine):
             forward_step_count += 1
             output = packed_context_parallel_forward(model, batch)
 
-            if mpu.is_pipeline_last_stage():
+            model_vp_stage = getattr(model, "vp_stage", None)
+            if mpu.is_pipeline_last_stage(
+                ignore_virtual=False, vp_stage=model_vp_stage
+            ):
                 output = unpad_logits(
                     output,
                     padding_length=padding_length,
@@ -1079,7 +1085,10 @@ class MegatronEngine(TrainEngine):
             forward_step_count += 1
             output = packed_context_parallel_forward(model, batch)
 
-            if mpu.is_pipeline_last_stage():
+            model_vp_stage = getattr(model, "vp_stage", None)
+            if mpu.is_pipeline_last_stage(
+                ignore_virtual=False, vp_stage=model_vp_stage
+            ):
                 output = unpad_logits(
                     output,
                     padding_length=padding_length,
