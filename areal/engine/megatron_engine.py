@@ -92,6 +92,7 @@ class MegatronEngine(TrainEngine):
         self.rank_generator = None
         self.checkpointer = None
         self.seed = 0
+        self.own_global_group = False
 
     def initialize(
         self,
@@ -100,7 +101,6 @@ class MegatronEngine(TrainEngine):
         parallel_strategy: ParallelStrategy,
         seed: int = 0,
     ):
-        # TODO: add parallel_strategy & seed in engine api when moving out of experimental
         if self.parallel_strategy is None:
             self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
         self.seed = seed
@@ -188,36 +188,31 @@ class MegatronEngine(TrainEngine):
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
-        assert not dist.is_initialized()
-        # TODO: Change engine_api.py and FSDPEngine API to seperate create_process_group
-        # from engine initialize when moving out of experimental.
         self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
-        # Required by NCCL weight update group for SGLang
-        os.environ["NCCL_CUMEM_ENABLE"] = "0"
-        os.environ["NCCL_NVLS_ENABLE"] = "0"
-        # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
-        # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
-        # otherwise initializing the NCCL weight update group will be wrong!
-        dist.init_process_group(
-            backend="nccl",
-            timeout=NCCL_DEFAULT_TIMEOUT,
-        )
-        # Initialize Megatron parallel states
-        # NOTE: we assume all MegatronEngine has the same parallel strategy.
-        mpu.initialize_model_parallel(
-            tensor_model_parallel_size=self.parallel_strategy.tensor_parallel_size,
-            pipeline_model_parallel_size=self.parallel_strategy.pipeline_parallel_size,
-            virtual_pipeline_model_parallel_size=self.parallel_strategy.virtual_pipeline_parallel_size,
-            use_sharp=False,
-            order="tp-cp-ep-dp-pp",
-            context_parallel_size=self.parallel_strategy.context_parallel_size,
-            expert_model_parallel_size=self.parallel_strategy.expert_parallel_size,
-            expert_tensor_parallel_size=self.parallel_strategy.expert_tensor_parallel_size,
-            distributed_timeout_minutes=int(NCCL_DEFAULT_TIMEOUT.seconds / 60),
-        )
-        # Set megatron model parallel seed
-        tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
-
+        if not dist.is_initialized():
+            # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
+            # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
+            # otherwise initializing the NCCL weight update group will be wrong!
+            dist.init_process_group(
+                backend="nccl",
+                timeout=NCCL_DEFAULT_TIMEOUT,
+            )
+            # Initialize Megatron parallel states
+            # NOTE: we assume all MegatronEngine has the same parallel strategy.
+            mpu.initialize_model_parallel(
+                tensor_model_parallel_size=self.parallel_strategy.tensor_parallel_size,
+                pipeline_model_parallel_size=self.parallel_strategy.pipeline_parallel_size,
+                virtual_pipeline_model_parallel_size=self.parallel_strategy.virtual_pipeline_parallel_size,
+                use_sharp=False,
+                order="tp-cp-ep-dp-pp",
+                context_parallel_size=self.parallel_strategy.context_parallel_size,
+                expert_model_parallel_size=self.parallel_strategy.expert_parallel_size,
+                expert_tensor_parallel_size=self.parallel_strategy.expert_tensor_parallel_size,
+                distributed_timeout_minutes=int(NCCL_DEFAULT_TIMEOUT.seconds / 60),
+            )
+            # Set megatron model parallel seed
+            tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
+            self.own_global_group = True
         self.logger = logging.getLogger(f"[Megatron Engine Rank {dist.get_rank()}]")
         self._parallelism_group = dist.new_group()
         self._context_and_model_parallel_group = None
@@ -385,13 +380,12 @@ class MegatronEngine(TrainEngine):
         gc.collect()
         dist.destroy_process_group(self.parallelism_group)
         dist.destroy_process_group(self.context_and_model_parallel_group)
-
-    def destroy_process_groups(self):
-        # Should be explicitly called after experiments.
-        assert dist.is_initialized()
-        mpu.destroy_model_parallel()
-        dist.destroy_process_group()
-        self.process_group_initialized = False
+        if self.own_global_group:
+            assert dist.is_initialized()
+            mpu.destroy_model_parallel()
+            dist.destroy_process_group()
+            self.process_group_initialized = False
+            self.own_global_group = False
 
     def train(self, mode: bool = True):
         self.model.train(mode=mode)

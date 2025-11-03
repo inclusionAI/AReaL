@@ -1224,10 +1224,7 @@ class BaseExperimentConfig:
     )
     allocation_mode: str = field(
         default="",
-        metadata={
-            "help": "GPU parallel strategy allocation mode. "
-            "Options: manual/heuristic or pattern-based."
-        },
+        metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
     )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
     total_train_epochs: int = field(
