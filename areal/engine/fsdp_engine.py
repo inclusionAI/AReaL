@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+import torch.distributed.checkpoint as dcp
 import torch.distributed.nn.functional as dist_F
 from peft import (
     LoraConfig,
@@ -40,7 +41,7 @@ from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.base_hf_engine import BaseHFEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, pkg_version
+from areal.utils import logging, name_resolve, names, perf_tracer, pkg_version
 from areal.utils.data import (
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
@@ -49,6 +50,7 @@ from areal.utils.data import (
 )
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
+from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
@@ -205,24 +207,22 @@ class FSDPEngine(BaseHFEngine):
         if meta.weight_format == "hf":
             self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
         elif meta.weight_format == "dcp":
-            # TODO: implement DCP save/load for FSDP
-            raise NotImplementedError("DCP format saving is not implemented yet. ")
+            self._save_to_dcp(meta.path, meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
-        if meta.with_optim:
+        if meta.with_optim and meta.weight_format == "hf":
             self.save_optimizer_state(meta.path)
 
     def load(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
             self._load_model_from_hf(meta.path)
         elif meta.weight_format == "dcp":
-            # TODO: implement DCP save/load for FSDP
-            raise NotImplementedError("DCP format loading is not implemented yet. ")
+            self._load_from_dcp(meta.path, meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
-        if meta.with_optim:
+        if meta.with_optim and meta.weight_format == "hf":
             self.load_optimizer_state(meta.path)
 
     def _save_model_to_hf(
@@ -265,6 +265,33 @@ class FSDPEngine(BaseHFEngine):
             full_state,
             self.cpu_offload,
             tie_word_embeddings=self.model_config.tie_word_embeddings,
+        )
+
+    def _save_to_dcp(
+        self,
+        path: str,
+        with_optim: bool,
+    ):
+        """Save model in PyTorch Distributed Checkpoint (DCP) format."""
+        if self.model is None:
+            raise RuntimeError("Model not initialized")
+
+        os.makedirs(path, exist_ok=True)
+
+        dcp_state = DCPState(self.model, self.optimizer if with_optim else None)
+        state_dict = {"dcp": dcp_state}
+        dcp.save(state_dict, checkpoint_id=path)
+
+    def _load_from_dcp(self, path: str, with_optim: bool):
+        """Load model from Distributed Checkpoint (DCP) format."""
+        if self.model is None:
+            raise RuntimeError("Model not initialized")
+
+        dcp_state = DCPState(self.model, self.optimizer if with_optim else None)
+        state_dict = {"dcp": dcp_state}
+        dcp.load(
+            state_dict=state_dict,
+            checkpoint_id=path,
         )
 
     def _apply_peft_wrapper(self):
@@ -568,7 +595,8 @@ class FSDPEngine(BaseHFEngine):
             else:
                 inputs = padded_mb_input
 
-            outputs = self.model(**inputs)
+            with perf_tracer.trace_scope("fsdp_engine.train_batch.forward"):
+                outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
             if self.parallel_helper.sp_size > 1:
@@ -583,7 +611,8 @@ class FSDPEngine(BaseHFEngine):
             loss_scale *= self.parallel_helper.dp_size
 
             loss *= loss_scale
-            loss.backward()
+            with perf_tracer.trace_scope("fsdp_engine.train_batch.backward"):
+                loss.backward()
 
         grad_norm = fsdp2_clip_grad_norm(
             list(self.model.parameters()),
@@ -595,7 +624,8 @@ class FSDPEngine(BaseHFEngine):
             self.optimizer.zero_grad()
             update_successful = False
         else:
-            self.optimizer.step()
+            with perf_tracer.trace_scope("fsdp_engine.train_batch.step"):
+                self.optimizer.step()
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
@@ -673,7 +703,8 @@ class FSDPEngine(BaseHFEngine):
             else:
                 inputs = padded_mb_input
 
-            outputs = self.model(**inputs)
+            with perf_tracer.trace_scope("fsdp_engine.eval_batch.forward"):
+                outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
             if self.parallel_helper.sp_size > 1:
@@ -757,7 +788,8 @@ class FSDPEngine(BaseHFEngine):
             else:
                 inputs = padded_mb_input
 
-            outputs = self.model(**inputs)
+            with perf_tracer.trace_scope("fsdp_engine.forward.forward"):
+                outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
 

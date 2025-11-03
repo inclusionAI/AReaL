@@ -424,6 +424,10 @@ class PPOActorConfig(TrainEngineConfig):
     temperature: float = field(
         default=1.0, metadata={"help": "Temperature during generation."}
     )
+    # M2PO
+    m2_threshold: float | None = field(
+        default=None, metadata={"help": "The second momentum threshold for M2PO."}
+    )
     # Reward
     reward_norm: NormConfig | None = field(
         default=None,
@@ -970,6 +974,60 @@ class StatsLoggerConfig:
 
 
 @dataclass
+class RequestTracerConfig:
+    """Configuration for per-request lifecycle tracing."""
+
+    enabled: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Enable per-request lifecycle tracing alongside perf events. "
+                "When true, request metadata is captured to requests.jsonl."
+            )
+        },
+    )
+    flush_threshold: int = field(
+        default=256,
+        metadata={
+            "help": (
+                "Flush request trace records once this many entries are ready. "
+                "Values <= 0 fall back to 1."
+            )
+        },
+    )
+
+
+@dataclass
+class PerfTracerConfig:
+    """Configuration for perf tracer emission."""
+
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
+    fileroot: str = MISSING
+    enabled: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Explicitly enable or disable perf tracing. Set to true to capture perf traces."
+            )
+        },
+    )
+    save_interval: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Flush trace events to disk every N calls to save(step=...). "
+                "A value of 1 writes on every step; values <= 0 fall back to 1."
+            )
+        },
+    )
+    request_tracer: RequestTracerConfig | None = field(
+        default=None,
+        metadata={"help": "Request tracing configuration."},
+    )
+
+
+@dataclass
 class NameResolveConfig:
     """Configuration for distributed name resolution and service discovery."""
 
@@ -1205,6 +1263,10 @@ class BaseExperimentConfig:
     saver: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
+    perf_tracer: PerfTracerConfig | None = field(
+        default=None,
+        metadata={"help": "Performance tracer configuration. None means disabled."},
+    )
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)

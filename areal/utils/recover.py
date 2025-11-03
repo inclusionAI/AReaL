@@ -2,7 +2,7 @@ import dataclasses
 import json
 import os
 import pickle
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING
 
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -31,11 +31,11 @@ class RecoverInfo:
     # Recover will start from the next iteration, obtained by `last_step_info.next()`.
     last_step_info: StepInfo
 
-    saver_info: Dict
-    evaluator_info: Dict
-    stats_logger_info: Dict
-    dataloader_info: Dict | List[Dict]
-    checkpoint_info: Dict
+    saver_info: dict
+    evaluator_info: dict
+    stats_logger_info: dict
+    dataloader_info: dict | list[dict]
+    checkpoint_info: dict
 
     def dump(self, dump_dir: str):
         # Dumps the recover info to multiple files in `dump_dir`:
@@ -90,24 +90,24 @@ class RecoverInfo:
 
         try:
             step_info_path = os.path.join(load_dir, "step_info.json")
-            with open(step_info_path, "r") as f:
+            with open(step_info_path) as f:
                 step_info_dict = json.load(f)
                 last_step_info = StepInfo(**step_info_dict)
 
             evaluator_info_path = os.path.join(load_dir, "evaluator_info.json")
-            with open(evaluator_info_path, "r") as f:
+            with open(evaluator_info_path) as f:
                 evaluator_info = json.load(f)
 
             saver_info_path = os.path.join(load_dir, "saver_info.json")
-            with open(saver_info_path, "r") as f:
+            with open(saver_info_path) as f:
                 saver_info = json.load(f)
 
             stats_logger_info_path = os.path.join(load_dir, "stats_logger_info.json")
-            with open(stats_logger_info_path, "r") as f:
+            with open(stats_logger_info_path) as f:
                 stats_logger_info = json.load(f)
 
             checkpoint_info_path = os.path.join(load_dir, "checkpoint_info.json")
-            with open(checkpoint_info_path, "r") as f:
+            with open(checkpoint_info_path) as f:
                 checkpoint_info = json.load(f)
 
             dataloader_info_path = os.path.join(load_dir, "dataloader_info.pkl")
@@ -160,12 +160,12 @@ class RecoverHandler:
     ):
         return os.path.join(
             Saver.get_save_root(experiment_name, trial_name, fileroot),
-            f"recover_info",
+            "recover_info",
         )
 
     def dump(
         self,
-        engine: TrainEngine | Dict[str, TrainEngine],
+        engine: TrainEngine | dict[str, TrainEngine],
         step_info: StepInfo,
         saver: Saver,
         evaluator: Evaluator,
@@ -213,7 +213,7 @@ class RecoverHandler:
 
     def load(
         self,
-        engine: TrainEngine | Dict[str, TrainEngine],
+        engine: TrainEngine | dict[str, TrainEngine],
         saver: Saver,
         evaluator: Evaluator,
         stats_logger: "StatsLogger",
@@ -226,10 +226,8 @@ class RecoverHandler:
             return
         if os.environ.get("AREAL_RECOVER_RUN", "0") != "1":
             return
-        if inference_engine is not None:
-            assert (
-                weight_update_meta is not None
-            ), "Inference engine requires weight update meta for recovery."
+        if inference_engine is not None and weight_update_meta is None:
+            raise ValueError("Weight update meta is required for recovery.")
 
         if isinstance(engine, TrainEngine):
             engine = {"default": engine}
@@ -269,12 +267,6 @@ class RecoverHandler:
                 f"This should not be a resumed experiment!"
             )
 
-    def _get_weight_format(self, engine: TrainEngine) -> str:
-        from areal.engine.megatron_engine import MegatronEngine
-
-        # TODO: Enable DCP format for FSDP
-        return "dcp" if isinstance(engine, MegatronEngine) else "hf"
-
     def _save_checkpoint(
         self,
         engine: TrainEngine,
@@ -289,7 +281,7 @@ class RecoverHandler:
             self.config.fileroot,
             name=name,
         )
-        weight_format = self._get_weight_format(engine)
+        weight_format = "dcp"
         with_optim = True
         meta = SaveLoadMeta(
             path=path,
@@ -317,7 +309,7 @@ class RecoverHandler:
         )
         if not os.path.exists(path):
             raise FileNotFoundError(f"Checkpoint path {path} does not exist.")
-        weight_format = self._get_weight_format(engine)
+        weight_format = "dcp"
         with_optim = True
         meta = SaveLoadMeta(
             path=path,

@@ -241,8 +241,6 @@ def estimate_stage_parameter_buckets(
     layer_weights: list[float] = [dense_layer_params] * total_layers
 
     num_moe_experts = getattr(tf_conf, "num_moe_experts", None)
-    if num_moe_experts is None:
-        num_moe_experts = getattr(hf_conf, "num_experts", None)
     if num_moe_experts:
         moe_hidden_size = getattr(tf_conf, "moe_ffn_hidden_size", None)
         if moe_hidden_size is None:
@@ -266,59 +264,21 @@ def estimate_stage_parameter_buckets(
             attn_and_norm + router_params + expert_params + shared_params
         )
 
-        def normalize_idx(value: int) -> int | None:
-            if not isinstance(value, int):
-                return None
-            if 0 <= value < total_layers:
-                return value
-            if 1 <= value <= total_layers:
-                return value - 1
-            return None
-
         moe_layer_indices: set[int] = set()
-        freq_candidates = (
-            getattr(tf_conf, "moe_layer_freq", None),
-            getattr(hf_conf, "moe_layer_freq", None),
-            getattr(hf_conf, "decoder_sparse_step", None),
-        )
-
-        for freq in freq_candidates:
-            if freq is None:
-                continue
-            if isinstance(freq, int):
-                step = abs(freq)
-                if step == 0:
-                    continue
-                if step == 1:
-                    moe_layer_indices.update(range(total_layers))
-                else:
-                    for idx in range(step - 1, total_layers, step):
-                        moe_layer_indices.add(idx)
-            elif isinstance(freq, (list, tuple, set)):
-                for raw in freq:
-                    idx = normalize_idx(raw)
-                    if idx is not None:
-                        moe_layer_indices.add(idx)
-
-        explicit_moe_layers = getattr(hf_conf, "moe_layers", None)
-        if isinstance(explicit_moe_layers, (list, tuple, set)):
-            for raw in explicit_moe_layers:
-                idx = normalize_idx(raw)
-                if idx is not None:
+        freq = getattr(tf_conf, "moe_layer_freq", 1)
+        assert freq > 0
+        if isinstance(freq, int):
+            step = abs(freq)
+            assert step >= 1
+            for idx in range(step - 1, total_layers, step):
+                moe_layer_indices.add(idx)
+        elif isinstance(freq, list) or isinstance(freq, tuple):
+            assert len(freq) == total_layers
+            for idx, is_moe in enumerate(freq):
+                if is_moe:
                     moe_layer_indices.add(idx)
 
-        mlp_only_layers = getattr(hf_conf, "mlp_only_layers", None)
-        if isinstance(mlp_only_layers, (list, tuple, set)):
-            for raw in mlp_only_layers:
-                idx = normalize_idx(raw)
-                if idx is not None and idx in moe_layer_indices:
-                    moe_layer_indices.discard(idx)
-
-        if not moe_layer_indices and num_moe_experts:
-            moe_layer_indices.update(range(total_layers))
-
         for idx in moe_layer_indices:
-            if 0 <= idx < total_layers:
-                layer_weights[idx] = moe_layer_params
+            layer_weights[idx] = moe_layer_params
 
     return (layer_weights, embedding_params, output_params)

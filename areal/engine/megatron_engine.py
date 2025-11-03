@@ -35,7 +35,7 @@ from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names
+from areal.utils import logging, name_resolve, names, perf_tracer
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -546,8 +546,11 @@ class MegatronEngine(TrainEngine):
         dist.all_gather_object(all_names, names, group=group)
 
         for rank_names in all_names:
-            valid = len(named_tensors) == len(rank_names)
-            assert valid, f"mismatch length: {len(named_tensors)}!={len(rank_names)}"
+            if len(named_tensors) != len(rank_names):
+                raise RuntimeError(
+                    "Named tensor count mismatch across expert parallel ranks: "
+                    f"expected {len(rank_names)} but got {len(named_tensors)}"
+                )
 
         gathered_params = [[] for _ in range(world_size)]
         handles = []
@@ -788,7 +791,10 @@ class MegatronEngine(TrainEngine):
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            assert not meta.with_optim, "Please use DCP format for optimizer saving."
+            if meta.with_optim:
+                raise ValueError(
+                    "HF format does not support optimizer state saving, please use DCP format instead."
+                )
             self._save_model_to_hf(
                 meta.path,
                 tokenizer=meta.tokenizer,
@@ -828,7 +834,10 @@ class MegatronEngine(TrainEngine):
 
     def load(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            assert not meta.with_optim, "Please use DCP format for optimizer loading."
+            if meta.with_optim:
+                raise ValueError(
+                    "HF format does not support optimizer state loading, please use DCP format instead."
+                )
             self._load_model_from_hf(meta.path)
         elif meta.weight_format == "dcp":
             self.checkpointer.load_checkpoint(meta.path, with_optimizer=meta.with_optim)
@@ -968,16 +977,18 @@ class MegatronEngine(TrainEngine):
             return output, functools.partial(_scaled_loss_fn, orig_input)
 
         forward_backward_func = get_forward_backward_func()
-        forward_backward_func(
-            forward_step_func=forward_step,
-            data_iterator=micro_batch_generator,
-            model=self.model if len(self.model) > 1 else self.model[0],
-            num_microbatches=len(mb_list.padded_mbs),
-            seq_length=max_total_len,  # no use when input_shapes was set
-            micro_batch_size=1,  # no use when input_shapes was set
-            forward_only=False,
-        )
-        update_successful, grad_norm, _ = self.optimizer.step()
+        with perf_tracer.trace_scope("megatron_engine.train_batch.forward_backward"):
+            forward_backward_func(
+                forward_step_func=forward_step,
+                data_iterator=micro_batch_generator,
+                model=self.model if len(self.model) > 1 else self.model[0],
+                num_microbatches=len(mb_list.padded_mbs),
+                seq_length=max_total_len,  # no use when input_shapes was set
+                micro_batch_size=1,  # no use when input_shapes was set
+                forward_only=False,
+            )
+        with perf_tracer.trace_scope("megatron_engine.train_batch.step"):
+            update_successful, grad_norm, _ = self.optimizer.step()
         current_lr = self.optimizer.param_groups[0]["lr"]
 
         return dict(
@@ -1043,15 +1054,16 @@ class MegatronEngine(TrainEngine):
             return output, functools.partial(_scaled_loss_fn, orig_input)
 
         forward_backward_func = get_forward_backward_func()
-        forward_backward_func(
-            forward_step_func=forward_step,
-            data_iterator=micro_batch_generator,
-            model=self.model if len(self.model) > 1 else self.model[0],
-            num_microbatches=len(mb_list.padded_mbs),
-            seq_length=max_total_len,  # no use when input_shapes was set
-            micro_batch_size=1,  # no use when input_shapes was set
-            forward_only=True,
-        )
+        with perf_tracer.trace_scope("megatron_engine.eval_batch.forward"):
+            forward_backward_func(
+                forward_step_func=forward_step,
+                data_iterator=micro_batch_generator,
+                model=self.model if len(self.model) > 1 else self.model[0],
+                num_microbatches=len(mb_list.padded_mbs),
+                seq_length=max_total_len,  # no use when input_shapes was set
+                micro_batch_size=1,  # no use when input_shapes was set
+                forward_only=True,
+            )
 
         return None
 
@@ -1109,15 +1121,17 @@ class MegatronEngine(TrainEngine):
             return output, functools.partial(_post_process_fn, orig_input)
 
         forward_backward_func = get_forward_backward_func()
-        output_list = forward_backward_func(
-            forward_step_func=forward_step,
-            data_iterator=micro_batch_generator,
-            model=self.model if len(self.model) > 1 else self.model[0],
-            num_microbatches=len(mb_list.padded_mbs),
-            seq_length=max_total_len,  # max # tokens across all micro-batches
-            micro_batch_size=1,  # should be 1 when using packed input
-            forward_only=True,
-        )
+
+        with perf_tracer.trace_scope("megatron_engine.forward.forward"):
+            output_list = forward_backward_func(
+                forward_step_func=forward_step,
+                data_iterator=micro_batch_generator,
+                model=self.model if len(self.model) > 1 else self.model[0],
+                num_microbatches=len(mb_list.padded_mbs),
+                seq_length=max_total_len,  # max # tokens across all micro-batches
+                micro_batch_size=1,  # should be 1 when using packed input
+                forward_only=True,
+            )
 
         result = None
         if mpu.is_pipeline_last_stage():
