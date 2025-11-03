@@ -267,6 +267,7 @@ class WorkflowExecutor:
             config.max_concurrent_rollouts or config.consumer_batch_size
         )
         self.consumer_batch_size = config.consumer_batch_size
+        self.max_staleness = config.max_head_offpolicyness
 
         self.config = config
         self.inference_engine = inference_engine
@@ -352,6 +353,16 @@ class WorkflowExecutor:
             tracer.flush(force=True)
         self.runner.destroy()
 
+    def get_pending_limit(self) -> int:
+        """Get the maximum number of pending rollouts allowed.
+
+        Returns
+        -------
+        int
+            Maximum number of pending rollouts (enqueued)
+        """
+        return (self.max_staleness + 1) * self.consumer_batch_size
+
     def get_capacity(self):
         """Get current available capacity for new rollouts.
 
@@ -369,6 +380,15 @@ class WorkflowExecutor:
         if tracer is None or request_id is None:
             return
         getattr(tracer, method)(request_id, **kwargs)
+
+    def _rollout_stats(self) -> str:
+        stats = self.staleness_manager.get_stats()
+        return (
+            f"enqueued: {stats.enqueued}, "
+            f"running: {stats.running}, "
+            f"accepted: {stats.accepted}, "
+            f"rejected: {stats.rejected}."
+        )
 
     def _create_workflow_task(
         self, task_input: _RolloutTaskInput
@@ -454,10 +474,7 @@ class WorkflowExecutor:
                     )
                     if self.config.enable_rollout_tracing:
                         self.logger.info(
-                            "Finish and accept rollout. Submit: %s, running: %s, accepted: %s.",
-                            stats.submitted,
-                            stats.running,
-                            stats.accepted,
+                            f"Finish and accept rollout. {self._rollout_stats()}",
                         )
                     return _RolloutResult(
                         request_id=request_id,
@@ -476,10 +493,7 @@ class WorkflowExecutor:
                 )
                 if self.config.enable_rollout_tracing:
                     self.logger.info(
-                        "Finish but reject rollout. Submit: %s, running: %s, accepted: %s.",
-                        stats.submitted,
-                        stats.running,
-                        stats.accepted,
+                        f"Finish but reject rollout. {self._rollout_stats()}",
                     )
                 return None
 
@@ -531,6 +545,11 @@ class WorkflowExecutor:
             )
         )
 
+        # Notify staleness manager of enqueued rollout tasks
+        self.staleness_manager.on_rollout_enqueued()
+        if self.config.enable_rollout_tracing:
+            self.logger.info(f"Submit rollout. {self._rollout_stats()}")
+
     def _commit_one_to_runner(self):
         task_input = self._pending_inputs.pop(0)
         # Create the async workflow execution function and submit to runner
@@ -551,13 +570,7 @@ class WorkflowExecutor:
         # Notify staleness manager of submission only after successful submission
         self.staleness_manager.on_rollout_submitted()
         if self.config.enable_rollout_tracing:
-            stat = self.staleness_manager.get_stats()
-            self.logger.info(
-                f"Submit rollout. "
-                f"Submit: {stat.submitted}, "
-                f"running: {stat.running}, "
-                f"accepted: {stat.accepted}."
-            )
+            self.logger.info(f"Submit rollout. {self._rollout_stats()}")
 
     def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
         """Wait for workflow results.
@@ -684,7 +697,7 @@ class WorkflowExecutor:
         while True:
             # Submit at least two batches to allow maximum overlap
             if (
-                self.get_capacity() + dataloader.batch_size > 0
+                len(self._pending_inputs) < self.get_pending_limit()
                 and self.runner.get_input_queue_size() + dataloader.batch_size
                 < self.runner.max_queue_size
             ):
@@ -695,19 +708,15 @@ class WorkflowExecutor:
                     args={"data": len(data)},
                 )
                 for item in data:
-                    try:
-                        self.submit(
-                            item,
-                            workflow=workflow,
-                            workflow_builder=workflow_builder,
-                            should_accept=should_accept,
-                        )
-                    except queue.Full:
-                        # Capacity exhausted during batch submission, stop and wait
-                        break
+                    self.submit(
+                        item,
+                        workflow=workflow,
+                        workflow_builder=workflow_builder,
+                        should_accept=should_accept,
+                    )
             try:
                 return self.wait(dataloader.batch_size, timeout=1)
-            except TimeoutError:
+            except (TimeoutError, queue.Full):
                 pass
 
     def pause(self):
