@@ -548,7 +548,7 @@ class WorkflowExecutor:
         # Notify staleness manager of enqueued rollout tasks
         self.staleness_manager.on_rollout_enqueued()
         if self.config.enable_rollout_tracing:
-            self.logger.info(f"Submit rollout. {self._rollout_stats()}")
+            self.logger.info(f"Enqueue rollout. {self._rollout_stats()}")
 
     def _commit_one_to_runner(self):
         task_input = self._pending_inputs.pop(0)
