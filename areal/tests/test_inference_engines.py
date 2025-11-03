@@ -89,6 +89,7 @@ def inference_engine(request):
     vllm_args = vLLMConfig.build_args(
         vllm_config=vllm_config,
         tp_size=1,
+        pp_size=1,
         host=host,
         port=port,
     )
