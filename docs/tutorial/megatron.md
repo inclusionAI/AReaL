@@ -13,7 +13,10 @@ that depends on the FSDP backend. The Megatron equivalent lives in
 You can modify your own training script to replace the FSDP backend with the Megatron
 one through these simple steps:
 
-- **Actor backend** – Replace `FSDPPPOActor` with `MegatronPPOActor`.
+- **Actor backend** – Replace `FSDPPPOActor` with
+  [`MegatronPPOActor`](https://github.com/inclusionAI/AReaL/blob/main/areal/engine/ppo/actor.py),
+  which is the composition of PPO functionals and the base Megatron training engine
+  [`MegatronEngine`](https://github.com/inclusionAI/AReaL/blob/main/areal/engine/megatron_engine.py).
 - **Train Engine Initialize** - Add `parallel_strategy=parallel_strategy` and
   `seed=config.seed` as arguments to `actor.initialize(...)` and `ref.initialize()`.
 - **Weight Update Meta** - Replace `WeightUpdateMeta.from_fsdp_xccl` with
