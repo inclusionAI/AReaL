@@ -25,7 +25,9 @@ class TestPPOActorLossFnSequenceLevel:
     @pytest.fixture
     def basic_1d_data(self):
         """Basic 1D tensor test data for sequence-level importance sampling (packed)."""
+        # 3 sequences with lengths [8, 12, 12]
         total_tokens = 32
+        cu_seqlens = torch.tensor([0, 8, 20, 32], dtype=torch.int32)
 
         return {
             "logprobs": torch.randn(total_tokens),
@@ -34,6 +36,7 @@ class TestPPOActorLossFnSequenceLevel:
             "advantages": torch.randn(total_tokens),
             "loss_mask": torch.ones(total_tokens, dtype=torch.bool),
             "eps_clip": 0.2,
+            "cu_seqlens": cu_seqlens,
         }
 
     def test_sequence_level_2d_shape(self, basic_2d_data):
@@ -67,6 +70,7 @@ class TestPPOActorLossFnSequenceLevel:
             eps_clip=basic_1d_data["eps_clip"],
             loss_mask=basic_1d_data["loss_mask"],
             importance_sampling_level="sequence",
+            cu_seqlens=basic_1d_data["cu_seqlens"],
         )
 
         # Loss should be a scalar
@@ -131,12 +135,14 @@ class TestPPOActorLossFnSequenceLevel:
         )
 
     def test_sequence_level_geometric_mean_1d(self):
-        """Test that geometric mean is computed correctly for 1D tensors."""
-        total_tokens = 4
+        """Test that geometric mean is computed correctly for 1D tensors (packed sequences)."""
+        # Two sequences: [4 tokens, 4 tokens]
+        total_tokens = 8
+        cu_seqlens = torch.tensor([0, 4, 8], dtype=torch.int32)
 
-        # Create data where we can manually verify geometric mean
-        logprobs = torch.tensor([1.0, 1.0, 1.0, 1.0])
-        proximal_logprobs = torch.tensor([0.5, 0.5, 0.5, 0.5])
+        # Sequence 1: log_ratio = 0.5, Sequence 2: log_ratio = 1.0
+        logprobs = torch.tensor([1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0])
+        proximal_logprobs = torch.tensor([0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0])
         old_logprobs = torch.zeros(total_tokens)
         advantages = torch.ones(total_tokens)
         loss_mask = torch.ones(total_tokens, dtype=torch.bool)
@@ -149,27 +155,33 @@ class TestPPOActorLossFnSequenceLevel:
             eps_clip=0.2,
             loss_mask=loss_mask,
             importance_sampling_level="sequence",
+            cu_seqlens=cu_seqlens,
         )
 
-        # log_ratio = 1.0 - 0.5 = 0.5
-        # Geometric mean = exp(0.5) ≈ 1.6487
-        expected_ratio = torch.exp(torch.tensor(0.5))
+        # Sequence 1: log_ratio = 1.0 - 0.5 = 0.5, Geometric mean = exp(0.5)
+        expected_ratio_seq1 = torch.exp(torch.tensor(0.5))
+        # Sequence 2: log_ratio = 2.0 - 1.0 = 1.0, Geometric mean = exp(1.0)
+        expected_ratio_seq2 = torch.exp(torch.tensor(1.0))
 
-        # All tokens should have the same ratio
+        # All tokens in sequence 1 should have the same ratio
         assert torch.allclose(
-            stat["importance_weight"], expected_ratio.expand(total_tokens), atol=1e-5
+            stat["importance_weight"][0:4], expected_ratio_seq1.expand(4), atol=1e-5
+        )
+        # All tokens in sequence 2 should have the same ratio
+        assert torch.allclose(
+            stat["importance_weight"][4:8], expected_ratio_seq2.expand(4), atol=1e-5
         )
 
-    def test_sequence_level_advantage_summing_2d(self):
-        """Test that advantages are summed per sequence for 2D tensors."""
+    def test_sequence_level_advantage_averaging_2d(self):
+        """Test that advantages are averaged per sequence for 2D tensors."""
         batch_size = 2
         seq_len = 4
 
         # Create advantages that vary per token
         advantages = torch.tensor(
             [
-                [1.0, 2.0, 3.0, 4.0],  # sum = 10.0
-                [0.5, 0.5, 0.5, 0.5],  # sum = 2.0
+                [1.0, 2.0, 3.0, 4.0],  # sum = 10.0, mean = 2.5
+                [0.5, 0.5, 0.5, 0.5],  # sum = 2.0, mean = 0.5
             ]
         )
 
@@ -179,7 +191,7 @@ class TestPPOActorLossFnSequenceLevel:
         loss_mask = torch.ones(batch_size, seq_len, dtype=torch.bool)
 
         # We'll verify this by checking that the loss is computed correctly
-        # The function should sum advantages across the sequence dimension
+        # The function should average advantages across the sequence dimension
         loss, stat = ppo_actor_loss_fn(
             logprobs=logprobs,
             proximal_logprobs=proximal_logprobs,
@@ -194,6 +206,12 @@ class TestPPOActorLossFnSequenceLevel:
         assert loss.ndim == 0
         assert not torch.isnan(loss)
         assert not torch.isinf(loss)
+
+        # With ratio=1, the loss is the negative mean of advantages.
+        # Seq1: mean_adv=2.5, 4 tokens → contributes -2.5 * 4 = -10.0
+        # Seq2: mean_adv=0.5, 4 tokens → contributes -0.5 * 4 = -2.0
+        # Total: (-10.0 + -2.0) / 8 = -1.5
+        assert torch.allclose(loss, torch.tensor(-1.5))
 
     def test_sequence_level_with_mask_2d(self):
         """Test sequence-level with partial masking for 2D tensors."""
@@ -237,11 +255,15 @@ class TestPPOActorLossFnSequenceLevel:
         )
 
     def test_sequence_level_with_mask_1d(self):
-        """Test sequence-level with partial masking for 1D tensors."""
+        """Test sequence-level with partial masking for 1D tensors (packed sequences)."""
+        # Two sequences: [4 tokens, 4 tokens]
         total_tokens = 8
+        cu_seqlens = torch.tensor([0, 4, 8], dtype=torch.int32)
 
-        # Create mask where only some tokens are valid
-        loss_mask = torch.tensor([True, True, True, True, False, False, False, False])
+        # Sequence 1: fully valid, Sequence 2: half masked
+        loss_mask = torch.tensor(
+            [True, True, True, True, True, True, False, False]
+        )
 
         logprobs = torch.randn(total_tokens)
         proximal_logprobs = torch.randn(total_tokens)
@@ -256,14 +278,19 @@ class TestPPOActorLossFnSequenceLevel:
             eps_clip=0.2,
             loss_mask=loss_mask,
             importance_sampling_level="sequence",
+            cu_seqlens=cu_seqlens,
         )
 
         # Masked positions should have zero importance weight
-        assert torch.allclose(stat["importance_weight"][4:], torch.zeros(4), atol=1e-6)
+        assert torch.allclose(stat["importance_weight"][6:8], torch.zeros(2), atol=1e-6)
 
-        # All valid positions should have same ratio (same sequence)
-        valid_ratios = stat["importance_weight"][:4]
-        assert torch.allclose(valid_ratios, valid_ratios[0].expand(4), atol=1e-5)
+        # All valid positions in sequence 1 should have same ratio
+        seq1_ratios = stat["importance_weight"][:4]
+        assert torch.allclose(seq1_ratios, seq1_ratios[0].expand(4), atol=1e-5)
+
+        # All valid positions in sequence 2 should have same ratio
+        seq2_valid_ratios = stat["importance_weight"][4:6]
+        assert torch.allclose(seq2_valid_ratios, seq2_valid_ratios[0].expand(2), atol=1e-5)
 
     def test_sequence_level_batch_size_1_2d(self):
         """Test batch_size=1 edge case for 2D tensors."""
@@ -296,8 +323,9 @@ class TestPPOActorLossFnSequenceLevel:
         assert torch.allclose(ratios, ratios[0].expand(seq_len), atol=1e-5)
 
     def test_sequence_level_batch_size_1_1d(self):
-        """Test batch_size=1 edge case for 1D tensors (single token)."""
-        total_tokens = 1
+        """Test batch_size=1 edge case for 1D tensors (single sequence)."""
+        total_tokens = 10
+        cu_seqlens = torch.tensor([0, 10], dtype=torch.int32)
 
         logprobs = torch.randn(total_tokens)
         proximal_logprobs = torch.randn(total_tokens)
@@ -313,6 +341,7 @@ class TestPPOActorLossFnSequenceLevel:
             eps_clip=0.2,
             loss_mask=loss_mask,
             importance_sampling_level="sequence",
+            cu_seqlens=cu_seqlens,
         )
 
         # Should compute without errors
@@ -320,9 +349,9 @@ class TestPPOActorLossFnSequenceLevel:
         assert not torch.isnan(loss)
         assert not torch.isinf(loss)
 
-        # Single token should have valid ratio
-        assert stat["importance_weight"].shape == (1,)
-        assert not torch.isnan(stat["importance_weight"][0])
+        # All tokens in the single sequence should have the same ratio
+        ratios = stat["importance_weight"]
+        assert torch.allclose(ratios, ratios[0].expand(total_tokens), atol=1e-5)
 
     def test_sequence_level_with_clipping_2d(self):
         """Test that clipping works correctly with sequence-level importance sampling."""
@@ -425,16 +454,22 @@ class TestPPOActorLossFnSequenceLevel:
         batch_size = 2
         seq_len = 4
 
-        # Create non-uniform data within sequences
+        # Create non-uniform data within sequences (use smaller values to avoid clipping)
         logprobs = torch.tensor(
             [
-                [1.0, 2.0, 3.0, 4.0],
-                [0.5, 1.5, 2.5, 3.5],
+                [0.1, 0.2, 0.05, 0.15],  # varying per token
+                [0.15, 0.1, 0.2, 0.05],  # different pattern
             ]
         )
         proximal_logprobs = torch.zeros(batch_size, seq_len)
         old_logprobs = torch.zeros(batch_size, seq_len)
-        advantages = torch.ones(batch_size, seq_len)
+        # Non-uniform advantages to make the difference clear
+        advantages = torch.tensor(
+            [
+                [1.0, 2.0, 3.0, 4.0],
+                [4.0, 3.0, 2.0, 1.0],
+            ]
+        )
         loss_mask = torch.ones(batch_size, seq_len, dtype=torch.bool)
 
         # Compute sequence-level loss
@@ -533,6 +568,84 @@ class TestPPOActorLossFnSequenceLevel:
         assert torch.allclose(loss1, loss2)
         assert torch.allclose(stat1["importance_weight"], stat2["importance_weight"])
         assert torch.equal(stat1["clip_mask"], stat2["clip_mask"])
+
+
+    def test_sequence_level_1d_requires_cu_seqlens(self):
+        """Test that cu_seqlens is required for 1D tensors with sequence-level."""
+        total_tokens = 8
+
+        logprobs = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        proximal_logprobs = torch.tensor([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+        old_logprobs = torch.zeros(total_tokens)
+        advantages = torch.ones(total_tokens)
+        loss_mask = torch.ones(total_tokens, dtype=torch.bool)
+
+        # Should raise ValueError when cu_seqlens is not provided for 1D tensors
+        with pytest.raises(
+            ValueError,
+            match="cu_seqlens is required for 1D tensors",
+        ):
+            ppo_actor_loss_fn(
+                logprobs=logprobs,
+                proximal_logprobs=proximal_logprobs,
+                old_logprobs=old_logprobs,
+                advantages=advantages,
+                eps_clip=0.2,
+                loss_mask=loss_mask,
+                importance_sampling_level="sequence",
+                cu_seqlens=None,
+            )
+
+    def test_sequence_level_1d_variable_lengths(self):
+        """Test packed sequences with variable lengths."""
+        # Three sequences with lengths [3, 5, 4]
+        cu_seqlens = torch.tensor([0, 3, 8, 12], dtype=torch.int32)
+        total_tokens = 12
+
+        # Different log ratios for each sequence
+        logprobs = torch.tensor(
+            [
+                1.0, 1.0, 1.0,  # seq 1: 3 tokens, log_ratio=0.5
+                2.0, 2.0, 2.0, 2.0, 2.0,  # seq 2: 5 tokens, log_ratio=1.0
+                3.0, 3.0, 3.0, 3.0,  # seq 3: 4 tokens, log_ratio=1.5
+            ]
+        )
+        proximal_logprobs = torch.tensor(
+            [
+                0.5, 0.5, 0.5,
+                1.0, 1.0, 1.0, 1.0, 1.0,
+                1.5, 1.5, 1.5, 1.5,
+            ]
+        )
+        old_logprobs = torch.zeros(total_tokens)
+        advantages = torch.ones(total_tokens)
+        loss_mask = torch.ones(total_tokens, dtype=torch.bool)
+
+        loss, stat = ppo_actor_loss_fn(
+            logprobs=logprobs,
+            proximal_logprobs=proximal_logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            eps_clip=0.2,
+            loss_mask=loss_mask,
+            importance_sampling_level="sequence",
+            cu_seqlens=cu_seqlens,
+        )
+
+        # Verify each sequence has its own ratio
+        expected_ratio_seq1 = torch.exp(torch.tensor(0.5))
+        expected_ratio_seq2 = torch.exp(torch.tensor(1.0))
+        expected_ratio_seq3 = torch.exp(torch.tensor(1.5))
+
+        assert torch.allclose(
+            stat["importance_weight"][0:3], expected_ratio_seq1.expand(3), atol=1e-5
+        )
+        assert torch.allclose(
+            stat["importance_weight"][3:8], expected_ratio_seq2.expand(5), atol=1e-5
+        )
+        assert torch.allclose(
+            stat["importance_weight"][8:12], expected_ratio_seq3.expand(4), atol=1e-5
+        )
 
 
 class TestPPOActorLossFnEdgeCases:

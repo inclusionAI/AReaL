@@ -7,7 +7,7 @@ from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
-from areal.utils import stats_tracker
+from areal.utils import logging, stats_tracker
 from areal.utils.data import (
     KLEstimator,
     Normalization,
@@ -20,6 +20,8 @@ from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PPOActor:
@@ -49,6 +51,20 @@ class PPOActor:
         self.dynamic_sampling = config.dynamic_sampling
 
         self.m2_threshold = config.m2_threshold
+
+        # Log critical GSPO/GRPO configuration for reproducibility
+        logger.info("PPOActor Configuration:")
+        logger.info(
+            f"  importance_sampling_level: {getattr(config, 'importance_sampling_level', 'NOT SET (defaults to token)')}"
+        )
+        logger.info(
+            f"  adv_norm: {config.adv_norm if config.adv_norm else 'DISABLED (None)'}"
+        )
+        logger.info(
+            f"  reward_norm: {config.reward_norm if config.reward_norm else 'DISABLED (None)'}"
+        )
+        logger.info(f"  eps_clip: {config.eps_clip}")
+        logger.info(f"  group_size: {config.group_size}")
 
     @torch.no_grad()
     def compute_logp(

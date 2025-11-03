@@ -58,9 +58,6 @@ actor:
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
-  overlong_reward_penalty: false
-  overlong_tokens: 512
-  overlong_penalty_factor: 1.0
   kl_ctl: 0.0
   ppo_n_minibatches: 1
   recompute_logprob: true
