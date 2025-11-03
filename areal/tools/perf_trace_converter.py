@@ -39,7 +39,7 @@ def _extract_rank(event: dict) -> str | int | None:
     if isinstance(rank, (int, float)):
         try:
             return int(rank)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
     if isinstance(rank, str):
         text = rank.strip()
@@ -87,8 +87,11 @@ def _metadata_name_sort_key(name: object) -> int:
 
 
 def _remap_process_and_thread_ids(events: list[dict]) -> list[dict]:
-    """Ensure unique pid/tid pairs across hosts and emit naming metadata."""
+    """Remap pid/tid to be unique and return metadata events.
 
+    This function modifies the `events` list in-place by replacing `pid` and
+    `tid` values. It returns a new list of generated metadata events.
+    """
     pid_keys: set[tuple[str | int, object]] = set()
     tid_keys: set[tuple[str | int, object, object]] = set()
 
@@ -151,7 +154,12 @@ def _remap_process_and_thread_ids(events: list[dict]) -> list[dict]:
 
         original_tid = event.get("tid")
         if original_tid is not None:
-            event["tid"] = tid_map[(rank, original_pid, original_tid)]
+            tid_key = (rank, original_pid, original_tid)
+            if tid_key in tid_map:
+                event["tid"] = tid_map[tid_key]
+            else:
+                # Defensive: leave event["tid"] as is, or set to None, or log warning
+                event["tid"] = None
 
     metadata_events: list[dict] = []
     for pid, (rank, original_pid) in pid_labels.items():
