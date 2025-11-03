@@ -175,6 +175,16 @@ class MegatronEngine(TrainEngine):
         if self.mcore_config.use_deterministic_algorithms:
             set_deterministic_algorithms(model_config)
 
+        # Set vp_stage for DDP models
+        for i, model_chunk in enumerate(self.model):
+            if (
+                isinstance(model_chunk, DDP)
+                and self.mcore_config.virtual_pipeline_parallel_size > 1
+            ):
+                vp_stage = getattr(model_chunk.module, "vp_stage", None)
+                self.logger.info(f"Setting vp_stage {vp_stage} for model chunk {i}.")
+                setattr(model_chunk, "vp_stage", vp_stage)
+
         if self.mcore_config.ddp.overlap_grad_reduce and isinstance(primary_model, DDP):
             model_config.no_sync_func = [
                 model_chunk.no_sync for model_chunk in self.model
