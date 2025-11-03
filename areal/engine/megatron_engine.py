@@ -920,20 +920,21 @@ class MegatronEngine(TrainEngine):
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
         micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
         micro_batch_generator = [iter(b) for b in micro_batch_generator]
-        forward_step_count = 0
+        forward_step_counts = [0] * len(self.model)
 
         def forward_step(batch_iter, model):
-            nonlocal forward_step_count
+            nonlocal forward_step_counts
             batch = next(batch_iter)
+            model_vp_stage = getattr(model, "vp_stage", 0)
+            forward_step_count = forward_step_counts[model_vp_stage]
             padding_length = mb_list.padding_lengths[forward_step_count]
             orig_input = mb_list.mbs[forward_step_count]
             cu_seqlens = batch["cu_seqlens"]
             old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
 
-            forward_step_count += 1
+            forward_step_counts[model_vp_stage] += 1
             output = packed_context_parallel_forward(model, batch)
 
-            model_vp_stage = getattr(model, "vp_stage", None)
             if mpu.is_pipeline_last_stage(
                 ignore_virtual=False, vp_stage=model_vp_stage
             ):
@@ -1005,20 +1006,21 @@ class MegatronEngine(TrainEngine):
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
         micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
         micro_batch_generator = [iter(b) for b in micro_batch_generator]
-        forward_step_count = 0
+        forward_step_counts = [0] * len(self.model)
 
         def forward_step(batch_iter, model):
-            nonlocal forward_step_count
+            nonlocal forward_step_counts
             batch = next(batch_iter)
+            model_vp_stage = getattr(model, "vp_stage", 0)
+            forward_step_count = forward_step_counts[model_vp_stage]
             padding_length = mb_list.padding_lengths[forward_step_count]
             orig_input = mb_list.mbs[forward_step_count]
             cu_seqlens = batch["cu_seqlens"]
             old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
 
-            forward_step_count += 1
+            forward_step_counts[model_vp_stage] += 1
             output = packed_context_parallel_forward(model, batch)
 
-            model_vp_stage = getattr(model, "vp_stage", None)
             if mpu.is_pipeline_last_stage(
                 ignore_virtual=False, vp_stage=model_vp_stage
             ):
@@ -1082,20 +1084,22 @@ class MegatronEngine(TrainEngine):
         max_total_len = max(m["max_seqlen"] for m in mb_list.padded_mbs)
         micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
         micro_batch_generator = [iter(b) for b in micro_batch_generator]
-        forward_step_count = 0
+        forward_step_counts = [0] * len(self.model)
 
         def forward_step(batch_iter, model):
-            nonlocal forward_step_count
+            nonlocal forward_step_counts
             batch = next(batch_iter)
+            model_vp_stage = getattr(model, "vp_stage", 0)
+            forward_step_count = forward_step_counts[model_vp_stage]
             padding_length = mb_list.padding_lengths[forward_step_count]
             orig_input = mb_list.mbs[forward_step_count]
             cu_seqlens = batch["cu_seqlens"]
             old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
 
+            forward_step_counts[model_vp_stage] += 1
             forward_step_count += 1
             output = packed_context_parallel_forward(model, batch)
 
-            model_vp_stage = getattr(model, "vp_stage", None)
             if mpu.is_pipeline_last_stage(
                 ignore_virtual=False, vp_stage=model_vp_stage
             ):
