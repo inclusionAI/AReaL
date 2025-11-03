@@ -192,9 +192,6 @@ class MegatronEngine(TrainEngine):
         # TODO: Change engine_api.py and FSDPEngine API to seperate create_process_group
         # from engine initialize when moving out of experimental.
         self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
-        # Required by NCCL weight update group for SGLang
-        os.environ["NCCL_CUMEM_ENABLE"] = "0"
-        os.environ["NCCL_NVLS_ENABLE"] = "0"
         # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
         # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
         # otherwise initializing the NCCL weight update group will be wrong!
