@@ -30,7 +30,7 @@ The key distinction between GSPO and traditional PPO lies in the computation of 
 |-----------|------------------------|----------------------|---------------|
 | **PPO** | Token-level | Per-token | General RL tasks |
 | **GRPO** | Token-level | Group-normalized per-token | Critic-free RL with sparse rewards |
-| **GSPO** | Sequence-level (geometric mean) | Per-sequence total (averaged per token, summed over tokens) | Sequence-level rewards, MoE training |
+| **GSPO** | Sequence-level (geometric mean) | Per-sequence sum of advantages | Sequence-level rewards, MoE training |
 
 For more details:
 
