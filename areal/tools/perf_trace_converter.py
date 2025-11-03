@@ -76,6 +76,16 @@ def _value_sort_key(value: object) -> tuple[int, object]:
     return (4, repr(value))
 
 
+def _metadata_name_sort_key(name: object) -> int:
+    if name == "process_name":
+        return 0
+    if name == "process_sort_index":
+        return 1
+    if name == "thread_name":
+        return 2
+    return 3
+
+
 def _remap_process_and_thread_ids(events: list[dict]) -> list[dict]:
     """Ensure unique pid/tid pairs across hosts and emit naming metadata."""
 
@@ -245,13 +255,7 @@ def convert_jsonl_to_chrome_trace(
     metadata_events.sort(
         key=lambda event: (
             _rank_sort_key(event.get("args", {}).get("rank")),
-            0
-            if event.get("name") == "process_name"
-            else 1
-            if event.get("name") == "process_sort_index"
-            else 2
-            if event.get("name") == "thread_name"
-            else 3,
+            _metadata_name_sort_key(event.get("name")),
             _value_sort_key(event.get("pid")),
             _value_sort_key(event.get("tid")),
         )
