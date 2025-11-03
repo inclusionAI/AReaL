@@ -137,6 +137,7 @@ class vLLMServerWrapper:
             cmd = vLLMConfig.build_cmd(
                 config,
                 tp_size=self.allocation_mode.gen.tp_size,
+                pp_size=self.allocation_mode.gen.pp_size,
                 host=host_ip,
                 port=server_port,
                 dist_init_addr=dist_init_addr,
