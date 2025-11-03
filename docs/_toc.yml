@@ -15,6 +15,7 @@ parts:
     - file: tutorial/installation
     - file: tutorial/quickstart
     - file: tutorial/openai_workflows
+    - file: tutorial/openai_agents_training
     - file: tutorial/eval
     - file: cli_reference
     - file: tutorial/quickstart_legacy
