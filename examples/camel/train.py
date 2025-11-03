@@ -124,12 +124,12 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         for reward in rewards:
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        completions_with_reward = {}
+        interactions_with_reward = {}
         for client in clients:
             client.apply_reward_discount(turn_discount=0.9)
-            completions = client.export_interactions(style="individual")
-            completions_with_reward.update(completions)
-        return completions_with_reward
+            interactions = client.export_interactions(style="individual")
+            interactions_with_reward.update(interactions)
+        return interactions_with_reward
 
 
 def main(args):
