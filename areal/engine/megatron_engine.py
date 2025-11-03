@@ -940,7 +940,8 @@ class MegatronEngine(TrainEngine):
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
-        micro_batch_generator = iter(mb_list.padded_mbs)
+        micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
+        micro_batch_generator = [iter(b) for b in micro_batch_generator]
         forward_step_count = 0
 
         def forward_step(batch_iter, model):
@@ -980,7 +981,9 @@ class MegatronEngine(TrainEngine):
         with perf_tracer.trace_scope("megatron_engine.train_batch.forward_backward"):
             forward_backward_func(
                 forward_step_func=forward_step,
-                data_iterator=micro_batch_generator,
+                data_iterator=micro_batch_generator
+                if len(self.model) > 1
+                else micro_batch_generator[0],
                 model=self.model if len(self.model) > 1 else self.model[0],
                 num_microbatches=len(mb_list.padded_mbs),
                 seq_length=max_total_len,  # no use when input_shapes was set
@@ -1019,7 +1022,8 @@ class MegatronEngine(TrainEngine):
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
-        micro_batch_generator = iter(mb_list.padded_mbs)
+        micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
+        micro_batch_generator = [iter(b) for b in micro_batch_generator]
         forward_step_count = 0
 
         def forward_step(batch_iter, model):
@@ -1057,7 +1061,9 @@ class MegatronEngine(TrainEngine):
         with perf_tracer.trace_scope("megatron_engine.eval_batch.forward"):
             forward_backward_func(
                 forward_step_func=forward_step,
-                data_iterator=micro_batch_generator,
+                data_iterator=micro_batch_generator
+                if len(self.model) > 1
+                else micro_batch_generator[0],
                 model=self.model if len(self.model) > 1 else self.model[0],
                 num_microbatches=len(mb_list.padded_mbs),
                 seq_length=max_total_len,  # no use when input_shapes was set
@@ -1090,7 +1096,8 @@ class MegatronEngine(TrainEngine):
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
 
         max_total_len = max(m["max_seqlen"] for m in mb_list.padded_mbs)
-        micro_batch_generator = iter(mb_list.padded_mbs)
+        micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
+        micro_batch_generator = [iter(b) for b in micro_batch_generator]
         forward_step_count = 0
 
         def forward_step(batch_iter, model):
@@ -1125,7 +1132,9 @@ class MegatronEngine(TrainEngine):
         with perf_tracer.trace_scope("megatron_engine.forward.forward"):
             output_list = forward_backward_func(
                 forward_step_func=forward_step,
-                data_iterator=micro_batch_generator,
+                data_iterator=micro_batch_generator
+                if len(self.model) > 1
+                else micro_batch_generator[0],
                 model=self.model if len(self.model) > 1 else self.model[0],
                 num_microbatches=len(mb_list.padded_mbs),
                 seq_length=max_total_len,  # max # tokens across all micro-batches
