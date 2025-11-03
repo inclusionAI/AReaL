@@ -380,11 +380,11 @@ class MegatronEngine(TrainEngine):
         gc.collect()
         dist.destroy_process_group(self.parallelism_group)
         dist.destroy_process_group(self.context_and_model_parallel_group)
+        self.process_group_initialized = False
         if self.own_global_group:
             assert dist.is_initialized()
             mpu.destroy_model_parallel()
             dist.destroy_process_group()
-            self.process_group_initialized = False
             self.own_global_group = False
 
     def train(self, mode: bool = True):
