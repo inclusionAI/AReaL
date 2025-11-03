@@ -189,7 +189,6 @@ class MegatronEngine(TrainEngine):
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
         assert not dist.is_initialized()
-        # TODO: Change engine_api.py and FSDPEngine API to seperate create_process_group
         # from engine initialize when moving out of experimental.
         self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
         # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher

@@ -63,7 +63,8 @@ def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
     return torch.mean(logits)
 
 
-@pytest.fixture(scope="module")
+# Cannot use a "module" scope since process groups can only be initialized once.
+@pytest.fixture
 def engine():
     logger.info(f"megatron.core version={get_version('megatron.core')}")
     os.environ.update(
@@ -93,6 +94,7 @@ def engine():
         yield engine
     finally:
         engine.destroy()
+        engine.destroy_process_groups()
 
 
 def test_simple_forward(engine, mock_input):
