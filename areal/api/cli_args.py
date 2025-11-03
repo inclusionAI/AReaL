@@ -590,10 +590,10 @@ class vLLMConfig:
     @staticmethod
     def build_cmd(
         vllm_config: "vLLMConfig",
-        tp_size,
-        pp_size,
-        host,
-        port,
+        tp_size: int,
+        pp_size: int,
+        host: str,
+        port: int,
         dist_init_addr: str | None = None,
     ):
         args = vLLMConfig.build_args(
