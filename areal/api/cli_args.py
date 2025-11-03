@@ -571,9 +571,10 @@ class vLLMConfig:
     @staticmethod
     def build_args(
         vllm_config: "vLLMConfig",
-        tp_size,
-        host,
-        port,
+        tp_size: int,
+        pp_size: int,
+        host: str,
+        port: int,
         dist_init_addr: str | None = None,
     ):
         args: dict = conf_as_dict(vllm_config)
@@ -585,6 +586,7 @@ class vLLMConfig:
             load_format="auto",
             trust_remote_code=True,
             tensor_parallel_size=tp_size,
+            pipeline_parallel_size=pp_size,
             **args,
         )
         return args
@@ -592,14 +594,16 @@ class vLLMConfig:
     @staticmethod
     def build_cmd(
         vllm_config: "vLLMConfig",
-        tp_size,
-        host,
-        port,
+        tp_size: int,
+        pp_size: int,
+        host: str,
+        port: int,
         dist_init_addr: str | None = None,
     ):
         args = vLLMConfig.build_args(
             vllm_config=vllm_config,
             tp_size=tp_size,
+            pp_size=pp_size,
             host=host,
             port=port,
             dist_init_addr=dist_init_addr,
