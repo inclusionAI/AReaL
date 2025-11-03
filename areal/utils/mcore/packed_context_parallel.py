@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -113,8 +113,7 @@ def postprocess_packed_seqs_context_parallel(
             )
             tmp[j * half_splitted_seq_len : (j + 1) * half_splitted_seq_len] = o0
             tmp[
-                seq_len
-                - (j + 1) * half_splitted_seq_len : seq_len
+                seq_len - (j + 1) * half_splitted_seq_len : seq_len
                 - j * half_splitted_seq_len
             ] = o1
 
@@ -124,7 +123,7 @@ def postprocess_packed_seqs_context_parallel(
 
 def packed_context_parallel_forward(
     model: torch.nn.Module,
-    input_: Dict[str, Any],
+    input_: dict[str, Any],
     is_critic: bool = False,
 ):
     # TODO: implement critic models
@@ -136,12 +135,18 @@ def packed_context_parallel_forward(
         input_ids, cu_seqlens
     )
     input_ids_rmpad = input_ids_rmpad.contiguous()
-    output_orig = model(
-        input_ids=input_ids_rmpad,
-        attention_mask=None,
-        position_ids=position_ids,
-        packed_seq_params=packed_seq_params,
-    )
+    try:
+        output_orig = model(
+            input_ids=input_ids_rmpad,
+            attention_mask=None,
+            position_ids=position_ids,
+            packed_seq_params=packed_seq_params,
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"Error occurred in packed context parallel forward pass on model {model} "
+            f"with input_ids shape {input_ids_rmpad.shape} and packed_seq_params {packed_seq_params}."
+        ) from e
     output = postprocess_packed_seqs_context_parallel(
         output_orig, cu_seqlens, mpu.is_pipeline_last_stage()
     )

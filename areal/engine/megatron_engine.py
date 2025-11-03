@@ -862,8 +862,9 @@ class MegatronEngine(TrainEngine):
             align_to_multiple_of=align_to_multiple_of,
         )
         self.logger.info(
-            f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}, aligned to: {mb_list.align_to_lengths}, "
-            f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}."
+            f"#microbatch: {len(mb_list.group_lens)}, microbatch #tokens: {mb_list.group_lens}, "
+            f"aligned to: {mb_list.align_to_lengths}, padded to: {mb_list.padded_to_lengths}, "
+            f"padding lengths: {mb_list.padding_lengths}."
         )
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
         # Modern model implementations takes a dict as the input.
