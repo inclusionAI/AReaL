@@ -97,7 +97,7 @@ class AsystemScheduler(Scheduler):
             f"AsystemScheduler initialized for {self.run_name}. API URL: {self.api_url}"
         )
 
-    def batch_cleanup_jobs(self, signum):
+    def batch_cleanup_jobs(self, signum, frame):
         logger.info(f"signum {signum} received: handle_signals starts")
         for role, job_uid in self.submitted_jobs.items():
             try:

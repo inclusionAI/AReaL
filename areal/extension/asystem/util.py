@@ -53,8 +53,7 @@ class ShuffleSampler(Sampler):
         self.shuffle_indices = get_shuffle_indices(size=len(data_source), seed=seed)
 
     def __iter__(self):
-        for idx in self.shuffle_indices:
-            yield from idx
+        return iter(self.shuffle_indices)
 
     def __len__(self):
         return len(self.data_source)

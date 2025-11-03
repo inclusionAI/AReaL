@@ -6,7 +6,7 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 import aiohttp
 import requests
@@ -22,6 +22,7 @@ from areal.api.io_struct import (
     RolloutStat,
     WeightUpdateMeta,
 )
+from areal.api.workflow_api import RolloutWorkflow
 from areal.extension.asystem.api.cli_args import RemoteHybridInferenceConfig
 from areal.extension.asystem.util import wait_future_ordered
 from areal.utils import logging, seeding
@@ -29,8 +30,6 @@ from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.errors import EngineError, FrameworkError
 from areal.utils.http import arequest_with_retry, get_default_connector
 
-if TYPE_CHECKING:
-    from areal.api.workflow_api import RolloutWorkflow
 logger = logging.getLogger(__name__)
 
 ROLLOUT_POLL_WAIT_TIME = 0.05
@@ -236,9 +235,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     # logger.info(f"Get data from puller: {data}")
                     task = asyncio.create_task(
                         (
-                            workflow.arun_episodes(self, data)
-                            if isinstance(data, list)
-                            else workflow.arun_episode(self, data)
+                            workflow.arun_episode(self, data)
                         ),
                         name=str(rid),
                     )
@@ -345,6 +342,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         start_time = time.perf_counter()
         accumulated_output_tokens = []
         accumulated_output_logprobs = []
+        accumulated_versions = []
 
         # Deal with rollout interruption
         stop_reason = ""
@@ -385,6 +383,9 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             # Update accumulated outputs
             accumulated_output_tokens.extend(output_tokens)
             accumulated_output_logprobs.extend(output_logprobs)
+            accumulated_versions.extend(
+                [self.get_version()] * len(output_logprobs)
+            )
 
             # Check if generation is complete
             finish_reason = meta_info["finish_reason"]
@@ -399,7 +400,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             input_tokens=req.input_ids,
             output_tokens=accumulated_output_tokens,
             output_logprobs=accumulated_output_logprobs,
-            output_version=self.get_version(),
+            output_versions=accumulated_versions,
             stop_reason=stop_reason,
             latency=latency,
             ttft=latency,  # Simplified for non-streaming
@@ -532,14 +533,13 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
     def submit(
         self,
-        data: list[dict[str, Any]] | dict[str, Any],
-        workflow: "RolloutWorkflow",
+        data: dict[str, Any],
+        workflow: RolloutWorkflow | None = None,
+        workflow_builder: Callable | None = None,
+        should_accept: Callable | None = None,
     ) -> None:
         try:
-            if not isinstance(data, list):
-                data = [data]
-            for d in data:
-                self.input_queue.put_nowait((d, workflow))
+            self.input_queue.put_nowait((data, workflow))
         except Full:
             raise FrameworkError(
                 "FrameworkError",
@@ -548,7 +548,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             )
 
     def submit_batch(
-        self, data: list[dict[str, Any]], workflow: "RolloutWorkflow"
+        self, data: list[dict[str, Any]], workflow: RolloutWorkflow
     ) -> None:
         try:
             self.input_queue.put_nowait(data, workflow)
@@ -701,3 +701,11 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         except Exception as e:
             raise EngineError("InferenceEngineError", "NotifyEventError", e)
         return None
+
+    def wait_quiet(
+        self, count: int, timeout: float | None = None, max_retries: int = 1,
+    ) -> dict[str, Any] | None:
+        try:
+            return self.wait(count, timeout=timeout)
+        except TimeoutError:
+            return "NO_RESULT"

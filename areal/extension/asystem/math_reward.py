@@ -38,8 +38,8 @@ async def reward_fn(
 
     format_rewards = []
 
-    query_id = kwargs.get("query_id")[0]
-    task = kwargs.get("task")[0]
+    query_id = kwargs.get("query_id")
+    task = kwargs.get("task")
     answers = [completion]
     query_id_strs = [query_id]
 
@@ -59,7 +59,7 @@ async def reward_fn(
     elif task == "ifeval":
         format_rewards = await ifeval_verify(id2info, answers, query_id_strs)
     elif task == "swe":
-        extra_info = kwargs.get("extra_info")[0]
+        extra_info = kwargs.get("extra_info")
         if extra_info and extra_info.get("provider", "functioncall") == "local":
             format_rewards = await local_swe_verify(id2info, answers, query_id_strs)
         else:
@@ -224,8 +224,8 @@ if __name__ == "__main__":
     async def main():
         answer = "<answer>\n28\n</answer>"
         data = {
-            "task": ["general"],
-            "query_id": ["general-42941"],
+            "task": "general",
+            "query_id": "general-42941",
             "prompt": [
                 "<role>HUMAN</role>33岁孩子不听话,如何处理父子之间矛盾?<role>ASSISTANT</role>"
             ],

@@ -6,24 +6,25 @@ from concurrent.futures import ThreadPoolExecutor
 
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
-
 from areal.api.cli_args import (
     SchedulingStrategy,
     load_expr_config,
 )
-from areal.api.io_struct import AllocationMode, FinetuneSpec
+from areal.api.io_struct import AllocationMode, FinetuneSpec, WeightUpdateMeta
 from areal.extension.asystem.api.cli_args import GRPOConfig
 from areal.extension.asystem.ascheduler import AsystemScheduler
 from areal.extension.asystem.controller import RolloutController, TrainController
+from areal.extension.asystem.math_reward import reward_fn
 from areal.extension.asystem.recover import latest_checkpoint, periodic_checkpoint
 from areal.extension.asystem.remote_hybrid_inference_worker import (
     RemoteHybridInferenceWorker,
 )
 from areal.extension.asystem.remote_hybrid_train_worker import RemoteHybridTrainWorker
 from areal.extension.asystem.util import ShuffleSampler, wait_future_ordered
-from areal.utils import logging
+from areal.utils import logging, stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
+from areal.workflow.rlvr import RLVRWorkflow
 
 logger = logging.getLogger("Trainer")
 
@@ -104,17 +105,35 @@ def main(args):
 
         tokenizer = load_hf_tokenizer(config.tokenizer_path)
         dataset = load_dataset("json", data_files=config.train_dataset.path)
+
+
+
         train_dataset = dataset["train"]
         train_dataset = train_dataset.filter(
             lambda x: len(tokenizer.encode(x["prompt"]))
             <= config.train_dataset.max_length
         )
+
+        def process(sample):
+            messages = [
+                {
+                    "role": "user",
+                    "content": sample["prompt"].replace("<role>HUMAN</role>", "").replace("<role>ASSISTANT</role>", "")
+                }
+            ]
+            return {"messages": messages}
+
+        train_dataset = train_dataset.map(process).remove_columns(["prompt"])
+
         dataloader = StatefulDataLoader(
             train_dataset,
-            batch_size=1,
+            batch_size=config.train_dataset.batch_size,
             sampler=ShuffleSampler(train_dataset),
-            collate_fn=custom_collate_fn,
+            collate_fn=lambda x: x,
         )
+        data_generator = iter(dataloader)
+        data = next(data_generator)
+        print(f"debug: {data}")
         ############################## recover #########################################
         recover_meta_info_path = config.recover.recover_meta_info_path
         enable_recover = True
@@ -262,234 +281,255 @@ def main(args):
             logger.info(
                 f"initialized all controllers in colocation mode {config.enable_colocate_mode}"
             )
-        #
-        # if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        #     config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-        # if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        #     config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-        #
-        # workflow = RLVRWorkflow(
-        #     reward_fn=reward_fn,
-        #     gconfig=config.gconfig,
-        #     tokenizer_path=config.tokenizer_path,
-        #     exp_name=config.experiment_name,
-        #     trial_name=config.trial_name,
-        # )
-        #
-        # for epoch in range(recover_epoch, epoch_num):
-        #     data_generator = iter(dataloader)
-        #     start_step = recover_step if can_recover and epoch == recover_epoch else 0
-        #     for step in range(start_step, step_num):
-        #         with (
-        #             stats_tracker.record_timing("e2e"),
-        #             stats_tracker.scope("grpo_actor"),
-        #         ):
-        #             batch_data = []
-        #             for _ in range(config.train_bs_n_seqs):
-        #                 try:
-        #                     batch = next(data_generator)
-        #                 except StopIteration:
-        #                     data_generator = iter(dataloader)
-        #                     batch = next(data_generator)
-        #                 batch_data.append(batch)
-        #
-        #             weight_update_config = WeightUpdateMeta(
-        #                 type=config.weight_update_type,
-        #                 path=f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}",
-        #                 alloc_mode=None,
-        #                 comm_backend=None,
-        #                 model_version=global_step,
-        #             )
-        #
-        #             with (
-        #                 stats_tracker.record_timing("weights_update_step"),
-        #                 stats_tracker.scope("weights_update"),
-        #             ):
-        #                 logger.info(
-        #                     f"start to update weight, step: {step}, epoch: {epoch}"
-        #                 )
-        #                 weight_update_config.path = f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}/{step}"
-        #                 if weight_update_config.type == "disk":
-        #                     actor.upload_weights(weight_update_config)
-        #                     weight_update_config.path = f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}/{step}"
-        #                     rollout.update_weights(weight_update_config)
-        #                     logger.info(
-        #                         f"disk mode update weight succeeded, step: {step}, epoch: {epoch}"
-        #                     )
-        #                     clear_dir(weight_update_config.path)
-        #                 else:
-        #                     import concurrent.futures
-        #
-        #                     with concurrent.futures.ThreadPoolExecutor(
-        #                         max_workers=2
-        #                     ) as executor:
-        #                         upload_future = executor.submit(
-        #                             actor.upload_weights, weight_update_config
-        #                         )
-        #                         update_future = executor.submit(
-        #                             rollout.update_weights, weight_update_config
-        #                         )
-        #                         wait_future_ordered([upload_future, update_future])
-        #                     logger.info(
-        #                         f"{weight_update_config.type} update weight succeeded (parallel), step: {step}, epoch: {epoch}"
-        #                     )
-        #
-        #             with (
-        #                 stats_tracker.record_timing("rollout_step"),
-        #                 stats_tracker.scope("rollout"),
-        #             ):
-        #                 with (
-        #                     stats_tracker.record_timing("notify_rollout_start_event"),
-        #                 ):
-        #                     logger.info(
-        #                         f"start to notify_rollout_start_event, step: {step}, epoch: {epoch}"
-        #                     )
-        #                     rollout.notify_event("rollout_start", global_step)
-        #                     logger.info(
-        #                         f"notify_rollout_start_event succeeded, step: {step}, epoch: {epoch}"
-        #                     )
-        #
-        #                 with stats_tracker.record_timing("rollout_main"):
-        #                     logger.info(
-        #                         f"start to rollout, step: {step}, epoch: {epoch}"
-        #                     )
-        #                     rollout_res = rollout.rollout(batch_data, workflow=workflow)
-        #                     logger.info(
-        #                         f"rollout succeeded, step: {step}, epoch: {epoch}"
-        #                     )
-        #
-        #             with (
-        #                 stats_tracker.scope("training_data"),
-        #             ):
-        #                 calc_training_data_metrics(rollout_res)
-        #                 calc_training_data_group_metrics(
-        #                     rollout_res, config.gconfig.n_samples
-        #                 )
-        #                 calc_training_data_version_metrics(rollout_res, global_step)
-        #
-        #             with stats_tracker.record_timing("post_data_process"):
-        #                 rollout_res_dict = rollout_res.to_dict()
-        #                 for k, v in rollout_res_dict.items():
-        #                     if (
-        #                         isinstance(v, torch.Tensor)
-        #                         and v.ndim > 1
-        #                         and v.shape[0] == 1
-        #                     ):
-        #                         rollout_res_dict[k] = v.squeeze(0)
-        #                 dis_batch = DistributedBatchMemory(rollout_res_dict)
-        #
-        #                 with (
-        #                     stats_tracker.record_timing("notify_rollout_end_event"),
-        #                 ):
-        #                     logger.info(
-        #                         f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}"
-        #                     )
-        #                     rollout.notify_event("rollout_end", global_step)
-        #                     logger.info(
-        #                         f"notify_rollout_end_event succeeded, step: {step}, epoch: {epoch}"
-        #                     )
-        #
-        #             if config.actor.hybrid_engine.wrap_policy.kl_ctl > 0:
-        #                 with (
-        #                     stats_tracker.record_timing("reference_step"),
-        #                     stats_tracker.scope("reference"),
-        #                 ):
-        #                     logger.info(
-        #                         f"start to compute_logprobs_with_distributed, step: {step}, epoch: {epoch}"
-        #                     )
-        #                     logp = ref.compute_logprobs_with_distributed(dis_batch)
-        #                     logp.to("cpu")
-        #                     rollout_res_dict["ref_logprobs"] = logp
-        #                     dis_batch = DistributedBatchMemory(rollout_res_dict)
-        #                     logger.info(
-        #                         f"compute ref logprobs succeeded, step: {step}, epoch: {epoch}, ref logp shape: {logp.shape}"
-        #                     )
-        #
-        #             with (
-        #                 stats_tracker.record_timing("train_step"),
-        #                 stats_tracker.scope("train"),
-        #             ):
-        #                 with (
-        #                     stats_tracker.record_timing("notify_train_start_event"),
-        #                 ):
-        #                     logger.info(
-        #                         f"start to notify_train_start_event, step: {step}, epoch: {epoch}"
-        #                     )
-        #                     actor.notify_event("train_start", global_step)
-        #                     logger.info(
-        #                         f"notify_train_start_event succeeded, step: {step}, epoch: {epoch}"
-        #                     )
-        #
-        #                 with (
-        #                     stats_tracker.record_timing("train_distributed_batch"),
-        #                 ):
-        #                     logger.info(f"start to train, step: {step}, epoch: {epoch}")
-        #                     actor.train_distributed_batch(dis_batch)
-        #                     logger.info(
-        #                         f"train succeeded, step: {step}, epoch: {epoch}"
-        #                     )
-        #
-        #                 with stats_tracker.record_timing("latest_recover_save"):
-        #                     if (
-        #                         config.recover.latest_save_interval is not None
-        #                         and global_step % config.recover.latest_save_interval
-        #                         == 0
-        #                         or global_step == config.total_train_steps
-        #                     ):
-        #                         logger.info(
-        #                             f"[Trainer] start save latest_checkpoint recover info, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
-        #                         )
-        #                         latest_recover.save(
-        #                             actor,
-        #                             epoch,
-        #                             step,
-        #                             global_step,
-        #                             dataloader.state_dict(),
-        #                             "latest_checkpoint",
-        #                             disable_save_hf=config.recover.latest_disable_save_hf,
-        #                         )
-        #                         logger.info(
-        #                             f"[Trainer] latest_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
-        #                         )
-        #
-        #                 with stats_tracker.record_timing("periodic_recover_save"):
-        #                     if (
-        #                         config.recover.periodic_save_interval is not None
-        #                         and global_step > 0
-        #                         and global_step % config.recover.periodic_save_interval
-        #                         == 0
-        #                         or global_step == config.total_train_steps
-        #                     ):
-        #                         logger.info(
-        #                             f"[Trainer] start save periodic_checkpoint recover info, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
-        #                         )
-        #                         periodic_recover.save(
-        #                             actor,
-        #                             epoch,
-        #                             step,
-        #                             global_step,
-        #                             dataloader.state_dict(),
-        #                             "periodic_checkpoint",
-        #                             disable_save_hf=config.recover.periodic_disable_save_hf,
-        #                         )
-        #                         logger.info(
-        #                             f"[Trainer] periodic_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
-        #                         )
-        #
-        #                 with (
-        #                     stats_tracker.record_timing("notify_train_end_event"),
-        #                 ):
-        #                     logger.info(
-        #                         f"start to notify_train_end_event, step: {step}, epoch: {epoch}"
-        #                     )
-        #                     actor.notify_event("train_end", global_step)
-        #                     logger.info(
-        #                         f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}"
-        #                     )
-        #
-        #         metric = stats_tracker.export()
-        #         stats_logger.commit(epoch, step, global_step, metric)
-        #         global_step += 1
+
+        if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
+            config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
+        if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
+            config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
+
+        workflow = RLVRWorkflow(
+            reward_fn=reward_fn,
+            gconfig=config.gconfig,
+            tokenizer=config.tokenizer_path,
+        )
+
+        for epoch in range(recover_epoch, epoch_num):
+            data_generator = iter(dataloader)
+            start_step = recover_step if can_recover and epoch == recover_epoch else 0
+            for step in range(start_step, step_num):
+                with (
+                    stats_tracker.record_timing("e2e"),
+                    stats_tracker.scope("grpo_actor"),
+                ):
+                    with stats_tracker.record_timing("rollout"):
+                        if config.async_training:
+                            batch = rollout.prepare_batch(
+                                dataloader,
+                                workflow_path="areal.workflow.rlvr.RLVRWorkflow",
+                                workflow_kwargs=dict(
+                                    reward_fn="areal.extension.asystem.math_reward.reward_fn",
+                                    gconfig=config.gconfig,
+                                    tokenizer=config.tokenizer_path,
+                                    enable_thinking=False,
+                                    dump_dir=os.path.join(
+                                        "/tmp",
+                                        "generated",
+                                    ),
+                                ),
+                            )
+                        else:
+                            batch = rollout.rollout_batch(
+                                next(data_generator),
+                                workflow_path="areal.workflow.rlvr.RLVRWorkflow",
+                                workflow_kwargs=dict(
+                                    reward_fn="areal.extension.asystem.math_reward.reward_fn",
+                                    gconfig=config.gconfig,
+                                    tokenizer=config.tokenizer_path,
+                                    enable_thinking=False,
+                                    dump_dir=os.path.join(
+                                        "/tmp",
+                                        "generated",
+                                    ),
+                                ),
+                            )
+
+                    logger.info(f"batch: {batch}")
+
+                    # weight_update_config = WeightUpdateMeta(
+                    #     type=config.weight_update_type,
+                    #     path=f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}",
+                    #     alloc_mode=None,
+                    # )
+                    #
+                    # with (
+                    #     stats_tracker.record_timing("weights_update_step"),
+                    #     stats_tracker.scope("weights_update"),
+                    # ):
+                    #     logger.info(
+                    #         f"start to update weight, step: {step}, epoch: {epoch}"
+                    #     )
+                    #     weight_update_config.path = f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}/{step}"
+                    #     if weight_update_config.type == "disk":
+                    #         actor.upload_weights(weight_update_config)
+                    #         weight_update_config.path = f"/storage/openpsi/checkpoints/{config.experiment_name}/{config.trial_name}/{step}"
+                    #         rollout.update_weights(weight_update_config)
+                    #         logger.info(
+                    #             f"disk mode update weight succeeded, step: {step}, epoch: {epoch}"
+                    #         )
+                    #         clear_dir(weight_update_config.path)
+                    #     else:
+                    #         import concurrent.futures
+                    #
+                    #         with concurrent.futures.ThreadPoolExecutor(
+                    #             max_workers=2
+                    #         ) as executor:
+                    #             upload_future = executor.submit(
+                    #                 actor.upload_weights, weight_update_config
+                    #             )
+                    #             update_future = executor.submit(
+                    #                 rollout.update_weights, weight_update_config
+                    #             )
+                    #             wait_future_ordered([upload_future, update_future])
+                    #         logger.info(
+                    #             f"{weight_update_config.type} update weight succeeded (parallel), step: {step}, epoch: {epoch}"
+                    #         )
+                    #
+                    # with (
+                    #     stats_tracker.record_timing("rollout_step"),
+                    #     stats_tracker.scope("rollout"),
+                    # ):
+                    #     with (
+                    #         stats_tracker.record_timing("notify_rollout_start_event"),
+                    #     ):
+                    #         logger.info(
+                    #             f"start to notify_rollout_start_event, step: {step}, epoch: {epoch}"
+                    #         )
+                    #         rollout.notify_event("rollout_start", global_step)
+                    #         logger.info(
+                    #             f"notify_rollout_start_event succeeded, step: {step}, epoch: {epoch}"
+                    #         )
+                    #
+                    #     with stats_tracker.record_timing("rollout_main"):
+                    #         logger.info(
+                    #             f"start to rollout, step: {step}, epoch: {epoch}"
+                    #         )
+                    #         rollout_res = rollout.rollout(batch_data, workflow=workflow)
+                    #         logger.info(
+                    #             f"rollout succeeded, step: {step}, epoch: {epoch}"
+                    #         )
+
+                    # with (
+                    #     stats_tracker.scope("training_data"),
+                    # ):
+                    #     calc_training_data_metrics(rollout_res)
+                    #     calc_training_data_group_metrics(
+                    #         rollout_res, config.gconfig.n_samples
+                    #     )
+                    #     calc_training_data_version_metrics(rollout_res, global_step)
+                    #
+                    # with stats_tracker.record_timing("post_data_process"):
+                    #     rollout_res_dict = rollout_res.to_dict()
+                    #     for k, v in rollout_res_dict.items():
+                    #         if (
+                    #             isinstance(v, torch.Tensor)
+                    #             and v.ndim > 1
+                    #             and v.shape[0] == 1
+                    #         ):
+                    #             rollout_res_dict[k] = v.squeeze(0)
+                    #     dis_batch = DistributedBatchMemory(rollout_res_dict)
+                    #
+                    #     with (
+                    #         stats_tracker.record_timing("notify_rollout_end_event"),
+                    #     ):
+                    #         logger.info(
+                    #             f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}"
+                    #         )
+                    #         rollout.notify_event("rollout_end", global_step)
+                    #         logger.info(
+                    #             f"notify_rollout_end_event succeeded, step: {step}, epoch: {epoch}"
+                    #         )
+                    #
+                    # if config.actor.hybrid_engine.wrap_policy.kl_ctl > 0:
+                    #     with (
+                    #         stats_tracker.record_timing("reference_step"),
+                    #         stats_tracker.scope("reference"),
+                    #     ):
+                    #         logger.info(
+                    #             f"start to compute_logprobs_with_distributed, step: {step}, epoch: {epoch}"
+                    #         )
+                    #         logp = ref.compute_logprobs_with_distributed(dis_batch)
+                    #         logp.to("cpu")
+                    #         rollout_res_dict["ref_logprobs"] = logp
+                    #         dis_batch = DistributedBatchMemory(rollout_res_dict)
+                    #         logger.info(
+                    #             f"compute ref logprobs succeeded, step: {step}, epoch: {epoch}, ref logp shape: {logp.shape}"
+                    #         )
+                    #
+                    # with (
+                    #     stats_tracker.record_timing("train_step"),
+                    #     stats_tracker.scope("train"),
+                    # ):
+                    #     with (
+                    #         stats_tracker.record_timing("notify_train_start_event"),
+                    #     ):
+                    #         logger.info(
+                    #             f"start to notify_train_start_event, step: {step}, epoch: {epoch}"
+                    #         )
+                    #         actor.notify_event("train_start", global_step)
+                    #         logger.info(
+                    #             f"notify_train_start_event succeeded, step: {step}, epoch: {epoch}"
+                    #         )
+                    #
+                    #     with (
+                    #         stats_tracker.record_timing("train_distributed_batch"),
+                    #     ):
+                    #         logger.info(f"start to train, step: {step}, epoch: {epoch}")
+                    #         actor.train_distributed_batch(dis_batch)
+                    #         logger.info(
+                    #             f"train succeeded, step: {step}, epoch: {epoch}"
+                    #         )
+
+                        # with stats_tracker.record_timing("latest_recover_save"):
+                        #     if (
+                        #         config.recover.latest_save_interval is not None
+                        #         and global_step % config.recover.latest_save_interval
+                        #         == 0
+                        #         or global_step == config.total_train_steps
+                        #     ):
+                        #         logger.info(
+                        #             f"[Trainer] start save latest_checkpoint recover info, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
+                        #         )
+                        #         latest_recover.save(
+                        #             actor,
+                        #             epoch,
+                        #             step,
+                        #             global_step,
+                        #             dataloader.state_dict(),
+                        #             "latest_checkpoint",
+                        #             disable_save_hf=config.recover.latest_disable_save_hf,
+                        #         )
+                        #         logger.info(
+                        #             f"[Trainer] latest_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
+                        #         )
+                        #
+                        # with stats_tracker.record_timing("periodic_recover_save"):
+                        #     if (
+                        #         config.recover.periodic_save_interval is not None
+                        #         and global_step > 0
+                        #         and global_step % config.recover.periodic_save_interval
+                        #         == 0
+                        #         or global_step == config.total_train_steps
+                        #     ):
+                        #         logger.info(
+                        #             f"[Trainer] start save periodic_checkpoint recover info, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
+                        #         )
+                        #         periodic_recover.save(
+                        #             actor,
+                        #             epoch,
+                        #             step,
+                        #             global_step,
+                        #             dataloader.state_dict(),
+                        #             "periodic_checkpoint",
+                        #             disable_save_hf=config.recover.periodic_disable_save_hf,
+                        #         )
+                        #         logger.info(
+                        #             f"[Trainer] periodic_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
+                        #         )
+
+                        # with (
+                        #     stats_tracker.record_timing("notify_train_end_event"),
+                        # ):
+                        #     logger.info(
+                        #         f"start to notify_train_end_event, step: {step}, epoch: {epoch}"
+                        #     )
+                        #     actor.notify_event("train_end", global_step)
+                        #     logger.info(
+                        #         f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}"
+                        #     )
+
+                metric = stats_tracker.export()
+                stats_logger.commit(epoch, step, global_step, metric)
+                global_step += 1
 
         stats_logger.close()
     except Exception as e:

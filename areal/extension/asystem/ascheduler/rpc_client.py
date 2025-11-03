@@ -115,7 +115,7 @@ class RPCClient:
                 last_exception = EngineCreationError(
                     worker_id, f"Connection error: {str(e)}"
                 )
-                logger.error(f"Connection error on attempt {attempt + 1}: {e}")
+                logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
 
             except httpx.TimeoutException as e:
                 # Timeout errors are retryable
@@ -140,7 +140,7 @@ class RPCClient:
             if last_exception is not None:
                 if attempt < max_retries - 1:
                     logger.warning(
-                        f"Retrying create_engine in 1 second... ({attempt + 1}/{max_retries})"
+                        f"Retrying create_engine in 5 second... ({attempt + 1}/{max_retries})"
                     )
                     await asyncio.sleep(5)
                     continue

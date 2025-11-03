@@ -47,9 +47,9 @@ if [[ -n "${PORT_LIST}" ]]; then
     # 获取第一个端口
     FIRST_PORT="${PORTS[0]}"
     # 添加到 WORKER_COMMAND
-    WORKER_COMMAND="/usr/bin/python -u -m areal.scheduler.rpc.async_rpc_server --worker-type ${WORKER_TYPE} --worker-index ${WORKER_INDEX} --port ${FIRST_PORT}"
+    WORKER_COMMAND="/usr/bin/python -u -m areal.scheduler.rpc.rpc_server --worker-type ${WORKER_TYPE} --worker-index ${WORKER_INDEX} --port ${FIRST_PORT}"
 else
-    WORKER_COMMAND="/usr/bin/python -u -m areal.scheduler.rpc.async_rpc_server --worker-type ${WORKER_TYPE} --worker-index ${WORKER_INDEX}"
+    WORKER_COMMAND="/usr/bin/python -u -m areal.scheduler.rpc.rpc_server --worker-type ${WORKER_TYPE} --worker-index ${WORKER_INDEX}"
 fi
 
 #log output to local worker dir

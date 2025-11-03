@@ -335,7 +335,7 @@ class RolloutController:
 
         # Choose worker via round-robin
         worker = self._choose_worker()
-
+        self.logger.info(f"Submit rollout to worker {worker.id}, task_input: {task_input}")
         self.scheduler.call_engine(
             worker.id,
             "submit",

@@ -78,6 +78,7 @@ class RLVRWorkflow(RolloutWorkflow):
             self.reward_fn = getattr(module, fname)
             self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
 
+        print(f"debug: data: {data}")
         input_ids = self.get_input_ids_fn(
             self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking
         )
@@ -109,7 +110,7 @@ class RLVRWorkflow(RolloutWorkflow):
             prompt_strs.append(prompt_str)
             completions_strs.append(completions_str)
             seqlens.append(len(seq))
-            reward = await self.async_reward_fn(
+            reward = await self.reward_fn(
                 prompt_str,
                 completions_str,
                 resp.input_tokens,
