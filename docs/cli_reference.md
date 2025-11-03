@@ -572,6 +572,7 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 | `worker_extension_cls`         | string          | `"areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"` | -           |
 | `enable_sleep_mode`            | boolean         | `False`                                                             | -           |
 | `uvicorn_log_level`            | string          | `"warning"`                                                         | -           |
+| `decode_context_parallel_size` | integer         | `1`                                                                 | -           |
 
 (section-dataset)=
 

@@ -567,6 +567,7 @@ class vLLMConfig:
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
+    decode_context_parallel_size: int = 1
 
     @staticmethod
     def build_args(
