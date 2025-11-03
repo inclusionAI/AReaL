@@ -67,15 +67,27 @@ def sglang_server_nccl():
     )
     base_url = f"http://{HOST}:{PORT}"
     tik = time.time()
-    while time.time() - tik < RUN_SERVER_TIMEOUT:
-        if check_server_health(base_url):
-            break
-        time.sleep(1)
-    if time.time() - tik > RUN_SERVER_TIMEOUT:
+    try:
+        while time.time() - tik < RUN_SERVER_TIMEOUT:
+            if check_server_health(base_url):
+                break
+            time.sleep(1)
+        if time.time() - tik > RUN_SERVER_TIMEOUT:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise RuntimeError("server launch failed")
+        yield
+    finally:
         process.terminate()
-        raise RuntimeError("server launch failed")
-    yield
-    process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 
 def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server_nccl):
@@ -97,26 +109,33 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
         optimizer=OptimizerConfig(),
     )
     engine = FSDPEngine(engine_config)
-    engine.create_process_group()
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
-    engine.initialize(None, ft_spec)
+    remote_engine = None
+    try:
+        engine.create_process_group()
+        ft_spec = FinetuneSpec(
+            total_train_epochs=1, dataset_size=100, train_batch_size=2
+        )
+        engine.initialize(None, ft_spec)
 
-    # Initialize RemoteSGLangEngine
-    config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
-    config.server_addrs = [f"{HOST}:{PORT}"]
-    remote_engine = RemoteSGLangEngine(config)
-    remote_engine.initialize()
+        # Initialize RemoteSGLangEngine
+        config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
+        config.server_addrs = [f"{HOST}:{PORT}"]
+        remote_engine = RemoteSGLangEngine(config)
+        remote_engine.initialize()
 
-    # Get WeightUpdateMeta
-    meta = WeightUpdateMeta.from_fsdp_xccl(
-        AllocationMode.from_str("sglang.d1p1t1+d1p1t1"),
-        nccl_group_name=GROUP_NAME,
-    )
+        # Get WeightUpdateMeta
+        meta = WeightUpdateMeta.from_fsdp_xccl(
+            AllocationMode.from_str("sglang.d1p1t1+d1p1t1"),
+            nccl_group_name=GROUP_NAME,
+        )
 
-    engine.connect_engine(remote_engine, meta)
+        engine.connect_engine(remote_engine, meta)
 
-    # Broadcast weights
-    engine.update_weights(meta)
-    print("uploaded weights to remote engine", flush=True)
-    remote_engine.destroy()
-    engine.destroy()
+        # Broadcast weights
+        engine.update_weights(meta)
+        print("uploaded weights to remote engine", flush=True)
+    finally:
+        # Cleanup in reverse order
+        if remote_engine is not None:
+            remote_engine.destroy()
+        engine.destroy()

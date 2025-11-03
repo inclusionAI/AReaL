@@ -89,8 +89,10 @@ def engine():
     engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
     logger.info(f"mcore GPTModel initialized: {engine.model}")
     log_gpu_stats("initialize")
-    yield engine
-    engine.destroy()
+    try:
+        yield engine
+    finally:
+        engine.destroy()
 
 
 def test_simple_forward(engine, mock_input):

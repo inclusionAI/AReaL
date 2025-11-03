@@ -113,27 +113,38 @@ def inference_engine(request):
     )
     base_url = f"http://{host}:{port}"
     tik = time.time()
-    while time.time() - tik < RUN_SERVER_TIMEOUT:
-        if check_server_health(base_url):
-            break
-        time.sleep(1)
-    if time.time() - tik > RUN_SERVER_TIMEOUT:
+    try:
+        while time.time() - tik < RUN_SERVER_TIMEOUT:
+            if check_server_health(base_url):
+                break
+            time.sleep(1)
+        if time.time() - tik > RUN_SERVER_TIMEOUT:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise RuntimeError(f"{backend.upper()} server launch failed")
+
+        # Set environment for remote engine
+        os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{host}:{port}"
+
+        yield {
+            "engine_class": engine_class,
+            "expr_name": expr_name,
+            "trial_name": trial_name,
+            "host": host,
+            "port": port,
+        }
+    finally:
+        # Cleanup - ensure process is fully terminated
         process.terminate()
-        raise RuntimeError(f"{backend.upper()} server launch failed")
-
-    # Set environment for remote engine
-    os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{host}:{port}"
-
-    yield {
-        "engine_class": engine_class,
-        "expr_name": expr_name,
-        "trial_name": trial_name,
-        "host": host,
-        "port": port,
-    }
-
-    # Cleanup
-    process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 
 # ============================================================================
