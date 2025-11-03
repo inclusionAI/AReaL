@@ -220,7 +220,9 @@ def _compute_sequence_level_ratio_and_advantages(
 
             # Compute mean log ratio for this sequence
             valid_count = seq_mask.sum().clamp(min=1)
-            seq_log_ratio_mean = torch.where(seq_mask, seq_log_ratio, 0.0).sum() / valid_count
+            seq_log_ratio_mean = (
+                torch.where(seq_mask, seq_log_ratio, 0.0).sum() / valid_count
+            )
 
             # All tokens in this sequence get the same geometric mean ratio
             seq_ratio = torch.exp(seq_log_ratio_mean)
@@ -228,8 +230,12 @@ def _compute_sequence_level_ratio_and_advantages(
 
             # Average advantages across the sequence
             # This ensures gradient magnitude is independent of sequence length
-            seq_adv_mean = torch.where(seq_mask, seq_advantages, 0.0).sum() / valid_count
-            advantages_averaged[start_idx:end_idx] = torch.where(seq_mask, seq_adv_mean, 0.0)
+            seq_adv_mean = (
+                torch.where(seq_mask, seq_advantages, 0.0).sum() / valid_count
+            )
+            advantages_averaged[start_idx:end_idx] = torch.where(
+                seq_mask, seq_adv_mean, 0.0
+            )
 
         # Use averaged advantages
         advantages = advantages_averaged
@@ -248,7 +254,9 @@ def _compute_sequence_level_ratio_and_advantages(
         # Average token advantages per sequence
         # This ensures gradient magnitude is independent of sequence length
         seq_lengths = loss_mask.sum(dim=-1, keepdim=True).clamp(min=1)
-        advantages = (advantages.sum(dim=-1, keepdim=True) / seq_lengths).expand_as(log_ratio)
+        advantages = (advantages.sum(dim=-1, keepdim=True) / seq_lengths).expand_as(
+            log_ratio
+        )
 
     return ratio, advantages
 

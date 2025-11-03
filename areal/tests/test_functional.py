@@ -261,9 +261,7 @@ class TestPPOActorLossFnSequenceLevel:
         cu_seqlens = torch.tensor([0, 4, 8], dtype=torch.int32)
 
         # Sequence 1: fully valid, Sequence 2: half masked
-        loss_mask = torch.tensor(
-            [True, True, True, True, True, True, False, False]
-        )
+        loss_mask = torch.tensor([True, True, True, True, True, True, False, False])
 
         logprobs = torch.randn(total_tokens)
         proximal_logprobs = torch.randn(total_tokens)
@@ -290,7 +288,9 @@ class TestPPOActorLossFnSequenceLevel:
 
         # All valid positions in sequence 2 should have same ratio
         seq2_valid_ratios = stat["importance_weight"][4:6]
-        assert torch.allclose(seq2_valid_ratios, seq2_valid_ratios[0].expand(2), atol=1e-5)
+        assert torch.allclose(
+            seq2_valid_ratios, seq2_valid_ratios[0].expand(2), atol=1e-5
+        )
 
     def test_sequence_level_batch_size_1_2d(self):
         """Test batch_size=1 edge case for 2D tensors."""
@@ -569,7 +569,6 @@ class TestPPOActorLossFnSequenceLevel:
         assert torch.allclose(stat1["importance_weight"], stat2["importance_weight"])
         assert torch.equal(stat1["clip_mask"], stat2["clip_mask"])
 
-
     def test_sequence_level_1d_requires_cu_seqlens(self):
         """Test that cu_seqlens is required for 1D tensors with sequence-level."""
         total_tokens = 8
@@ -605,16 +604,34 @@ class TestPPOActorLossFnSequenceLevel:
         # Different log ratios for each sequence
         logprobs = torch.tensor(
             [
-                1.0, 1.0, 1.0,  # seq 1: 3 tokens, log_ratio=0.5
-                2.0, 2.0, 2.0, 2.0, 2.0,  # seq 2: 5 tokens, log_ratio=1.0
-                3.0, 3.0, 3.0, 3.0,  # seq 3: 4 tokens, log_ratio=1.5
+                1.0,
+                1.0,
+                1.0,  # seq 1: 3 tokens, log_ratio=0.5
+                2.0,
+                2.0,
+                2.0,
+                2.0,
+                2.0,  # seq 2: 5 tokens, log_ratio=1.0
+                3.0,
+                3.0,
+                3.0,
+                3.0,  # seq 3: 4 tokens, log_ratio=1.5
             ]
         )
         proximal_logprobs = torch.tensor(
             [
-                0.5, 0.5, 0.5,
-                1.0, 1.0, 1.0, 1.0, 1.0,
-                1.5, 1.5, 1.5, 1.5,
+                0.5,
+                0.5,
+                0.5,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.5,
+                1.5,
+                1.5,
+                1.5,
             ]
         )
         old_logprobs = torch.zeros(total_tokens)
