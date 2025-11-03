@@ -1,12 +1,12 @@
 import bisect
 import itertools
-from typing import Any, List, Tuple, Union
+from typing import Any
 
 import numba
 import numpy as np
 
 
-def flat2d(arr: List[List[Any]]) -> List[Any]:
+def flat2d(arr: list[list[Any]]) -> list[Any]:
     return list(itertools.chain(*arr))
 
 
@@ -69,14 +69,14 @@ def partition_balanced(nums: np.ndarray, k: int, min_size: int = 1):
 
 def partition_balanced_tuples(
     nums: np.ndarray, k: int, min_size: int = 1
-) -> List[Tuple[int, int]]:
+) -> list[tuple[int, int]]:
     lst = partition_balanced(nums, k, min_size)
     return [(lst[i], lst[i + 1]) for i in range(k)]
 
 
 def min_abs_diff_partition(
-    arr: Union[np.ndarray, List], k: int, min_size: int = 1
-) -> List[Tuple[int, int]]:
+    arr: np.ndarray | list, k: int, min_size: int = 1
+) -> list[tuple[int, int]]:
     err_hint = (
         " Errors should not be reported in this function. It is probably a bug in the dataset code"
         " or too small batch size with pipeline parallelism."
@@ -117,7 +117,7 @@ def min_abs_diff_partition(
 def reorder_to_balanced_batches(
     seqlens: np.ndarray,
     n_seqs_per_batch: int,
-) -> Tuple[np.ndarray, int]:
+) -> tuple[np.ndarray, int]:
     max_bins = (len(seqlens) + n_seqs_per_batch - 1) // n_seqs_per_batch
 
     bins = [[] for _ in range(max_bins)]
@@ -147,12 +147,12 @@ def reorder_to_balanced_batches(
 
 # @numba.njit
 def _ffd_allocate(
-    values: np.ndarray, capacity: int, min_groups: int
-) -> List[List[int]]:
+    values: np.ndarray, capacity: int, min_groups: int, n_groups_divisor: int = 1
+) -> list[list[int]]:
     """A greedy allocation algorithm that partitions a list of numbers
     into k groups, where the summation of each group is less than capacity
-    and k >= min_groups. We want to minimize k and make partitions as balanced
-    as possible.
+    and (k >= min_groups and k % n_groups_divisor == 0). We want to minimize
+    k and make partitions as balanced as possible.
 
     1. Sort the numbers in reverse order.
     2. If the number of groups is less than `min_groups`, create a new group.
@@ -161,8 +161,8 @@ def _ffd_allocate(
     4. Otherwise, create a new group.
     """
     value_indices = np.argsort(-values)
-    group_indices: List[List[int]] = []
-    group_values: List[Tuple[float, int]] = []
+    group_indices: list[list[int]] = []
+    group_values: list[tuple[float, int]] = []
     group_cnt = 0
     for idx in value_indices:
         if (
@@ -184,14 +184,28 @@ def _ffd_allocate(
     return group_indices
 
 
-def ffd_allocate(values: List[int], capacity: int, min_groups: int) -> List[List[int]]:
+def ffd_allocate(
+    values: list[int], capacity: int, min_groups: int, n_groups_divisor: int = 1
+) -> list[list[int]]:
+    if min_groups is None or min_groups < n_groups_divisor:
+        min_groups = n_groups_divisor
     if any(v > capacity for v in values):
         raise RuntimeError(f"Values {values} is larger than capacity {capacity}")
     if len(values) < min_groups:
         raise RuntimeError(
             f"Number of values {len(values)} is smaller than min_groups {min_groups}"
         )
-    return _ffd_allocate(np.array(values), capacity, min_groups)
+    res = _ffd_allocate(np.array(values), capacity, min_groups)
+    while len(res) % n_groups_divisor != 0:
+        min_groups += n_groups_divisor
+        try:
+            res = _ffd_allocate(np.array(values), capacity, min_groups)
+        except RuntimeError:
+            raise RuntimeError(
+                f"Cannot allocate values {values} that satisfies capacity {capacity}, "
+                f"min_groups {min_groups} and n_groups_divisor {n_groups_divisor}."
+            )
+    return res
 
 
 if __name__ == "__main__":

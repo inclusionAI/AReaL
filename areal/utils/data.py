@@ -1,8 +1,9 @@
 # Pad/unpad operations are modified from flash-attention under BSD-3 license.
 # Copyright (c) 2023, Tri Dao.
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import torch
@@ -18,7 +19,7 @@ from areal.utils import datapack, logging
 logger = logging.getLogger("data utils")
 
 
-def get_batch_size(data: Dict[str, Any]) -> int:
+def get_batch_size(data: dict[str, Any]) -> int:
     if not data:
         return 0
 
@@ -41,18 +42,18 @@ def get_batch_size(data: Dict[str, Any]) -> int:
     return 0
 
 
-def reorder_list(xs: List, indices: List[int]) -> List:
+def reorder_list(xs: list, indices: list[int]) -> list:
     assert len(set(indices)) == len(xs)
     return [xs[i] for i in indices]
 
 
-def dict_map(x: Dict, fn: Callable) -> Dict:
+def dict_map(x: dict, fn: Callable) -> dict:
     return {k: fn(v) for k, v in x.items()}
 
 
 def dict_of_list2list_of_dict(
-    dict_of_lists: Dict[str, List[Any]],
-) -> List[Dict[str, Any]]:
+    dict_of_lists: dict[str, list[Any]],
+) -> list[dict[str, Any]]:
     if not dict_of_lists:
         return []
     keys = list(dict_of_lists.keys())
@@ -66,8 +67,8 @@ def dict_of_list2list_of_dict(
 
 
 def list_of_dict2dict_of_list(
-    list_of_dicts: List[Dict[str, Any]],
-) -> Dict[str, List[Any]]:
+    list_of_dicts: list[dict[str, Any]],
+) -> dict[str, list[Any]]:
     if not list_of_dicts:
         return {}
     keys = list(list_of_dicts[0].keys())
@@ -80,8 +81,8 @@ def list_of_dict2dict_of_list(
 
 
 def pad_sequences_to_tensors(
-    sequence_list: List[Dict[str, Any]], pad_value: float = 0.0
-) -> Dict[str, Any]:
+    sequence_list: list[dict[str, Any]], pad_value: float = 0.0
+) -> dict[str, Any]:
     if not sequence_list:
         return {}
     skip_keys = {"multi_modal_input"}
@@ -130,7 +131,7 @@ def pad_sequences_to_tensors(
 
 def unpad_input(
     hidden_states, attention_mask
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
     max_seqlen_in_batch = seqlens_in_batch.max().item()
@@ -150,8 +151,8 @@ def pad_input(hidden_states, indices, batch, seqlen):
 
 
 def concat_padded_tensors(
-    tensor_dicts: List[Dict[str, Any]], pad_value: float = 0.0
-) -> Dict[str, Any]:
+    tensor_dicts: list[dict[str, Any]], pad_value: float = 0.0
+) -> dict[str, Any]:
     """Concatenate and pad tensors from multiple dictionaries of padded tensors."""
     if not tensor_dicts:
         return {}
@@ -223,8 +224,8 @@ def concat_padded_tensors(
 
 def unpack_sequence(
     x: torch.Tensor,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    lens: Optional[List[int]] = None,
+    cu_seqlens: torch.Tensor | None = None,
+    lens: list[int] | None = None,
     dim: int = 0,
 ):
     """Unpack a sequence tensor into a list of tensors based on cumulative sequence lengths."""
@@ -237,10 +238,13 @@ def unpack_sequence(
     raise ValueError("Either cu_seqlens or input_lens must be provided.")
 
 
-def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: List[int]) -> List[List[int]]:
+def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: list[int]) -> list[list[int]]:
     assert mb_spec.max_tokens_per_mb is not None
     group_indices = datapack.ffd_allocate(
-        lens, mb_spec.max_tokens_per_mb, min_groups=mb_spec.n_mbs
+        lens,
+        mb_spec.max_tokens_per_mb,
+        min_groups=mb_spec.n_mbs,
+        n_groups_divisor=mb_spec.n_mbs_divisor,
     )
     group_indices = sorted([sorted(g) for g in group_indices])
     return group_indices
@@ -248,9 +252,9 @@ def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: List[int]) -> List[List
 
 def allocate_balanced_mbs_synced(
     mb_spec: MicroBatchSpec,
-    lens: List[int],
-    group: Optional[dist.ProcessGroup] = None,
-) -> List[List[int]]:
+    lens: list[int],
+    group: dist.ProcessGroup | None = None,
+) -> list[list[int]]:
     group_indices = allocate_balanced_mbs(mb_spec, lens)
     if not dist.is_initialized():
         return group_indices
@@ -263,7 +267,7 @@ def allocate_balanced_mbs_synced(
     )
 
 
-def pack_tensor_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+def pack_tensor_dict(data: dict[str, Any]) -> dict[str, Any]:
     """Pack a dict of tensors of shape [B, S, ...] into [total_length, ...], leaving other keys unchanged.
 
     Args:
@@ -315,12 +319,12 @@ def pack_tensor_dict(data: Dict[str, Any]) -> Dict[str, Any]:
     return packed_data
 
 
-def pad_and_stack_tensors_along_first_dim(tensor_list: List[torch.Tensor]):
+def pad_and_stack_tensors_along_first_dim(tensor_list: list[torch.Tensor]):
     max_length = max(tensor.shape[0] for tensor in tensor_list)
     n_dim = tensor_list[0].ndim
-    assert all(
-        tensor.ndim == n_dim for tensor in tensor_list
-    ), "All tensors must have the same number of dimensions."
+    assert all(tensor.ndim == n_dim for tensor in tensor_list), (
+        "All tensors must have the same number of dimensions."
+    )
 
     padded_tensors = []
     for tensor in tensor_list:
@@ -331,7 +335,7 @@ def pad_and_stack_tensors_along_first_dim(tensor_list: List[torch.Tensor]):
 
 
 def tensor_container_to(
-    d: Dict[str, Any] | torch.Tensor | List[torch.Tensor], *args, **kwargs
+    d: dict[str, Any] | torch.Tensor | list[torch.Tensor], *args, **kwargs
 ):
     """Apply `t.to(*args, **kwargs)` to all tensors in the dictionary.
     Support nested dictionaries.
@@ -356,19 +360,19 @@ def tensor_container_to(
 
 @dataclass
 class MicroBatchList:
-    data: Dict[str, Any]
+    data: dict[str, Any]
     mb_spec: MicroBatchSpec
-    mbs: List[Dict[str, Any]]
-    forward_indices: List[int]
-    backward_indices: List[int]
-    group_lens: List[int]
-    padded_mbs: List[Dict[str, Any]] | None = None
+    mbs: list[dict[str, Any]]
+    forward_indices: list[int]
+    backward_indices: list[int]
+    group_lens: list[int]
+    padded_mbs: list[dict[str, Any]] | None = None
     # Batch-level padding information
-    padding_lengths: List[int] | None = None
-    padded_to_lengths: List[int] | None = None
+    padding_lengths: list[int] | None = None
+    padded_to_lengths: list[int] | None = None
     # sequence-level padding information
-    align_to_lengths: List[int] | None = None
-    old_cu_seqlens_list: List[torch.Tensor] | None = None
+    align_to_lengths: list[int] | None = None
+    old_cu_seqlens_list: list[torch.Tensor] | None = None
 
     def to(self, *args, **kwargs):
         mbs = [tensor_container_to(mb, *args, **kwargs) for mb in self.mbs]
@@ -402,9 +406,9 @@ DEFAULT_MAX_TOKENS_PER_MB = int(1e12)
 
 
 def split_padded_tensor_dict_into_mb_list(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     mb_spec: MicroBatchSpec,
-    group: Optional[dist.ProcessGroup] = None,
+    group: dist.ProcessGroup | None = None,
 ) -> MicroBatchList:
     """Split a padded dict of tensors into micro-batches based on the attention mask.
 
@@ -417,9 +421,9 @@ def split_padded_tensor_dict_into_mb_list(
         MicroBatchList: A structure containing the split micro-batches and metadata.
     """
     # TODO: should align sequences first and then split, needs refactor
-    assert (
-        "attention_mask" in data
-    ), "Input data must be padded and contain 'attention_mask' key."
+    assert "attention_mask" in data, (
+        "Input data must be padded and contain 'attention_mask' key."
+    )
     if mb_spec.max_tokens_per_mb is None:
         mb_spec = MicroBatchSpec.new(
             mb_spec, max_tokens_per_mb=DEFAULT_MAX_TOKENS_PER_MB
@@ -522,12 +526,12 @@ N_TOKENS_PER_PAGE = 256
 
 
 def pad_packed_tensor_dict(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     pad_to_length: int,
     pad_value: float = 0.0,
     align_sequences: bool = False,
-    align_to_multiple_of: Optional[int] = None,
-) -> Tuple[Dict[str, Any], int, torch.Tensor, int]:
+    align_to_multiple_of: int | None = None,
+) -> tuple[dict[str, Any], int, torch.Tensor, int]:
     """Pad a packed dict of tensors to a specified length.
     This function assumes that the input data contains "cu_seqlens" and "max_seqlen" key,
     and all other tensors of shape [total_length, ] will be padded to `pad_to_length`.
@@ -553,9 +557,9 @@ def pad_packed_tensor_dict(
     sequence_padded_data = {}
     align_to_length = None
     if align_sequences:
-        assert (
-            align_to_multiple_of is not None
-        ), "align_to_multiple_of must be specified when align_sequences is True."
+        assert align_to_multiple_of is not None, (
+            "align_to_multiple_of must be specified when align_sequences is True."
+        )
         input_lens = cu_seqlens[1:] - cu_seqlens[:-1]
         batch_size = input_lens.shape[0]
         # Align sequences to an integer multiple of align_to_multiple_of
@@ -642,9 +646,9 @@ def pad_packed_tensor_dict(
 
     # Pad batch
     pad_length = pad_to_length - total_length
-    assert (
-        pad_length >= 0
-    ), f"pad_to_length {pad_to_length} must be greater than or equal to total length {total_length}."
+    assert pad_length >= 0, (
+        f"pad_to_length {pad_to_length} must be greater than or equal to total length {total_length}."
+    )
     new_cu_seqlens = F.pad(cu_seqlens, (0, 1), value=pad_to_length)
     new_max_seqlen = max(max_seqlen, pad_length)
     padded_data = {}
@@ -687,7 +691,7 @@ def pad_mb_list(
     pad_value: float = 0.0,
     pad_to_maximum: bool = False,
     align_sequences: bool = False,
-    align_to_multiple_of: Optional[int] = None,
+    align_to_multiple_of: int | None = None,
 ) -> MicroBatchList:
     """Pad the micro-batch list to the maximum length or to a specific size to:
         1. Reduce memory fragmentation.
@@ -705,9 +709,9 @@ def pad_mb_list(
         MicroBatchList: The padded micro-batch list.
     """
     if align_sequences:
-        assert (
-            align_to_multiple_of is not None
-        ), "align_to_multiple_of must be specified when align_sequences is True."
+        assert align_to_multiple_of is not None, (
+            "align_to_multiple_of must be specified when align_sequences is True."
+        )
     padded_mb_inputs, pad_lengths = [], []
     pad_to_lengths = []
     old_cu_seqlens_list = []
@@ -717,10 +721,10 @@ def pad_mb_list(
         or mb_list.mb_spec.max_tokens_per_mb == DEFAULT_MAX_TOKENS_PER_MB
     ):
         logger.warning(
-            f"Unable to pad to maximum because max_tokens_per_mb is not properly set."
+            "Unable to pad to maximum because max_tokens_per_mb is not properly set."
         )
         pad_to_maximum = False
-    for mb, l in zip(mb_list.mbs, mb_list.group_lens):
+    for mb, length in zip(mb_list.mbs, mb_list.group_lens):
         if pad_to_maximum:
             pad_to_length = mb_list.mb_spec.max_tokens_per_mb
         else:
@@ -728,7 +732,7 @@ def pad_mb_list(
             # Take hidden size 4096 with bf16 dtype as an example,
             # the batch size of a page is 256
             pad_to_length = (
-                (int(l) + N_TOKENS_PER_PAGE - 1)
+                (int(length) + N_TOKENS_PER_PAGE - 1)
                 // N_TOKENS_PER_PAGE
                 * N_TOKENS_PER_PAGE
             )
@@ -756,8 +760,8 @@ def pad_mb_list(
 def unpad_logits(
     logits: torch.Tensor,
     padding_length: int,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    old_cu_seqlens: Optional[torch.Tensor] = None,
+    cu_seqlens: torch.Tensor | None = None,
+    old_cu_seqlens: torch.Tensor | None = None,
 ):
     # TODO: when using megatron, logits are in fp32,
     # create new logits in bucket to reduce peak memory usage
@@ -785,8 +789,8 @@ def unpad_logits(
 
 
 def unsqueeze_packed_tensor_dict(
-    data: Dict[str, Any],
-) -> Dict[str, Any]:
+    data: dict[str, Any],
+) -> dict[str, Any]:
     assert "cu_seqlens" in data, "Input data must contain 'cu_seqlens' key."
     assert "max_seqlen" in data, "Input data must contain 'max_seqlen' key."
 
@@ -820,7 +824,7 @@ def unsqueeze_mb_list(
     return mb_list
 
 
-def amend_position_ids(data: Dict) -> Dict:
+def amend_position_ids(data: dict) -> dict:
     assert "attention_mask" in data, "Input data must contain 'attention_mask' key."
 
     attn_mask = data["attention_mask"]
@@ -912,9 +916,8 @@ def _flatten_pad_to_max_numel(x, shapes):
     return torch.nn.functional.pad(x.view(-1), (0, pad_size), value=0)
 
 
-def all_gather_tensor_container(data, group=None) -> List:
+def all_gather_tensor_container(data, group=None) -> list:
     if torch.is_tensor(data):
-
         local_shape = list(data.shape)
         shapes = [None for _ in range(dist.get_world_size(group))]
         dist.all_gather_object(shapes, local_shape, group=group)
@@ -1105,7 +1108,7 @@ class Normalization:
     def __call__(
         self,
         x: torch.Tensor,
-        loss_mask: Optional[torch.Tensor] = None,
+        loss_mask: torch.Tensor | None = None,
         high_precision: bool = True,
         reduce_group=None,
     ) -> torch.Tensor:
@@ -1206,7 +1209,7 @@ class Normalization:
     @staticmethod
     def _compute_mean(
         x: torch.Tensor,
-        mask: Optional[torch.Tensor],
+        mask: torch.Tensor | None,
         high_precision: bool,
         leave_one_out: bool,
         all_reduce: bool,
@@ -1263,7 +1266,7 @@ class Normalization:
     @staticmethod
     def _compute_std(
         x: torch.Tensor,
-        mask: Optional[torch.Tensor],
+        mask: torch.Tensor | None,
         mean: torch.Tensor,
         unbiased: bool,
         high_precision: bool,

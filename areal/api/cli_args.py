@@ -79,6 +79,12 @@ class MicroBatchSpec:
             "help": "Maximum tokens per micro-batch for each forward pass. When set, n_mbs becomes the minimum number of micro-batches.",
         },
     )
+    n_mbs_divisor: int = field(
+        default=1,
+        metadata={
+            "help": "Divisor for the number of micro-batches. The final number of micro-batches will be adjusted to be divisible by this value.",
+        },
+    )
 
     @classmethod
     def new(cls, mb_spec: "MicroBatchSpec", **kwargs):
@@ -87,6 +93,7 @@ class MicroBatchSpec:
             n_mbs=mb_spec.n_mbs,
             granularity=mb_spec.granularity,
             max_tokens_per_mb=mb_spec.max_tokens_per_mb,
+            n_mbs_divisor=mb_spec.n_mbs_divisor,
         )
         fields.update(kwargs)
         return cls(**fields)

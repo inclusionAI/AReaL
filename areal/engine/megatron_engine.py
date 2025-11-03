@@ -66,40 +66,6 @@ from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
-# class VirtualPipelineModelCollection(list[nn.Module]):
-#     """Container that aggregates multiple virtual pipeline model chunks."""
-
-#     def named_parameters(self, *args, **kwargs):
-#         for model in self:
-#             yield from model.named_parameters(*args, **kwargs)
-
-#     def parameters(self, *args, **kwargs):
-#         for model in self:
-#             yield from model.parameters(*args, **kwargs)
-
-#     def named_buffers(self, *args, **kwargs):
-#         for model in self:
-#             yield from model.named_buffers(*args, **kwargs)
-
-#     def buffers(self, *args, **kwargs):
-#         for model in self:
-#             yield from model.buffers(*args, **kwargs)
-
-#     def zero_grad_buffer(self):
-#         for model in self:
-#             if hasattr(model, "zero_grad_buffer"):
-#                 model.zero_grad_buffer()
-
-#     def train(self, mode: bool = True):
-#         for model in self:
-#             model.train(mode)
-#         return self
-
-#     def eval(self):
-#         for model in self:
-#             model.eval()
-#         return self
-
 
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
@@ -874,6 +840,7 @@ class MegatronEngine(TrainEngine):
         mb_spec = MicroBatchSpec.new(
             self.config.mb_spec,
             n_mbs=max(min_n_mbs, self.config.mb_spec.n_mbs),
+            n_mbs_divisor=pp_size,
         )
         mb_list = split_padded_tensor_dict_into_mb_list(
             input_,
