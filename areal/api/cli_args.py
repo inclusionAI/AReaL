@@ -503,6 +503,13 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "Filter out tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing loss. Must be > 1.0. use_decoupled_loss must be true."
         },
     )
+    importance_sampling_level: str = field(
+        default="token",
+        metadata={
+            "help": "Level at which to compute importance sampling ratios. 'token': per-token ratios (standard PPO). 'sequence': sequence-level geometric mean of per-token ratios (GSPO).",
+            "choices": ["token", "sequence"],
+        },
+    )
     # Advanced Options
     dynamic_sampling: bool = field(
         default=False,
@@ -1240,10 +1247,7 @@ class BaseExperimentConfig:
     )
     allocation_mode: str = field(
         default="",
-        metadata={
-            "help": "GPU parallel strategy allocation mode. "
-            "Options: manual/heuristic or pattern-based."
-        },
+        metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
     )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
     total_train_epochs: int = field(
