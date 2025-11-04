@@ -251,10 +251,11 @@ class MegatronEngine(TrainEngine):
             )
             # Initialize Megatron parallel states
             # NOTE: we assume all MegatronEngine has the same parallel strategy.
+            vpp_size = self.parallel_strategy.virtual_pipeline_parallel_size
             mpu.initialize_model_parallel(
                 tensor_model_parallel_size=self.parallel_strategy.tensor_parallel_size,
                 pipeline_model_parallel_size=self.parallel_strategy.pipeline_parallel_size,
-                virtual_pipeline_model_parallel_size=self.parallel_strategy.virtual_pipeline_parallel_size,
+                virtual_pipeline_model_parallel_size=vpp_size if vpp_size > 1 else None,
                 use_sharp=False,
                 order="tp-cp-ep-dp-pp",
                 context_parallel_size=self.parallel_strategy.context_parallel_size,
