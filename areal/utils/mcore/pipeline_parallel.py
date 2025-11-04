@@ -18,7 +18,7 @@ def configure_pipeline_layer_splits(
     tf_config: TransformerConfig,
 ) -> TransformerConfig:
     pp_size = parallel_strategy.pipeline_parallel_size
-    vpp_size = parallel_strategy.virtual_pipeline_model_parallel_size or 1
+    vpp_size = parallel_strategy.virtual_pipeline_parallel_size
 
     if pp_size <= 1:
         return tf_config
