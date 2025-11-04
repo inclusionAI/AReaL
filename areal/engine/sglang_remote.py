@@ -1,4 +1,4 @@
-import os
+import subprocess
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any, Optional
@@ -18,13 +18,18 @@ from areal.api.io_struct import (
 )
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import RemoteInfEngine
-from areal.launcher.sglang_server import launch_server_cmd, wait_for_server
+from areal.launcher.sglang_server import launch_server_cmd
 from areal.platforms import current_platform
-from areal.utils.network import find_free_ports, gethostip
 
 
 class SGLangBackend:
     """SGLang-specific backend implementation for remote inference."""
+
+    def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
+        # FIXME: avoid circular import
+
+        cmd = SGLangConfig.build_cmd_from_args(server_args)
+        return launch_server_cmd(cmd)
 
     def build_generation_request(
         self, req: ModelRequest, with_lora: bool
@@ -191,21 +196,11 @@ class RemoteSGLangEngine(InferenceEngine):
         # Pure composition - create internal engine with SGLang backend
         self._engine = RemoteInfEngine(config, SGLangBackend())
 
-    def create_engine(self, engine_args):
-        engine_args["host"] = host_ip = gethostip()
-        engine_args["port"] = server_port = find_free_ports(1)[0]
-        cmd = SGLangConfig.build_cmd_from_args(engine_args)
-        self.server_process = launch_server_cmd(cmd)
-        wait_for_server(f"http://{host_ip}:{server_port}")
-        print(f"SGLang server launched at: http://{host_ip}:{server_port}")
-        os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{host_ip}:{server_port}"
+    def launch_server(self, server_args: dict[str, Any]):
+        return self._engine.launch_server(server_args)
 
-    def configure(self, config):
-        self.config = config
-        self._engine.configure(config)
-
-    def destroy_engine(self, *args, **kwargs):
-        return self._engine.destroy_engine(*args, **kwargs)
+    def teardown_server(self):
+        return self._engine.teardown_server()
 
     def initialize(
         self,

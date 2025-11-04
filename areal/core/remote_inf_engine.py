@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import shutil
+import subprocess
 import time
 import uuid
 from collections.abc import Callable
@@ -31,6 +32,7 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
+from areal.utils.network import find_free_ports, gethostip
 
 from .workflow_executor import WorkflowExecutor
 
@@ -50,6 +52,8 @@ class RemoteInfBackendProtocol(Protocol):
 
     Implementations can raise NotImplementedError for unsupported features.
     """
+
+    def launch_server(self, server_args) -> subprocess.Popen: ...
 
     def build_generation_request(
         self, req: ModelRequest, with_lora: bool
@@ -229,15 +233,25 @@ class RemoteInfEngine:
 
         self.workflow_executor: WorkflowExecutor
 
-    def configure(self, config):
-        self.config = config
+        self.server_process: subprocess.Popen | None = None
 
-    def create_engine(self, engine_args):
-        # remote inference engine does not need to create an engine
-        return
+    def launch_server(self, server_args):
+        server_args["host"] = host_ip = gethostip()
+        server_args["port"] = server_port = find_free_ports(1)[0]
+        self.server_process = self.backend.launch_server(server_args=server_args)
+        address = f"{host_ip}:{server_port}"
+        self._wait_for_server(address)
+        return address
 
-    def destroy_engine(self):
-        return
+    def teardown_server(self):
+        if self.server_process is not None:
+            self.server_process.terminate()
+            try:
+                self.server_process.wait(timeout=5)
+            except TimeoutError:
+                self.server_process.kill()
+                self.server_process.wait()
+            self.server_process = None
 
     def _wait_for_server(self, address):
         """Wait for a server to become healthy."""
@@ -339,6 +353,7 @@ class RemoteInfEngine:
         if getattr(self, "executor"):
             self.executor.shutdown()
             self.executor = None
+        self.teardown_server()
 
     def set_version(self, version):
         """Set the current weight version."""

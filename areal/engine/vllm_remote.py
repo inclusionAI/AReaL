@@ -1,10 +1,11 @@
+import subprocess
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any, Optional
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import InferenceEngineConfig
+from areal.api.cli_args import InferenceEngineConfig, vLLMConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     HttpGenerationResult,
@@ -22,6 +23,13 @@ from areal.platforms import current_platform
 
 class VLLMBackend:
     """vLLM-specific backend implementation for remote inference."""
+
+    def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
+        # FIXME: avoid circular import
+        from areal.launcher.vllm_server import launch_server_cmd
+
+        cmd = vLLMConfig.build_cmd_from_args(server_args)
+        return launch_server_cmd(cmd)
 
     def build_generation_request(
         self, req: ModelRequest, with_lora: bool
@@ -159,15 +167,11 @@ class RemotevLLMEngine(InferenceEngine):
         # Pure composition - create internal engine with vLLM backend
         self._engine = RemoteInfEngine(config, VLLMBackend())
 
-    def configure(self, config):
-        self.config = config
-        self._engine.configure(config)
+    def launch_server(self, server_args: dict[str, Any]):
+        return self._engine.launch_server(server_args)
 
-    def create_engine(self, *args, **kwargs):
-        return self._engine.create_engine(*args, **kwargs)
-
-    def destroy_engine(self, *args, **kwargs):
-        return self._engine.destroy_engine(*args, **kwargs)
+    def teardown_server(self):
+        return self._engine.teardown_server()
 
     def initialize(
         self,

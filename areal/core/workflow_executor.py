@@ -223,9 +223,6 @@ class _RolloutResult:
     request_id: int | None = None
 
 
-TASK_RUNNER_MAX_QSIZE = 4096
-
-
 class WorkflowExecutor:
     """Executor for asynchronous workflow-based rollout generation.
 

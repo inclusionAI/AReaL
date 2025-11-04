@@ -21,9 +21,6 @@ if TYPE_CHECKING:
 
 
 class TrainEngine(abc.ABC):
-    def configure(self, config):
-        raise NotImplementedError()
-
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Initialize PyTorch distributed communication groups.
 
@@ -321,13 +318,10 @@ class TrainEngine(abc.ABC):
 
 
 class InferenceEngine(abc.ABC):
-    def configure(self, config):
+    def launch_server(self, server_args: dict[str, Any]) -> str:
         raise NotImplementedError()
 
-    def create_engine(self, engine_args: dict[str, Any]):
-        raise NotImplementedError()
-
-    def destroy_engine(self):
+    def teardown_server(self):
         raise NotImplementedError()
 
     def initialize(self, *args, **kwargs):
