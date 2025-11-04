@@ -6,9 +6,15 @@ helping with code reviews. This guide will help you get started.
 
 ## Table of Contents
 
-- [Quick Start](#quick-start)
-- [Ways to Contribute](#ways-to-contribute)
-- [Tips for Using AI-Assisted Coding](#tips-for-using-ai-assisted-coding)
+- [Contributing to AReaL](#contributing-to-areal)
+  - [Table of Contents](#table-of-contents)
+  - [Quick Start](#quick-start)
+  - [Ways to Contribute](#ways-to-contribute)
+    - [🐛 Bug Reports](#-bug-reports)
+    - [✨ Feature Requests](#-feature-requests)
+    - [📚 Documentation](#-documentation)
+    - [💻 Code Contributions](#-code-contributions)
+  - [Tips for Using AI-Assisted Coding](#tips-for-using-ai-assisted-coding)
 
 ## Quick Start
 
@@ -102,7 +108,7 @@ helping with code reviews. This guide will help you get started.
 
    ```bash
    # Build docs locally:
-   pip install jupyter-book
+   pip install --upgrade jupyter-book==1.0.4.post1 # higher version might fail to build docs
    jb build docs
    ```
 
