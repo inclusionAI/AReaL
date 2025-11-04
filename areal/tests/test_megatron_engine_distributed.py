@@ -77,6 +77,7 @@ def test_qwen3moe_expert_parallel(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 def test_qwen3_dcp_save_load(tmp_path_factory):
     if current_platform.device_count() < 8:
         pytest.skip("DCP save load requires 8 GPUs to run")
@@ -90,6 +91,7 @@ def test_qwen3_dcp_save_load(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 def test_qwen3moe_dcp_save_load(tmp_path_factory):
     if current_platform.device_count() < 8:
         pytest.skip("Qwen3 MoE DCP save load requires 8 GPUs to run")
