@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 import torch
+import torch.distributed as dist
 from transformers import AutoTokenizer
 
 from areal.api.alloc_mode import AllocationMode
@@ -94,7 +95,7 @@ def engine():
         yield engine
     finally:
         engine.destroy()
-        engine.destroy_process_groups()
+        assert not dist.is_initialized()
 
 
 def test_simple_forward(engine, mock_input):

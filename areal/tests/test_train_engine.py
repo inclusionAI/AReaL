@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 import torch
+import torch.distributed as dist
 from transformers import AutoTokenizer
 
 from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
@@ -90,6 +91,7 @@ def engine(request):
         yield engine
     finally:
         engine.destroy()
+        assert not dist.is_initialized()
 
 
 @torch.no_grad()
