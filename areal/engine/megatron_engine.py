@@ -14,7 +14,6 @@ from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import finalize_model_grads
-from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -67,12 +66,31 @@ from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
 
+class _MegatronModelList(list):
+    """List wrapper that exposes module-like helpers for Megatron model chunks."""
+
+    def forward(self, *args, **kwargs):
+        if len(self) == 1:
+            return self[0](*args, **kwargs)
+        raise RuntimeError(
+            "Direct forward calls are only supported for single-chunk model list."
+        )
+
+    def named_parameters(self, *args, **kwargs):
+        for module in self:
+            yield from module.named_parameters(*args, **kwargs)
+
+    def parameters(self, *args, **kwargs):
+        for _, parameter in self.named_parameters(*args, **kwargs):
+            yield parameter
+
+
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
         self.hf_config: PretrainedConfig
         self.tf_config: TransformerConfig
-        self.model: list[GPTModel | DDP] | None = None
+        self.model: _MegatronModelList | None = None
         self.dtype = getattr(torch, self.config.dtype)
         self.device = None
         self.optimizer_config = config.optimizer
@@ -147,12 +165,16 @@ class MegatronEngine(TrainEngine):
 
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
-            self.model = make_mcore_model(
+            models = make_mcore_model(
                 hf_config=self.hf_config,
                 tf_config=self.tf_config,
                 mcore_config=self.mcore_config,
                 bridge=self.bridge,
             )
+
+        self.model = _MegatronModelList(models)
+
+        with self.device:
             self._load_model_from_hf(self.config.path)
 
         assert self.model, "Megatron models failed to initialize."
