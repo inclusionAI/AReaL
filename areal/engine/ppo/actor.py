@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
 
@@ -7,7 +7,7 @@ from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
-from areal.utils import stats_tracker
+from areal.utils import logging, stats_tracker
 from areal.utils.data import (
     KLEstimator,
     Normalization,
@@ -20,6 +20,8 @@ from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PPOActor:
@@ -50,11 +52,25 @@ class PPOActor:
 
         self.m2_threshold = config.m2_threshold
 
+        # Log critical GSPO/GRPO configuration for reproducibility
+        logger.info("PPOActor Configuration:")
+        logger.info(
+            f"  importance_sampling_level: {getattr(config, 'importance_sampling_level', 'NOT SET (defaults to token)')}"
+        )
+        logger.info(
+            f"  adv_norm: {config.adv_norm if config.adv_norm else 'DISABLED (None)'}"
+        )
+        logger.info(
+            f"  reward_norm: {config.reward_norm if config.reward_norm else 'DISABLED (None)'}"
+        )
+        logger.info(f"  eps_clip: {config.eps_clip}")
+        logger.info(f"  group_size: {config.group_size}")
+
     @torch.no_grad()
     def compute_logp(
         self,
-        data: Dict[str, Any],
-        temperature: Optional[float] = None,
+        data: dict[str, Any],
+        temperature: float | None = None,
     ) -> torch.Tensor | None:
         def calc_logprobs(logits, input_data):
             labels = input_data.get(
@@ -71,7 +87,7 @@ class PPOActor:
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 
-    def compute_advantages(self, data: Dict[str, Any]) -> None:
+    def compute_advantages(self, data: dict[str, Any]) -> None:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
@@ -165,7 +181,7 @@ class PPOActor:
         # because we have rolled old_logp by -1
         data["logprobs"] = old_logp
 
-    def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
+    def ppo_update(self, data: dict[str, Any]) -> list[dict[str, float]]:
         if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
             data, sampling_stat = dynamic_sampling(data, self.group_size)
 
@@ -269,6 +285,7 @@ class PPOActor:
                     c_clip=self.config.c_clip,
                     behav_imp_weight_cap=self.config.behav_imp_weight_cap,
                     m2_threshold=self.m2_threshold,
+                    importance_sampling_level=self.config.importance_sampling_level,
                 ),
                 loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
             )
@@ -293,7 +310,7 @@ class FSDPPPOActor(FSDPEngine):
     def compute_advantages(self, *args, **kwargs) -> None:
         self.actor.compute_advantages(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
+    def ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
         return self.actor.ppo_update(*args, **kwargs)
 
 
@@ -310,19 +327,20 @@ class MegatronPPOActor(MegatronEngine):
     def compute_advantages(self, *args, **kwargs) -> None:
         self.actor.compute_advantages(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
+    def ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
         return self.actor.ppo_update(*args, **kwargs)
 
 
 def grpo_loss_fn(
     logits: torch.Tensor,
-    input_data: Dict,
+    input_data: dict,
     temperature: float,
     eps_clip: float,
     eps_clip_higher: float | None,
     c_clip: float | None,
     behav_imp_weight_cap: float | None,
     m2_threshold: float | None = None,
+    importance_sampling_level: str = "token",
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
@@ -372,6 +390,8 @@ def grpo_loss_fn(
         c_clip=c_clip,
         proximal_logprobs=prox_logp,
         behav_imp_weight_cap=behav_imp_weight_cap,
+        importance_sampling_level=importance_sampling_level,
+        cu_seqlens=input_data.get("cu_seqlens"),
     )
 
     # Log training statistics

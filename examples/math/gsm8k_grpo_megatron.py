@@ -95,6 +95,7 @@ def main(args):
     ref = None
     if config.actor.kl_ctl > 0 and config.ref is not None:
         ref = MegatronPPOActor(config=config.ref)
+        ref.create_process_group(parallel_strategy=parallel_strategy)
         ref.initialize(
             None, ft_spec, parallel_strategy=parallel_strategy, seed=config.seed
         )
@@ -267,7 +268,6 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
-    actor.destroy_process_groups()
 
 
 if __name__ == "__main__":
