@@ -288,12 +288,12 @@ class MegatronEngineConfig:
     ddp: DistributedDataParallelConfig = field(
         default_factory=DistributedDataParallelConfig
     )
-    virtual_pipeline_parallel_size: int | None = field(
-        default=None,
+    virtual_pipeline_parallel_size: int = field(
+        default=1,
         metadata={
             "help": (
                 "Virtual pipeline parallel size for Megatron interleaved schedule. "
-                "Set to >1 to enable VPP; leave unset or <=1 to disable."
+                "Set to >1 to enable VPP. Default is 1 (disabled)."
             )
         },
     )
