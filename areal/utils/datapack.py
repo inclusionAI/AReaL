@@ -195,12 +195,12 @@ def ffd_allocate(
         raise RuntimeError(
             f"Number of values {len(values)} is smaller than min_groups {min_groups}"
         )
-    res = _ffd_allocate(np.array(values), capacity, min_groups)
-    while len(res) % n_groups_divisor != 0:
-        min_groups += n_groups_divisor
-        try:
-            res = _ffd_allocate(np.array(values), capacity, min_groups)
-        except RuntimeError:
+    while True:
+        res = _ffd_allocate(np.array(values), capacity, min_groups)
+        min_groups += n_groups_divisor - min_groups % n_groups_divisor
+        if len(res) % n_groups_divisor == 0:
+            break
+        if len(values) < min_groups:
             raise RuntimeError(
                 f"Cannot allocate values {values} that satisfies capacity {capacity}, "
                 f"min_groups {min_groups} and n_groups_divisor {n_groups_divisor}."
