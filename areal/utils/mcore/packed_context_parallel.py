@@ -112,10 +112,9 @@ def postprocess_packed_seqs_context_parallel(
                 o[start + half_splitted_seq_len : start + splitted_seq_len],
             )
             tmp[j * half_splitted_seq_len : (j + 1) * half_splitted_seq_len] = o0
-            tmp[
-                seq_len - (j + 1) * half_splitted_seq_len : seq_len
-                - j * half_splitted_seq_len
-            ] = o1
+            splitted_start = seq_len - (j + 1) * half_splitted_seq_len
+            splitted_end = seq_len - j * half_splitted_seq_len
+            tmp[splitted_start:splitted_end] = o1
 
         output_new[cu_seqlens[i] : cu_seqlens[i + 1]] = tmp[:seq_len]
     return output_new

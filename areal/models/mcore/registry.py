@@ -79,9 +79,10 @@ def make_mcore_model(
         transformer_layer_spec = make_mcore_layer_specs(hf_config, tf_config)
         rope_scaling_args = {}
         if hf_config.rope_scaling is not None:
-            assert hf_config.rope_scaling["type"] == "linear", (
-                "only linear scaling is supported for now"
-            )
+            if hf_config.rope_scaling["type"] != "linear":
+                raise NotImplementedError(
+                    f"Rope scaling type {hf_config.rope_scaling['type']} not supported yet."
+                )
             rope_scaling_args["seq_len_interpolation_factor"] = hf_config.rope_scaling[
                 "factor"
             ]

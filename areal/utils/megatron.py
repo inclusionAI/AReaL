@@ -14,9 +14,8 @@ def all_gather_param(name: str, param: Parameter | Tensor):
     if "expert_bias" in name:
         return param
 
-    assert hasattr(param, "tensor_model_parallel"), (
-        f"{name} does not have tensor_model_parallel attribute"
-    )
+    if not hasattr(param, "tensor_model_parallel"):
+        raise ValueError(f"{name} does not have tensor_model_parallel attribute")
     if (
         not param.tensor_model_parallel
         or getattr(param, "parallel_mode", None) == "duplicated"
@@ -80,9 +79,8 @@ def convert_qwen3moe_to_hf(
         head_dim = tf_config.hidden_size // tf_config.num_attention_heads
     value_num_per_group = tf_config.num_attention_heads // tf_config.num_query_groups
 
-    assert tf_config.num_query_groups is not None, (
-        "Qwen3-MoE models should have num_query_groups"
-    )
+    if tf_config.num_query_groups is None:
+        raise ValueError("Qwen3-MoE models should have num_query_groups")
 
     decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
     match = re.match(decoder_layers_pattern, name)
@@ -236,9 +234,8 @@ def convert_qwen2_to_hf(
         head_dim = tf_config.hidden_size // tf_config.num_attention_heads
     value_num_per_group = tf_config.num_attention_heads // tf_config.num_query_groups
 
-    assert tf_config.num_query_groups is not None, (
-        "Qwen2 models should have num_query_groups"
-    )
+    if tf_config.num_query_groups is None:
+        raise ValueError("Qwen2 models should have num_query_groups")
 
     decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
     match = re.match(decoder_layers_pattern, name)

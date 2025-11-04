@@ -977,11 +977,14 @@ class MegatronEngine(TrainEngine):
 
         forward_backward_func = get_forward_backward_func()
         with perf_tracer.trace_scope("megatron_engine.train_batch.forward_backward"):
+            data_iterator = (
+                micro_batch_generator
+                if len(self.model) > 1
+                else micro_batch_generator[0]
+            )
             forward_backward_func(
                 forward_step_func=forward_step,
-                data_iterator=micro_batch_generator
-                if len(self.model) > 1
-                else micro_batch_generator[0],
+                data_iterator=data_iterator,
                 model=self.model if len(self.model) > 1 else self.model[0],
                 num_microbatches=len(mb_list.padded_mbs),
                 seq_length=max_total_len,  # no use when input_shapes was set
@@ -1061,11 +1064,14 @@ class MegatronEngine(TrainEngine):
 
         forward_backward_func = get_forward_backward_func()
         with perf_tracer.trace_scope("megatron_engine.eval_batch.forward"):
+            data_iterator = (
+                micro_batch_generator
+                if len(self.model) > 1
+                else micro_batch_generator[0]
+            )
             forward_backward_func(
                 forward_step_func=forward_step,
-                data_iterator=micro_batch_generator
-                if len(self.model) > 1
-                else micro_batch_generator[0],
+                data_iterator=data_iterator,
                 model=self.model if len(self.model) > 1 else self.model[0],
                 num_microbatches=len(mb_list.padded_mbs),
                 seq_length=max_total_len,  # no use when input_shapes was set
@@ -1137,11 +1143,14 @@ class MegatronEngine(TrainEngine):
         forward_backward_func = get_forward_backward_func()
 
         with perf_tracer.trace_scope("megatron_engine.forward.forward"):
+            data_iterator = (
+                micro_batch_generator
+                if len(self.model) > 1
+                else micro_batch_generator[0]
+            )
             output_list = forward_backward_func(
                 forward_step_func=forward_step,
-                data_iterator=micro_batch_generator
-                if len(self.model) > 1
-                else micro_batch_generator[0],
+                data_iterator=data_iterator,
                 model=self.model if len(self.model) > 1 else self.model[0],
                 num_microbatches=len(mb_list.padded_mbs),
                 seq_length=max_total_len,  # max # tokens across all micro-batches
