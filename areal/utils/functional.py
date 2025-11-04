@@ -205,9 +205,9 @@ def _compute_sequence_level_ratio_and_advantages(
         batch_size = cu_seqlens.shape[0] - 1
         seq_lengths = cu_seqlens[1:] - cu_seqlens[:-1]
         # Create sequence index for each token: [0,0,0,1,1,2,2,2,2,...]
-        sequence_idx = torch.arange(batch_size, device=log_ratio.device).repeat_interleave(
-            seq_lengths
-        )
+        sequence_idx = torch.arange(
+            batch_size, device=log_ratio.device
+        ).repeat_interleave(seq_lengths)
 
         # Use scatter_add for vectorized summation per sequence (faster than Python loop)
         masked_log_ratio = torch.where(loss_mask, log_ratio, 0.0)
@@ -230,7 +230,9 @@ def _compute_sequence_level_ratio_and_advantages(
         log_ratio_mean_per_seq = log_ratio_sum_per_seq / valid_count_per_seq.to(
             log_ratio.dtype
         )
-        adv_mean_per_seq = advantages_sum_per_seq / valid_count_per_seq.to(advantages.dtype)
+        adv_mean_per_seq = advantages_sum_per_seq / valid_count_per_seq.to(
+            advantages.dtype
+        )
 
         # Broadcast sequence-level values back to token-level
         ratio = torch.exp(log_ratio_mean_per_seq)[sequence_idx]
