@@ -322,3 +322,4 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine
         train_engine.destroy()
         if inf_engine is not None:
             inf_engine.destroy()
+        assert not dist.is_initialized()
