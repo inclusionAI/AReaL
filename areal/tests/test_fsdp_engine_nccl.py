@@ -5,6 +5,7 @@ import time
 
 import pytest
 import requests
+import torch.distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
@@ -139,3 +140,4 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
         if remote_engine is not None:
             remote_engine.destroy()
         engine.destroy()
+        assert not dist.is_initialized()

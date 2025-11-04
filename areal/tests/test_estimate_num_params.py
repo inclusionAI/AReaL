@@ -57,3 +57,4 @@ def test_estimate_num_params(model_name_or_path):
     finally:
         mpu.destroy_model_parallel()
         dist.destroy_process_group()
+        assert not dist.is_initialized()

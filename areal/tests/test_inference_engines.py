@@ -7,6 +7,7 @@ import time
 
 import pytest
 import requests
+import torch.distributed as dist
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
@@ -191,6 +192,7 @@ def test_rollout(inference_engine, n_samples):
     bs = get_batch_size(result)
     assert bs == 2 * n_samples
     engine.destroy()
+    assert not dist.is_initialized()
 
 
 @pytest.mark.parametrize("ofp", [0, 1, 4, 16])
@@ -256,6 +258,7 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         assert results["attention_mask"].shape[0] == bs * 2 * n_samples
 
     engine.destroy()
+    assert not dist.is_initialized()
 
 
 @pytest.mark.slow
