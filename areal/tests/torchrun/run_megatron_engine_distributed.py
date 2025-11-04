@@ -86,14 +86,14 @@ def mock_input(
     )
 
 
-def make_engine(model_type, allocation_mode, mb_spec, init_optimizer=False):
+def make_engine(model_type, allocation_mode, mb_spec, vpp_size=1, init_optimizer=False):
     config = TrainEngineConfig(
         experiment_name="test",
         trial_name="test",
         path=MODEL_PATHS[model_type],
         mb_spec=mb_spec,
         optimizer=OptimizerConfig() if init_optimizer else None,
-        megatron=MegatronEngineConfig(),
+        megatron=MegatronEngineConfig(virtual_pipeline_parallel_size=vpp_size),
     )
     alloc_mode = AllocationMode.from_str(allocation_mode)
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
@@ -124,11 +124,13 @@ def make_fsdp_engine(model_type, allocation_mode, mb_spec, init_optimizer=False)
     return engine
 
 
-def test_forward(model_type: str, alloc_mode: str, output: str | None = None):
+def test_forward(
+    model_type: str, alloc_mode: str, output: str | None = None, vpp_size: int = 1
+):
     rank = int(os.environ["RANK"])
 
     mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
-    engine = make_engine(model_type, alloc_mode, mb_spec)
+    engine = make_engine(model_type, alloc_mode, mb_spec, vpp_size=vpp_size)
     seeding.set_random_seed(0, key=f"trainer{rank}")
 
     input_ = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
@@ -215,12 +217,16 @@ def mock_loss_fn(logits: torch.Tensor, input_data) -> torch.Tensor:
     return torch.mean(logprobs)
 
 
-def test_train(model_type: str, alloc_mode: str, output: str | None = None):
+def test_train(
+    model_type: str, alloc_mode: str, output: str | None = None, vpp_size: int = 1
+):
     print(f"running train test: model_type={model_type} alloc_mode={alloc_mode}")
     rank = int(os.environ["RANK"])
 
     mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
-    engine = make_engine(model_type, alloc_mode, mb_spec, init_optimizer=True)
+    engine = make_engine(
+        model_type, alloc_mode, mb_spec, init_optimizer=True, vpp_size=vpp_size
+    )
     seeding.set_random_seed(0, key=f"trainer{rank}")
 
     input_ = mock_input(batch_size=16, max_seqlen=128, device=engine.device)
@@ -249,7 +255,7 @@ def test_train(model_type: str, alloc_mode: str, output: str | None = None):
 
 
 def test_train_dcp_save_load(
-    model_type: str, alloc_mode: str, output: str | None = None
+    model_type: str, alloc_mode: str, output: str | None = None, vpp_size: int = 1
 ):
     print(
         f"running test_train_dcp_save_load(model_type={model_type} alloc_mode={alloc_mode})"
@@ -264,7 +270,9 @@ def test_train_dcp_save_load(
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATHS[model_type])
 
     mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
-    engine = make_engine(model_type, alloc_mode, mb_spec, init_optimizer=True)
+    engine = make_engine(
+        model_type, alloc_mode, mb_spec, init_optimizer=True, vpp_size=vpp_size
+    )
 
     seeding.set_random_seed(0, key=f"trainer{rank}")
 
@@ -354,7 +362,7 @@ def test_train_dcp_save_load(
 
 
 def test_simple_dcp_save_load(
-    model_type: str, alloc_mode: str, output: str | None = None
+    model_type: str, alloc_mode: str, output: str | None = None, vpp_size: int = 1
 ):
     print(
         f"running test_simple_dcp_save_load(model_type={model_type} alloc_mode={alloc_mode})"
@@ -369,7 +377,9 @@ def test_simple_dcp_save_load(
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATHS[model_type])
 
     mb_spec = MicroBatchSpec(max_tokens_per_mb=256)
-    engine = make_engine(model_type, alloc_mode, mb_spec, init_optimizer=True)
+    engine = make_engine(
+        model_type, alloc_mode, mb_spec, init_optimizer=True, vpp_size=vpp_size
+    )
 
     seeding.set_random_seed(0, key=f"trainer{rank}")
     print(f"rank {rank} is_data_parallel_head()={engine.is_data_parallel_head()}")
@@ -432,6 +442,12 @@ def main():
         help="Allocation mode for the model",
     )
     parser.add_argument(
+        "--vpp_size",
+        type=int,
+        default=1,
+        help="Virtual pipeline parallel size",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -448,16 +464,32 @@ def main():
 
     print(args)
     if args.test_type == "train":
-        test_train(args.model_type, args.allocation_mode, output=args.output)
+        test_train(
+            args.model_type,
+            args.allocation_mode,
+            output=args.output,
+            vpp_size=args.vpp_size,
+        )
     elif args.test_type == "forward":
-        test_forward(args.model_type, args.allocation_mode, output=args.output)
+        test_forward(
+            args.model_type,
+            args.allocation_mode,
+            output=args.output,
+            vpp_size=args.vpp_size,
+        )
     elif args.test_type == "simple_dcp_save_load":
         test_simple_dcp_save_load(
-            args.model_type, args.allocation_mode, output=args.output
+            args.model_type,
+            args.allocation_mode,
+            output=args.output,
+            vpp_size=args.vpp_size,
         )
     elif args.test_type == "train_dcp_save_load":
         test_train_dcp_save_load(
-            args.model_type, args.allocation_mode, output=args.output
+            args.model_type,
+            args.allocation_mode,
+            output=args.output,
+            vpp_size=args.vpp_size,
         )
     else:
         raise NotImplementedError()
