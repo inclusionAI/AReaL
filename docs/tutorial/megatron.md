@@ -67,20 +67,10 @@ modules are denoted by `attn:` and `ffn:`, and separated by `|`. For example,
 size 4, that has DP size 1, TP size 2, and CP size 2 for attention modules and DP size
 1, TP size 1, and EP size 4 for expert modules.
 
-**Tips on tuning 5D parallel strategy:**
+**5D parallel strategy Tuning Guides:**
 
-- Keep the model and context parallelism size as small as possible. Model and context
-  parallelism are typically used to avoid OOM issues, but they introduce communication
-  overhead and hurt performance.
-- Ensure EP and TP communication are limited within the NVLink domain. For example, in a
-  typical 8-GPU node setup, EPxTP size should less or equal than 8 to avoid large
-  performance drop.
-- Increase PP size if you want to scale the model to more nodes. The PP size for the
-  attention and expert module should be the same, and the size is not restricted by the
-  number of total layers.
-- For expert modules, prefer EP or TP whenever possible.
-- Only enable context parallelism for long context training (e.g. sequence length >=
-  16k)
+- [Megatron Performance Best Practice](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core/transformer/moe#performance-best-practice)
+- [verl with Megatron Practice](https://github.com/ISEEKYAN/verl_megatron_practice)
 
 ### Aligning Inference and Training Precision
 
