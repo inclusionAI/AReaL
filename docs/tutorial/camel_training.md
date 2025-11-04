@@ -35,7 +35,7 @@ infrastructure:
 
 1. **OpenAI-compatible client with token-level tracking**: AReaL's `ArealOpenAI` client
    provides a drop-in replacement for OpenAI's API that automatically records
-   token-level information. Each interaction (response/completion) is cached with its
+   token-level information. Each interaction (completion/response) is cached with its
    input tokens, output tokens, and associated log probabilities (see the
    [OpenAI-Compatible Workflows](openai_workflows.md) guide for details). This enables
    RL algorithms to access the granular data needed for policy gradient computation.
@@ -61,7 +61,7 @@ Before starting, ensure you have:
 pip install camel-ai
 ```
 
-## Quick Start
+## Building a Trainable CAMEL Agent
 
 We'll build a trainable CAMEL agent step by step, starting from the simplest example and
 gradually adding complexity. By the end, you'll have a complete agent integrated into
@@ -70,7 +70,7 @@ AReaL's training pipeline.
 ### Writing a CAMEL Agent
 
 A typical CAMEL agent is straightforward to write. Here's a simple example that uses
-CAMEL's `ChatAgent`: Let's begin with a simple CAMEL agent that solves math problems:
+CAMEL's `ChatAgent` to solve math problems:
 
 ```python
 from camel.agents import ChatAgent
@@ -117,10 +117,10 @@ response = await agent.astep("Solve: 2 + 2 = ?")
 ```
 
 **What changed:** The `AReaLOpenAICompatibleModel` adapter connects CAMEL to AReaL's
-inference engine. Every completion is now automatically tracked with token IDs and log
-probabilities.
+inference engine. Every completion/response is now automatically tracked with token IDs
+and log probabilities.
 
-### Add Reward Evaluation
+### Adding Reward Evaluation
 
 Next, we need to evaluate and assign rewards. After the agent responds, we check if the
 answer is correct and set the reward:
@@ -167,7 +167,7 @@ class CamelMathAgent:
         client : ArealOpenAI
             Client that tracks token information
         """
-        # Create agent
+        # Create agent with AReaL OpenAI-compatible model
         agent = ChatAgent(
             system_message="You are a helpful math assistant.",
             model=AReaLOpenAICompatibleModel(...),
@@ -216,7 +216,7 @@ class CamelRLVRWorkflow(RolloutWorkflow):
             for _ in range(self.n_trajs)
         ]
 
-        # Run agents in parallel - this is where we get diversity!
+        # Run agents in parallel
         rewards = await asyncio.gather(
             *[
                 self.agent.run_agent(data=data, client=clients[i])
@@ -271,20 +271,33 @@ That's it! Your CAMEL agent is now fully integrated into AReaL's training pipeli
 
 ## Configuration
 
-Your workflow can be configured through the standard AReaL config system. Key parameters
-include:
+Configuration for CAMEL training workflows can be managed through AReaL's standard
+config system. You can define a custom configuration class that extends `GRPOConfig` to
+include CAMEL-specific parameters.
+
+```python
+from dataclasses import dataclass, field
+from areal.api.cli_args import GRPOConfig
+
+@dataclass
+class CamelRLVRConfig(GRPOConfig):
+    n_trajs: int = 2
+    max_tokens_per_trajectory: int = 32768
+```
+
+And they can be configured in a YAML file:
 
 ```yaml
-# Number of trajectories to collect per query
+# CAMEL-specific parameters
 n_trajs: 2
-
-# Maximum tokens per trajectory
 max_tokens_per_trajectory: 8192
+
+# ... other configuration options
 ```
 
 See the
 [complete example configuration](https://github.com/inclusionAI/AReaL/blob/main/examples/camel/config.yaml)
-for all available options.
+for a full working example with all available options.
 
 ## Customization
 
