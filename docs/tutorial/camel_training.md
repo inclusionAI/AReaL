@@ -13,6 +13,10 @@ flows, tool calling, and multi-agent interactions. CAMEL agents excel at tasks r
 sequential reasoning, such as mathematical problem-solving, code generation, and
 multi-step planning.
 
+While CAMEL agents are powerful out of the box, reinforcement learning (RL) training can
+significantly improve their performance by optimizing task-specific behavior, learning
+from feedback signals, and adapting to domain-specific requirements.
+
 However, CAMEL agents cannot be directly trained with reinforcement learning for several
 reasons:
 
@@ -118,7 +122,8 @@ response = await agent.astep("Solve: 2 + 2 = ?")
 
 **What changed:** The `AReaLOpenAICompatibleModel` adapter connects CAMEL to AReaL's
 inference engine. Every completion/response is now automatically tracked with token IDs
-and log probabilities.
+and log probabilities. Refer to the [OpenAI-Compatible Workflows](openai_workflows.md)
+guide for more details.
 
 ### Adding Reward Evaluation
 
@@ -186,8 +191,8 @@ class CamelMathAgent:
 
 ### Creating the Rollout Workflow
 
-Finally, we integrate our agent into AReaL's `RolloutWorkflow`. We can collect multiple
-trajectories in parallel:
+Finally, we integrate our agent into AReaL's `RolloutWorkflow`. Here, we can collect
+multiple trajectories in parallel, which is essential for effective RL training:
 
 ```python
 from areal.api.workflow_api import RolloutWorkflow
@@ -238,13 +243,15 @@ class CamelRLVRWorkflow(RolloutWorkflow):
 
 **Key points:**
 
-- **Creates multiple clients**: One `ArealOpenAI` client per trajectory enables parallel
-  collection of diverse trajectories.
-- **Runs agents in parallel**: Uses `asyncio.gather()` to execute all agent instances
-  concurrently, maximizing throughput.
-- **Applies reward discounting**: For multi-turn conversations, rewards are discounted
-  backward through the conversation tree.
-- **Exports interactions**: All interactions with token-level data and rewards are
+- **Parallel episode execution**: AReaL's training loop calls `arun_episode` in parallel
+  across multiple samples in a batch, enabling parallel trajectory collection at the
+  batch level.
+- **Parallel trajectory collection within episodes**: Each `arun_episode` call creates
+  multiple `ArealOpenAI` clients and runs agents in parallel using `asyncio.gather()`,
+  collecting diverse trajectories for each query.
+- **Reward discounting**: For multi-turn conversations, rewards are discounted backward
+  through the conversation tree.
+- **Interactions export**: All interactions with token-level data and rewards are
   exported in a format ready for RL training.
 
 This workflow is then integrated into AReaL's standard training loop, which handles
@@ -267,37 +274,10 @@ workflow = CamelRLVRWorkflow(
 # The workflow handles rollout collection, and AReaL handles training
 ```
 
-That's it! Your CAMEL agent is now fully integrated into AReaL's training pipeline.
-
-## Configuration
-
-Configuration for CAMEL training workflows can be managed through AReaL's standard
-config system. You can define a custom configuration class that extends `GRPOConfig` to
-include CAMEL-specific parameters.
-
-```python
-from dataclasses import dataclass, field
-from areal.api.cli_args import GRPOConfig
-
-@dataclass
-class CamelRLVRConfig(GRPOConfig):
-    n_trajs: int = 2
-    max_tokens_per_trajectory: int = 32768
-```
-
-And they can be configured in a YAML file:
-
-```yaml
-# CAMEL-specific parameters
-n_trajs: 2
-max_tokens_per_trajectory: 8192
-
-# ... other configuration options
-```
-
-See the
-[complete example configuration](https://github.com/inclusionAI/AReaL/blob/main/examples/camel/config.yaml)
-for a full working example with all available options.
+That's it! Your CAMEL agent is now fully integrated into AReaL's training pipeline. See
+the
+[complete example](https://github.com/inclusionAI/AReaL/blob/main/examples/camel/train.py)
+for a full working implementation.
 
 ## Customization
 
