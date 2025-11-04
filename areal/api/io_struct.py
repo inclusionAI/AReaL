@@ -206,8 +206,9 @@ class SaveLoadMeta:
 
 @dataclass
 class RolloutStat:
-    submitted: int = 0
     accepted: int = 0
+    enqueued: int = 0
+    rejected: int = 0
     running: int = 0
 
 
