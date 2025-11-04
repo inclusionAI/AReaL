@@ -1,4 +1,4 @@
-# Fine-tuning Large MoE Models with Megatron-LM Training Backend
+# Fine-tuning Large MoE Models
 
 Compared to PyTorch FSDP, Megatron-LM supports full 5D parallelism, delivering better
 scaling and efficiency, especially for large MoE models. AReaL fully supports customized
@@ -43,17 +43,17 @@ The allocation mode is a pattern-based string option that tells AReaL how to par
 models across GPUs in training and inference backends. When running the experiment,
 AReaL converts the string option into an `AllocationMode` object that stores the backend
 choice and parallel strategy for each model. For a simple example,
-`sglang.d2+megatron.t2` configures AReaL to use the SGLang backend with data parallel
+`sglang:d2+megatron:t2` configures AReaL to use the SGLang backend with data parallel
 size 2 and the Megatron training backend with tensor parallel size 2. Here we only
 discuss how to configure the parallel strategy for the Megatron training backend, which
-is the `megatron.t2` part in the previous example. For full details, please check the
+is the `megatron:t2` part in the previous example. For full details, please check the
 documentation strings in
 [areal/api/alloc_mode.py](https://github.com/inclusionAI/AReaL/blob/main/areal/api/alloc_mode.py).
 
 For a dense model, there are only 4 available parallel dimensions: data parallel (DP,
 d), tensor parallel (TP, t), pipeline parallel (PP, p), and context parallel (CP, c).
 The numbers that follow the single-character abbreviation of parallel dimensions
-describe the parallel size. For example, `megatron.d2t4p2c2` describes a 32-GPU parallel
+describe the parallel size. For example, `megatron:d2t4p2c2` describes a 32-GPU parallel
 strategy that has DP size 2, TP size 4, PP size 2, and CP size 2.
 
 For MoE models, the AReaL allocation mode supports separate parallel strategies for
@@ -67,6 +67,21 @@ modules are denoted by `attn:` and `ffn:`, and separated by `|`. For example,
 size 4, that has DP size 1, TP size 2, and CP size 2 for attention modules and DP size
 1, TP size 1, and EP size 4 for expert modules.
 
+**Tips on tuning 5D parallel strategy:**
+
+- Keep the model and context parallelism size as small as possible. Model and context
+  parallelism are typically used to avoid OOM issues, but they introduce communication
+  overhead and hurt performance.
+- Ensure EP and TP communication are limited within the NVLink domain. For example, in a
+  typical 8-GPU node setup, EPxTP size should less or equal than 8 to avoid large
+  performance drop.
+- Increase PP size if you want to scale the model to more nodes. The PP size for the
+  attention and expert module should be the same, and the size is not restricted by the
+  number of total layers.
+- For expert modules, prefer EP or TP whenever possible.
+- Only enable context parallelism for long context training (e.g. sequence length >=
+  16k)
+
 ### Aligning Inference and Training Precision
 
 Due to the sparse nature of MoE models, the logits calculated by forward passes during
@@ -79,6 +94,7 @@ As an example, you can run GRPO on the Qwen3 30B-A3B MoE model and GSM8K dataset
 32-GPU ray cluster) directly with the following command:
 
 ```bash
+# NOTE: Allocation mode here is only for illustration purposes. It is not optimized.
 python3 -m areal.launcher.ray examples/math/gsm8k_grpo_megatron.py --config examples/math/gsm8k_grpo_megatron.yaml \
     experiment_name=megatron-moe-gsm8k-grpo trial_name=trial-0 allocation_mode=sglang.d4t4+megatron:(attn:d1p4t2c2|ffn:d1p4t1e4) \
     cluster.n_nodes=4 cluster.n_gpus_per_node=8 actor.path=Qwen/Qwen3-30B-A3B \
