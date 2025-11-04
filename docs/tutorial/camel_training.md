@@ -90,9 +90,6 @@ response = await agent.astep("Solve: 2 + 2 = ?")
 print(response.msg.content)
 ```
 
-This agent works well for inference, but cannot be directly used for RL training because
-it lacks access to token-level information and reward mechanisms.
-
 ### Converting to an RL-Trainable Agent
 
 To make this agent trainable with AReaL, simply replace the model with AReaL's
@@ -120,11 +117,6 @@ agent = ChatAgent(
 response = await agent.astep("Solve: 2 + 2 = ?")
 ```
 
-**What changed:** The `AReaLOpenAICompatibleModel` adapter connects CAMEL to AReaL's
-inference engine. Every completion/response is now automatically tracked with token IDs
-and log probabilities. Refer to the [OpenAI-Compatible Workflows](openai_workflows.md)
-guide for more details.
-
 ### Adding Reward Evaluation
 
 Next, we need to evaluate and assign rewards. After the agent responds, we check if the
@@ -142,9 +134,6 @@ response = await agent.astep("Solve: 2 + 2 = ?")
 reward = math_reward_fn(response.msg.content, "4")
 client.set_final_reward(reward)
 ```
-
-**Why this matters:** The reward tells the RL algorithm whether the agent's response is
-correct. The client stores this reward along with the token-level data for training.
 
 ### Wrapping the Agent in a Reusable Class
 
@@ -276,8 +265,21 @@ workflow = CamelRLVRWorkflow(
 
 That's it! Your CAMEL agent is now fully integrated into AReaL's training pipeline. See
 the
-[complete example](https://github.com/inclusionAI/AReaL/blob/main/examples/camel/train.py)
+[complete train script](https://github.com/inclusionAI/AReaL/blob/main/examples/camel/train.py)
 for a full working implementation.
+
+## Full Working Example
+
+The full working CAMEL training example is located in
+[**`examples/camel/`**](https://github.com/inclusionAI/AReaL/blob/main/examples/camel/).
+To run the example on a single node:
+
+```bash
+python3 -m areal.launcher.local examples/camel/train.py \
+    --config examples/camel/config.yaml \
+    experiment_name=<your experiment name> \
+    trial_name=<your trial name>
+```
 
 ## Customization
 
@@ -302,22 +304,6 @@ class CamelTaskAgent:
         # ... rest of the logic
 ```
 
-### Custom Reward Functions
-
-Define reward functions that match your task:
-
-```python
-def complex_reward_fn(result, answer):
-    """Custom reward logic for your task."""
-    # Your evaluation logic here
-    score = evaluate_with_your_metric(result, answer)
-    return score
-
-class YourAgent:
-    def __init__(self, ...):
-        self.async_reward_fn = AsyncRewardWrapper(complex_reward_fn)
-```
-
 ### Modifying Agent Behavior
 
 Customize the agent's behavior through CAMEL's configuration options:
@@ -333,10 +319,3 @@ agent = ChatAgent(
 
 Refer to the [CAMEL-AI documentation](https://github.com/camel-ai/camel) for available
 agent types and configuration options.
-
-## Next Steps
-
-- Check out the
-  [complete example](https://github.com/inclusionAI/AReaL/blob/main/examples/camel/) for
-  a full working implementation
-- Learn about [OpenAI-Compatible Workflows](openai_workflows.md) for more details
