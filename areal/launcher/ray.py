@@ -50,6 +50,11 @@ def run_func(file_path, function_name, *args, **kwargs):
 
     # Load the module from file path
     spec = importlib.util.spec_from_file_location(module_name, file_path)
+    if spec is None:
+        raise FileNotFoundError(
+            f"Cannot load module from file path '{file_path}'. "
+            f"Please ensure the file exists and the path is correct."
+        )
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
@@ -383,7 +388,7 @@ def ray_main(config, run_id: int = 0):
         # Launcher should launch SGLang servers according to allocation mode.
         config.sglang = to_structured_cfg(config.sglang, SGLangConfig)
         n_sglang_servers = allocation_mode.gen.dp_size
-        n_sglang_nodes = allocation_mode.gen.world_size // n_gpus_per_node
+        n_sglang_nodes = max(1, allocation_mode.gen.world_size // n_gpus_per_node)
         node_group_size = max(1, allocation_mode.gen_instance_size // n_gpus_per_node)
         n_servers_per_node = max(n_sglang_servers // n_sglang_nodes, 1)
         cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
