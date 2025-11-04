@@ -353,16 +353,6 @@ class WorkflowExecutor:
             tracer.flush(force=True)
         self.runner.destroy()
 
-    def get_pending_limit(self) -> int:
-        """Get the maximum number of pending rollouts allowed.
-
-        Returns
-        -------
-        int
-            Maximum number of pending rollouts (enqueued)
-        """
-        return (self.max_staleness + 1) * self.consumer_batch_size
-
     def get_capacity(self):
         """Get current available capacity for new rollouts.
 
@@ -697,7 +687,7 @@ class WorkflowExecutor:
         while True:
             # Submit at least two batches to allow maximum overlap
             if (
-                len(self._pending_inputs) < self.get_pending_limit()
+                len(self._pending_inputs) < self.staleness_manager.get_pending_limit()
                 and self.runner.get_input_queue_size() + dataloader.batch_size
                 < self.runner.max_queue_size
             ):

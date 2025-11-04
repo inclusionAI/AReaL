@@ -52,6 +52,16 @@ class StalenessManager:
         self.lock = Lock()
         self.rollout_stat = RolloutStat()
 
+    def get_pending_limit(self) -> int:
+        """Get the maximum number of pending rollouts allowed.
+
+        Returns
+        -------
+        int
+            Maximum number of pending rollouts (enqueued)
+        """
+        return (self.max_staleness + 1) * self.consumer_batch_size
+
     def get_capacity(self, current_version: int) -> int:
         """Calculate available capacity for new rollouts.
 
