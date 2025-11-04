@@ -18,8 +18,9 @@ train_dataset:
   type: "rl"
 
 scheduler:
-  endpoint: "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081"
+#  endpoint: "http://asystem-scheduler.asystem-my001-swift.svc.sigma-my001.ml01.sgp-ml.local:8081"
   functioncall_service_domain: "http://110.75.237.19:8080"
+  endpoint: "http://asystem-scheduler.asystem-cluster-prod-1.svc:8081"
   reward_model_path: "/storage/jiulin.jl/Skywork-Reward-V2-Qwen3-8B"
   reward_model_service_url: "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify"
 
@@ -111,8 +112,6 @@ actor: &actor_ref
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   hybrid_engine:
-    experiment_name: ${experiment_name}
-    trial_name: ${trial_name}
     group_size: ${gconfig.n_samples}
     train_bs_n_seqs: ${train_dataset.batch_size}
     max_tokens_per_mb: 16384

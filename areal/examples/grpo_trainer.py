@@ -262,6 +262,9 @@ def main(args):
                         role="actor",
                         alloc_mode=allocation_mode,
                         ft_spec=ft_spec,
+                        group_size=config.gconfig.n_samples,
+                        enable_colocate_mode=config.enable_colocate_mode,
+                        storage_prefix=config.storage_prefix,
                     ),
                     executor.submit(
                         rollout.initialize, role="rollout", alloc_mode=allocation_mode

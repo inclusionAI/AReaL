@@ -5,16 +5,71 @@ the base TrainController and overrides the initialize method.
 """
 
 import asyncio
+import torch
 
-from areal.api.cli_args import TrainEngineConfig
+from torch import Tensor
+from collections.abc import Callable
+from typing import Any
+from areal.extension.asystem.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import AllocationMode, FinetuneSpec
 from areal.api.scheduler_api import Job, Scheduler
 from areal.controller.train_controller import TrainController as BaseTrainController
 from areal.extension.asystem.remote_hybrid_train_worker import RemoteMegatronInitConfig
-from areal.utils import logging
+from areal.utils import logging, stats_tracker
+from areal.controller.batch import DistributedBatch
+from areal.api.io_struct import AllocationMode, SaveLoadMeta, WeightUpdateMeta
 
 logger = logging.getLogger("TrainController")
+
+
+def _execute_parallel_tasks(workers, scheduler, method_name, *args):
+    """Execute tasks in parallel across all workers.
+    
+    This is a helper function to reduce code duplication when executing
+    the same method on all workers with identical parameters.
+    
+    Parameters
+    ----------
+    workers : list
+        List of worker objects
+    scheduler : Scheduler
+        Scheduler instance for async calls
+    method_name : str
+        Name of the method to call on each worker's engine
+    *args, **kwargs
+        Arguments to pass to the method
+        
+    Returns
+    -------
+    list
+        Results from all workers
+        
+    Raises
+    ------
+    RuntimeError
+        If any worker fails to execute the task
+    """
+    tasks = [
+        scheduler.async_call_engine(
+            worker.id, method_name, *args, _should_bcast=False
+        )
+        for worker in workers
+    ]
+    
+    try:
+        return asyncio.run(asyncio.gather(*tasks, return_exceptions=False))
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"{method_name} failed, error: {e}")
+
+
+def _calc_metrics(batch_inputs):
+    # seqlen std
+    seqlens = [td["seqlen"].sum().item() for td in batch_inputs]
+    seqlen_std = torch.tensor(seqlens).float().std().item()
+    stats_tracker.scalar(**{"seqlen_std": seqlen_std})
 
 
 class TrainController(BaseTrainController):
@@ -69,9 +124,16 @@ class TrainController(BaseTrainController):
         self.logger = logging.getLogger("[TrainController]")
 
         # Store configuration
+        self.parallel_strategy = alloc_mode.train
         self._worker_role = role
         self.alloc_mode = alloc_mode
-        self.parallel_strategy = alloc_mode.train
+        self.world_size = self.alloc_mode.train.world_size
+        self.dp_size = self.alloc_mode.train.dp_size
+        self.tp_size = self.alloc_mode.train.tp_size
+        self.pp_size = self.alloc_mode.train.pp_size
+        self.group_size = kwargs.get("group_size")
+        self.enable_colocate_mode = kwargs.get("enable_colocate_mode")
+        self.storage_prefix = kwargs.get("storage_prefix")
 
         # Create job for scheduler
         job = Job(
@@ -99,10 +161,6 @@ class TrainController(BaseTrainController):
         asyncio.run(self._async_create_engines(engine_path))
         asyncio.run(self._async_initialize(job, ft_spec, **kwargs))
 
-        # Identify DP head workers
-        # todo: @chucai, implement this, record rank info in hybrid train worker and implement is_data_parallel_head...
-        # self._identify_dp_heads()
-
         self.logger.info("TrainController initialization complete")
 
     async def _async_initialize(self, job: Job, ft_spec: FinetuneSpec, **kwargs):
@@ -121,7 +179,17 @@ class TrainController(BaseTrainController):
             for worker, init_config in zip(self.workers, init_configs)
         ]
 
-        await asyncio.gather(*tasks)
+        self.rank_info = {}
+        try:
+            gather_results = await asyncio.gather(*tasks, return_exceptions=False)
+        except Exception as e:
+            self.logger.error(f"Initialization failed with error: {e}")
+            raise RuntimeError(f"Failed to initialize workers, error: {e}")
+
+        for worker_index, result in enumerate(gather_results):
+            self.rank_info[worker_index] = result
+            self.logger.info(f"Worker {worker_index} succeeded: {result}")
+
         self.logger.info("All engines are initialized!")
 
     def _build_engine_initialize_config(
@@ -139,3 +207,101 @@ class TrainController(BaseTrainController):
             )
             for index, worker in enumerate(self.workers)
         ]
+
+    def train_batch(
+        self,
+        input_: DistributedBatch,
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    ) -> dict[str, float]:
+        self.logger.info(f"start to train_batch")
+        with (stats_tracker.record_timing("train_batch_data_split"), ):
+            batches = input_.chunk_by_ffd(self.group_size, self.dp_size)
+
+        _calc_metrics(batches)
+
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker.id, "train_batch", batches[self.rank_info[index]["dp_rank"]], _should_bcast=False
+            )
+            for index, worker in enumerate(self.workers)
+        ]
+
+        try:
+            results = asyncio.run(asyncio.gather(*tasks, return_exceptions=False))
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"train_batch failed, error: {e}")
+
+        for worker_result in results:
+            if len(worker_result) > 1:
+                for minibatch in worker_result:
+                    stats_tracker.scalar(**minibatch)
+            else:
+                stats_tracker.scalar(**worker_result[0])
+
+        return {}
+
+    def compute_logp(self, input_: DistributedBatch) -> Tensor:
+        """Update the model with a batch of data and a loss function."""
+        logger.info(f"start to compute_logp")
+        with (
+            stats_tracker.record_timing("compute_logp_data_split"),
+        ):
+            batches = input_.chunk(self.dp_size)
+            tasks = [
+                self.scheduler.async_call_engine(
+                    worker.id, "compute_logprobs", batches[self.rank_info[index]["dp_rank"]], _should_bcast=False
+                )
+                for index, worker in enumerate(self.workers)
+            ]
+
+        try:
+            results = asyncio.run(asyncio.gather(*tasks, return_exceptions=False))
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"compute_logp failed, error: {e}")
+
+        # cat tensor from dp head with padding
+        tensors_from_dp_heads = results[: self.dp_size]
+        if not tensors_from_dp_heads:
+            return torch.tensor([])
+
+        # Find max length in dim 1
+        max_len = max(t.shape[1] for t in tensors_from_dp_heads)
+        max_len_all = max(t.shape[1] for t in results)
+        assert max_len_all == max_len
+        # Pad all tensors to max length
+        padded_tensors = []
+        for t in tensors_from_dp_heads:
+            pad_size = max_len - t.shape[1]
+            padded = torch.nn.functional.pad(t, (0, pad_size), value=0.0)
+            padded_tensors.append(padded)
+
+        # Concatenate along batch dimension
+        concatenated_result = torch.cat(padded_tensors, dim=0)
+        return concatenated_result
+
+    def upload_weights(self, meta: WeightUpdateMeta):
+        """Upload weights to the inference engine."""
+        _execute_parallel_tasks(self.workers, self.scheduler, "upload_weights", meta)
+
+    def save(self, meta: SaveLoadMeta):
+        """Save model weights (and optimizer states) for later use."""
+        _execute_parallel_tasks(self.workers, self.scheduler, "save", meta)
+
+    def load(self, meta: SaveLoadMeta):
+        """Load model weights and optimizer states from a file."""
+        _execute_parallel_tasks(self.workers, self.scheduler, "load", meta)
+
+    def notify_event(self, event: str, global_step: int) -> None:
+        """Notify workers about training start/end events.
+
+        Args:
+            event: "train_start" or "train_end"
+            global_step: Current global step
+        """
+        _execute_parallel_tasks(self.workers, self.scheduler, "notify_event", event, global_step)
+        return None
