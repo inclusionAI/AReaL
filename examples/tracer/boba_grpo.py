@@ -1,7 +1,6 @@
 import os
 import sys
 
-import torch
 import torch.distributed as dist
 from datasets import load_dataset
 
@@ -26,25 +25,22 @@ from areal.workflow.rlvr import RLVRWorkflow
 
 logger = logging.getLogger("boba_grpo")
 
-REWARD_TIMEOUT_SECONDS = 30
-
 
 def get_input_ids_fn(data, tokenizer, enable_thinking):
     user_token = "<｜User｜>"
     assistant_token = "<｜Assistant｜>"
     think_token = "<think>"
-    if user_token in data:
-        data = data.replace("<｜User｜>", "")
-    if assistant_token in data:
-        data = data.replace("<｜Assistant｜>", "")
-    if think_token in data:
-        enable_thinking = True
-        data = data.replace("<think>", "")
+    has_think_token = think_token in data
+    data = (
+        data.replace(user_token, "")
+        .replace(assistant_token, "")
+        .replace(think_token, "")
+    )
     input_ids = tokenizer.apply_chat_template(
         [{"role": "user", "content": data}],
         tokenize=True,
         add_generation_prompt=True,
-        enable_thinking=enable_thinking,
+        enable_thinking=enable_thinking or has_think_token,
     )
     return input_ids
 
@@ -110,12 +106,7 @@ def main(args):
         dataset_config=config.train_dataset,
     )
 
-    device = torch.device(int(os.environ["LOCAL_RANK"]))
     train_dataset_len = len(train_dataloader)
-    dataset_len_tensor = torch.tensor(
-        [train_dataset_len], dtype=torch.long, device=device
-    )
-    train_dataset_len = int(dataset_len_tensor.item())
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=train_dataset_len * config.train_dataset.batch_size,
@@ -281,8 +272,6 @@ def main(args):
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
-
-        rollout.resume()
 
         with (
             stats_tracker.record_timing("save"),
