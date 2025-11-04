@@ -72,7 +72,7 @@ def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
     return torch.mean(logits)
 
 
-@pytest.fixture(scope="module", params=["fsdp"])
+@pytest.fixture(params=["fsdp"])
 def engine(request):
     os.environ.update(
         {
@@ -86,7 +86,10 @@ def engine(request):
 
     engine = get_engine(request.param, MODEL_PATH)
     print(f"✓ {request.param.upper()} Engine created successfully")
-    yield engine
+    try:
+        yield engine
+    finally:
+        engine.destroy()
 
 
 @torch.no_grad()

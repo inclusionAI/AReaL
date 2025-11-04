@@ -282,31 +282,40 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine
     )
     train_engine = FSDPEngine(engine_config)
     train_engine.create_process_group()
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
-    train_engine.initialize(None, ft_spec)
-    train_engine.model_version = 100
+    inf_engine = None
+    try:
+        ft_spec = FinetuneSpec(
+            total_train_epochs=1, dataset_size=100, train_batch_size=2
+        )
+        train_engine.initialize(None, ft_spec)
+        train_engine.model_version = 100
 
-    # setup name resolve
-    import areal.utils.name_resolve as name_resolve
-    from areal.api.cli_args import NameResolveConfig
+        # setup name resolve
+        import areal.utils.name_resolve as name_resolve
+        from areal.api.cli_args import NameResolveConfig
 
-    nfs_record_root = tmp_path_factory.mktemp("nfs_record_path")
-    name_resolve_config = NameResolveConfig(type="nfs", nfs_record_root=nfs_record_root)
-    name_resolve.reconfigure(name_resolve_config)
+        nfs_record_root = tmp_path_factory.mktemp("nfs_record_path")
+        name_resolve_config = NameResolveConfig(
+            type="nfs", nfs_record_root=nfs_record_root
+        )
+        name_resolve.reconfigure(name_resolve_config)
 
-    config = InferenceEngineConfig(
-        experiment_name=inference_engine["expr_name"],
-        trial_name=inference_engine["trial_name"],
-    )
-    # initialize inference engine
-    inf_engine = inference_engine["engine_class"](config)
-    inf_engine.initialize()
-    inf_engine.set_version(100)
+        config = InferenceEngineConfig(
+            experiment_name=inference_engine["expr_name"],
+            trial_name=inference_engine["trial_name"],
+        )
+        # initialize inference engine
+        inf_engine = inference_engine["engine_class"](config)
+        inf_engine.initialize()
+        inf_engine.set_version(100)
 
-    # test update weights
-    path = tmp_path_factory.mktemp("update_weights_from_disk")
-    update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))
-    train_engine.connect_engine(inf_engine, update_weight_meta)
-    train_engine.set_version(100)
-    train_engine.update_weights(update_weight_meta)
-    inf_engine.destroy()
+        # test update weights
+        path = tmp_path_factory.mktemp("update_weights_from_disk")
+        update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))
+        train_engine.connect_engine(inf_engine, update_weight_meta)
+        train_engine.set_version(100)
+        train_engine.update_weights(update_weight_meta)
+    finally:
+        train_engine.destroy()
+        if inf_engine is not None:
+            inf_engine.destroy()
