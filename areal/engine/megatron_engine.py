@@ -1119,7 +1119,6 @@ class MegatronEngine(TrainEngine):
             old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
 
             forward_step_counts[model_vp_stage] += 1
-            forward_step_count += 1
             output = packed_context_parallel_forward(model, batch)
 
             if mpu.is_pipeline_last_stage(
