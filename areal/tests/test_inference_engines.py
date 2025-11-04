@@ -7,6 +7,7 @@ import time
 
 import pytest
 import requests
+import torch.distributed as dist
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
@@ -44,13 +45,10 @@ def _dummy_reward_fn(*args, **kwargs):
     return 1.0
 
 
-@pytest.fixture(
-    params=[("vllm", "remote"), ("sglang", "remote")],
-    ids=["vllm-remote", "sglang-remote"],
-)
+@pytest.fixture(params=["vllm", "sglang"], scope="module")
 def inference_engine(request):
     """Fixture for remote inference engines only (vLLM and SGLang)."""
-    backend, mode = request.param
+    backend = request.param
 
     # Skip if vLLM is not installed
     if backend == "vllm" and not IS_VLLM_INSTALLED:
@@ -70,7 +68,8 @@ def inference_engine(request):
     sglang_config = SGLangConfig(
         skip_tokenizer_init=True,
         model_path=MODEL_PATH,
-        mem_fraction_static=0.1,
+        mem_fraction_static=0.2,
+        context_length=128,
     )
     sglang_args = SGLangConfig.build_args(
         sglang_config=sglang_config,
@@ -85,8 +84,8 @@ def inference_engine(request):
     vllm_config = vLLMConfig(
         skip_tokenizer_init=False,
         model=MODEL_PATH,
-        gpu_memory_utilization=0.1,
-        max_model_len=4096,
+        gpu_memory_utilization=0.2,
+        max_model_len=128,
     )
     vllm_args = vLLMConfig.build_args(
         vllm_config=vllm_config,
@@ -94,11 +93,6 @@ def inference_engine(request):
         pp_size=1,
         host=host,
         port=port,
-    )
-
-    config = InferenceEngineConfig(
-        experiment_name=expr_name,
-        trial_name=trial_name,
     )
 
     # Launch remote server and initialize engine
@@ -114,40 +108,45 @@ def inference_engine(request):
         engine_class = RemoteSGLangEngine
 
     # Launch process
-    cmd = cmd.replace("\\\n", " ").replace("\\", " ")
     process = subprocess.Popen(
-        cmd.split(),
-        text=True,
+        cmd,
         stdout=sys.stdout,
         stderr=sys.stdout,
     )
     base_url = f"http://{host}:{port}"
     tik = time.time()
-    while time.time() - tik < RUN_SERVER_TIMEOUT:
-        if check_server_health(base_url):
-            break
-        time.sleep(1)
-    if time.time() - tik > RUN_SERVER_TIMEOUT:
+    try:
+        while time.time() - tik < RUN_SERVER_TIMEOUT:
+            if check_server_health(base_url):
+                break
+            time.sleep(1)
+        if time.time() - tik > RUN_SERVER_TIMEOUT:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise RuntimeError(f"{backend.upper()} server launch failed")
+
+        # Set environment for remote engine
+        os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{host}:{port}"
+
+        yield {
+            "engine_class": engine_class,
+            "expr_name": expr_name,
+            "trial_name": trial_name,
+            "host": host,
+            "port": port,
+        }
+    finally:
+        # Cleanup - ensure process is fully terminated
         process.terminate()
-        raise RuntimeError(f"{backend.upper()} server launch failed")
-
-    # Set environment for remote engine
-    os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{host}:{port}"
-
-    engine = engine_class(config)
-
-    yield {
-        "engine": engine,
-        "backend": backend,
-        "mode": mode,
-        "expr_name": expr_name,
-        "trial_name": trial_name,
-        "host": host,
-        "port": port,
-    }
-
-    # Cleanup
-    process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 
 # ============================================================================
@@ -156,6 +155,8 @@ def inference_engine(request):
 
 
 @pytest.mark.parametrize("n_samples", [1, 2, 4])
+@pytest.mark.slow
+@pytest.mark.ci
 def test_rollout(inference_engine, n_samples):
     """Test engine rollout with different sample sizes."""
     from areal.workflow.rlvr import RLVRWorkflow
@@ -168,8 +169,7 @@ def test_rollout(inference_engine, n_samples):
         enable_rollout_tracing=True,
     )
 
-    engine = inference_engine["engine"]
-    engine.configure(config)
+    engine = inference_engine["engine_class"](config)
     engine.initialize()
 
     gconfig = GenerationHyperparameters(
@@ -192,11 +192,14 @@ def test_rollout(inference_engine, n_samples):
     bs = get_batch_size(result)
     assert bs == 2 * n_samples
     engine.destroy()
+    assert not dist.is_initialized()
 
 
 @pytest.mark.parametrize("ofp", [0, 1, 4, 16])
 @pytest.mark.parametrize("bs", [2, 4])
 @pytest.mark.parametrize("n_samples", [2, 1])
+@pytest.mark.slow
+@pytest.mark.ci
 def test_staleness_control(inference_engine, bs, ofp, n_samples):
     """Test engine staleness control mechanism."""
     from areal.workflow.rlvr import RLVRWorkflow
@@ -206,14 +209,10 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         trial_name=inference_engine["trial_name"],
         consumer_batch_size=bs,
         max_head_offpolicyness=ofp,
-        enable_rollout_tracing=(
-            inference_engine["backend"] == "sglang"
-            and inference_engine["mode"] == "remote"
-        ),
+        enable_rollout_tracing=True,
     )
 
-    engine = inference_engine["engine"]
-    engine.configure(config)
+    engine = inference_engine["engine_class"](config)
     engine.initialize()
 
     gconfig = GenerationHyperparameters(
@@ -259,8 +258,11 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         assert results["attention_mask"].shape[0] == bs * 2 * n_samples
 
     engine.destroy()
+    assert not dist.is_initialized()
 
 
+@pytest.mark.slow
+@pytest.mark.ci
 def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine):
     """Test disk-based weight updates from FSDP engine to inference engine."""
 
@@ -283,27 +285,41 @@ def test_disk_update_weights_from_fsdp_engine(tmp_path_factory, inference_engine
     )
     train_engine = FSDPEngine(engine_config)
     train_engine.create_process_group()
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=100, train_batch_size=2)
-    train_engine.initialize(None, ft_spec)
-    train_engine.model_version = 100
+    inf_engine = None
+    try:
+        ft_spec = FinetuneSpec(
+            total_train_epochs=1, dataset_size=100, train_batch_size=2
+        )
+        train_engine.initialize(None, ft_spec)
+        train_engine.model_version = 100
 
-    # setup name resolve
-    import areal.utils.name_resolve as name_resolve
-    from areal.api.cli_args import NameResolveConfig
+        # setup name resolve
+        import areal.utils.name_resolve as name_resolve
+        from areal.api.cli_args import NameResolveConfig
 
-    nfs_record_root = tmp_path_factory.mktemp("nfs_record_path")
-    name_resolve_config = NameResolveConfig(type="nfs", nfs_record_root=nfs_record_root)
-    name_resolve.reconfigure(name_resolve_config)
+        nfs_record_root = tmp_path_factory.mktemp("nfs_record_path")
+        name_resolve_config = NameResolveConfig(
+            type="nfs", nfs_record_root=nfs_record_root
+        )
+        name_resolve.reconfigure(name_resolve_config)
 
-    # initialize inference engine
-    inf_engine = inference_engine["engine"]
-    inf_engine.initialize()
-    inf_engine.set_version(100)
+        config = InferenceEngineConfig(
+            experiment_name=inference_engine["expr_name"],
+            trial_name=inference_engine["trial_name"],
+        )
+        # initialize inference engine
+        inf_engine = inference_engine["engine_class"](config)
+        inf_engine.initialize()
+        inf_engine.set_version(100)
 
-    # test update weights
-    path = tmp_path_factory.mktemp("update_weights_from_disk")
-    update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))
-    train_engine.connect_engine(inf_engine, update_weight_meta)
-    train_engine.set_version(100)
-    train_engine.update_weights(update_weight_meta)
-    inf_engine.destroy()
+        # test update weights
+        path = tmp_path_factory.mktemp("update_weights_from_disk")
+        update_weight_meta = WeightUpdateMeta(type="disk", path=str(path))
+        train_engine.connect_engine(inf_engine, update_weight_meta)
+        train_engine.set_version(100)
+        train_engine.update_weights(update_weight_meta)
+    finally:
+        train_engine.destroy()
+        if inf_engine is not None:
+            inf_engine.destroy()
+        assert not dist.is_initialized()

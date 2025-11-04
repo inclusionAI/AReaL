@@ -48,10 +48,8 @@ def sglang_server():
         dist_init_addr=f"{HOST}:{DIST_PORT}",
     )
     # Launch process
-    cmd = cmd.replace("\\\n", " ").replace("\\", " ")
     process = subprocess.Popen(
-        cmd.split(),
-        text=True,
+        cmd,
         stdout=sys.stdout,
         stderr=sys.stdout,
     )

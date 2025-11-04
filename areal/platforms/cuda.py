@@ -55,8 +55,6 @@ class CudaPlatform(Platform):
             # "RAY_DEBUG": "legacy"
             "TORCHINDUCTOR_COMPILE_THREADS": "2",
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-            "NCCL_CUMEM_ENABLE": "0",  # https://github.com/NVIDIA/nccl/issues/1234
-            "NCCL_NVLS_ENABLE": "0",
         }
         return env_vars
 

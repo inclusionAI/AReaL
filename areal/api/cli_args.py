@@ -592,6 +592,24 @@ class PPOCriticConfig(TrainEngineConfig):
     )
 
 
+def get_py_cmd(module: str, args: dict[str, Any]):
+    # convert to flags
+    cmd = ["python3", "-m", module]
+    for k, v in args.items():
+        if v is None or v is False or v == "" or (isinstance(v, list) and not v):
+            continue
+        flag = f"--{k.replace('_', '-')}"
+        if v is True:
+            cmd.append(flag)
+        elif isinstance(v, list):
+            cmd.append(flag)
+            cmd.extend(map(str, v))
+        else:
+            cmd.append(flag)
+            cmd.append(str(v))
+    return cmd
+
+
 @dataclass
 class vLLMConfig:
     """Configuration for vLLM runtime. Refer to:
@@ -654,18 +672,7 @@ class vLLMConfig:
 
     @staticmethod
     def build_cmd_from_args(args: dict[str, Any]):
-        # convert to flags
-        flags = []
-        for k, v in args.items():
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_', '-')}")
-            elif isinstance(v, list):
-                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
-            else:
-                flags.append(f"--{k.replace('_', '-')} {v}")
-        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
+        return get_py_cmd("areal.thirdparty.vllm.areal_vllm_server", args)
 
     @staticmethod
     def build_cmd(
@@ -786,28 +793,15 @@ class SGLangConfig:
 
     @staticmethod
     def build_cmd_from_args(args: dict[str, Any]):
-        # convert to flags
-        flags = []
-        for k, v in args.items():
-            if is_version_less("sglang", "0.4.10.post2") and "max_loaded_loras" in k:
-                continue
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_', '-')}")
-            elif isinstance(v, list):
-                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
-            else:
-                flags.append(f"--{k.replace('_', '-')} {v}")
-        return f"python3 -m sglang.launch_server {' '.join(flags)}"
+        return get_py_cmd("sglang.launch_server", args)
 
     @staticmethod
     def build_args(
         sglang_config: "SGLangConfig",
-        tp_size,
-        base_gpu_id,
-        host=None,
-        port=None,
+        tp_size: int,
+        base_gpu_id: int,
+        host: str | None = None,
+        port: str | None = None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
@@ -857,6 +851,8 @@ class SGLangConfig:
             args["port"] = port
         if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"):
             raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
+        if is_version_less("sglang", "0.4.10.post2"):
+            args.pop("max_loaded_loras", None)
         return args
 
 

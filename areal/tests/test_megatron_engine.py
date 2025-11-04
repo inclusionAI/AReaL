@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 import torch
+import torch.distributed as dist
 from transformers import AutoTokenizer
 
 from areal.api.alloc_mode import AllocationMode
@@ -63,7 +64,8 @@ def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
     return torch.mean(logits)
 
 
-@pytest.fixture(scope="module")
+# Cannot use a "module" scope since process groups can only be initialized once.
+@pytest.fixture
 def engine():
     logger.info(f"megatron.core version={get_version('megatron.core')}")
     os.environ.update(
@@ -89,8 +91,11 @@ def engine():
     engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
     logger.info(f"mcore GPTModel initialized: {engine.model}")
     log_gpu_stats("initialize")
-    yield engine
-    engine.destroy()
+    try:
+        yield engine
+    finally:
+        engine.destroy()
+        assert not dist.is_initialized()
 
 
 def test_simple_forward(engine, mock_input):
