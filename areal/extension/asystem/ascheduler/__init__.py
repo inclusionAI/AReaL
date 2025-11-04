@@ -227,8 +227,9 @@ class AsystemScheduler(Scheduler):
             EngineCallError: If the method call fails.
         """
         logger.info(f"Async calling '{method}' on worker {worker_id}")
+        max_retries = kwargs.pop("max_retries", 3)
         return await self.rpc_client.async_call_engine(
-            worker_id, method, 3, *args, **kwargs
+            worker_id, method, max_retries, *args, **kwargs
         )
 
     async def create_engine(self, worker_id: str, engine: str, *args, **kwargs) -> Any:

@@ -301,7 +301,7 @@ class RolloutController:
         tik = time.time()
         while result == "NO_RESULT" and time.time() - tik < self.config.request_timeout:
             result = await self.scheduler.async_call_engine(
-                worker.id, "wait_quiet", count=1, timeout=1, max_retries=1
+                worker.id, "wait_quiet", count=1, timeout=3600, max_retries=1
             )
 
         # The RPCServer will return None if the
@@ -402,6 +402,8 @@ class RolloutController:
             # Check capacity before submitting
             capacity = self.get_capacity()
             # Submit pending tasks
+            self.logger.info(f"Capacity: {capacity}, pending inputs: {len(self._pending_inputs)}")
+
             for _ in range(capacity):
                 if len(self._pending_inputs) == 0:
                     break
@@ -544,6 +546,7 @@ class RolloutController:
                         # Capacity exhausted during batch submission, stop and wait
                         break
             try:
+                self.logger.info("Wait for batch...")
                 return self.wait(dataloader.batch_size, timeout=1)
             except TimeoutError:
                 pass

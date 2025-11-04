@@ -54,6 +54,10 @@ rollout:
   model_path: ${tokenizer_path}
   storage_path: "${storage_prefix}/checkpoints"
   seed: ${seed}
+  max_concurrent_rollouts: 64
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
   engine_config:
     attention_backend: "triton"
     disable_custom_all_reduce: true

@@ -97,6 +97,7 @@ class StalenessManager:
 
             # Return the minimum of both constraints
             capacity = min(concurrency_capacity, staleness_capacity)
+            print(f"Capacity: {capacity}, max_concurrent_rollouts: {max_concurrent_rollouts}, rollout_stat: {self.rollout_stat}, consumer_bs: {consumer_bs}")
             return capacity
 
     def on_rollout_submitted(self) -> None:
