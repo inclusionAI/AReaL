@@ -86,10 +86,12 @@ def inference_engine(request):
         skip_tokenizer_init=False,
         model=MODEL_PATH,
         gpu_memory_utilization=0.1,
+        max_model_len=4096,
     )
     vllm_args = vLLMConfig.build_args(
         vllm_config=vllm_config,
         tp_size=1,
+        pp_size=1,
         host=host,
         port=port,
     )

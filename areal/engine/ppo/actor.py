@@ -7,7 +7,7 @@ from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
-from areal.utils import stats_tracker
+from areal.utils import logging, stats_tracker
 from areal.utils.data import (
     KLEstimator,
     Normalization,
@@ -20,6 +20,8 @@ from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PPOActor:
@@ -47,6 +49,22 @@ class PPOActor:
 
         self.temperature = config.temperature
         self.dynamic_sampling = config.dynamic_sampling
+
+        self.m2_threshold = config.m2_threshold
+
+        # Log critical GSPO/GRPO configuration for reproducibility
+        logger.info("PPOActor Configuration:")
+        logger.info(
+            f"  importance_sampling_level: {getattr(config, 'importance_sampling_level', 'NOT SET (defaults to token)')}"
+        )
+        logger.info(
+            f"  adv_norm: {config.adv_norm if config.adv_norm else 'DISABLED (None)'}"
+        )
+        logger.info(
+            f"  reward_norm: {config.reward_norm if config.reward_norm else 'DISABLED (None)'}"
+        )
+        logger.info(f"  eps_clip: {config.eps_clip}")
+        logger.info(f"  group_size: {config.group_size}")
 
     @torch.no_grad()
     def compute_logp(
@@ -258,6 +276,8 @@ class PPOActor:
                         eps_clip_higher=self.config.eps_clip_higher,
                         c_clip=self.config.c_clip,
                         behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                        m2_threshold=self.m2_threshold,
+                        importance_sampling_level=self.config.importance_sampling_level,
                     ),
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
@@ -307,6 +327,8 @@ def grpo_loss_fn(
     eps_clip_higher: float | None,
     c_clip: float | None,
     behav_imp_weight_cap: float | None,
+    m2_threshold: float | None = None,
+    importance_sampling_level: str = "token",
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
@@ -323,6 +345,29 @@ def grpo_loss_fn(
 
     logprobs, entropy = gather_logprobs_entropy(logits, labels, temperature)
     entropy = entropy.detach()
+
+    # If m2_threshold is set, use M2PO loss function.
+    if m2_threshold is not None:
+        delta = old_logp - prox_logp
+        m2 = delta * delta
+        mask_flat = loss_mask.view(-1)
+        m2_selected = m2.view(-1)[mask_flat]
+        if m2_selected.numel() == 0:
+            full_loss_mask = loss_mask
+        else:
+            sorted_m2, indices = torch.sort(m2_selected, descending=True)
+            restored_indices = torch.argsort(indices)
+            sorted_m2_loss_mask = get_m2po_loss_mask(
+                sorted_m2=sorted_m2, m2_threshold=m2_threshold
+            )
+            m2_selected_mask = sorted_m2_loss_mask[restored_indices]
+            m2_full_flat = torch.zeros_like(
+                mask_flat, dtype=torch.bool, device=loss_mask.device
+            )
+            m2_full_flat[mask_flat] = m2_selected_mask
+            full_loss_mask = m2_full_flat.view_as(loss_mask)
+        loss_mask = full_loss_mask
+
     loss, stat = ppo_actor_loss_fn(
         logprobs=logprobs,
         old_logprobs=old_logp,
@@ -333,6 +378,8 @@ def grpo_loss_fn(
         c_clip=c_clip,
         proximal_logprobs=prox_logp,
         behav_imp_weight_cap=behav_imp_weight_cap,
+        importance_sampling_level=importance_sampling_level,
+        cu_seqlens=input_data.get("cu_seqlens"),
     )
 
     # Log training statistics
@@ -378,3 +425,43 @@ def grpo_loss_fn(
         denominator="clipped_tokens",
     )
     return loss
+
+
+def get_m2po_loss_mask(
+    sorted_m2: torch.Tensor,
+    m2_threshold: float,
+) -> torch.Tensor:
+    """
+    Get the mask for M2PO loss based on the second-momentum threshold.
+    Mask the tokens whose second-momentum is the largest, until the average second-momentum is below the threshold.
+    """
+    n = sorted_m2.numel()
+    if n == 0:
+        return torch.ones_like(sorted_m2, dtype=torch.bool)
+
+    # Suffix sums: S[i] = sum(sorted_m2[i:])
+    suffix_sums = sorted_m2.flip(0).cumsum(0).flip(0)
+
+    # Number of elements in suffix: N[i] = n - i
+    counts = torch.arange(n, 0, -1, device=sorted_m2.device, dtype=sorted_m2.dtype)
+
+    # Average of suffix: A[i] = S[i] / N[i]
+    avg_m2_suffix = suffix_sums / counts
+
+    # Find the first index `k` where the average of the rest is below threshold.
+    below_threshold_indices = torch.where(avg_m2_suffix < m2_threshold)[0]
+
+    if len(below_threshold_indices) > 0:
+        num_to_mask = below_threshold_indices[0].item()
+    else:
+        # All suffix averages are >= threshold. Mask all but one to satisfy assertion.
+        num_to_mask = n - 1
+
+    loss_mask = torch.ones_like(sorted_m2, dtype=torch.bool)
+    if num_to_mask > 0:
+        loss_mask[:num_to_mask] = False
+
+    if loss_mask.sum() == 0:
+        raise RuntimeError("All tokens are masked out when getting the m2po loss mask.")
+
+    return loss_mask

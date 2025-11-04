@@ -119,7 +119,7 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 
 | Backend    | Tensor Parallel | Context Parallel | Pipeline Parallel | Data Parallel Attention | Expert Parallel |
 | ---------- | --------------- | ---------------- | ----------------- | ----------------------- | --------------- |
-| **vLLM**   | ✅              | ❓               | ❓                | ❓                      | ❓              |
+| **vLLM**   | ✅              | ❓               | ✅                | ❓                      | ❓              |
 | **SGLang** | ✅              | ❌               | ❌                | ✅                      | ✅              |
 
 ## 🚀 Getting Started

@@ -115,11 +115,9 @@ class VLLMBackend:
     ) -> HttpRequest:
         """Build vLLM init weights group request."""
         assert meta.alloc_mode is not None
-        if meta.alloc_mode.gen.pp_size != 1:
-            raise NotImplementedError(
-                "NCCL weight update with PP size > 1 is not implemented yet."
-            )
-        rank_offset = 1 + server_idx * meta.alloc_mode.gen.tp_size
+        rank_offset = (
+            1 + server_idx * meta.alloc_mode.gen.tp_size * meta.alloc_mode.gen.pp_size
+        )
         payload = {
             "master_address": meta.nccl_master_address,
             "master_port": str(meta.nccl_master_port),

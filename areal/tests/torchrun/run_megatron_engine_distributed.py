@@ -197,7 +197,6 @@ def test_forward(model_type: str, alloc_mode: str, output: str | None = None):
     dist.barrier()
     fsdp_engine.destroy()
     engine.destroy()
-    engine.destroy_process_groups()
 
     print(f"Test: test_forward(model_type={model_type}, alloc_mode={alloc_mode}) Done.")
     if rank == 0 and output is not None:
@@ -241,7 +240,6 @@ def test_train(model_type: str, alloc_mode: str, output: str | None = None):
     current_platform.synchronize()
     dist.barrier()
     engine.destroy()
-    engine.destroy_process_groups()
 
     if rank == 0 and output is not None:
         write_result(output, True)
@@ -343,7 +341,6 @@ def test_train_dcp_save_load(
     dist.barrier()
 
     engine.destroy()
-    engine.destroy_process_groups()
 
     if output:
         write_result(output, True)
@@ -406,7 +403,6 @@ def test_simple_dcp_save_load(
     dist.barrier()
 
     engine.destroy()
-    engine.destroy_process_groups()
 
     if output:
         write_result(output, True)

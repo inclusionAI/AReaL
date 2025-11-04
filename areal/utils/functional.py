@@ -1,6 +1,6 @@
 import functools
 import warnings
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import torch
@@ -130,7 +130,7 @@ def gather_logprobs_entropy(
 @torch.no_grad()
 def masked_normalization(
     x: torch.Tensor,
-    mask: Optional[torch.Tensor] = None,
+    mask: torch.Tensor | None = None,
     dim=None,
     unbiased=False,
     eps=1e-5,
@@ -168,6 +168,100 @@ def masked_normalization(
     return ((x - mean) / (var.sqrt() + eps)).float()
 
 
+def _compute_sequence_level_ratio_and_advantages(
+    log_ratio: torch.Tensor,
+    advantages: torch.Tensor,
+    loss_mask: torch.Tensor,
+    cu_seqlens: torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute sequence-level geometric mean ratios and average advantages per sequence (GSPO).
+
+    Args:
+        log_ratio: Log of probability ratios (logprobs - proximal_logprobs)
+        advantages: Per-token advantages
+        loss_mask: Boolean mask indicating valid tokens
+        cu_seqlens: Cumulative sequence lengths. Required for 1D tensors (packed format).
+            Shape: [batch_size + 1], where cu_seqlens[i] marks the start of sequence i.
+            For a single sequence, use cu_seqlens=torch.tensor([0, seq_len]).
+
+    Returns:
+        ratio: Sequence-level importance sampling ratios (broadcast to all tokens)
+        advantages: Sequence-averaged advantages (broadcast to all tokens)
+            Note: We use mean instead of sum to keep gradient magnitude independent
+            of sequence length. When multiplied by ratio and summed over tokens,
+            this gives the correct total gradient contribution per sequence.
+    """
+    # Handle both 1D (packed) and 2D (padded) tensor shapes
+    if log_ratio.ndim == 1:
+        # For 1D tensors (packed format), cu_seqlens is required
+        if cu_seqlens is None:
+            raise ValueError(
+                "cu_seqlens is required for 1D tensors (packed format). "
+                "In AReaL, 1D tensors are produced by pack_tensor_dict() and always have cu_seqlens. "
+                "For a single sequence, use cu_seqlens=torch.tensor([0, seq_len], dtype=torch.int32)."
+            )
+
+        # Packed sequences: use cu_seqlens boundaries
+        batch_size = cu_seqlens.shape[0] - 1
+        seq_lengths = cu_seqlens[1:] - cu_seqlens[:-1]
+        # Create sequence index for each token: [0,0,0,1,1,2,2,2,2,...]
+        sequence_idx = torch.arange(
+            batch_size, device=log_ratio.device
+        ).repeat_interleave(seq_lengths)
+
+        # Use scatter_add for vectorized summation per sequence (faster than Python loop)
+        masked_log_ratio = torch.where(loss_mask, log_ratio, 0.0)
+        log_ratio_sum_per_seq = torch.zeros(
+            batch_size, device=log_ratio.device, dtype=log_ratio.dtype
+        ).scatter_add_(0, sequence_idx, masked_log_ratio)
+
+        masked_advantages = torch.where(loss_mask, advantages, 0.0)
+        advantages_sum_per_seq = torch.zeros(
+            batch_size, device=advantages.device, dtype=advantages.dtype
+        ).scatter_add_(0, sequence_idx, masked_advantages)
+
+        valid_count_per_seq = (
+            torch.zeros(batch_size, device=loss_mask.device, dtype=torch.int32)
+            .scatter_add_(0, sequence_idx, loss_mask.int())
+            .clamp(min=1)
+        )
+
+        # Compute sequence-level means
+        log_ratio_mean_per_seq = log_ratio_sum_per_seq / valid_count_per_seq.to(
+            log_ratio.dtype
+        )
+        adv_mean_per_seq = advantages_sum_per_seq / valid_count_per_seq.to(
+            advantages.dtype
+        )
+
+        # Broadcast sequence-level values back to token-level
+        ratio = torch.exp(log_ratio_mean_per_seq)[sequence_idx]
+        ratio = torch.where(loss_mask, ratio, 0.0)
+
+        advantages = adv_mean_per_seq[sequence_idx]
+        advantages = torch.where(loss_mask, advantages, 0.0)
+    else:
+        # For 2D tensors (padded sequences)
+        # Input shape: [batch_size, seq_len]
+        # Compute mean log ratio over sequence length for each sample
+        seq_log_ratio_mean = torch.where(loss_mask, log_ratio, 0.0).sum(dim=1) / (
+            loss_mask.sum(dim=1).clamp(min=1)
+        )
+        # Broadcast back to original shape: each sequence gets its own geometric mean ratio
+        ratio = torch.exp(seq_log_ratio_mean.unsqueeze(1).expand_as(log_ratio))
+        # Apply mask
+        ratio = torch.where(loss_mask, ratio, 0.0)
+
+        # Average token advantages per sequence
+        # This ensures gradient magnitude is independent of sequence length
+        seq_lengths = loss_mask.sum(dim=-1, keepdim=True).clamp(min=1)
+        advantages = (advantages.sum(dim=-1, keepdim=True) / seq_lengths).expand_as(
+            log_ratio
+        )
+
+    return ratio, advantages
+
+
 def ppo_actor_loss_fn(
     logprobs: torch.Tensor,
     proximal_logprobs: torch.Tensor,
@@ -175,10 +269,12 @@ def ppo_actor_loss_fn(
     advantages: torch.Tensor,
     eps_clip: float,
     loss_mask: torch.Tensor,
-    eps_clip_higher: Optional[float] = None,
-    c_clip: Optional[float] = None,
-    behav_imp_weight_cap: Optional[float] = None,
-) -> Tuple[torch.Tensor, Dict]:
+    eps_clip_higher: float | None = None,
+    c_clip: float | None = None,
+    behav_imp_weight_cap: float | None = None,
+    importance_sampling_level: str = "token",
+    cu_seqlens: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict]:
     """
     When decoupled loss is disabled:
     1. if recompute logp, both old_logprobs and proximal_logprobs are recomputed logp;
@@ -186,9 +282,32 @@ def ppo_actor_loss_fn(
 
     When decoupled loss is enabled, proximal_logprobs is the recomputed logp,
     old_logprobs is produced by the inference engine.
+
+    Args:
+        importance_sampling_level: Level at which to compute importance sampling ratios.
+            - 'token': Per-token ratios
+            - 'sequence': Sequence-level geometric mean of per-token ratios (GSPO)
+        cu_seqlens: Cumulative sequence lengths for packed sequences (1D tensors).
+            Required when inputs are 1D and importance_sampling_level='sequence'.
+            Shape: [batch_size + 1], where cu_seqlens[i] marks the start of sequence i.
+            Not needed for 2D padded inputs (sequences identified by batch dimension).
     """
     loss_mask_count = loss_mask.count_nonzero() or 1
-    ratio = torch.where(loss_mask, torch.exp(logprobs - proximal_logprobs), 0)
+
+    if importance_sampling_level == "sequence":
+        # GSPO: Compute sequence-level geometric mean of probability ratios
+        log_ratio = logprobs - proximal_logprobs
+        ratio, advantages = _compute_sequence_level_ratio_and_advantages(
+            log_ratio, advantages, loss_mask, cu_seqlens
+        )
+    elif importance_sampling_level == "token":
+        # Standard PPO: per-token ratio
+        ratio = torch.where(loss_mask, torch.exp(logprobs - proximal_logprobs), 0)
+    else:
+        raise ValueError(
+            f"Invalid importance_sampling_level: {importance_sampling_level}. "
+            "Must be 'token' or 'sequence'."
+        )
 
     clipped_ratio = torch.clamp(
         ratio,
@@ -249,9 +368,9 @@ def ppo_critic_loss_fn(
     old_value: torch.FloatTensor,
     target_value: torch.FloatTensor,
     value_eps_clip: float,
-    loss_mask: Optional[torch.Tensor] = None,
+    loss_mask: torch.Tensor | None = None,
     loss_fn_type: str = "mse",
-) -> Tuple[torch.Tensor, Dict]:
+) -> tuple[torch.Tensor, dict]:
     """Compute PPO critic loss function given padded batch inputs.
 
     There is no shape requirements for the inputs, but they must have the same shape.
@@ -312,8 +431,8 @@ def ppo_critic_loss_fn(
 
 
 def dynamic_sampling(
-    data: Dict[str, Any], group_size: int
-) -> Tuple[Dict[str, Any], Dict[str, int]]:
+    data: dict[str, Any], group_size: int
+) -> tuple[dict[str, Any], dict[str, int]]:
     """Filter samples by group when all rewards in a group are equal.
 
     Assumes samples of the same group are adjacent in the batch.
@@ -362,7 +481,7 @@ def dynamic_sampling(
     n_group_filtered = int(num_groups - n_group_kept)
 
     # Apply mask row-wise across tensors that share the same batch dimension
-    filtered: Dict[str, Any] = {}
+    filtered: dict[str, Any] = {}
     for k, v in data.items():
         if torch.is_tensor(v) and v.shape[:1] == (batch_size,):
             filtered[k] = v[mask]
@@ -374,11 +493,11 @@ def dynamic_sampling(
 
 # code modified from VERL: https://github.com/volcengine/verl/blob/main/verl/workers/reward_manager/dapo.py
 def reward_overlong_penalty(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     overlong_tokens: int,
     overlong_penalty_factor: float,
     max_response_length: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     reward_score = data["rewards"]
     input_ids = data["input_ids"]
     response_lengths = (data["loss_mask"].sum(dim=-1)).long()

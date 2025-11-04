@@ -142,6 +142,7 @@ class AEntPPOActor(PPOActor):
                     entropy_clamp=self.entropy_clamp,
                     c_clip=self.config.c_clip,
                     behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                    importance_sampling_level=self.config.importance_sampling_level,
                 ),
                 loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
             )
@@ -192,6 +193,7 @@ def aent_grpo_loss_fn(
     eps_clip_higher: float | None,
     c_clip: float | None,
     behav_imp_weight_cap: float | None,
+    importance_sampling_level: str = "token",
 ):
     labels = input_data.get(
         "rolled_input_ids",
@@ -220,6 +222,7 @@ def aent_grpo_loss_fn(
         c_clip=c_clip,
         proximal_logprobs=prox_logp,
         behav_imp_weight_cap=behav_imp_weight_cap,
+        importance_sampling_level=importance_sampling_level,
     )
     # add AEnt's clamped entropy regularizer
     clamped_entropy_loss = clamped_entropy_loss_fn(clamped_entropy, loss_mask)

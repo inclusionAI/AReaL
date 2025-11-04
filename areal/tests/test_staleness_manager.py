@@ -12,6 +12,13 @@ import pytest
 from areal.core.staleness_manager import StalenessManager
 
 
+def enqueue_and_submit(manager: StalenessManager, count: int = 1) -> None:
+    """Convenience helper to enqueue and submit rollouts sequentially."""
+    for _ in range(count):
+        manager.on_rollout_enqueued()
+        manager.on_rollout_submitted()
+
+
 class TestStalenessManagerBasics:
     """Test basic functionality of StalenessManager."""
 
@@ -28,7 +35,7 @@ class TestStalenessManagerBasics:
         assert manager.max_staleness == 2
 
         stats = manager.get_stats()
-        assert stats.submitted == 0
+        assert stats.enqueued == 0
         assert stats.accepted == 0
         assert stats.running == 0
 
@@ -71,8 +78,7 @@ class TestCapacityCalculations:
         )
 
         # Submit 3 rollouts
-        for _ in range(3):
-            manager.on_rollout_submitted()
+        enqueue_and_submit(manager, count=3)
 
         capacity = manager.get_capacity(current_version=0)
         assert capacity == 2  # 5 - 3 = 2 remaining
@@ -118,8 +124,7 @@ class TestCapacityCalculations:
         )
 
         # Submit 3 rollouts
-        for _ in range(3):
-            manager.on_rollout_submitted()
+        enqueue_and_submit(manager, count=3)
 
         # Concurrency capacity: 10 - 3 = 7
         # Staleness capacity: (2 + 0 + 1) * 4 - 3 = 12 - 3 = 9
@@ -137,6 +142,7 @@ class TestCapacityCalculations:
 
         # Submit and accept 5 rollouts
         for _ in range(5):
+            manager.on_rollout_enqueued()
             manager.on_rollout_submitted()
             manager.on_rollout_accepted()
 
@@ -156,8 +162,7 @@ class TestCapacityCalculations:
         )
 
         # Submit 5 rollouts (at concurrency limit)
-        for _ in range(5):
-            manager.on_rollout_submitted()
+        enqueue_and_submit(manager, count=5)
 
         # Concurrency: 5 - 5 = 0
         # Staleness: (5 + 0 + 1) * 2 - 5 = 12 - 5 = 7 (not limiting)
@@ -173,8 +178,7 @@ class TestCapacityCalculations:
         )
 
         # Submit 10 rollouts (way over limit)
-        for _ in range(10):
-            manager.on_rollout_submitted()
+        enqueue_and_submit(manager, count=10)
 
         capacity = manager.get_capacity(current_version=0)
         assert capacity < 0
@@ -204,12 +208,14 @@ class TestRolloutLifecycle:
             max_staleness=2,
         )
 
+        manager.on_rollout_enqueued()
         manager.on_rollout_submitted()
 
         stats = manager.get_stats()
-        assert stats.submitted == 1
+        assert stats.enqueued == 0
         assert stats.running == 1
         assert stats.accepted == 0
+        assert stats.rejected == 0
 
     def test_accept_updates_counters(self):
         """Test that accepting a rollout updates counters correctly."""
@@ -219,13 +225,15 @@ class TestRolloutLifecycle:
             max_staleness=2,
         )
 
+        manager.on_rollout_enqueued()
         manager.on_rollout_submitted()
         manager.on_rollout_accepted()
 
         stats = manager.get_stats()
-        assert stats.submitted == 1
+        assert stats.enqueued == 0
         assert stats.running == 0  # Decremented
         assert stats.accepted == 1  # Incremented
+        assert stats.rejected == 0
 
     def test_reject_updates_counters(self):
         """Test that rejecting a rollout updates counters correctly."""
@@ -235,13 +243,15 @@ class TestRolloutLifecycle:
             max_staleness=2,
         )
 
+        manager.on_rollout_enqueued()
         manager.on_rollout_submitted()
         manager.on_rollout_rejected()
 
         stats = manager.get_stats()
-        assert stats.submitted == 1
+        assert stats.enqueued == 0
         assert stats.running == 0  # Decremented
         assert stats.accepted == 0  # NOT incremented (key difference from accept)
+        assert stats.rejected == 1
 
     def test_multiple_rollouts_lifecycle(self):
         """Test multiple rollouts going through their lifecycle."""
@@ -252,8 +262,7 @@ class TestRolloutLifecycle:
         )
 
         # Submit 5 rollouts
-        for _ in range(5):
-            manager.on_rollout_submitted()
+        enqueue_and_submit(manager, count=5)
 
         # Accept 3 of them
         for _ in range(3):
@@ -264,9 +273,10 @@ class TestRolloutLifecycle:
             manager.on_rollout_rejected()
 
         stats = manager.get_stats()
-        assert stats.submitted == 5
+        assert stats.enqueued == 0
         assert stats.running == 0  # All completed
         assert stats.accepted == 3  # Only 3 accepted
+        assert stats.rejected == 2
 
     def test_accept_without_submit_is_invalid(self):
         """Test that accepting without submitting leads to incorrect state."""
@@ -280,7 +290,7 @@ class TestRolloutLifecycle:
         manager.on_rollout_accepted()
 
         stats = manager.get_stats()
-        assert stats.submitted == 0
+        assert stats.enqueued == 0
         assert stats.running == -1  # Incorrect state!
         assert stats.accepted == 1
 
@@ -301,6 +311,7 @@ class TestThreadSafety:
 
         def submit_many():
             for _ in range(submissions_per_thread):
+                manager.on_rollout_enqueued()
                 manager.on_rollout_submitted()
 
         threads = [threading.Thread(target=submit_many) for _ in range(num_threads)]
@@ -311,8 +322,10 @@ class TestThreadSafety:
 
         stats = manager.get_stats()
         expected_total = num_threads * submissions_per_thread
-        assert stats.submitted == expected_total
+        assert stats.enqueued == 0
         assert stats.running == expected_total
+        assert stats.accepted == 0
+        assert stats.rejected == 0
 
     def test_concurrent_mixed_operations(self):
         """Test concurrent mixed operations (submit, accept, reject)."""
@@ -326,6 +339,7 @@ class TestThreadSafety:
 
         def submit_operations():
             for _ in range(num_operations):
+                manager.on_rollout_enqueued()
                 manager.on_rollout_submitted()
 
         def accept_operations():
@@ -346,10 +360,11 @@ class TestThreadSafety:
                 f.result()
 
         stats = manager.get_stats()
-        assert stats.submitted == num_operations
+        assert stats.enqueued == 0
         # running should be 0 (100 submitted, 50 accepted, 50 rejected)
         assert stats.running == 0
         assert stats.accepted == num_operations // 2
+        assert stats.rejected == num_operations // 2
 
     def test_concurrent_capacity_checks(self):
         """Test that concurrent capacity checks don't cause race conditions."""
@@ -384,15 +399,14 @@ class TestThreadSafety:
         )
 
         # Submit some rollouts in background
-        for _ in range(10):
-            manager.on_rollout_submitted()
+        enqueue_and_submit(manager, count=10)
 
         results = []
 
         def get_stats_many():
             for _ in range(100):
                 stats = manager.get_stats()
-                results.append((stats.submitted, stats.running, stats.accepted))
+                results.append((stats.enqueued, stats.running, stats.accepted))
 
         threads = [threading.Thread(target=get_stats_many) for _ in range(5)]
         for t in threads:
@@ -461,13 +475,15 @@ class TestEdgeCases:
 
         # Submit and reject 10 rollouts
         for _ in range(10):
+            manager.on_rollout_enqueued()
             manager.on_rollout_submitted()
             manager.on_rollout_rejected()
 
         stats = manager.get_stats()
-        assert stats.submitted == 10
+        assert stats.enqueued == 0
         assert stats.running == 0
         assert stats.accepted == 0
+        assert stats.rejected == 10
 
         # Should have full capacity again
         capacity = manager.get_capacity(current_version=0)
@@ -483,6 +499,7 @@ class TestEdgeCases:
 
         # Simulate 20 rollouts: 15 accepted, 5 rejected
         for _ in range(20):
+            manager.on_rollout_enqueued()
             manager.on_rollout_submitted()
 
         for _ in range(15):
@@ -492,9 +509,10 @@ class TestEdgeCases:
             manager.on_rollout_rejected()
 
         stats = manager.get_stats()
-        assert stats.submitted == 20
+        assert stats.enqueued == 0
         assert stats.running == 0
         assert stats.accepted == 15
+        assert stats.rejected == 5
 
         # Check capacity with the accepted rollouts
         # Staleness capacity: (3 + 0 + 1) * 8 - 15 = 32 - 15 = 17
@@ -516,8 +534,7 @@ class TestRealWorldScenarios:
         )
 
         # Version 0: Submit initial batch
-        for _ in range(16):
-            manager.on_rollout_submitted()
+        enqueue_and_submit(manager, count=16)
 
         # Complete 14 successfully, 2 rejected
         for _ in range(14):
@@ -532,12 +549,13 @@ class TestRealWorldScenarios:
         assert capacity_v1 == 32  # Limited by concurrency
 
         # Submit another batch
-        for _ in range(16):
-            manager.on_rollout_submitted()
+        enqueue_and_submit(manager, count=16)
 
         stats = manager.get_stats()
+        assert stats.enqueued == 0
         assert stats.running == 16
         assert stats.accepted == 14
+        assert stats.rejected == 2
 
     def test_burst_load_scenario(self):
         """Test handling burst load of rollouts."""
@@ -548,10 +566,10 @@ class TestRealWorldScenarios:
         )
 
         # Burst: Submit 100 rollouts quickly
-        for _ in range(100):
-            manager.on_rollout_submitted()
+        enqueue_and_submit(manager, count=100)
 
         stats = manager.get_stats()
+        assert stats.enqueued == 0
         assert stats.running == 100
 
         # Capacity should be negative (over limit)
@@ -581,6 +599,7 @@ class TestRealWorldScenarios:
 
         # Accept 30 rollouts (approaching staleness limit)
         for _ in range(30):
+            manager.on_rollout_enqueued()
             manager.on_rollout_submitted()
             manager.on_rollout_accepted()
 

@@ -41,7 +41,7 @@ from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.base_hf_engine import BaseHFEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, pkg_version
+from areal.utils import logging, name_resolve, names, perf_tracer, pkg_version
 from areal.utils.data import (
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
@@ -595,7 +595,8 @@ class FSDPEngine(BaseHFEngine):
             else:
                 inputs = padded_mb_input
 
-            outputs = self.model(**inputs)
+            with perf_tracer.trace_scope("fsdp_engine.train_batch.forward"):
+                outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
             if self.parallel_helper.sp_size > 1:
@@ -610,7 +611,8 @@ class FSDPEngine(BaseHFEngine):
             loss_scale *= self.parallel_helper.dp_size
 
             loss *= loss_scale
-            loss.backward()
+            with perf_tracer.trace_scope("fsdp_engine.train_batch.backward"):
+                loss.backward()
 
         grad_norm = fsdp2_clip_grad_norm(
             list(self.model.parameters()),
@@ -622,7 +624,8 @@ class FSDPEngine(BaseHFEngine):
             self.optimizer.zero_grad()
             update_successful = False
         else:
-            self.optimizer.step()
+            with perf_tracer.trace_scope("fsdp_engine.train_batch.step"):
+                self.optimizer.step()
             update_successful = True
 
         current_lr = self.lr_scheduler.get_last_lr()[0]
@@ -700,7 +703,8 @@ class FSDPEngine(BaseHFEngine):
             else:
                 inputs = padded_mb_input
 
-            outputs = self.model(**inputs)
+            with perf_tracer.trace_scope("fsdp_engine.eval_batch.forward"):
+                outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
             if self.parallel_helper.sp_size > 1:
@@ -784,7 +788,8 @@ class FSDPEngine(BaseHFEngine):
             else:
                 inputs = padded_mb_input
 
-            outputs = self.model(**inputs)
+            with perf_tracer.trace_scope("fsdp_engine.forward.forward"):
+                outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
 

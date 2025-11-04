@@ -177,7 +177,6 @@ def main(args):
 
     stats_logger.close()
     engine.destroy()
-    engine.destroy_process_groups()
 
 
 if __name__ == "__main__":
