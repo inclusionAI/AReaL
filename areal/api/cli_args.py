@@ -79,6 +79,12 @@ class MicroBatchSpec:
             "help": "Maximum tokens per micro-batch for each forward pass. When set, n_mbs becomes the minimum number of micro-batches.",
         },
     )
+    n_mbs_divisor: int = field(
+        default=1,
+        metadata={
+            "help": "Divisor for the number of micro-batches. The final number of micro-batches will be adjusted to be divisible by this value.",
+        },
+    )
 
     @classmethod
     def new(cls, mb_spec: "MicroBatchSpec", **kwargs):
@@ -87,6 +93,7 @@ class MicroBatchSpec:
             n_mbs=mb_spec.n_mbs,
             granularity=mb_spec.granularity,
             max_tokens_per_mb=mb_spec.max_tokens_per_mb,
+            n_mbs_divisor=mb_spec.n_mbs_divisor,
         )
         fields.update(kwargs)
         return cls(**fields)
@@ -280,6 +287,15 @@ class MegatronEngineConfig:
     use_custom_fsdp: bool = False  # TODO: pending test
     ddp: DistributedDataParallelConfig = field(
         default_factory=DistributedDataParallelConfig
+    )
+    virtual_pipeline_parallel_size: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Virtual pipeline parallel size for Megatron interleaved schedule. "
+                "Set to >1 to enable VPP. Default is 1 (disabled)."
+            )
+        },
     )
     # Don't use MegatronOptimizerConfig here because OmegaConf
     # does not recognize the annotation "torch.dtype"

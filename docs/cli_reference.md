@@ -271,6 +271,7 @@ Specification for splitting micro-batches during training.
 | `n_mbs`             | integer \| None | `1`     | Number of micro-batches (or minimum number if max_tokens_per_mb is set). Used when max_tokens_per_mb is None or as minimum count |
 | `granularity`       | integer         | `1`     | Granularity of each micro-batch. Adjacent sequences are grouped by this size when dividing microbatches.                         |
 | `max_tokens_per_mb` | integer \| None | `None`  | Maximum tokens per micro-batch for each forward pass. When set, n_mbs becomes the minimum number of micro-batches.               |
+| `n_mbs_divisor`     | integer         | `1`     | Divisor for the number of micro-batches. The final number of micro-batches will be adjusted to be divisible by this value.       |
 
 (section-norm)=
 
@@ -785,26 +786,27 @@ Configuration for Megatron-LM training framework.
 
 Refer to Megatron-LM documentation for implementation details.
 
-| Parameter                                  | Type                                                                 | Default      | Description |
-| ------------------------------------------ | -------------------------------------------------------------------- | ------------ | ----------- |
-| `wrap_with_ddp`                            | boolean                                                              | `True`       | -           |
-| `use_torch_fsdp2`                          | boolean                                                              | `False`      | -           |
-| `use_custom_fsdp`                          | boolean                                                              | `False`      | -           |
-| `ddp`                                      | [`DistributedDataParallelConfig`](section-distributed-data-parallel) | **Required** | -           |
-| `overlap_param_gather_with_optimizer_step` | boolean                                                              | `False`      | -           |
-| `use_precision_aware_optimizer`            | boolean                                                              | `False`      | -           |
-| `main_grads_dtype`                         | string                                                               | `"float32"`  | -           |
-| `main_params_dtype`                        | string                                                               | `"float32"`  | -           |
-| `exp_avg_dtype`                            | string                                                               | `"float32"`  | -           |
-| `exp_avg_sq_dtype`                         | string                                                               | `"float32"`  | -           |
-| `async_save`                               | boolean                                                              | `False`      | -           |
-| `use_checkpoint_opt_param_scheduler`       | boolean                                                              | `True`       | -           |
-| `use_deterministic_algorithms`             | boolean                                                              | `False`      | -           |
-| `recompute_granularity`                    | string \| None                                                       | `"full"`     | -           |
-| `recompute_method`                         | string \| None                                                       | `"uniform"`  | -           |
-| `recompute_num_layers`                     | integer \| None                                                      | `1`          | -           |
-| `distribute_saved_activations`             | boolean \| None                                                      | `None`       | -           |
-| `recompute_modules`                        | list of string \| None                                               | `None`       | -           |
+| Parameter                                  | Type                                                                 | Default      | Description                                                                                                         |
+| ------------------------------------------ | -------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `wrap_with_ddp`                            | boolean                                                              | `True`       | -                                                                                                                   |
+| `use_torch_fsdp2`                          | boolean                                                              | `False`      | -                                                                                                                   |
+| `use_custom_fsdp`                          | boolean                                                              | `False`      | -                                                                                                                   |
+| `ddp`                                      | [`DistributedDataParallelConfig`](section-distributed-data-parallel) | **Required** | -                                                                                                                   |
+| `virtual_pipeline_parallel_size`           | integer                                                              | `1`          | Virtual pipeline parallel size for Megatron interleaved schedule. Set to >1 to enable VPP. Default is 1 (disabled). |
+| `overlap_param_gather_with_optimizer_step` | boolean                                                              | `False`      | -                                                                                                                   |
+| `use_precision_aware_optimizer`            | boolean                                                              | `False`      | -                                                                                                                   |
+| `main_grads_dtype`                         | string                                                               | `"float32"`  | -                                                                                                                   |
+| `main_params_dtype`                        | string                                                               | `"float32"`  | -                                                                                                                   |
+| `exp_avg_dtype`                            | string                                                               | `"float32"`  | -                                                                                                                   |
+| `exp_avg_sq_dtype`                         | string                                                               | `"float32"`  | -                                                                                                                   |
+| `async_save`                               | boolean                                                              | `False`      | -                                                                                                                   |
+| `use_checkpoint_opt_param_scheduler`       | boolean                                                              | `True`       | -                                                                                                                   |
+| `use_deterministic_algorithms`             | boolean                                                              | `False`      | -                                                                                                                   |
+| `recompute_granularity`                    | string \| None                                                       | `"full"`     | -                                                                                                                   |
+| `recompute_method`                         | string \| None                                                       | `"uniform"`  | -                                                                                                                   |
+| `recompute_num_layers`                     | integer \| None                                                      | `1`          | -                                                                                                                   |
+| `distribute_saved_activations`             | boolean \| None                                                      | `None`       | -                                                                                                                   |
+| `recompute_modules`                        | list of string \| None                                               | `None`       | -                                                                                                                   |
 
 (section-perf-tracer)=
 

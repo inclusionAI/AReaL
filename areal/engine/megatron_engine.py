@@ -66,12 +66,31 @@ from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
 
+class _MegatronModelList(list):
+    """List wrapper that exposes module-like helpers for Megatron model chunks."""
+
+    def forward(self, *args, **kwargs):
+        if len(self) == 1:
+            return self[0](*args, **kwargs)
+        raise RuntimeError(
+            "Direct forward calls are only supported for single-chunk model list."
+        )
+
+    def named_parameters(self, *args, **kwargs):
+        for module in self:
+            yield from module.named_parameters(*args, **kwargs)
+
+    def parameters(self, *args, **kwargs):
+        for _, parameter in self.named_parameters(*args, **kwargs):
+            yield parameter
+
+
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
         self.hf_config: PretrainedConfig
         self.tf_config: TransformerConfig
-        self.model = None
+        self.model: _MegatronModelList | None = None
         self.dtype = getattr(torch, self.config.dtype)
         self.device = None
         self.optimizer_config = config.optimizer
@@ -139,50 +158,83 @@ class MegatronEngine(TrainEngine):
         self.hf_config, self.tf_config = make_hf_and_mcore_config(
             self.config.path, dtype=self.dtype, bridge=self.bridge
         )
+        # TODO: configure for VPP
         self.tf_config = configure_pipeline_layer_splits(
             self.parallel_strategy, self.hf_config, self.tf_config
         )
 
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
-            self.model = make_mcore_model(
+            models = make_mcore_model(
                 hf_config=self.hf_config,
                 tf_config=self.tf_config,
                 mcore_config=self.mcore_config,
                 bridge=self.bridge,
             )
+
+        self.model = _MegatronModelList(models)
+
+        with self.device:
             self._load_model_from_hf(self.config.path)
 
-        module = self.model.module if isinstance(self.model, DDP) else self.model
-        total_params = sum(param.numel() for param in module.parameters())
+        assert self.model, "Megatron models failed to initialize."
+        modules = [m.module if isinstance(m, DDP) else m for m in self.model]
+        total_params = sum(
+            param.numel() for module in modules for param in module.parameters()
+        )
         self.logger.info(
-            f"Model parameter count: {total_params / 1e6:.2f}M, pp_stage={mpu.get_pipeline_model_parallel_rank()}"
+            f"Model parameter count: {total_params / 1e6:.2f}M, pp_stage={mpu.get_pipeline_model_parallel_rank()}, vpp_chunks={len(self.model)}"
         )
 
         if self.config.disable_dropout:
-            disable_dropout_in_model(self.model)
+            for model in self.model:
+                disable_dropout_in_model(model)
 
-        model_config = get_model_config(self.model)
+        # TODO: Check verl implementation
+        primary_model = self.model[0]
+        model_config = get_model_config(primary_model)
         # NOTE: It is recommended to set this option to True for RL training on MoE models for stability.
         if self.mcore_config.use_deterministic_algorithms:
             set_deterministic_algorithms(model_config)
 
-        if isinstance(self.model, DDP) and self.mcore_config.ddp.overlap_grad_reduce:
-            model_config.no_sync_func = self.model.no_sync
+        # Set vp_stage for DDP models
+        for i, model_chunk in enumerate(self.model):
+            if (
+                isinstance(model_chunk, DDP)
+                and self.mcore_config.virtual_pipeline_parallel_size > 1
+            ):
+                vp_stage = getattr(model_chunk.module, "vp_stage", None)
+                self.logger.info(f"Setting vp_stage {vp_stage} for model chunk {i}.")
+                setattr(model_chunk, "vp_stage", vp_stage)
+
+        if self.mcore_config.ddp.overlap_grad_reduce and isinstance(primary_model, DDP):
+            model_config.no_sync_func = [
+                model_chunk.no_sync for model_chunk in self.model
+            ]
+            if len(self.model) == 1:
+                model_config.no_sync_func = model_config.no_sync_func[0]
+
         if (
             self.mcore_config.ddp.overlap_param_gather
             and self.mcore_config.ddp.align_param_gather
         ):
-            model_config.param_sync_func = self.model.start_param_sync
+            model_config.param_sync_func = [
+                model_chunk.start_param_sync for model_chunk in self.model
+            ]
+            if len(self.model) == 1:
+                model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
         self.create_optimizer(ft_spec)
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
     ) -> MegatronParallelStrategy:
+        base_strategy = dataclasses.asdict(parallel_strategy)
+        vpp_size = self.mcore_config.virtual_pipeline_parallel_size
         return MegatronParallelStrategy(
             use_sequence_parallel=parallel_strategy.tensor_parallel_size > 1,
-            **dataclasses.asdict(parallel_strategy),
+            virtual_pipeline_parallel_size=vpp_size,
+            **base_strategy,
         )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
@@ -199,10 +251,11 @@ class MegatronEngine(TrainEngine):
             )
             # Initialize Megatron parallel states
             # NOTE: we assume all MegatronEngine has the same parallel strategy.
+            vpp_size = self.parallel_strategy.virtual_pipeline_parallel_size
             mpu.initialize_model_parallel(
                 tensor_model_parallel_size=self.parallel_strategy.tensor_parallel_size,
                 pipeline_model_parallel_size=self.parallel_strategy.pipeline_parallel_size,
-                virtual_pipeline_model_parallel_size=self.parallel_strategy.virtual_pipeline_parallel_size,
+                virtual_pipeline_model_parallel_size=vpp_size if vpp_size > 1 else None,
                 use_sharp=False,
                 order="tp-cp-ep-dp-pp",
                 context_parallel_size=self.parallel_strategy.context_parallel_size,
@@ -246,7 +299,7 @@ class MegatronEngine(TrainEngine):
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
             return
-        assert self.model is not None
+        assert self.model is not None and len(self.model) > 0
 
         assert self.optimizer_config.type in [
             "adam",
@@ -291,7 +344,7 @@ class MegatronEngine(TrainEngine):
 
         self.optimizer = get_megatron_optimizer(
             mcore_opt_config,
-            [self.model],
+            self.model,
             no_weight_decay_cond=lambda n, p: any(
                 k in n for k in ["bias", "ln.weight", "ln_f.weight"]
             ),
@@ -317,7 +370,7 @@ class MegatronEngine(TrainEngine):
         self.lr_scheduler = lr_scheduler
 
         self.checkpointer = MegatronCheckpointManager(
-            model=[self.model],
+            model=self.model,
             optimizer=self.optimizer,
             lr_scheduler=self.lr_scheduler,
             use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
@@ -374,7 +427,7 @@ class MegatronEngine(TrainEngine):
         if hasattr(self, "optimizer"):
             del self.optimizer
         if hasattr(self, "model"):
-            del self.model
+            self.model = None
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
@@ -388,7 +441,9 @@ class MegatronEngine(TrainEngine):
             self.own_global_group = False
 
     def train(self, mode: bool = True):
-        self.model.train(mode=mode)
+        assert self.model is not None
+        for model in self.model:
+            model.train(mode=mode)
         return self
 
     def _update_bucket_weights_from_distributed(
@@ -756,7 +811,7 @@ class MegatronEngine(TrainEngine):
 
         save_weights_to_hf_with_mbridge_fast(
             bridge=self.bridge,
-            models=[self.model],
+            models=self.model,
             weights_path=path,
             base_model_path=base_model_path,
             max_shard_size_byte=int(3e9),
@@ -786,7 +841,7 @@ class MegatronEngine(TrainEngine):
         assert self.model is not None, "Model is not initialized."
         load_weights_from_hf_with_mbridge_fast(
             bridge=self.bridge,
-            models=[self.model],
+            models=self.model,
             weights_path=path,
             max_workers=None,
         )
@@ -812,6 +867,7 @@ class MegatronEngine(TrainEngine):
         mb_spec = MicroBatchSpec.new(
             self.config.mb_spec,
             n_mbs=max(min_n_mbs, self.config.mb_spec.n_mbs),
+            n_mbs_divisor=pp_size,
         )
         mb_list = split_padded_tensor_dict_into_mb_list(
             input_,
@@ -833,8 +889,9 @@ class MegatronEngine(TrainEngine):
             align_to_multiple_of=align_to_multiple_of,
         )
         self.logger.info(
-            f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}, aligned to: {mb_list.align_to_lengths}, "
-            f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}."
+            f"#microbatch: {len(mb_list.group_lens)}, microbatch #tokens: {mb_list.group_lens}, "
+            f"aligned to: {mb_list.align_to_lengths}, padded to: {mb_list.padded_to_lengths}, "
+            f"padding lengths: {mb_list.padding_lengths}."
         )
         # FIXME: the resulting max_seqlen is a tensor rather than an integer
         # Modern model implementations takes a dict as the input.
@@ -862,7 +919,8 @@ class MegatronEngine(TrainEngine):
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
         self.optimizer.zero_grad()
-        self.model.zero_grad_buffer()
+        for model in self.model:
+            model.zero_grad_buffer()
         # Assume input_ is identical across context and model parallel group
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
@@ -877,21 +935,26 @@ class MegatronEngine(TrainEngine):
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
-        micro_batch_generator = iter(mb_list.padded_mbs)
-        forward_step_count = 0
+        micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
+        micro_batch_generator = [iter(b) for b in micro_batch_generator]
+        forward_step_counts = [0] * len(self.model)
 
         def forward_step(batch_iter, model):
-            nonlocal forward_step_count
+            nonlocal forward_step_counts
             batch = next(batch_iter)
+            model_vp_stage = getattr(model, "vp_stage", 0)
+            forward_step_count = forward_step_counts[model_vp_stage]
             padding_length = mb_list.padding_lengths[forward_step_count]
             orig_input = mb_list.mbs[forward_step_count]
             cu_seqlens = batch["cu_seqlens"]
             old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
 
-            forward_step_count += 1
+            forward_step_counts[model_vp_stage] += 1
             output = packed_context_parallel_forward(model, batch)
 
-            if mpu.is_pipeline_last_stage():
+            if mpu.is_pipeline_last_stage(
+                ignore_virtual=False, vp_stage=model_vp_stage
+            ):
                 output = unpad_logits(
                     output,
                     padding_length=padding_length,
@@ -915,10 +978,15 @@ class MegatronEngine(TrainEngine):
 
         forward_backward_func = get_forward_backward_func()
         with perf_tracer.trace_scope("megatron_engine.train_batch.forward_backward"):
+            data_iterator = (
+                micro_batch_generator
+                if len(self.model) > 1
+                else micro_batch_generator[0]
+            )
             forward_backward_func(
                 forward_step_func=forward_step,
-                data_iterator=micro_batch_generator,
-                model=self.model,
+                data_iterator=data_iterator,
+                model=self.model if len(self.model) > 1 else self.model[0],
                 num_microbatches=len(mb_list.padded_mbs),
                 seq_length=max_total_len,  # no use when input_shapes was set
                 micro_batch_size=1,  # no use when input_shapes was set
@@ -956,21 +1024,26 @@ class MegatronEngine(TrainEngine):
         assert total_loss_weight != 0
         dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
         max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
-        micro_batch_generator = iter(mb_list.padded_mbs)
-        forward_step_count = 0
+        micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
+        micro_batch_generator = [iter(b) for b in micro_batch_generator]
+        forward_step_counts = [0] * len(self.model)
 
         def forward_step(batch_iter, model):
-            nonlocal forward_step_count
+            nonlocal forward_step_counts
             batch = next(batch_iter)
+            model_vp_stage = getattr(model, "vp_stage", 0)
+            forward_step_count = forward_step_counts[model_vp_stage]
             padding_length = mb_list.padding_lengths[forward_step_count]
             orig_input = mb_list.mbs[forward_step_count]
             cu_seqlens = batch["cu_seqlens"]
             old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
 
-            forward_step_count += 1
+            forward_step_counts[model_vp_stage] += 1
             output = packed_context_parallel_forward(model, batch)
 
-            if mpu.is_pipeline_last_stage():
+            if mpu.is_pipeline_last_stage(
+                ignore_virtual=False, vp_stage=model_vp_stage
+            ):
                 output = unpad_logits(
                     output,
                     padding_length=padding_length,
@@ -992,10 +1065,15 @@ class MegatronEngine(TrainEngine):
 
         forward_backward_func = get_forward_backward_func()
         with perf_tracer.trace_scope("megatron_engine.eval_batch.forward"):
+            data_iterator = (
+                micro_batch_generator
+                if len(self.model) > 1
+                else micro_batch_generator[0]
+            )
             forward_backward_func(
                 forward_step_func=forward_step,
-                data_iterator=micro_batch_generator,
-                model=self.model,
+                data_iterator=data_iterator,
+                model=self.model if len(self.model) > 1 else self.model[0],
                 num_microbatches=len(mb_list.padded_mbs),
                 seq_length=max_total_len,  # no use when input_shapes was set
                 micro_batch_size=1,  # no use when input_shapes was set
@@ -1027,21 +1105,26 @@ class MegatronEngine(TrainEngine):
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
 
         max_total_len = max(m["max_seqlen"] for m in mb_list.padded_mbs)
-        micro_batch_generator = iter(mb_list.padded_mbs)
-        forward_step_count = 0
+        micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
+        micro_batch_generator = [iter(b) for b in micro_batch_generator]
+        forward_step_counts = [0] * len(self.model)
 
         def forward_step(batch_iter, model):
-            nonlocal forward_step_count
+            nonlocal forward_step_counts
             batch = next(batch_iter)
+            model_vp_stage = getattr(model, "vp_stage", 0)
+            forward_step_count = forward_step_counts[model_vp_stage]
             padding_length = mb_list.padding_lengths[forward_step_count]
             orig_input = mb_list.mbs[forward_step_count]
             cu_seqlens = batch["cu_seqlens"]
             old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
 
-            forward_step_count += 1
+            forward_step_counts[model_vp_stage] += 1
             output = packed_context_parallel_forward(model, batch)
 
-            if mpu.is_pipeline_last_stage():
+            if mpu.is_pipeline_last_stage(
+                ignore_virtual=False, vp_stage=model_vp_stage
+            ):
                 output = unpad_logits(
                     output,
                     padding_length=padding_length,
@@ -1058,11 +1141,17 @@ class MegatronEngine(TrainEngine):
             return output, functools.partial(_post_process_fn, orig_input)
 
         forward_backward_func = get_forward_backward_func()
+
         with perf_tracer.trace_scope("megatron_engine.forward.forward"):
+            data_iterator = (
+                micro_batch_generator
+                if len(self.model) > 1
+                else micro_batch_generator[0]
+            )
             output_list = forward_backward_func(
                 forward_step_func=forward_step,
-                data_iterator=micro_batch_generator,
-                model=self.model,
+                data_iterator=data_iterator,
+                model=self.model if len(self.model) > 1 else self.model[0],
                 num_microbatches=len(mb_list.padded_mbs),
                 seq_length=max_total_len,  # max # tokens across all micro-batches
                 micro_batch_size=1,  # should be 1 when using packed input
