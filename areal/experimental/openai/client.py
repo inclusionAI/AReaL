@@ -318,10 +318,14 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                     )
                 elif isinstance(item["content"], Iterable):
                     for content in item["content"]:
-                        if isinstance(content, dict):
-                            # Convert tool output format if needed
-                            converted = _convert_tool_output_format(content)
-                            messages_list.append(deepcopy(converted))
+                        if (
+                            isinstance(content, dict)
+                            and content.get("type") == "output_text"
+                            and "text" in content
+                        ):
+                            messages_list.append(
+                                {"role": item["role"], "content": content["text"]},
+                            )
                         else:
                             raise ValueError("Unsupported content format")
                 else:
