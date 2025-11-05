@@ -15,7 +15,9 @@ parts:
     - file: tutorial/installation
     - file: tutorial/quickstart
     - file: tutorial/openai_workflows
+    - file: tutorial/camel_training
     - file: tutorial/eval
+    - file: tutorial/megatron
     - file: cli_reference
     - file: tutorial/quickstart_legacy
     # - file: tutorial/troubleshooting

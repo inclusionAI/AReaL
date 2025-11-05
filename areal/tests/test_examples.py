@@ -728,35 +728,43 @@ def test_search_agent_deepresearch(tmp_path_factory):
         stderr=sys.stderr,
         env=_env,
     )
-    time.sleep(20)
 
-    loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
-        run_example(
-            example_file,
-            config_name,
-            "allocation_mode=sglang:d1+megatron:d1",
-            "gconfig.n_samples=1",
-            "gconfig.max_new_tokens=128",
-            "actor.mb_spec.max_tokens_per_mb=2048",
-            "train_dataset.batch_size=4",
-            f"train_dataset.path={dataset_path}",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
-            "n_trajs=2",
-            "max_tokens_per_trajectory=1024",
-            "max_llm_calls_per_run=2",
-            f"judge_engine.experiment_name={llm_judge_exp_name}",
-            f"judge_engine.trial_name={llm_judge_trial_name}",
+    try:
+        time.sleep(20)
+
+        loop = asyncio.get_event_loop()
+        return_code, success = loop.run_until_complete(
+            run_example(
+                example_file,
+                config_name,
+                "allocation_mode=sglang:d1+megatron:d1",
+                "gconfig.n_samples=1",
+                "gconfig.max_new_tokens=128",
+                "actor.mb_spec.max_tokens_per_mb=2048",
+                "train_dataset.batch_size=4",
+                f"train_dataset.path={dataset_path}",
+                f"cluster.fileroot={str(experiments_path)}",
+                f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+                f"actor.path={model_path}",
+                "n_trajs=2",
+                "max_tokens_per_trajectory=1024",
+                "max_llm_calls_per_run=2",
+                f"judge_engine.experiment_name={llm_judge_exp_name}",
+                f"judge_engine.trial_name={llm_judge_trial_name}",
+            )
         )
-    )
-    if not success:
-        raise RuntimeError(
-            f"Search Agent DeepResearch example failed, return_code={return_code}"
-        )
-    llm_judge_proc.terminate()
-    llm_judge_proc.wait(5)
+        if not success:
+            raise RuntimeError(
+                f"Search Agent DeepResearch example failed, return_code={return_code}"
+            )
+    finally:
+        # Ensure cleanup happens even if test fails
+        llm_judge_proc.terminate()
+        try:
+            llm_judge_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            llm_judge_proc.kill()
+            llm_judge_proc.wait()
 
 
 @pytest.mark.multi_gpu

@@ -52,6 +52,16 @@ class StalenessManager:
         self.lock = Lock()
         self.rollout_stat = RolloutStat()
 
+    def get_pending_limit(self) -> int:
+        """Get the maximum number of pending rollouts allowed.
+
+        Returns
+        -------
+        int
+            Maximum number of pending rollouts (enqueued)
+        """
+        return (self.max_staleness + 1) * self.consumer_batch_size
+
     def get_capacity(self, current_version: int) -> int:
         """Calculate available capacity for new rollouts.
 
@@ -99,34 +109,40 @@ class StalenessManager:
             capacity = min(concurrency_capacity, staleness_capacity)
             return capacity
 
+    def on_rollout_enqueued(self) -> None:
+        """Callback when a rollout is enqueued as a pending input task.
+
+        Thread-safe method to increment the enqueued counters.
+        """
+        with self.lock:
+            self.rollout_stat.enqueued += 1
+
     def on_rollout_submitted(self) -> None:
         """Callback when a rollout is submitted for execution.
 
-        Thread-safe method to increment the submitted and running counters.
+        Thread-safe method to decrement enqueued counter and increment running counters.
         """
         with self.lock:
-            self.rollout_stat.submitted += 1
+            self.rollout_stat.enqueued -= 1
             self.rollout_stat.running += 1
 
     def on_rollout_accepted(self) -> None:
         """Callback when a rollout completes successfully and is accepted.
 
-        Thread-safe method to increment accepted counter and decrement running counter.
+        Thread-safe method to decrement running counter and increment accepted counter.
         """
         with self.lock:
-            self.rollout_stat.accepted += 1
             self.rollout_stat.running -= 1
+            self.rollout_stat.accepted += 1
 
     def on_rollout_rejected(self) -> None:
         """Callback when a rollout completes but is rejected.
 
-        Thread-safe method to decrement running counter only.
-        This is called when a trajectory is filtered out by should_accept or
-        when the workflow returns None. The rollout was never added to accepted,
-        so we only need to decrement running.
+        Thread-safe method to decrement running counter and increment rejected counter.
         """
         with self.lock:
             self.rollout_stat.running -= 1
+            self.rollout_stat.rejected += 1
 
     def get_stats(self) -> RolloutStat:
         """Get a snapshot of current rollout statistics.
@@ -134,11 +150,12 @@ class StalenessManager:
         Returns
         -------
         RolloutStat
-            Current rollout statistics (submitted, accepted, running)
+            Current rollout statistics (enqueued, accepted, running)
         """
         with self.lock:
             return RolloutStat(
-                submitted=self.rollout_stat.submitted,
                 accepted=self.rollout_stat.accepted,
+                enqueued=self.rollout_stat.enqueued,
+                rejected=self.rollout_stat.rejected,
                 running=self.rollout_stat.running,
             )
