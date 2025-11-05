@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 import torch
+import torch.distributed as dist
 from transformers import AutoTokenizer
 
 from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
@@ -72,7 +73,7 @@ def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
     return torch.mean(logits)
 
 
-@pytest.fixture(scope="module", params=["fsdp"])
+@pytest.fixture(params=["fsdp"])
 def engine(request):
     os.environ.update(
         {
@@ -86,7 +87,11 @@ def engine(request):
 
     engine = get_engine(request.param, MODEL_PATH)
     print(f"✓ {request.param.upper()} Engine created successfully")
-    yield engine
+    try:
+        yield engine
+    finally:
+        engine.destroy()
+        assert not dist.is_initialized()
 
 
 @torch.no_grad()

@@ -3,6 +3,7 @@ import random
 
 import pytest
 import torch
+import torch.distributed as dist
 from torch.testing import assert_close
 
 from areal.api.cli_args import TrainEngineConfig
@@ -104,6 +105,7 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
             assert_close(x1, x2, atol=2e-1, rtol=2e-1)
     finally:
         engine.destroy()
+        assert not dist.is_initialized()
 
 
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
@@ -277,3 +279,4 @@ def test_vlm_consistency(model_path):
             assert_close(x1, x2, atol=2e-1, rtol=2e-1)
     finally:
         engine.destroy()
+        assert not dist.is_initialized()

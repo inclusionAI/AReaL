@@ -31,6 +31,13 @@ def test_estimate_num_params(model_name_or_path):
         mpu.initialize_model_parallel()
         tensor_parallel.model_parallel_cuda_manual_seed(0)
 
+        # use local model if possible
+        local_path = os.path.join(
+            "/storage/openpsi/models", model_name_or_path.replace("/", "__")
+        )
+        if os.path.exists(local_path):
+            model_name_or_path = local_path
+
         bridge = mbridge.AutoBridge.from_pretrained(model_name_or_path)
         hf_config, tf_config = make_hf_and_mcore_config(
             model_name_or_path, dtype=torch.bfloat16, bridge=bridge
@@ -50,3 +57,4 @@ def test_estimate_num_params(model_name_or_path):
     finally:
         mpu.destroy_model_parallel()
         dist.destroy_process_group()
+        assert not dist.is_initialized()
