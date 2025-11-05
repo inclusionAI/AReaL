@@ -163,7 +163,7 @@ jobs:
               --maintenance-policy TERMINATE \
               --restart-on-failure \
               --max-run-duration "2h" \
-              --instance-terminate-action DELETE \
+              --instance-termination-action DELETE \
               --scopes "https://www.googleapis.com/auth/cloud-platform" \
               --metadata repo=${{ github.repository }},runner_labels=${RUNNER_LABELS} \
               --metadata-from-file startup-script=startup-script.sh,runner_token=runner-token.txt
