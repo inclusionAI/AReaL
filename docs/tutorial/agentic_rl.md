@@ -343,23 +343,12 @@ agent types and configuration options.
 
 ## Training with OpenAI Agents
 
-The [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) provides a
-high-level framework for building multi-agent workflows with handoffs, tool calling, and
-sessions. The SDK simplifies the development of agentic applications by handling
-conversation management, tool execution, and agent coordination automatically.
-
-### Building a Trainable Agent
-
-This section walks you through the process of creating an RL-trainable agent using the
-OpenAI Agents SDK. We'll begin with a minimal working example and progressively enhance
-it with additional functionality. The final result will be a production-ready agent that
-works seamlessly within AReaL's training framework.
+Using the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with AReaL
+follows a similar pattern to using CAMEL. The key difference is that instead of using
+CAMEL's `AReaLOpenAICompatibleModel` adapter, you can use AReaL's `ArealOpenAI` client
+directly with the SDK's `RunConfig`.
 
 #### Step 1: Basic Agent Implementation
-
-Creating an agent with the OpenAI Agents SDK requires minimal setup. The following
-example demonstrates how to use the SDK's `Agent` and `Runner` components for a math
-problem-solving task:
 
 ```python
 from agents import Agent as OpenAIAgent
@@ -381,9 +370,7 @@ print(result.final_output)
 
 #### Step 2: Enabling RL Training
 
-Transforming this agent into one that supports RL training involves replacing the
-standard OpenAI client with AReaL's `ArealOpenAI` client. This change enables
-token-level tracking while maintaining full compatibility with the OpenAI Agents SDK:
+Replace the standard OpenAI client with AReaL's `ArealOpenAI` client:
 
 ```python
 from agents import Agent as OpenAIAgent
@@ -418,16 +405,12 @@ result = await OpenAIRunner.run(
 
 #### Step 3: Adding Reward Evaluation
 
-The next step involves defining a reward mechanism that evaluates agent performance.
-Once the agent produces a response, we compute a reward based on task-specific criteria
-and attach it to the interaction (completion/response):
-
 ```python
 def math_reward_fn(result, answer):
     """Simple reward function: 1.0 if correct, 0.0 otherwise."""
     return 1.0 if result.strip() == answer.strip() else 0.0
 
-# Execute the agent
+# Run the agent
 result = await OpenAIRunner.run(
     agent,
     input="Solve: 2 + 2 = ?",
@@ -440,10 +423,6 @@ client.set_final_reward(reward)
 ```
 
 #### Step 4: Wrapping the Agent in a Reusable Class
-
-Encapsulate the agent in a class that manages its lifecycle and reward evaluation for
-integration into AReaL's training pipeline. This structure enables reuse across
-different workflows:
 
 ```python
 from areal.api.reward_api import AsyncRewardWrapper
@@ -495,10 +474,6 @@ class OpenAIMathAgent:
 
 #### Step 5: Creating the Rollout Workflow
 
-The final integration step involves putting the agent into AReaL's `RolloutWorkflow`
-class. This workflow enables parallel collection of multiple agent trajectories, a
-critical capability for efficient reinforcement learning:
-
 ```python
 from areal.api.workflow_api import RolloutWorkflow
 from areal.api.cli_args import GenerationHyperparameters
@@ -547,38 +522,17 @@ class RLVRAgentWorkflow(RolloutWorkflow):
         return interactions_with_reward
 ```
 
-**Important considerations:**
-
-- **Batch-level parallelism**: The training loop invokes `arun_episode` concurrently for
-  multiple samples within each batch, achieving parallel trajectory gathering at the
-  batch level.
-- **Episode-level parallelism**: Within each episode, multiple `ArealOpenAI` client
-  instances are spawned and agent executions proceed concurrently via
-  `asyncio.gather()`, yielding varied trajectories for each input.
-- **Reward discounting**: Multi-turn dialogues benefit from backward reward propagation
-  through the conversation hierarchy using discount factors.
-- **Data preparation**: The workflow exports all interactions complete with token-level
-  details and rewards in a format directly consumable by RL algorithms.
-
 #### Step 6: Incorporating into Training
 
-With the workflow defined, you can incorporate it into AReaL's training procedure
-seamlessly.
-
 ```python
-# In your training script
 workflow = RLVRAgentWorkflow(
     gconfig=config.gconfig,
     tokenizer=tokenizer,
     n_trajs=2,
 )
-
-# AReaL will call workflow.arun_episode() for each batch
-# The workflow handles rollout collection, and AReaL handles training
 ```
 
-Your OpenAI Agents SDK agent is now ready for RL training with AReaL! For a
-comprehensive implementation, refer to the
+For a complete implementation, refer to the
 [complete training script](https://github.com/inclusionAI/AReaL/blob/main/examples/openai-agents/train_agents.py).
 
 ### Complete Example
@@ -596,127 +550,6 @@ python3 -m areal.launcher.local examples/openai-agents/train_agents.py \
 
 ### Customization
 
-#### Multi-Agent Workflows with Handoffs
-
-The OpenAI Agents SDK supports **agent handoffs**, allowing you to create specialized
-agents that can delegate tasks to each other. This is particularly useful for complex
-tasks that require different expertise:
-
-```python
-from agents import Agent as OpenAIAgent
-from agents import handoff, OpenAIProvider, RunConfig
-from agents import Runner as OpenAIRunner
-
-class MultiAgentMathAgent:
-    def _create_agent_workflow(self) -> OpenAIAgent:
-        # Create specialized agents
-        problem_analyzer = OpenAIAgent(
-            name="Problem Analyzer",
-            instructions="""You analyze math problems and break them down.
-            If you need help solving, hand off to the Solution Specialist."""
-        )
-
-        solution_specialist = OpenAIAgent(
-            name="Solution Specialist",
-            instructions="""You solve math problems step by step.
-            If you need verification, hand off to the Verification Agent."""
-        )
-
-        verification_agent = OpenAIAgent(
-            name="Verification Agent",
-            instructions="You verify solutions and provide final answers."
-        )
-
-        # Create main agent with handoffs
-        main_agent = OpenAIAgent(
-            name="Math Problem Solver",
-            instructions="""You coordinate solving math problems.
-            Use handoffs to specialized agents as needed.""",
-            handoffs=[
-                handoff(
-                    agent=problem_analyzer,
-                    tool_name_override="analyze_problem",
-                    tool_description_override="Analyze problem structure"
-                ),
-                handoff(
-                    agent=solution_specialist,
-                    tool_name_override="solve_problem",
-                    tool_description_override="Solve the problem step by step"
-                ),
-                handoff(
-                    agent=verification_agent,
-                    tool_name_override="verify_solution",
-                    tool_description_override="Verify the solution"
-                ),
-            ],
-        )
-
-        return main_agent
-
-    async def run_agent(self, data, client: ArealOpenAI):
-        # create multi-agent workflow
-        agent = self._create_agent_workflow()
-
-        # ...
-
-        # Run multi-agent workflow
-        result = await OpenAIRunner.run(
-            agent,
-            input=data["messages"][-1]["content"],
-            run_config=run_config
-        )
-
-        # ...
-```
-
-#### Tool Calling Support
-
-AReaL supports function calling through the OpenAI Agents SDK. The tool calls are parsed
-and integrated into the conversation tree. When creating the `ArealOpenAI` client,
-specify the appropriate tool call parser:
-
-```python
-client = ArealOpenAI(
-    engine=engine,
-    tokenizer=tokenizer,
-    # Parser for tool call format (e.g., "qwen25", "deepseekv3", "gpt-oss", etc.)
-    tool_call_parser="qwen25",
-)
-```
-
-The tool call parser extracts function names and their arguments from model outputs by
-leveraging SGLang's `Tool Parser` functionality. Refer to the
-[SGLang documentation](https://docs.sglang.ai/advanced_features/tool_parser.html) for
-more supported parsers.
-
-#### Custom Agent Instructions and Configuration
-
-You can customize agent behavior through instructions and generation parameters:
-
-```python
-from agents import ModelSettings
-
-agent = OpenAIAgent(
-    name="CustomAgent",
-    instructions="""You are a specialized agent for [task description].
-    Your responsibilities include:
-    1. [Task 1]
-    2. [Task 2]
-    3. [Task 3]
-
-    When you encounter [condition], you should [action]."""
-)
-
-run_config = RunConfig(
-    model_provider=OpenAIProvider(openai_client=client),
-    tracing_disabled=True,
-    model_settings=ModelSettings(
-        temperature=1.0,
-        extra_args={"max_completion_tokens": 1024},
-    ),
-)
-```
-
-For comprehensive details on agent instructions, `ModelSettings`, and additional
-configuration options, refer to the
+For comprehensive details on agent instructions, handoffs, `ModelSettings`, and
+additional configuration options, refer to the
 [OpenAI Agents SDK documentation](https://openai.github.io/openai-agents-python/).
