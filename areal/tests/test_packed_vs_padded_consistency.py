@@ -105,9 +105,9 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
         engine.destroy()
 
 
-QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
+QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-7B-Instruct"
 if not os.path.exists(QWEN25_VL_PATH):
-    QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-3B-Instruct"
+    QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-7B-Instruct"
 GEMMA3_PATH = "/storage/openpsi/models/google__gemma-3-4b-it/"
 if not os.path.exists(GEMMA3_PATH):
     GEMMA3_PATH = "google/gemma-3-4b-it"
