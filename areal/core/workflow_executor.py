@@ -513,7 +513,7 @@ class WorkflowExecutor:
             assert workflow_builder is not None
             workflow = workflow_builder()
         if not isinstance(workflow, RolloutWorkflow):
-            raise TypeError("workflow_builder must return a RolloutWorkflow instance")
+            raise TypeError("workflow must be a RolloutWorkflow instance")
 
         request_id = None
         tracer = perf_tracer.get_request_tracer()

@@ -45,7 +45,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
             {
                 "role": "user",
                 "content": "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
-                "Please carefully read the original question, check the preivous errors, and try to answer it again.",
+                "Please carefully read the original question, check the previous errors, and try to answer it again.",
             }
         ]
 
