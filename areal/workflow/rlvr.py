@@ -85,7 +85,7 @@ class RLVRWorkflow(RolloutWorkflow):
 
         Parameters
         ----------
-        resps : list
+        resps : list[ModelResponse]
             List of ModelResponse objects from the inference engine.
         prompt_str : str
             The decoded prompt string for context.
