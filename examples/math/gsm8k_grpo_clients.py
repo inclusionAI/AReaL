@@ -57,6 +57,8 @@ class ClientRLVRWorkflow(RolloutWorkflow):
         self.rollout_stat_scope = rollout_stat_scope
 
     async def arun_episode(self, engine: InferenceEngine, data):
+        # NOTE: creating clients for each arun episode will influence the speed.
+        # See also gsm8k_grpo_proxy.py for a better solution.
         clients = [
             ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
             for _ in range(self.n_samples)
