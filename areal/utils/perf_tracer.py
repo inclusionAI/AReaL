@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import atexit
+import functools
 import getpass
 import json
 import os
@@ -12,6 +14,7 @@ from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
 )
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, cast
@@ -20,6 +23,9 @@ from areal.api.cli_args import PerfTracerConfig, RequestTracerConfig
 from areal.utils import logging
 
 logger = logging.getLogger("PerfTracer")
+
+# Context variable for storing request_id in async context
+_current_request_id: ContextVar[int | None] = ContextVar("request_id", default=None)
 
 # Suppress Pydantic warnings for standard dataclasses
 # Pydantic may inspect all dataclasses even when not using pydantic.dataclasses
@@ -518,6 +524,178 @@ def trace_request_event(
     if event is None:
         return
     tracer.record_event(request_id, event, **payload)
+
+
+class _SyncRequestPhaseScope(AbstractContextManager[Any]):
+    """Sync context manager for tracing request phases.
+
+    Automatically calls mark_{phase}_start on enter and mark_{phase}_end on exit,
+    ensuring proper pairing even if exceptions occur.
+    """
+
+    def __init__(
+        self,
+        request_id: int | None,
+        phase: str,
+        *,
+        start_payload: dict[str, Any] | None = None,
+        end_payload: dict[str, Any] | None = None,
+    ) -> None:
+        self._request_id = request_id
+        self._phase = phase
+        self._start_method = f"mark_{phase}_start"
+        self._end_method = f"mark_{phase}_end"
+        self._start_payload = start_payload or {}
+        self._end_payload = end_payload or {}
+
+    def __enter__(self) -> _SyncRequestPhaseScope:
+        trace_request_event(self._request_id, self._start_method, **self._start_payload)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Always call end event, even if exception occurred
+        trace_request_event(self._request_id, self._end_method, **self._end_payload)
+        return False  # Don't suppress exceptions
+
+
+class _AsyncRequestPhaseScope(AbstractAsyncContextManager[Any]):
+    """Async context manager for tracing request phases.
+
+    Automatically calls mark_{phase}_start on enter and mark_{phase}_end on exit,
+    ensuring proper pairing even if exceptions occur.
+    """
+
+    def __init__(
+        self,
+        request_id: int | None,
+        phase: str,
+        *,
+        start_payload: dict[str, Any] | None = None,
+        end_payload: dict[str, Any] | None = None,
+    ) -> None:
+        self._request_id = request_id
+        self._phase = phase
+        self._start_method = f"mark_{phase}_start"
+        self._end_method = f"mark_{phase}_end"
+        self._start_payload = start_payload or {}
+        self._end_payload = end_payload or {}
+
+    async def __aenter__(self) -> _AsyncRequestPhaseScope:
+        trace_request_event(self._request_id, self._start_method, **self._start_payload)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # Always call end event, even if exception occurred
+        trace_request_event(self._request_id, self._end_method, **self._end_payload)
+        return False  # Don't suppress exceptions
+
+
+def trace_request_phase(
+    request_id: int | None,
+    phase: str,
+    *,
+    start_payload: dict[str, Any] | None = None,
+    end_payload: dict[str, Any] | None = None,
+) -> AbstractContextManager[Any]:
+    """Sync context manager for tracing request phases.
+
+    Automatically pairs mark_{phase}_start and mark_{phase}_end events,
+    ensuring they are always called together even if exceptions occur.
+
+    Parameters
+    ----------
+    request_id : int | None
+        The request ID to trace. If None, no tracing occurs.
+    phase : str
+        The phase name (e.g., "generate", "reward", "execution").
+        Will call mark_{phase}_start and mark_{phase}_end.
+    start_payload : dict[str, Any] | None
+        Optional payload to pass to the start event.
+    end_payload : dict[str, Any] | None
+        Optional payload to pass to the end event.
+
+    Returns
+    -------
+    AbstractContextManager
+        A sync context manager for the phase tracing.
+
+    Examples
+    --------
+    >>> with trace_request_phase(request_id, "generate"):
+    ...     result = engine.generate(req)
+
+    >>> with trace_request_phase(request_id, "reward"):
+    ...     reward = reward_fn(prompt, completion)
+
+    >>> with trace_request_phase(
+    ...     request_id,
+    ...     "execution",
+    ...     end_payload={"status": "accepted"}
+    ... ):
+    ...     result = process_request()
+    """
+    if request_id is None:
+        return _NullContext()
+    return _SyncRequestPhaseScope(
+        request_id,
+        phase,
+        start_payload=start_payload,
+        end_payload=end_payload,
+    )
+
+
+def atrace_request_phase(
+    request_id: int | None,
+    phase: str,
+    *,
+    start_payload: dict[str, Any] | None = None,
+    end_payload: dict[str, Any] | None = None,
+) -> AbstractAsyncContextManager[Any]:
+    """Async context manager for tracing request phases.
+
+    Automatically pairs mark_{phase}_start and mark_{phase}_end events,
+    ensuring they are always called together even if exceptions occur.
+
+    Parameters
+    ----------
+    request_id : int | None
+        The request ID to trace. If None, no tracing occurs.
+    phase : str
+        The phase name (e.g., "generate", "reward", "execution").
+        Will call mark_{phase}_start and mark_{phase}_end.
+    start_payload : dict[str, Any] | None
+        Optional payload to pass to the start event.
+    end_payload : dict[str, Any] | None
+        Optional payload to pass to the end event.
+
+    Returns
+    -------
+    AbstractAsyncContextManager
+        An async context manager for the phase tracing.
+
+    Examples
+    --------
+    >>> async with atrace_request_phase(request_id, "generate"):
+    ...     result = await engine.agenerate(req)
+
+    >>> async with atrace_request_phase(request_id, "reward"):
+    ...     reward = await reward_fn(prompt, completion)
+
+    >>> async with atrace_request_phase(
+    ...     request_id,
+    ...     "execution",
+    ...     end_payload={"status": "accepted"}
+    ... ):
+    ...     result = await process_request()
+    """
+    if request_id is None:
+        return _NullContext()
+    return _AsyncRequestPhaseScope(
+        request_id,
+        phase,
+        start_payload=start_payload,
+        end_payload=end_payload,
+    )
 
 
 class RequestTracer:
@@ -1116,6 +1294,162 @@ def save(*, step: int | None = None, force: bool = False) -> None:
     tracer.save(step=step, force=force)
 
 
+def trace_perf(name: str, *, category: CategoryLike = None):
+    """
+    Decorator for tracing function performance with PerfTracer.
+
+    Automatically creates a trace scope around the entire function execution.
+    Works with both sync and async functions.
+
+    Parameters
+    ----------
+    name : str
+        Trace name to display in the trace viewer.
+    category : CategoryLike, optional
+        Trace category (compute, io, comm, sync, scheduler, etc.).
+
+    Examples
+    --------
+    >>> @trace_perf("ppo_update", category="compute")
+    ... async def update_model(self, batch):
+    ...     loss = compute_loss(batch)
+    ...     loss.backward()
+    ...     return loss
+
+    >>> @trace_perf("save_checkpoint", category="io")
+    ... def save(self, path):
+    ...     torch.save(self.state_dict(), path)
+    """
+
+    def decorator(func):
+        if asyncio.iscoroutinefunction(func):
+
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                async with atrace_scope(name, category=category):
+                    return await func(*args, **kwargs)
+
+            return async_wrapper
+        else:
+
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                with trace_scope(name, category=category):
+                    return func(*args, **kwargs)
+
+            return sync_wrapper
+
+    return decorator
+
+
+def set_request_id(request_id: int | None) -> None:
+    """
+    Set the request_id for the current async context.
+
+    This should be called once at the entry point of each request/task.
+    All subsequent async calls within the same context will have access
+    to this request_id.
+
+    Parameters
+    ----------
+    request_id : int | None
+        The request ID to set in the current context.
+
+    Examples
+    --------
+    >>> async def execute_request(data):
+    ...     request_id = submit_request(data)
+    ...     perf_tracer.set_request_id(request_id)  # Set once
+    ...     result = await workflow.arun_episode(...)  # All children inherit
+    ...     return result
+    """
+    _current_request_id.set(request_id)
+
+
+def get_request_id() -> int | None:
+    """
+    Get the request_id from the current async context.
+
+    Returns the request_id that was set via set_request_id(),
+    or None if no request_id has been set.
+
+    Returns
+    -------
+    int | None
+        The request ID from the current context, or None.
+
+    Examples
+    --------
+    >>> request_id = perf_tracer.get_request_id()
+    >>> if request_id is not None:
+    ...     print(f"Processing request {request_id}")
+    """
+    return _current_request_id.get()
+
+
+def trace_request(phase: str):
+    """
+    Decorator for tracing request phases using contextvars.
+
+    Automatically reads request_id from the async context (set via
+    set_request_id) and traces the phase execution.
+
+    Parameters
+    ----------
+    phase : str
+        Phase name (e.g., "generate", "reward", "execution").
+        Will call mark_{phase}_start and mark_{phase}_end.
+
+    Examples
+    --------
+    >>> # Set context at entry point
+    >>> async def arun_episode(self, engine, task_input):
+    ...     perf_tracer.set_request_id(task_input.request_id)
+    ...     resps = await self._do_generate(engine, req, n_samples)
+    ...     results = await self._compute_rewards(resps)
+    ...     return results
+
+    >>> # Use decorator on methods - no need to pass request_id!
+    >>> @trace_request("generate")
+    ... async def _do_generate(self, engine, req, n_samples):
+    ...     return await asyncio.gather(...)
+
+    >>> @trace_request("reward")
+    ... async def _compute_rewards(self, resps):
+    ...     for resp in resps:
+    ...         reward = await self.async_reward_fn(...)
+    ...     return results
+    """
+
+    def decorator(func):
+        if asyncio.iscoroutinefunction(func):
+
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                request_id = get_request_id()
+                trace_request_event(request_id, f"mark_{phase}_start")
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    trace_request_event(request_id, f"mark_{phase}_end")
+
+            return async_wrapper
+        else:
+
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                request_id = get_request_id()
+                trace_request_event(request_id, f"mark_{phase}_start")
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    trace_request_event(request_id, f"mark_{phase}_end")
+
+            return sync_wrapper
+
+    return decorator
+
+
 __all__ = [
     "PerfTracer",
     "RequestTracer",
@@ -1123,6 +1457,12 @@ __all__ = [
     "Category",
     "RequestTraceEvent",
     "trace_request_event",
+    "trace_request_phase",
+    "atrace_request_phase",
+    "trace_perf",
+    "trace_request",
+    "set_request_id",
+    "get_request_id",
     "GLOBAL_TRACER",
     "get_tracer",
     "get_request_tracer",

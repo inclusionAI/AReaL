@@ -422,3 +422,140 @@ def test_perf_tracer_torchrun_multi_rank(tmp_path, world_size):
         evt["args"].get("rank") for evt in payload if evt["name"] == "torchrun-mark"
     }
     assert mark_ranks == set(range(world_size))
+
+
+@pytest.mark.asyncio
+async def test_trace_request_phase(tmp_path):
+    """Test that atrace_request_phase context manager works correctly."""
+    config = PerfTracerConfig(
+        experiment_name="test-phase",
+        trial_name="trial",
+        fileroot=str(tmp_path),
+        enabled=True,
+        request_tracer=RequestTracerConfig(enabled=True, flush_threshold=1),
+    )
+    perf_tracer.configure(config, rank=0)
+    try:
+        tracer = perf_tracer.get_request_tracer()
+        assert tracer is not None
+
+        # Register a request
+        request_id = tracer.register_submission()
+
+        # Use context manager for generate phase
+        async with perf_tracer.atrace_request_phase(request_id, "generate"):
+            await asyncio.sleep(0.01)  # Simulate work
+
+        # Use context manager for reward phase
+        async with perf_tracer.atrace_request_phase(request_id, "reward"):
+            await asyncio.sleep(0.01)  # Simulate work
+
+        # Mark as completed
+        perf_tracer.trace_request_event(
+            request_id, "mark_execution_end", status="accepted"
+        )
+        perf_tracer.trace_request_event(request_id, "mark_consumed")
+
+        # Force flush
+        tracer.flush(force=True)
+
+        # Read the trace file
+        request_trace_path = (
+            Path(tmp_path)
+            / "logs"
+            / getpass.getuser()
+            / "test-phase"
+            / "trial"
+            / "request_tracer"
+            / "requests-r0.jsonl"
+        )
+        assert request_trace_path.exists()
+
+        with open(request_trace_path) as f:
+            records = [json.loads(line) for line in f]
+
+        assert len(records) == 1
+        record = records[0]
+
+        # Verify phases exist
+        assert "phases" in record
+        assert "generate" in record["phases"]
+        assert "reward" in record["phases"]
+
+        # Verify each phase has start and end timestamps
+        generate_phase = record["phases"]["generate"]
+        assert len(generate_phase) == 1
+        assert generate_phase[0]["start_ts"] is not None
+        assert generate_phase[0]["end_ts"] is not None
+
+        reward_phase = record["phases"]["reward"]
+        assert len(reward_phase) == 1
+        assert reward_phase[0]["start_ts"] is not None
+        assert reward_phase[0]["end_ts"] is not None
+
+        # Verify computed times
+        assert "generate_s" in record
+        assert record["generate_s"] > 0
+        assert "reward_calc_s" in record
+        assert record["reward_calc_s"] > 0
+
+    finally:
+        perf_tracer.reset()
+
+
+@pytest.mark.asyncio
+async def test_trace_request_phase_with_exception(tmp_path):
+    """Test that atrace_request_phase handles exceptions correctly."""
+    config = PerfTracerConfig(
+        experiment_name="test-phase-exc",
+        trial_name="trial",
+        fileroot=str(tmp_path),
+        enabled=True,
+        request_tracer=RequestTracerConfig(enabled=True, flush_threshold=1),
+    )
+    perf_tracer.configure(config, rank=0)
+    try:
+        tracer = perf_tracer.get_request_tracer()
+        assert tracer is not None
+
+        request_id = tracer.register_submission()
+
+        # Even if exception occurs, end event should be recorded
+        with pytest.raises(ValueError):
+            async with perf_tracer.atrace_request_phase(request_id, "generate"):
+                raise ValueError("Simulated error")
+
+        # Complete the request
+        perf_tracer.trace_request_event(
+            request_id, "mark_execution_end", status="failed"
+        )
+        tracer.flush(force=True)
+
+        # Read the trace
+        request_trace_path = (
+            Path(tmp_path)
+            / "logs"
+            / getpass.getuser()
+            / "test-phase-exc"
+            / "trial"
+            / "request_tracer"
+            / "requests-r0.jsonl"
+        )
+        assert request_trace_path.exists()
+
+        with open(request_trace_path) as f:
+            records = [json.loads(line) for line in f]
+
+        assert len(records) == 1
+        record = records[0]
+
+        # Verify generate phase was recorded with both start and end
+        assert "phases" in record
+        assert "generate" in record["phases"]
+        generate_phase = record["phases"]["generate"]
+        assert len(generate_phase) == 1
+        assert generate_phase[0]["start_ts"] is not None
+        assert generate_phase[0]["end_ts"] is not None
+
+    finally:
+        perf_tracer.reset()

@@ -89,9 +89,10 @@ class RLVRWorkflow(RolloutWorkflow):
 
         # Record generate timing
         request_id = task_input.request_id
-        perf_tracer.trace_request_event(request_id, "mark_generate_start")
-        resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
-        perf_tracer.trace_request_event(request_id, "mark_generate_end")
+        async with perf_tracer.atrace_request_phase(request_id, "generate"):
+            resps = await asyncio.gather(
+                *[engine.agenerate(req) for _ in range(n_samples)]
+            )
 
         version = engine.get_version()
         prompt_str = self.tokenizer.decode(input_ids)
