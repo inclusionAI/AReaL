@@ -65,8 +65,8 @@ def ulysses_flash_attn_forward(
     ulysses_sp_size = get_ulysses_sequence_parallel_world_size()
 
     if ulysses_sp_size > 1:
-        assert self.num_heads % ulysses_sp_size == 0, (
-            f"num_heads ({self.num_heads}) must be divisible by Ulysses sequence parallel size({ulysses_sp_size})"
+        assert self.config.num_attention_heads % ulysses_sp_size == 0, (
+            f"num_heads ({self.config.num_attention_heads}) must be divisible by Ulysses sequence parallel size({ulysses_sp_size})"
         )
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
