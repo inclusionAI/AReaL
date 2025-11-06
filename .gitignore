@@ -3,6 +3,10 @@
 .data/
 .idea/
 
+
+# Ruff
+.ruff_cache/
+
 # Mac
 .DS_Store
 
