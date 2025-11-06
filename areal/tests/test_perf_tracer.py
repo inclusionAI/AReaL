@@ -12,7 +12,7 @@ from areal.api.cli_args import PerfTracerConfig, RequestTracerConfig
 from areal.platforms import current_platform
 from areal.utils import perf_tracer
 from areal.utils.network import find_free_ports
-from areal.utils.perf_tracer import Category
+from areal.utils.perf_tracer import Category, RequestTraceEvent
 
 
 def _make_config(
@@ -347,13 +347,13 @@ def test_request_tracer_configuration(tmp_path):
     assert request_tracer is not None
 
     request_id = request_tracer.register_submission()
-    request_tracer.mark_execution_start(request_id)
-    request_tracer.mark_execution_end(
+    request_tracer.record_event(request_id, RequestTraceEvent.EXECUTION_START)
+    request_tracer.record_event(
         request_id,
+        RequestTraceEvent.EXECUTION_END,
         status="accepted",
-        should_accept=True,
     )
-    request_tracer.mark_consumed(request_id)
+    request_tracer.record_event(request_id, RequestTraceEvent.CONSUMED)
     tracer.save(force=True)
 
     request_path = _expected_request_trace_path(config, rank=0)

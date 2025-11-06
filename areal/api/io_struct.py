@@ -29,7 +29,7 @@ class ModelRequest:
     tokenizer: PreTrainedTokenizerFast | None = None
 
     # vlm
-    image_data: list[ImageObject | str] | None = field(default_factory=list)
+    image_data: list[str] | None = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
 
     def copy(self):

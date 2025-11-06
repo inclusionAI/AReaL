@@ -1,5 +1,7 @@
 from __future__ import annotations  # noqa
 
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
@@ -8,9 +10,29 @@ if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
 
 
-class RolloutWorkflow:
+@dataclass(slots=True)
+class WorkflowTaskInput:
+    """Input payload provided to :class:`RolloutWorkflow` implementations.
+
+    Parameters
+    ----------
+    data : dict[str, Any]
+        Original sample provided by the dataloader or caller.
+    request_id : int | None, optional
+        Identifier registered with the global request tracer when tracing is
+        enabled.
+    """
+
+    data: dict[str, Any]
+    request_id: int | None = None
+
+
+class RolloutWorkflow(ABC):
+    @abstractmethod
     async def arun_episode(
-        self, engine: InferenceEngine, data: dict[str, Any]
+        self,
+        engine: InferenceEngine,
+        task_input: WorkflowTaskInput,
     ) -> dict[str, Any] | None | dict[str, InteractionWithTokenLogpReward]:
         """Run a single episode of the workflow.
 
@@ -24,8 +46,9 @@ class RolloutWorkflow:
         ----------
         engine : InferenceEngine
             The inference engine to use for generating responses
-        data : Dict[str, Any]
-            Input data for the workflow episode
+        task_input : WorkflowTaskInput
+            Wrapper carrying the request payload and metadata. ``task_input.data``
+            contains the original sample provided to the workflow.
 
         Returns
         -------

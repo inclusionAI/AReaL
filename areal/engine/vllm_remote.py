@@ -203,10 +203,10 @@ class RemotevLLMEngine(InferenceEngine):
         data: dict[str, Any],
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> None:
         """Submit a request to the inference engine."""
-        return self._engine.submit(data, workflow, workflow_builder, should_accept)
+        return self._engine.submit(data, workflow, workflow_builder, should_accept_fn)
 
     def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
         """Wait for a specified number of requests to complete."""
@@ -217,11 +217,11 @@ class RemotevLLMEngine(InferenceEngine):
         data: list[dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results."""
         return self._engine.rollout_batch(
-            data, workflow, workflow_builder, should_accept
+            data, workflow, workflow_builder, should_accept_fn
         )
 
     def prepare_batch(
@@ -229,11 +229,11 @@ class RemotevLLMEngine(InferenceEngine):
         dataloader: StatefulDataLoader,
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
         return self._engine.prepare_batch(
-            dataloader, workflow, workflow_builder, should_accept
+            dataloader, workflow, workflow_builder, should_accept_fn
         )
 
     def pause(self):

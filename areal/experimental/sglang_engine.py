@@ -1,8 +1,9 @@
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Optional
 
 import sglang as sgl
 import torch.distributed as dist
@@ -17,7 +18,6 @@ from areal.api.io_struct import (
 )
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import WorkflowExecutor
-from areal.core.workflow_executor import WorkflowExecutor
 from areal.utils import logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger(__name__)
@@ -38,11 +38,10 @@ SGLangEngine currently only supports single-controller. Cannot be used in SPMD
 
 
 class SGLangEngine(InferenceEngine):
-
     def __init__(
         self,
         config: InferenceEngineConfig,
-        engine_args: Optional[Dict[str, Any]] = None,
+        engine_args: dict[str, Any] | None = None,
     ):
         self.config = config
         self.engine_args = engine_args or {}
@@ -61,7 +60,7 @@ class SGLangEngine(InferenceEngine):
 
     def initialize(
         self,
-        engine_id: Optional[str] = None,
+        engine_id: str | None = None,
         train_data_parallel_size: int | None = None,
     ):
         if engine_id is None:
@@ -125,7 +124,6 @@ class SGLangEngine(InferenceEngine):
             stop_reason != "stop"
             and len(accumulated_output_tokens) < gconfig.max_new_tokens
         ):
-
             try:
                 outputs = await self.engine.async_generate(
                     prompt=prompt,
@@ -186,13 +184,13 @@ class SGLangEngine(InferenceEngine):
                 save_timestamp = int(name_resolve.wait(update_name, timeout=120))
                 load_timestamp = time.time_ns()
                 logger.info(
-                    f"Begin update weights from {meta.path}, responded in {(load_timestamp - save_timestamp)/1e6:.2f} ms"
+                    f"Begin update weights from {meta.path}, responded in {(load_timestamp - save_timestamp) / 1e6:.2f} ms"
                 )
                 # Update weights from disk,
                 self.engine.update_weights_from_disk(model_path=meta.path)
 
                 logger.info(
-                    f"Loading weights done in {(time.time_ns() - load_timestamp)/1e6:.2f} ms"
+                    f"Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
                 )
                 self.set_version(meta.model_version)
             except Exception as e:
@@ -203,16 +201,16 @@ class SGLangEngine(InferenceEngine):
 
     def submit(
         self,
-        data: Dict[str, Any],
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
+        data: dict[str, Any],
+        workflow: RolloutWorkflow | None = None,
+        workflow_builder: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> None:
         return self.workflow_executor.submit(
             data,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def wait(self, count: int, timeout: float | None = None):
@@ -220,30 +218,30 @@ class SGLangEngine(InferenceEngine):
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
+        workflow_builder: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ):
         return self.workflow_executor.rollout_batch(
             data=data,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
+        workflow: RolloutWorkflow | None = None,
+        workflow_builder: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ):
         return self.workflow_executor.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def pause(self):

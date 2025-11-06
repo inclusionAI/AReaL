@@ -6,18 +6,36 @@ import json
 import os
 import threading
 import time
+import warnings
+from collections.abc import Callable
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
 )
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar, cast
 
 from areal.api.cli_args import PerfTracerConfig, RequestTracerConfig
 from areal.utils import logging
 
 logger = logging.getLogger("PerfTracer")
+
+# Suppress Pydantic warnings for standard dataclasses
+# Pydantic may inspect all dataclasses even when not using pydantic.dataclasses
+# and emit false warnings about field() parameters or frozen dataclasses
+warnings.filterwarnings(
+    "ignore",
+    message=".*repr.*should be.*",
+    category=UserWarning,
+    module="pydantic",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*frozen.*attribute.*provided to.*Field.*function.*",
+    category=UserWarning,
+    module="pydantic",
+)
 
 
 _THREAD_LOCAL = threading.local()
@@ -73,6 +91,49 @@ def _normalize_save_interval(config: PerfTracerConfig) -> int:
     return max(config.save_interval, 1)
 
 
+def _normalize_flush_threshold(config: RequestTracerConfig) -> int:
+    try:
+        value = int(config.flush_threshold)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid flush_threshold=%r; defaulting to 1",
+            getattr(config, "flush_threshold", None),
+        )
+        return 1
+    return max(value, 1)
+
+
+def _rollout_stats_to_dict(data: Any) -> dict[str, int] | None:
+    if data is None:
+        return None
+    if isinstance(data, dict):
+        converted: dict[str, int] = {}
+        for key, value in data.items():
+            try:
+                converted[str(key)] = int(value)
+            except (TypeError, ValueError):
+                continue
+        return converted or None
+    attrs = ("accepted", "enqueued", "rejected", "running")
+    converted: dict[str, int] = {}
+    for attr in attrs:
+        if hasattr(data, attr):
+            try:
+                converted[attr] = int(getattr(data, attr))
+            except (TypeError, ValueError):
+                continue
+    if converted:
+        return converted
+    to_dict = getattr(data, "to_dict", None)
+    if callable(to_dict):
+        try:
+            maybe = to_dict()
+            return _rollout_stats_to_dict(maybe)
+        except Exception:  # pragma: no cover - defensive
+            return None
+    return None
+
+
 def _normalize_category(category: CategoryLike) -> str:
     if category is None:
         return PerfTraceCategory.MISC.value
@@ -106,29 +167,73 @@ def _default_trace_path(
     return os.path.join(base_dir, _rank_qualified_filename(filename, rank))
 
 
-def _normalize_flush_threshold(config: RequestTracerConfig) -> int:
-    return max(config.flush_threshold, 1)
+class RequestTraceEvent(str, Enum):
+    ENQUEUED = "enqueued"
+    EXECUTION_START = "execution_start"
+    EXECUTION_END = "execution_end"
+    CONSUMED = "consumed"
+    GENERATE_START = "generate_start"
+    GENERATE_END = "generate_end"
+    REWARD_START = "reward_start"
+    REWARD_END = "reward_end"
+    DROPPED = "dropped"
 
 
-def _staleness_to_dict(stats: Any) -> dict[str, int] | None:
-    if stats is None:
-        return None
-    if isinstance(stats, dict):
+@dataclass
+class PhaseEntry:
+    start_ts: float
+    end_ts: float | None = None
+
+    def to_dict(self) -> dict[str, float | None]:
         return {
-            "submitted": int(stats.get("submitted", 0)),
-            "running": int(stats.get("running", 0)),
-            "accepted": int(stats.get("accepted", 0)),
+            "start_ts": self.start_ts,
+            "end_ts": self.end_ts,
         }
-    submitted = getattr(stats, "submitted", None)
-    running = getattr(stats, "running", None)
-    accepted = getattr(stats, "accepted", None)
-    if submitted is None and running is None and accepted is None:
-        return None
-    return {
-        "submitted": int(submitted or 0),
-        "running": int(running or 0),
-        "accepted": int(accepted or 0),
-    }
+
+
+# NOTE: frozen=True is valid despite Pydantic warnings
+@dataclass(frozen=True)
+class PhaseConfig:
+    name: str
+    start_event: RequestTraceEvent
+    end_event: RequestTraceEvent
+    allow_multiple: bool = False
+    ready_on_complete: bool = False
+    on_end: Callable[[RequestRecord, dict[str, Any]], None] | None = None
+
+
+# NOTE: frozen=True is valid despite Pydantic warnings
+@dataclass(frozen=True)
+class EventRule:
+    timestamp_attr: str | None = None
+    phase: str | None = None
+    role: str | None = None
+    allow_multiple: bool = False
+    payload_handler: Callable[[RequestRecord, dict[str, Any]], None] | None = None
+    mark_ready: bool = False
+
+
+# NOTE: frozen=True is valid despite Pydantic warnings
+@dataclass(frozen=True)
+class RecordField:
+    attr: str | None = None
+    key: str | None = None
+    compute: Callable[[RequestRecord], Any] | None = None
+    omit_if_none: bool = True
+
+    def resolve(self, record: RequestRecord) -> Any:
+        if self.compute is not None:
+            return self.compute(record)
+        if self.attr is None:
+            raise ValueError("RecordField requires either attr or compute")
+        return getattr(record, self.attr)
+
+    def key_name(self) -> str:
+        if self.key is not None:
+            return self.key
+        if self.attr is None:
+            raise ValueError("RecordField without attr must define key")
+        return self.attr
 
 
 @dataclass
@@ -136,14 +241,48 @@ class RequestRecord:
     request_id: int
     rank: int
     submit_ts: float
-    enqueue_ts: float | None = None
-    execute_start_ts: float | None = None
-    execute_end_ts: float | None = None
-    wait_return_ts: float | None = None
     status: str = "pending"
-    should_accept: bool | None = None
     rejection_reason: str | None = None
-    staleness: dict[str, int] | None = None
+    rollout_stats: dict[str, int] | None = None
+    enqueue_ts: float | None = None
+    wait_return_ts: float | None = None
+    phases: dict[str, list[PhaseEntry]] = field(init=False)
+    counters: dict[str, int] = field(init=False)
+    # NOTE: repr=False is valid for dataclasses.field() despite Pydantic warnings
+    _active_phases: dict[str, PhaseEntry | None] = field(init=False, repr=False)
+
+    PHASE_CONFIGS: ClassVar[tuple[PhaseConfig, ...]] = ()
+    COUNTERS: ClassVar[tuple[str, ...]] = ()
+    FIELD_SPECS: ClassVar[tuple[RecordField, ...]] = ()
+
+    def __post_init__(self) -> None:
+        self.phases = {cfg.name: [] for cfg in self.PHASE_CONFIGS}
+        self._active_phases = {cfg.name: None for cfg in self.PHASE_CONFIGS}
+        self.counters = {name: 0 for name in self.COUNTERS}
+
+    @classmethod
+    def default_phase_configs(cls) -> tuple[PhaseConfig, ...]:
+        return (
+            PhaseConfig(
+                name="execution",
+                start_event=RequestTraceEvent.EXECUTION_START,
+                end_event=RequestTraceEvent.EXECUTION_END,
+                on_end=cls._on_execution_end,
+                ready_on_complete=True,
+            ),
+            PhaseConfig(
+                name="generate",
+                start_event=RequestTraceEvent.GENERATE_START,
+                end_event=RequestTraceEvent.GENERATE_END,
+                allow_multiple=True,
+            ),
+            PhaseConfig(
+                name="reward",
+                start_event=RequestTraceEvent.REWARD_START,
+                end_event=RequestTraceEvent.REWARD_END,
+                allow_multiple=True,
+            ),
+        )
 
     def is_ready_to_flush(self) -> bool:
         if self.status in {"rejected", "failed", "dropped"}:
@@ -152,28 +291,233 @@ class RequestRecord:
             return True
         return False
 
-    def to_dict(self) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "request_id": self.request_id,
-            "rank": self.rank,
-            "status": self.status,
-            "should_accept": self.should_accept,
-            "rejection_reason": self.rejection_reason,
-            "submit_ts": self.submit_ts,
-            "enqueue_ts": self.enqueue_ts,
-            "execute_start_ts": self.execute_start_ts,
-            "execute_end_ts": self.execute_end_ts,
-            "wait_return_ts": self.wait_return_ts,
-            "staleness": self.staleness,
+    def increment_counter(self, name: str, value: int = 1) -> None:
+        self.counters[name] = self.counters.get(name, 0) + value
+
+    def apply_phase_event(
+        self,
+        phase: str,
+        role: str,
+        timestamp: float,
+        *,
+        allow_multiple: bool,
+    ) -> None:
+        entries = self.phases.setdefault(phase, [])
+        current = self._active_phases.get(phase)
+        if role == "start":
+            if current is not None and current.end_ts is None and not allow_multiple:
+                current.end_ts = timestamp
+            entry = PhaseEntry(start_ts=timestamp)
+            entries.append(entry)
+            self._active_phases[phase] = entry
+        elif role == "end":
+            if current is None or current.end_ts is not None:
+                entry = PhaseEntry(start_ts=timestamp)
+                entries.append(entry)
+            else:
+                entry = current
+            entry.end_ts = timestamp
+            self._active_phases[phase] = None
+
+    def _phase_first_start(self, phase: str) -> float | None:
+        for entry in self.phases.get(phase, []):
+            if entry.start_ts is not None:
+                return entry.start_ts
+        return None
+
+    def _phase_first_end(self, phase: str) -> float | None:
+        for entry in self.phases.get(phase, []):
+            if entry.end_ts is not None:
+                return entry.end_ts
+        return None
+
+    @staticmethod
+    def _on_execution_end(record: RequestRecord, payload: dict[str, Any]) -> None:
+        status = payload.get("status")
+        if status is not None:
+            record.status = status
+        if "rejection_reason" in payload:
+            record.rejection_reason = payload.get("rejection_reason")
+        record.rollout_stats = _rollout_stats_to_dict(payload.get("rollout_stats"))
+
+    @staticmethod
+    def _on_drop(record: RequestRecord, payload: dict[str, Any]) -> None:
+        record.status = "dropped"
+        reason = payload.get("rejection_reason")
+        if reason is not None:
+            record.rejection_reason = reason
+        record.rollout_stats = _rollout_stats_to_dict(payload.get("rollout_stats"))
+
+    @classmethod
+    def build_event_rules(cls) -> dict[RequestTraceEvent, EventRule]:
+        rules: dict[RequestTraceEvent, EventRule] = {
+            RequestTraceEvent.ENQUEUED: EventRule(timestamp_attr="enqueue_ts"),
+            RequestTraceEvent.CONSUMED: EventRule(timestamp_attr="wait_return_ts"),
+            RequestTraceEvent.DROPPED: EventRule(
+                phase="execution",
+                role="end",
+                payload_handler=cls._on_drop,
+                mark_ready=True,
+            ),
         }
-        data["queue_wait_s"] = _maybe_duration(self.submit_ts, self.enqueue_ts)
-        data["runner_wait_s"] = _maybe_duration(self.enqueue_ts, self.execute_start_ts)
-        data["execution_s"] = _maybe_duration(
-            self.execute_start_ts, self.execute_end_ts
+        for cfg in cls.PHASE_CONFIGS:
+            rules[cfg.start_event] = EventRule(
+                phase=cfg.name,
+                role="start",
+                allow_multiple=cfg.allow_multiple,
+            )
+            if cfg.end_event is not None:
+                rules[cfg.end_event] = EventRule(
+                    phase=cfg.name,
+                    role="end",
+                    payload_handler=cfg.on_end,
+                    mark_ready=cfg.ready_on_complete,
+                )
+        return rules
+
+    def _phase_total_duration(self, phase: str) -> float | None:
+        durations = [
+            entry.end_ts - entry.start_ts
+            for entry in self.phases.get(phase, [])
+            if entry.end_ts is not None
+        ]
+        if not durations:
+            return None
+        return sum(durations)
+
+    @staticmethod
+    def _compute_queue_wait(record: RequestRecord) -> float | None:
+        return _maybe_duration(record.submit_ts, record.enqueue_ts)
+
+    @staticmethod
+    def _compute_runner_wait(record: RequestRecord) -> float | None:
+        first_execution_start = record._phase_first_start("execution")
+        return _maybe_duration(record.enqueue_ts, first_execution_start)
+
+    @staticmethod
+    def _compute_execution_time(record: RequestRecord) -> float | None:
+        return record._phase_total_duration("execution")
+
+    @staticmethod
+    def _compute_post_wait(record: RequestRecord) -> float | None:
+        first_execution_end = record._phase_first_end("execution")
+        return _maybe_duration(first_execution_end, record.wait_return_ts)
+
+    @staticmethod
+    def _compute_total_time(record: RequestRecord) -> float | None:
+        return _maybe_duration(record.submit_ts, record.wait_return_ts)
+
+    @staticmethod
+    def _compute_generate_time(record: RequestRecord) -> float | None:
+        return record._phase_total_duration("generate")
+
+    @staticmethod
+    def _compute_reward_time(record: RequestRecord) -> float | None:
+        return record._phase_total_duration("reward")
+
+    @classmethod
+    def default_field_specs(cls) -> tuple[RecordField, ...]:
+        return (
+            RecordField("request_id"),
+            RecordField("rank"),
+            RecordField("status"),
+            RecordField("rejection_reason", omit_if_none=True),
+            RecordField("submit_ts"),
+            RecordField("enqueue_ts", omit_if_none=True),
+            RecordField("wait_return_ts", omit_if_none=True),
+            RecordField("rollout_stats", omit_if_none=True),
+            RecordField(
+                compute=cls._compute_queue_wait,
+                key="queue_wait_s",
+                omit_if_none=True,
+            ),
+            RecordField(
+                compute=cls._compute_runner_wait,
+                key="runner_wait_s",
+                omit_if_none=True,
+            ),
+            RecordField(
+                compute=cls._compute_execution_time,
+                key="execution_s",
+                omit_if_none=True,
+            ),
+            RecordField(
+                compute=cls._compute_post_wait,
+                key="post_wait_s",
+                omit_if_none=True,
+            ),
+            RecordField(
+                compute=cls._compute_total_time,
+                key="total_s",
+                omit_if_none=True,
+            ),
+            RecordField(
+                compute=cls._compute_generate_time,
+                key="generate_s",
+                omit_if_none=True,
+            ),
+            RecordField(
+                compute=cls._compute_reward_time,
+                key="reward_calc_s",
+                omit_if_none=True,
+            ),
         )
-        data["post_wait_s"] = _maybe_duration(self.execute_end_ts, self.wait_return_ts)
-        data["total_s"] = _maybe_duration(self.submit_ts, self.wait_return_ts)
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {}
+        for field_spec in self.FIELD_SPECS:
+            value = field_spec.resolve(self)
+            if field_spec.omit_if_none and value is None:
+                continue
+            data[field_spec.key_name()] = value
+        if any(self.phases.values()):
+            data["phases"] = {
+                name: [entry.to_dict() for entry in entries]
+                for name, entries in self.phases.items()
+                if entries
+            }
+        if any(self.counters.values()):
+            data["counters"] = {k: v for k, v in self.counters.items() if v}
         return data
+
+
+RequestRecord.PHASE_CONFIGS = RequestRecord.default_phase_configs()
+RequestRecord.FIELD_SPECS = RequestRecord.default_field_specs()
+_REQUEST_EVENT_RULES = RequestRecord.build_event_rules()
+
+_REQUEST_TRACE_METHOD_TO_EVENT: dict[str, RequestTraceEvent] = {
+    "mark_enqueued": RequestTraceEvent.ENQUEUED,
+    "mark_execution_start": RequestTraceEvent.EXECUTION_START,
+    "mark_execution_end": RequestTraceEvent.EXECUTION_END,
+    "mark_consumed": RequestTraceEvent.CONSUMED,
+    "mark_dropped": RequestTraceEvent.DROPPED,
+    "mark_generate_start": RequestTraceEvent.GENERATE_START,
+    "mark_generate_end": RequestTraceEvent.GENERATE_END,
+    "mark_reward_start": RequestTraceEvent.REWARD_START,
+    "mark_reward_end": RequestTraceEvent.REWARD_END,
+}
+
+
+def trace_request_event(
+    request_id: int | None,
+    method: str,
+    **payload: Any,
+) -> None:
+    if request_id is None:
+        return
+    tracer = get_request_tracer()
+    if tracer is None:
+        return
+    if method == "increment_counter":
+        name = payload.get("name")
+        if not name:
+            return
+        tracer.increment_counter(request_id, name, payload.get("value", 1))
+        return
+    event = _REQUEST_TRACE_METHOD_TO_EVENT.get(method)
+    if event is None:
+        return
+    tracer.record_event(request_id, event, **payload)
 
 
 class RequestTracer:
@@ -192,6 +536,7 @@ class RequestTracer:
         self._ready: set[int] = set()
         self._flush_threshold = _normalize_flush_threshold(config)
         self._output_path = output_path
+        self._event_rules = _REQUEST_EVENT_RULES
 
     def register_submission(self) -> int:
         now = time.perf_counter()
@@ -205,75 +550,57 @@ class RequestTracer:
             )
         return request_id
 
-    def mark_enqueued(self, request_id: int) -> None:
-        with self._lock:
-            record = self._records.get(request_id)
-            if record is None:
-                return
-            record.enqueue_ts = time.perf_counter()
-
-    def mark_execution_start(self, request_id: int) -> None:
-        with self._lock:
-            record = self._records.get(request_id)
-            if record is None:
-                return
-            record.execute_start_ts = time.perf_counter()
-
-    def mark_execution_end(
+    def _apply_event(
         self,
         request_id: int,
-        *,
-        status: str,
-        should_accept: bool | None,
-        rejection_reason: str | None = None,
-        staleness: Any = None,
+        event: RequestTraceEvent,
+        payload: dict[str, Any] | None = None,
+    ) -> bool:
+        rule = self._event_rules.get(event)
+        if rule is None:
+            return False
+        data = dict(payload or {})
+        with self._lock:
+            record = self._records.get(request_id)
+            if record is None:
+                return False
+            timestamp = time.perf_counter()
+            if rule.timestamp_attr is not None:
+                setattr(record, rule.timestamp_attr, timestamp)
+            if rule.phase is not None and rule.role is not None:
+                record.apply_phase_event(
+                    rule.phase,
+                    rule.role,
+                    timestamp,
+                    allow_multiple=rule.allow_multiple,
+                )
+            if rule.payload_handler is not None:
+                rule.payload_handler(record, data)
+            ready = rule.mark_ready or record.is_ready_to_flush()
+            if ready:
+                self._ready.add(request_id)
+                if len(self._ready) >= self._flush_threshold:
+                    return True
+            return False
+
+    def record_event(
+        self,
+        request_id: int,
+        event: RequestTraceEvent,
+        **payload: Any,
     ) -> None:
-        now = time.perf_counter()
-        should_flush = False
-        with self._lock:
-            record = self._records.get(request_id)
-            if record is None:
-                return
-            record.execute_end_ts = now
-            record.status = status
-            record.should_accept = should_accept
-            record.rejection_reason = rejection_reason
-            record.staleness = _staleness_to_dict(staleness)
-            if record.is_ready_to_flush():
-                self._ready.add(request_id)
-                if len(self._ready) >= self._flush_threshold:
-                    should_flush = True
+        should_flush = self._apply_event(request_id, event, payload)
         if should_flush:
             self.flush()
 
-    def mark_consumed(self, request_id: int) -> None:
-        should_flush = False
+    def increment_counter(self, request_id: int, name: str, value: int = 1) -> None:
         with self._lock:
             record = self._records.get(request_id)
             if record is None:
                 return
-            record.wait_return_ts = time.perf_counter()
+            record.increment_counter(name, value)
             if record.is_ready_to_flush():
                 self._ready.add(request_id)
-                if len(self._ready) >= self._flush_threshold:
-                    should_flush = True
-        if should_flush:
-            self.flush()
-
-    def mark_dropped(self, request_id: int, reason: str) -> None:
-        should_flush = False
-        with self._lock:
-            record = self._records.get(request_id)
-            if record is None:
-                return
-            record.execute_end_ts = time.perf_counter()
-            record.status = "dropped"
-            record.rejection_reason = reason
-            self._ready.add(request_id)
-            if len(self._ready) >= self._flush_threshold:
-                should_flush = True
-        if should_flush:
-            self.flush()
 
     def flush(self, force: bool = False) -> None:
         with self._lock:
@@ -454,6 +781,7 @@ class PerfTracer:
         request_cfg = getattr(config, "request_tracer", None)
         enabled = bool(request_cfg and getattr(request_cfg, "enabled", False))
         if enabled:
+            request_cfg = cast(RequestTracerConfig, request_cfg)
             output_path = _default_trace_path(
                 config,
                 filename=_REQUEST_TRACE_FILENAME,
@@ -793,6 +1121,8 @@ __all__ = [
     "RequestTracer",
     "PerfTraceCategory",
     "Category",
+    "RequestTraceEvent",
+    "trace_request_event",
     "GLOBAL_TRACER",
     "get_tracer",
     "get_request_tracer",

@@ -1,13 +1,11 @@
 import base64
 from io import BytesIO
-from typing import List
 
 from PIL import Image
 from PIL.Image import Image as ImageObject
 
 
-def image2base64(images: List[ImageObject] | ImageObject) -> List[str] | str:
-
+def image2base64(images: list[ImageObject] | ImageObject) -> list[str]:
     if isinstance(images, ImageObject):
         images = [images]
 
@@ -29,7 +27,6 @@ def pad_images_batch_to_max_size(images):
     padded_images = []
 
     for image in images:
-
         width, height = image.size
 
         padding_left = (max_width - width) // 2
