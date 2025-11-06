@@ -17,7 +17,7 @@ from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow, WorkflowTaskInput
 from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.data import concat_padded_tensors
-from areal.utils.perf_tracer import trace_perf, trace_request
+from areal.utils.perf_tracer import atrace_request_phase, trace_perf, trace_request
 
 logger = logging.getLogger("RLVR workflow")
 
@@ -141,7 +141,7 @@ class RLVRWorkflow(RolloutWorkflow):
 
         # Generate responses
         request_id = task_input.request_id
-        async with perf_tracer.atrace_request_phase(request_id, "generate"):
+        async with atrace_request_phase(request_id, "generate"):
             resps = await asyncio.gather(
                 *[engine.agenerate(req) for _ in range(n_samples)]
             )

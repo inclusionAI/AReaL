@@ -82,6 +82,20 @@ _PERF_TRACE_FILENAME = "traces.jsonl"
 _REQUEST_TRACE_FILENAME = "requests.jsonl"
 
 
+class _NullContext(AbstractContextManager, AbstractAsyncContextManager):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, exc_tb):
+        return False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, exc_tb):
+        return False
+
+
 def _rank_qualified_filename(filename: str, rank: int) -> str:
     root, ext = os.path.splitext(filename)
     return f"{root}-r{rank}{ext}"
@@ -838,20 +852,6 @@ class RequestTracer:
             self._ready.clear()
             self._next_id = 0
             self._flush_threshold = _normalize_flush_threshold(self._config)
-
-
-class _NullContext(AbstractContextManager, AbstractAsyncContextManager):
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, exc_tb):
-        return False
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, exc_tb):
-        return False
 
 
 class _Scope(AbstractContextManager[Any]):
