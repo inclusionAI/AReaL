@@ -153,3 +153,4 @@ launcher:
   inference_server_mem_per_gpu: 16384
   trainer_cpus_per_gpu: 4
   trainer_mem_per_gpu: 16384
+
