@@ -100,6 +100,9 @@ class RLVRWorkflow(RolloutWorkflow):
         rewards = []
         seqlens = []
 
+        # Record reward calculation timing
+        perf_tracer.trace_request_event(request_id, "mark_reward_start")
+
         results = []
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
@@ -112,8 +115,6 @@ class RLVRWorkflow(RolloutWorkflow):
             completions_strs.append(completions_str)
             seqlens.append(len(seq))
 
-            # Record reward calculation timing
-            perf_tracer.trace_request_event(request_id, "mark_reward_start")
             reward = await self.async_reward_fn(
                 prompt_str,
                 completions_str,
@@ -121,7 +122,6 @@ class RLVRWorkflow(RolloutWorkflow):
                 resp.output_tokens,
                 **task_input.data,
             )
-            perf_tracer.trace_request_event(request_id, "mark_reward_end")
 
             # Log reward.
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
@@ -137,6 +137,8 @@ class RLVRWorkflow(RolloutWorkflow):
             }
             res = {k: v.unsqueeze(0) for k, v in res.items()}
             results.append(res)
+
+        perf_tracer.trace_request_event(request_id, "mark_reward_end")
 
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))

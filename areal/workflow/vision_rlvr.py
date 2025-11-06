@@ -82,6 +82,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         rewards = []
         seqlens = []
 
+        # Record reward calculation timing
+        perf_tracer.trace_request_event(request_id, "mark_reward_start")
+
         results = []
         for resp in resps:
             seq = resp.input_tokens + resp.output_tokens
@@ -93,7 +96,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             prompt_strs.append(prompt_str)
             completions_strs.append(completions_str)
             seqlens.append(len(seq))
-            perf_tracer.trace_request_event(request_id, "mark_reward_start")
             reward = await self.async_reward_fn(
                 prompt=prompt_str,
                 completions=completions_str,
@@ -101,7 +103,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 completion_ids=resp.output_tokens,
                 **data,
             )
-            perf_tracer.trace_request_event(request_id, "mark_reward_end")
 
             # Log reward.
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
@@ -129,6 +130,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 rewards=torch.tensor([reward], dtype=torch.float32),
             )
             results.append(res)
+
+        perf_tracer.trace_request_event(request_id, "mark_reward_end")
+
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))
             await aiofiles.os.makedirs(dump_path, exist_ok=True)
