@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import torch
 
@@ -8,13 +8,15 @@ from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import stats_tracker
 from areal.utils.functional import gather_logprobs
+from areal.utils.perf_tracer import trace_perf
 
 
 class LMEngine:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
-    def train_lm(self, data: Dict[str, Any]):
+    @trace_perf("lm_engine.train_lm", category="compute")
+    def train_lm(self, data: dict[str, Any]):
         self.engine.train()
         return self.engine.train_batch(
             input_=data,
@@ -22,6 +24,7 @@ class LMEngine:
             loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
         )
 
+    @trace_perf("lm_engine.evaluate_lm", category="compute")
     def evaluate_lm(self, data):
         self.engine.eval()
         return self.engine.eval_batch(
@@ -56,7 +59,7 @@ class MegatronLMEngine(MegatronEngine):
 
 
 def compute_packed_sft_loss(
-    logits: torch.Tensor, input_: Dict[str, Any]
+    logits: torch.Tensor, input_: dict[str, Any]
 ) -> torch.Tensor:
     # Use rolled input_ids. Ulysses SP will roll input_ids in ulysses_prepare_inputs().
     labels: torch.Tensor = input_.get(

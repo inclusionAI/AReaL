@@ -12,11 +12,12 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import ModelRequest
+from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.api.workflow_api import WorkflowTaskInput
 from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.data import concat_padded_tensors
 from areal.utils.image import image2base64
+from areal.utils.perf_tracer import trace_perf, trace_request
 from areal.workflow.rlvr import RLVRWorkflow
 
 logger = logging.getLogger("RLVR workflow")
@@ -43,11 +44,63 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         )
         self.processor = processor
 
+    @trace_request("reward")
+    async def _compute_rewards(
+        self,
+        resps: list[ModelResponse],
+        prompt_str: str,
+        task_data: dict[str, Any],
+    ) -> tuple[list[float], list[str]]:
+        """Compute rewards for all responses and decode completion strings.
+
+        This method iterates through all model responses, decodes the output tokens
+        into strings, and computes rewards for each completion. Each reward is logged
+        to the stats tracker for monitoring.
+
+        Parameters
+        ----------
+        resps : list[ModelResponse]
+            List of ModelResponse objects from the inference engine.
+        prompt_str : str
+            The decoded prompt string for context.
+        task_data : dict[str, Any]
+            Original task data containing additional context (e.g., ground truth answer).
+
+        Returns
+        -------
+        tuple[list[float], list[str]]
+            A tuple containing:
+            - rewards: List of computed reward values for each response.
+            - completions_strs: List of decoded completion strings corresponding to each response.
+        """
+        rewards = []
+        completions_strs = []
+
+        for resp in resps:
+            completions_str = self.tokenizer.decode(resp.output_tokens)
+            completions_strs.append(completions_str)
+
+            reward = await self.async_reward_fn(
+                prompt=prompt_str,
+                completions=completions_str,
+                prompt_ids=resp.input_tokens,
+                completion_ids=resp.output_tokens,
+                **task_data,
+            )
+            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            rewards.append(reward)
+
+        return rewards, completions_strs
+
+    @trace_perf("rlvr_workflow.arun_episode", category="compute")
     async def arun_episode(
         self,
         engine: InferenceEngine,
         task_input: WorkflowTaskInput,
     ) -> dict[str, torch.Tensor]:
+        # Set request_id in context for trace_request decorators
+        perf_tracer.set_request_id(task_input.request_id)
+
         data = task_input.data
         request_id = task_input.request_id
         processor_callable = cast(Callable[..., dict[str, Any]], self.processor)
@@ -71,6 +124,8 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             tokenizer=self.tokenizer,
             processor=self.processor,
         )
+
+        # Generate responses
         async with perf_tracer.atrace_request_phase(request_id, "generate"):
             resps = await asyncio.gather(
                 *[engine.agenerate(req) for _ in range(n_samples)]
@@ -78,38 +133,20 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
         version = engine.get_version()
         prompt_str = self.tokenizer.decode(input_ids)
-        prompt_strs = []
-        completions_strs = []
-        rewards = []
-        seqlens = []
+        prompt_strs = [prompt_str] * n_samples
 
-        # Record reward calculation timing
-        perf_tracer.trace_request_event(request_id, "mark_reward_start")
+        # Compute rewards
+        rewards, completions_strs = await self._compute_rewards(resps, prompt_str, data)
 
+        # Build result tensors
         results = []
-        for resp in resps:
+        for resp, reward in zip(resps, rewards):
             seq = resp.input_tokens + resp.output_tokens
             logprobs = [0.0] * resp.input_len + resp.output_logprobs
             loss_mask = [0] * resp.input_len + [1] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
 
-            completions_str = self.tokenizer.decode(resp.output_tokens)
-            prompt_strs.append(prompt_str)
-            completions_strs.append(completions_str)
-            seqlens.append(len(seq))
-            reward = await self.async_reward_fn(
-                prompt=prompt_str,
-                completions=completions_str,
-                prompt_ids=resp.input_tokens,
-                completion_ids=resp.output_tokens,
-                **data,
-            )
-
-            # Log reward.
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
-
-            rewards.append(reward)
-            # We store multi_modal_input for each data point as a dict,
+            # Build multi-modal input for each data point
             multi_modal_input = [
                 {
                     "pixel_values": processed_input["pixel_values"],
@@ -119,24 +156,22 @@ class VisionRLVRWorkflow(RLVRWorkflow):
                 multi_modal_input[0]["image_grid_thw"] = processed_input[
                     "image_grid_thw"
                 ]
-            res = dict(
-                # unsqueeze to add an additional batch dimension
-                input_ids=torch.tensor(seq, dtype=torch.int32).unsqueeze(0),
-                loss_mask=torch.tensor(loss_mask, dtype=torch.int32).unsqueeze(0),
-                logprobs=torch.tensor(logprobs, dtype=torch.float32).unsqueeze(0),
-                multi_modal_input=multi_modal_input,
-                versions=torch.tensor(versions, dtype=torch.int32).unsqueeze(0),
-                attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
-                # reward
-                rewards=torch.tensor([reward], dtype=torch.float32),
-            )
-            results.append(res)
 
-        perf_tracer.trace_request_event(request_id, "mark_reward_end")
+            res = {
+                "input_ids": torch.tensor(seq, dtype=torch.int32).unsqueeze(0),
+                "loss_mask": torch.tensor(loss_mask, dtype=torch.int32).unsqueeze(0),
+                "logprobs": torch.tensor(logprobs, dtype=torch.float32).unsqueeze(0),
+                "multi_modal_input": multi_modal_input,
+                "versions": torch.tensor(versions, dtype=torch.int32).unsqueeze(0),
+                "attention_mask": torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
+                "rewards": torch.tensor([reward], dtype=torch.float32),
+            }
+            results.append(res)
 
         if self.dump_dir is not None:
             dump_path = os.path.join(self.dump_dir, str(version))
             await aiofiles.os.makedirs(dump_path, exist_ok=True)
+
             # Get the unique identifier for this prompt
             qid = None
             for key in ["query_id", "id", "qid"]:
@@ -147,16 +182,18 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
             # Dump rollout to file
             file_path = os.path.join(dump_path, f"{qid}.txt")
+            seqlens = [
+                len(resp.input_tokens) + len(resp.output_tokens) for resp in resps
+            ]
             async with aiofiles.open(file_path, "a") as f:
-                n_samples = self.gconfig.n_samples
-                for i, (p, c, r, sl) in enumerate(
+                for i, (prompt, completion, reward, seqlen) in enumerate(
                     zip(prompt_strs, completions_strs, rewards, seqlens)
                 ):
                     info = "\n".join(
                         [
-                            f"idx: {i + 1} / {n_samples}, seqlen: {sl}, reward is {r}.",
-                            f"prompt is \n{colorama.Fore.YELLOW + colorama.Style.DIM}{p}{colorama.Style.RESET_ALL}",
-                            f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
+                            f"idx: {i + 1} / {n_samples}, seqlen: {seqlen}, reward is {reward}.",
+                            f"prompt is \n{colorama.Fore.YELLOW + colorama.Style.DIM}{prompt}{colorama.Style.RESET_ALL}",
+                            f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{completion}{colorama.Style.RESET_ALL}",
                         ]
                     )
                     await f.write(info + "\n")

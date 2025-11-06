@@ -55,6 +55,7 @@ from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
+from areal.utils.perf_tracer import trace_perf
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
@@ -383,6 +384,7 @@ class FSDPEngine(BaseHFEngine):
 
             fut.result()
 
+    @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
 
@@ -427,6 +429,7 @@ class FSDPEngine(BaseHFEngine):
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
 
+    @trace_perf("fsdp_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
         fut = Future()
 
@@ -523,6 +526,7 @@ class FSDPEngine(BaseHFEngine):
             should_accept_fn=should_accept_fn,
         )
 
+    @trace_perf("fsdp_engine.train_batch", category="compute")
     def train_batch(
         self,
         input_: dict[str, Any],
@@ -635,6 +639,7 @@ class FSDPEngine(BaseHFEngine):
             lr=current_lr,
         )
 
+    @trace_perf("fsdp_engine.eval_batch", category="compute")
     @torch.no_grad()
     def eval_batch(
         self,
@@ -723,6 +728,7 @@ class FSDPEngine(BaseHFEngine):
 
         return total_loss
 
+    @trace_perf("fsdp_engine.forward", category="compute")
     @torch.no_grad()
     def forward(
         self,

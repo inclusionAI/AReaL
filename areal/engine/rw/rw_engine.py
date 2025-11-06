@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Any, Dict
+from typing import Any
 
 import torch
 
@@ -8,6 +8,7 @@ from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.platforms import current_platform
 from areal.utils import logging, stats_tracker
+from areal.utils.perf_tracer import trace_perf
 
 logger = logging.getLogger("RW engine")
 
@@ -16,7 +17,8 @@ class RWEngine:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
-    def train_rw(self, data: Dict[str, Any]):
+    @trace_perf("rw_engine.train_rw", category="compute")
+    def train_rw(self, data: dict[str, Any]):
         """Train on a batch(reward model)"""
         self.engine.train()
         return self.engine.train_batch(
@@ -29,7 +31,8 @@ class RWEngine:
             ),
         )
 
-    def evaluate_rw(self, data: Dict[str, Any]):
+    @trace_perf("rw_engine.evaluate_rw", category="compute")
+    def evaluate_rw(self, data: dict[str, Any]):
         self.engine.eval()
         return self.engine.eval_batch(
             input_=data,
@@ -58,7 +61,7 @@ class FSDPRWEngine(FSDPEngine):
         return self.rw_engine.evaluate_rw(data)
 
 
-def compute_rw_loss(scores: torch.Tensor, input_: Dict[str, Any]) -> torch.Tensor:
+def compute_rw_loss(scores: torch.Tensor, input_: dict[str, Any]) -> torch.Tensor:
     cu_seqlens = input_["cu_seqlens"]
     seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu()
     n_pairs = (cu_seqlens.shape[0] - 1) // 2

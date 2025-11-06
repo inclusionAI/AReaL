@@ -19,6 +19,7 @@ from areal.core.staleness_manager import StalenessManager
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.utils.perf_tracer import trace_perf, trace_request_event
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
@@ -397,7 +398,7 @@ class WorkflowExecutor:
             rejection_reason: str | None = None
 
             try:
-                perf_tracer.trace_request_event(request_id, "mark_execution_start")
+                trace_request_event(request_id, "mark_execution_start")
                 traj = await pending_task.workflow.arun_episode(
                     self.inference_engine, pending_task.task_input
                 )
@@ -444,7 +445,7 @@ class WorkflowExecutor:
                     assert traj is not None
                     manager.on_rollout_accepted()
                     stats = manager.get_stats()
-                    perf_tracer.trace_request_event(
+                    trace_request_event(
                         request_id,
                         "mark_execution_end",
                         status="accepted",
@@ -461,7 +462,7 @@ class WorkflowExecutor:
 
                 manager.on_rollout_rejected()
                 stats = manager.get_stats()
-                perf_tracer.trace_request_event(
+                trace_request_event(
                     request_id,
                     "mark_execution_end",
                     status="rejected",
@@ -477,7 +478,7 @@ class WorkflowExecutor:
             except Exception as exc:  # pragma: no cover - workflow execution errors
                 manager.on_rollout_rejected()
                 stats = manager.get_stats()
-                perf_tracer.trace_request_event(
+                trace_request_event(
                     request_id,
                     "mark_execution_end",
                     status="failed",
@@ -546,13 +547,13 @@ class WorkflowExecutor:
         request_id = pending_task.task_input.request_id
         try:
             self.runner.submit(workflow_fn)
-            perf_tracer.trace_request_event(
+            trace_request_event(
                 request_id,
                 "mark_enqueued",
             )
         except TaskQueueFullError:
             stats = self.staleness_manager_required.get_stats()
-            perf_tracer.trace_request_event(
+            trace_request_event(
                 request_id,
                 "mark_dropped",
                 rejection_reason="input_queue_full",
@@ -647,11 +648,12 @@ class WorkflowExecutor:
         # Concatenate into batch tensor format
         trajectories: list[dict[str, Any]] = []
         for result in results:
-            perf_tracer.trace_request_event(result.request_id, "mark_consumed")
+            trace_request_event(result.request_id, "mark_consumed")
             trajectories.append(result.trajectory)
 
         return concat_padded_tensors(trajectories)
 
+    @trace_perf("workflow_executor.rollout_batch", category="scheduler")
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
@@ -678,6 +680,7 @@ class WorkflowExecutor:
             )
         return self.wait(count=len(data))
 
+    @trace_perf("workflow_executor.prepare_batch", category="scheduler")
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
