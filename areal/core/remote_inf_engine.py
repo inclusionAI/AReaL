@@ -17,6 +17,7 @@ import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
+from areal.api.engine_api import _NoResult
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
@@ -640,7 +641,9 @@ class RemoteInfEngine:
             should_accept=should_accept,
         )
 
-    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | _NoResult:
         """Wait for a specified number of requests to complete.
 
         Parameters
@@ -649,13 +652,17 @@ class RemoteInfEngine:
             The number of accepted trajectories to wait for
         timeout : float, optional
             Timeout in seconds
+        raise_timeout : bool, optional
+            Whether to raise a TimeoutError when the timeout is exceeded, by default True
 
         Returns
         -------
-        Dict[str, Any]
-            A concatenated batch of trajectories
+        Dict[str, Any] | _NoResult
+            A concatenated batch of trajectories, or NO_RESULT if timeout exceeded and raise_timeout is False
         """
-        return self.workflow_executor.wait(count, timeout=timeout)
+        return self.workflow_executor.wait(
+            count, timeout=timeout, raise_timeout=raise_timeout
+        )
 
     def rollout_batch(
         self,

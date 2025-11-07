@@ -13,6 +13,7 @@ from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
+from areal.api.engine_api import NO_RESULT, _NoResult
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.async_task_runner import AsyncTaskRunner, TaskQueueFullError
 from areal.core.staleness_manager import StalenessManager
@@ -562,7 +563,9 @@ class WorkflowExecutor:
         if self.config.enable_rollout_tracing:
             self.logger.info(f"Submit rollout. {self._rollout_stats()}")
 
-    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | _NoResult:
         """Wait for workflow results.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for detailed
@@ -592,10 +595,13 @@ class WorkflowExecutor:
             remaining_timeout = timeout - elapsed
 
             if remaining_timeout <= 0:
-                raise TimeoutError(
-                    f"Timed out waiting for {count} rollouts, only received "
-                    f"{len(self._pending_results)}."
-                )
+                if raise_timeout:
+                    raise TimeoutError(
+                        f"Timed out waiting for {count} rollouts, only received "
+                        f"{len(self._pending_results)}."
+                    )
+                else:
+                    return NO_RESULT
 
             # Try to get at least the number we still need, but request at least 1
             # Note: runner.wait() might return fewer due to rejections (None results)
