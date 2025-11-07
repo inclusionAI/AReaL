@@ -3,6 +3,7 @@ from copy import deepcopy
 
 import torch.distributed as dist
 from datasets import Dataset
+from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
@@ -14,7 +15,7 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
-from areal.engine.ppo.actor import FSDPPPOActor
+from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
@@ -55,8 +56,13 @@ class GRPOTrainer:
         self.parallel_strategy = self.allocation_mode.train
         assert self.parallel_strategy is not None
 
-        # Initialize train engine
-        self.actor = self._init_train_engine(config.actor)
+        # Create actor
+        self.actor = self._create_train_engine(config.actor)
+        if self.config.actor.backend not in ["fsdp", "megatron"]:
+            raise ValueError(
+                f"Invalid backend: {self.config.actor.backend}, expected fsdp or megatron"
+            )
+        self.is_megatron_backend = self.config.actor.backend == "megatron"
 
         # Create dataloaders
         self.train_dataset = train_dataset
@@ -74,18 +80,31 @@ class GRPOTrainer:
         self.rollout = self._init_inference_engine(config.rollout, is_eval=False)
         self.eval_rollout = self._init_inference_engine(config.rollout, is_eval=True)
 
-        self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(self.allocation_mode)
+        # Initialize train engine
+        engine_init_kwargs = {"addr": None, "ft_spec": self.ft_spec}
+        if self.is_megatron_backend:
+            engine_init_kwargs["parallel_strategy"] = self.parallel_strategy
+            engine_init_kwargs["seed"] = config.seed
+        self.actor.initialize(**engine_init_kwargs)
 
-        self.actor.initialize(None, self.ft_spec)
+        # Prepare weight update meta and connect to inference engine
+        if self.is_megatron_backend:
+            self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
+                self.allocation_mode,
+                nccl_group_name=self.actor.weight_update_group_name,
+            )
+        else:
+            self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
+                self.allocation_mode
+            )
         self.actor.connect_engine(self.rollout, self.weight_update_meta)
 
         self.ref = None
         if config.actor.kl_ctl > 0 and config.ref is not None:
-            self.ref = FSDPPPOActor(config=config.ref)
-            self.ref.create_process_group(parallel_strategy=self.parallel_strategy)
-            self.ref.initialize(None, self.ft_spec)
+            self.ref = self._create_train_engine(config.ref)
+            self.ref.initialize(**engine_init_kwargs)
 
-        # Run training.
+        # Prepare save, stats logger, evaluator, and recover handler
         self.saver = Saver(config.saver, self.ft_spec)
         self.stats_logger = StatsLogger(config, self.ft_spec)
         self.evaluator = Evaluator(config.evaluator, self.ft_spec)
@@ -102,6 +121,13 @@ class GRPOTrainer:
         )
 
     def train(self, workflow: RolloutWorkflow, eval_workflow: RolloutWorkflow):
+        """
+        Train the model using GRPO algorithm, with custom rollout workflow.
+
+        Args:
+            workflow: Rollout workflow for training.
+            eval_workflow: Rollout workflow for evaluation.
+        """
         config = self.config
         start_step = (
             self.recover_info.last_step_info.next().global_step
@@ -217,7 +243,7 @@ class GRPOTrainer:
 
             # Upload statistics to the logger (e.g., wandb)
             stats[0].update(
-                stats_tracker.export_all(reduce_group=self.actor.data_parallel_group)
+                stats_tracker.export_all(reduce_group=self._get_data_parallel_group())
             )
             self.stats_logger.commit(epoch, step, global_step, stats)
 
@@ -227,28 +253,59 @@ class GRPOTrainer:
             # Resume rollout
             self.rollout.resume()
 
+    def close(self):
+        self.stats_logger.close()
+        self.eval_rollout.destroy()
+        self.rollout.destroy()
+        if self.ref is not None:
+            self.ref.destroy()
+        self.actor.destroy()
+
+    def _get_data_parallel_rank(self) -> int:
+        if self.is_megatron_backend:
+            return mpu.get_data_parallel_rank()
+        else:
+            return self.actor.data_parallel_rank
+
+    def _get_data_parallel_group(self) -> dist.ProcessGroup:
+        if self.is_megatron_backend:
+            return mpu.get_data_parallel_group()
+        else:
+            return self.actor.data_parallel_group
+
+    def _get_data_parallel_world_size(self) -> int:
+        if self.is_megatron_backend:
+            return mpu.get_data_parallel_world_size()
+        else:
+            return self.actor.data_parallel_world_size
+
     def _create_dataloader(
         self, dataset: Dataset | None, split: str = "train"
     ) -> StatefulDataLoader | None:
+        if getattr(self, "actor", None) is None:
+            raise ValueError("Train engine is not created")
+
         if dataset is None:
             return None
 
-        rank = self.actor.data_parallel_rank
-        world_size = self.actor.data_parallel_world_size
         dataset_config = (
             self.config.train_dataset if split == "train" else self.config.valid_dataset
         )
         return create_dataloader(
             dataset,
-            rank=rank,
-            world_size=world_size,
+            rank=self._get_data_parallel_rank(),
+            world_size=self._get_data_parallel_world_size(),
             dataset_config=dataset_config,
         )
 
-    def _init_train_engine(self, actor_config: PPOActorConfig) -> FSDPPPOActor:
+    def _create_train_engine(
+        self, actor_config: PPOActorConfig
+    ) -> FSDPPPOActor | MegatronPPOActor:
         # Initialize train engine
-        # TODO: support Megatron actor
-        actor = FSDPPPOActor(config=actor_config)
+        if actor_config.backend == "fsdp":
+            actor = FSDPPPOActor(config=actor_config)
+        else:
+            actor = MegatronPPOActor(config=actor_config)
         actor.create_process_group(parallel_strategy=self.parallel_strategy)
         return actor
 
@@ -272,12 +329,6 @@ class GRPOTrainer:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.stats_logger.close()
-        self.eval_rollout.destroy()
-        self.rollout.destroy()
-        if self.ref is not None:
-            self.ref.destroy()
-        self.actor.destroy()
-
+        self.close()
         if exc_type is not None:
             raise exc_value
