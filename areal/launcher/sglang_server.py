@@ -19,7 +19,6 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
 )
-from areal.engine.sglang_remote import SGLangBackend
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH, apply_sglang_patch
@@ -186,7 +185,7 @@ class SGLangServerWrapper:
             base_gpu_id = (server_local_idx - server_idx_offset) * gpus_per_server
             config = deepcopy(self.config)
             config.random_seed = base_random_seed + server_local_idx
-            server_args = SGLangConfig.build_args(
+            cmd = SGLangConfig.build_cmd(
                 config,
                 tp_size=self.allocation_mode.gen.tp_size,
                 base_gpu_id=base_gpu_id,
@@ -196,7 +195,7 @@ class SGLangServerWrapper:
                 n_nodes=n_nodes,
                 node_rank=node_rank,
             )
-            launch_server_args.append((server_args, host_ip, server_port, node_rank))
+            launch_server_args.append((cmd, host_ip, server_port, node_rank))
             server_addresses.append(f"http://{host_ip}:{server_port}")
 
         with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
@@ -226,9 +225,8 @@ class SGLangServerWrapper:
 
             time.sleep(1)
 
-    def launch_one_server(self, server_args, host_ip, server_port, node_rank):
-        backend = SGLangBackend()
-        server_process = backend.launch_server(server_args)
+    def launch_one_server(self, cmd, host_ip, server_port, node_rank):
+        server_process = launch_server_cmd(cmd)
         wait_for_server(f"http://{host_ip}:{server_port}")
         if node_rank == 0:
             name = names.gen_servers(self.experiment_name, self.trial_name)

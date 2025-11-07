@@ -807,7 +807,14 @@ class RemoteInfEngine:
         for server_info in self.local_server_processes:
             if server_info.process.poll() is None:
                 server_info.process.terminate()
-                server_info.process.wait()
+                try:
+                    server_info.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.logger.warning(
+                        f"Server process {server_info.process.pid} did not terminate gracefully. Killing it."
+                    )
+                    server_info.process.kill()
+                    server_info.process.wait()
         self.local_server_processes.clear()
 
 
