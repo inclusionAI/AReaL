@@ -5,7 +5,7 @@ from typing import Any, Optional
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.engine_api import InferenceEngine
+from areal.api.engine_api import InferenceEngine, NoResult
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
@@ -208,9 +208,11 @@ class RemotevLLMEngine(InferenceEngine):
         """Submit a request to the inference engine."""
         return self._engine.submit(data, workflow, workflow_builder, should_accept)
 
-    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | NoResult:
         """Wait for a specified number of requests to complete."""
-        return self._engine.wait(count, timeout)
+        return self._engine.wait(count, timeout, raise_timeout)
 
     def rollout_batch(
         self,

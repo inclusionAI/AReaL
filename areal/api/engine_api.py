@@ -314,6 +314,14 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
 
+class NoResult:
+    def __repr__(self):
+        return "NO_RESULT"
+
+
+NO_RESULT = NoResult()
+
+
 class InferenceEngine(abc.ABC):
     def initialize(self, *args, **kwargs):
         """Initialize environments and launch the background thread for asynchronous distributed inference.
@@ -455,7 +463,9 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | NoResult:
         """Wait for a specified number of requests to complete, with a timeout.
 
         Should be used together with preceding `submit`.
@@ -466,6 +476,9 @@ class InferenceEngine(abc.ABC):
             The number of accepted trajectories to wait for
         timeout : float, optional
             Timeout in seconds. Exceeding the timeout will raise a `TimeoutError`, by default None
+        raise_timeout : bool, optional
+            Whether to raise a `TimeoutError` when the timeout is exceeded,
+            otherwise return a special NO_RESULT sentinel, by default True
 
         Returns
         -------
