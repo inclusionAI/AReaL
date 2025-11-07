@@ -6,11 +6,14 @@ from typing import Any
 import torch
 from transformers.integrations.flash_attention import flash_attention_forward
 
+from areal.utils import logging
 from areal.utils.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
     get_ulysses_sequence_parallel_world_size,
 )
+
+logger = logging.getLogger("Qwen3VL")
 
 # Import qwen3_vl specific functions
 try:
@@ -19,21 +22,7 @@ try:
         repeat_kv,
     )
 except ImportError:
-    # Fallback: try to import from other qwen vl models
-    try:
-        from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-            apply_multimodal_rotary_pos_emb as apply_rotary_pos_emb,
-        )
-        from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-            repeat_kv,
-        )
-    except ImportError:
-        from transformers.models.qwen2_vl.modeling_qwen2_vl import (
-            apply_multimodal_rotary_pos_emb as apply_rotary_pos_emb,
-        )
-        from transformers.models.qwen2_vl.modeling_qwen2_vl import (
-            repeat_kv,
-        )
+    logger.warning("transformers >= 4.57.1 is required for qwen3_vl.")
 
 
 def ulysses_flash_attn_forward(
