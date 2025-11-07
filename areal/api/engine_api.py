@@ -478,7 +478,7 @@ class InferenceEngine(abc.ABC):
             Timeout in seconds. Exceeding the timeout will raise a `TimeoutError`, by default None
         raise_timeout : bool, optional
             Whether to raise a `TimeoutError` when the timeout is exceeded,
-            otherwise return a special NO_RESULT sential, by default True
+            otherwise return a special NO_RESULT sentinel, by default True
 
         Returns
         -------
