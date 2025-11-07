@@ -4,6 +4,9 @@
 from typing import Any
 
 import torch
+from torch import nn
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor, Replicate
 from transformers.integrations.flash_attention import flash_attention_forward
 
 from areal.utils import logging
@@ -14,6 +17,7 @@ from areal.utils.ulysses import (
 )
 
 logger = logging.getLogger("Qwen3VL")
+
 
 # Import qwen3_vl specific functions
 try:
@@ -96,3 +100,43 @@ def ulysses_flash_attn_forward(
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
     attn_output = self.o_proj(attn_output)
     return attn_output, attn_weights
+
+
+def patch_qwen3_vl_deepstack_process_for_tp(
+    language_model: nn.Module, device_mesh: DeviceMesh
+):
+    """Patch _deepstack_process to convert visual_pos_masks and visual_embeds
+    to DTensor when TP is enabled.
+    """
+    if not hasattr(language_model, "_deepstack_process"):
+        return
+
+    original_deepstack_process = language_model._deepstack_process
+
+    def patched_deepstack_process(self, hidden_states, visual_embeds, visual_pos_masks):
+        # Check if hidden_states is a DTensor (TP is enabled)
+        if isinstance(hidden_states, DTensor):
+            # Convert visual_pos_masks to DTensor with Replicate placement
+            if not isinstance(visual_pos_masks, DTensor):
+                visual_pos_masks = DTensor.from_local(
+                    visual_pos_masks,
+                    device_mesh,
+                    (Replicate(),),
+                    run_check=False,
+                )
+            # Also convert visual_embeds if needed
+            if not isinstance(visual_embeds, DTensor):
+                visual_embeds = DTensor.from_local(
+                    visual_embeds,
+                    device_mesh,
+                    (Replicate(),),
+                    run_check=False,
+                )
+
+        return original_deepstack_process(
+            self, hidden_states, visual_embeds, visual_pos_masks
+        )
+
+    language_model._deepstack_process = patched_deepstack_process.__get__(
+        language_model, type(language_model)
+    )

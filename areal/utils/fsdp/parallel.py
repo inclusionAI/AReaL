@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from functools import partial
-from typing import Dict
 
 import torch
 from torch import nn
@@ -21,9 +20,15 @@ from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import FSDPParallelStrategy
 from areal.api.cli_args import FSDPWrapPolicy, TrainEngineConfig
+from areal.models.transformers.qwen3_vl import patch_qwen3_vl_deepstack_process_for_tp
 from areal.platforms import current_platform
 from areal.utils.fsdp import apply_fsdp2
-from areal.utils.model import is_gemma3_model, is_moe_model, is_valid_vision_model
+from areal.utils.model import (
+    is_gemma3_model,
+    is_moe_model,
+    is_qwen3_vl_model,
+    is_valid_vision_model,
+)
 
 __all__ = ["ReplicateParallel", "ParallelHelper", "parallelize_model"]
 
@@ -112,9 +117,9 @@ class ParallelHelper:
         for d in (sp, tp, ep, etp):
             assert d >= 1, "Parallelism degree should be >= 1"
 
-        assert (
-            dp * sp * tp == world_size
-        ), f"Invalid parallel dims: dp({dp}) * sp({sp}) * tp({tp}) != WORLD_SIZE({world_size})"
+        assert dp * sp * tp == world_size, (
+            f"Invalid parallel dims: dp({dp}) * sp({sp}) * tp({tp}) != WORLD_SIZE({world_size})"
+        )
 
         if ep > 1:
             assert etp == tp or etp == 1, "Currently we only support ETP=TP or ETP=1"
@@ -285,7 +290,7 @@ def apply_non_moe_tp(
         raise RuntimeError("Model does not have the required submodule 'model'.")
 
     # For model or model.language_model
-    model_tp_plan: Dict[str, ParallelStyle] = {
+    model_tp_plan: dict[str, ParallelStyle] = {
         "embed_tokens": RowwiseParallel(
             input_layouts=Replicate(),
             output_layouts=Shard(1),
@@ -339,7 +344,7 @@ def apply_non_moe_tp(
         )
 
     # For root module
-    root_tp_plan: Dict[str, ParallelStyle] = {}
+    root_tp_plan: dict[str, ParallelStyle] = {}
     if hasattr(model, "lm_head") and isinstance(model.lm_head, nn.Module):
         # All-gather
         root_tp_plan["lm_head"] = ColwiseParallel(
@@ -370,6 +375,12 @@ def apply_non_moe_tp(
                 input_layouts=Replicate(),
                 desired_input_layouts=Shard(1),
             )
+
+            # For Qwen3 VL, patch _deepstack_process for TP
+            if is_qwen3_vl_model(model_config.model_type):
+                patch_qwen3_vl_deepstack_process_for_tp(
+                    model.model.language_model, tp_device_mesh
+                )
 
             parallelize_module(
                 model.model.language_model,
