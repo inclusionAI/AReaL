@@ -1,5 +1,3 @@
-from typing import Optional
-
 from datasets import load_dataset
 
 
@@ -7,7 +5,7 @@ def get_gsm8k_sft_dataset(
     path: str,
     split: str,
     tokenizer,
-    max_length: Optional[int] = None,
+    max_length: int | None = None,
 ):
     dataset = load_dataset(path=path, name="main", split=split)
 
@@ -32,7 +30,7 @@ def get_gsm8k_rl_dataset(
     path: str,
     split: str,
     tokenizer,
-    max_length: Optional[int] = None,
+    max_length: int | None = None,
 ):
     dataset = load_dataset(path=path, name="main", split=split)
 
