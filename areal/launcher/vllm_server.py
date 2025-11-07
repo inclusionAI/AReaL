@@ -16,6 +16,7 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.api.io_struct import AllocationMode
+from areal.engine.vllm_remote import VLLMBackend
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH
@@ -133,7 +134,7 @@ class vLLMServerWrapper:
             }
             config = deepcopy(self.config)
             config.seed = base_random_seed + server_local_idx
-            cmd = vLLMConfig.build_cmd(
+            server_args = vLLMConfig.build_args(
                 config,
                 tp_size=self.allocation_mode.gen.tp_size,
                 pp_size=self.allocation_mode.gen.pp_size,
@@ -141,7 +142,7 @@ class vLLMServerWrapper:
                 port=server_port,
                 dist_init_addr=dist_init_addr,
             )
-            launch_server_args.append((cmd, host_ip, server_port, custom_env))
+            launch_server_args.append((server_args, host_ip, server_port, custom_env))
             server_addresses.append(f"http://{host_ip}:{server_port}")
 
         with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
@@ -173,9 +174,28 @@ class vLLMServerWrapper:
             time.sleep(1)
 
     def launch_one_server(
-        self, cmd: str, host_ip: str, server_port: int, custom_env: dict | None = None
+        self,
+        server_args: dict,
+        host_ip: str,
+        server_port: int,
+        custom_env: dict | None = None,
     ):
-        server_process = launch_server_cmd(cmd, custom_env)
+        backend = VLLMBackend()
+
+        original_env = os.environ.get(current_platform.device_control_env_var)
+        if custom_env and current_platform.device_control_env_var in custom_env:
+            os.environ[current_platform.device_control_env_var] = custom_env[
+                current_platform.device_control_env_var
+            ]
+
+        server_process = backend.launch_server(server_args)
+
+        # Restore original environment
+        if original_env is not None:
+            os.environ[current_platform.device_control_env_var] = original_env
+        elif custom_env and current_platform.device_control_env_var in custom_env:
+            del os.environ[current_platform.device_control_env_var]
+
         wait_for_server(f"http://{host_ip}:{server_port}")
         name = names.gen_servers(self.experiment_name, self.trial_name)
         name_resolve.add_subentry(name, f"{host_ip}:{server_port}")

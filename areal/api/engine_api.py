@@ -9,6 +9,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.io_struct import (
+    LocalInfServerInfo,
     ModelRequest,
     ModelResponse,
     ParamSpec,
@@ -340,6 +341,14 @@ class InferenceEngine(abc.ABC):
 
     def destroy(self):
         """Destroy the engine and release GPU memory for the local inference engine."""
+        raise NotImplementedError()
+
+    def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
+        """Launch a inference server via subprocess and return its info."""
+        raise NotImplementedError()
+
+    def teardown_server(self):
+        """Teardown the inference server launched by `launch_server`."""
         raise NotImplementedError()
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
