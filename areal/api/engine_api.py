@@ -314,12 +314,12 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
 
-class _NoResult:
+class NoResult:
     def __repr__(self):
         return "NO_RESULT"
 
 
-NO_RESULT = _NoResult()
+NO_RESULT = NoResult()
 
 
 class InferenceEngine(abc.ABC):
@@ -465,7 +465,7 @@ class InferenceEngine(abc.ABC):
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any] | _NoResult:
+    ) -> dict[str, Any] | NoResult:
         """Wait for a specified number of requests to complete, with a timeout.
 
         Should be used together with preceding `submit`.

@@ -13,7 +13,7 @@ from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.engine_api import NO_RESULT, _NoResult
+from areal.api.engine_api import NO_RESULT, NoResult
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.async_task_runner import AsyncTaskRunner, TaskQueueFullError
 from areal.core.staleness_manager import StalenessManager
@@ -565,7 +565,7 @@ class WorkflowExecutor:
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any] | _NoResult:
+    ) -> dict[str, Any] | NoResult:
         """Wait for workflow results.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for detailed
