@@ -1,6 +1,7 @@
 # Qwen3VL-specific Ulysses sequence parallelism patch
 # Based on transformers.models.qwen3_vl.modeling_qwen3_vl.Qwen3VLTextAttention
 
+import types
 from typing import Any
 
 import torch
@@ -113,30 +114,39 @@ def patch_qwen3_vl_deepstack_process_for_tp(
 
     original_deepstack_process = language_model._deepstack_process
 
-    def patched_deepstack_process(self, hidden_states, visual_embeds, visual_pos_masks):
+    def patched_deepstack_process(self, hidden_states, visual_pos_masks, visual_embeds):
         # Check if hidden_states is a DTensor (TP is enabled)
         if isinstance(hidden_states, DTensor):
-            # Convert visual_pos_masks to DTensor with Replicate placement
-            if not isinstance(visual_pos_masks, DTensor):
-                visual_pos_masks = DTensor.from_local(
-                    visual_pos_masks,
-                    device_mesh,
-                    (Replicate(),),
-                    run_check=False,
-                )
-            # Also convert visual_embeds if needed
-            if not isinstance(visual_embeds, DTensor):
-                visual_embeds = DTensor.from_local(
-                    visual_embeds,
-                    device_mesh,
-                    (Replicate(),),
-                    run_check=False,
-                )
+            device_mesh = hidden_states.device_mesh
+            placements = hidden_states.placements
 
-        return original_deepstack_process(
-            self, hidden_states, visual_embeds, visual_pos_masks
-        )
+            replicated_placements = [Replicate()] * device_mesh.ndim
+            # Convert to local tensor for boolean indexing operations
+            # DTensor's sharding propagation cannot handle dynamic output shapes from boolean indexing
+            hidden_states = hidden_states.redistribute(placements=replicated_placements)
+            hidden_states = hidden_states.to_local()
 
-    language_model._deepstack_process = patched_deepstack_process.__get__(
-        language_model, type(language_model)
+            hidden_states = hidden_states.clone()
+
+            hidden_states = original_deepstack_process(
+                hidden_states, visual_pos_masks, visual_embeds
+            )
+
+            hidden_states = DTensor.from_local(
+                hidden_states,
+                device_mesh,
+                replicated_placements,
+                run_check=False,
+            )
+
+            hidden_states = hidden_states.redistribute(placements=placements)
+
+            return hidden_states
+        else:
+            return original_deepstack_process(
+                hidden_states, visual_pos_masks, visual_embeds
+            )
+
+    language_model._deepstack_process = types.MethodType(
+        patched_deepstack_process, language_model
     )
