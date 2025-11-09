@@ -378,9 +378,7 @@ def apply_non_moe_tp(
 
             # For Qwen3 VL, patch _deepstack_process for TP
             if is_qwen3_vl_model(model_config.model_type):
-                patch_qwen3_vl_deepstack_process_for_tp(
-                    model.model.language_model, tp_device_mesh
-                )
+                patch_qwen3_vl_deepstack_process_for_tp(model.model.language_model)
 
             parallelize_module(
                 model.model.language_model,

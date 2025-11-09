@@ -6,7 +6,6 @@ from typing import Any
 
 import torch
 from torch import nn
-from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate
 from transformers.integrations.flash_attention import flash_attention_forward
 
@@ -103,9 +102,7 @@ def ulysses_flash_attn_forward(
     return attn_output, attn_weights
 
 
-def patch_qwen3_vl_deepstack_process_for_tp(
-    language_model: nn.Module, device_mesh: DeviceMesh
-):
+def patch_qwen3_vl_deepstack_process_for_tp(language_model: nn.Module):
     """Patch _deepstack_process to convert visual_pos_masks and visual_embeds
     to DTensor when TP is enabled.
     """
