@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  areal-grpo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: areal-grpo:local
+    container_name: areal-grpo-container
+    
+    # GPU configuration (only used if --gpus flag is available)
+    # On macOS without GPU, this will be ignored
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    # Mount project directory
+    volumes:
+      - ../..:/workspace/AReaL:rw
+      - ./wandb:/workspace/AReaL/examples/local_gsm8k/wandb:rw
+      - ./outputs:/workspace/AReaL/examples/local_gsm8k/outputs:rw
+      - ./models:/workspace/models:rw
+    
+    # Working directory
+    working_dir: /workspace/AReaL
+    
+    # Environment variables
+    environment:
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - PYTHONPATH=/workspace/AReaL
+      - WANDB_MODE=disabled
+    
+    # Shared memory (important for multiprocessing)
+    shm_size: 8g
+    
+    # Network mode (for SGLang server communication)
+    network_mode: host
+    
+    # Keep container running
+    stdin_open: true
+    tty: true
+    
+    # Command
+    command: /bin/bash
+

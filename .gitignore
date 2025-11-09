@@ -1,3 +1,6 @@
+# temperatory files
+tmp/
+
 # Legacy codes
 .legacy/
 .data/
