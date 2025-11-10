@@ -159,17 +159,19 @@ def apply_monkey_patch(
             model.config.text_config.num_key_value_heads,
         )
 
-    assert num_attention_heads % ulysses_sp_size == 0, (
-        f"num_attention_heads {num_attention_heads} must be divisible by ulysses_sp_size {ulysses_sp_size}"
-    )
-    assert (
-        num_key_value_heads % ulysses_sp_size == 0
-        or ulysses_sp_size % num_key_value_heads == 0
-    ), (
-        f"num_key_value_heads {num_key_value_heads} must be divisible by ulysses_sp_size "
-        f"{ulysses_sp_size}or vise versa. Upon ulysses_sp_size % num_key_value_heads == 0,"
-        f"kv heads are repeated to ensure correctness."
-    )
+    if num_attention_heads % ulysses_sp_size != 0:
+        raise ValueError(
+            f"num_attention_heads {num_attention_heads} must be divisible by ulysses_sp_size {ulysses_sp_size}"
+        )
+    if (
+        num_key_value_heads % ulysses_sp_size != 0
+        and ulysses_sp_size % num_key_value_heads != 0
+    ):
+        raise ValueError(
+            f"num_key_value_heads {num_key_value_heads} must be divisible by ulysses_sp_size "
+            f"{ulysses_sp_size}or vise versa. Upon ulysses_sp_size % num_key_value_heads == 0,"
+            "kv heads are repeated to ensure correctness."
+        )
 
     vl_model_mappings = {
         "qwen2_5_vl": {
