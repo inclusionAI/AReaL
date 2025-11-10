@@ -748,7 +748,7 @@ class MegatronEngine(TrainEngine):
         granularity: int = 1,
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
@@ -756,7 +756,7 @@ class MegatronEngine(TrainEngine):
             granularity=granularity,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def prepare_batch(
@@ -765,7 +765,7 @@ class MegatronEngine(TrainEngine):
         granularity: int = 1,
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
@@ -773,7 +773,7 @@ class MegatronEngine(TrainEngine):
             granularity=granularity,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def set_version(self, version: int):

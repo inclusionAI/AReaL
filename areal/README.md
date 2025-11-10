@@ -496,13 +496,13 @@ def submit(
     data: Dict[str, Any],
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
-    should_accept: Callable | None = None,
+    should_accept_fn: Callable | None = None,
 ) -> None:
     try:
         if workflow is None:
             workflow = workflow_builder()
         x = _RolloutTaskInput(
-            data=data, workflow=workflow, should_accept=should_accept
+            data=data, workflow=workflow, should_accept_fn=should_accept_fn
         )
         self.input_queue.put_nowait(x)
     except queue.Full:
@@ -518,7 +518,7 @@ def rollout_batch(
     data: List[Dict[str, Any]],
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
-    should_accept: Callable | None = None,
+    should_accept_fn: Callable | None = None,
 ) -> Dict[str, Any]:
     """Submit a batch of requests to the inference engine and wait for the results."""
     for item in data:
@@ -530,7 +530,7 @@ def prepare_batch(
     dataloader: StatefulDataLoader,
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
-    should_accept: Callable | None = None,
+    should_accept_fn: Callable | None = None,
 ):
     """Prepare batch for asynchronous processing."""
     # Implementation details...

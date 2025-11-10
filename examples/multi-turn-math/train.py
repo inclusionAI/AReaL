@@ -254,13 +254,13 @@ def main(args):
                 batch = actor.prepare_batch(
                     train_dataloader,
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
             else:
                 batch = actor.rollout_batch(
                     next(data_generator),
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
