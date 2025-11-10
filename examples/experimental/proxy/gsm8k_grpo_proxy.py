@@ -309,16 +309,16 @@ def main(args):
             if config.async_training:
                 batch = actor.prepare_batch(
                     train_dataloader,
-                    granularity=actor.config.group_size,
+                    granularity=1, # for multi-turn rollouts, granularity must be 1
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
             else:
                 batch = actor.rollout_batch(
                     next(data_generator),
-                    granularity=actor.config.group_size,
+                    granularity=1, # for multi-turn rollouts, granularity must be 1
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
