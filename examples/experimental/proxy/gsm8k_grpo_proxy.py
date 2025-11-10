@@ -33,9 +33,9 @@ from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import cycle_dataloader
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
+from areal.utils.dynamic_import import import_from_string
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.importing import dynamic_import
 from areal.utils.network import find_free_ports
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
@@ -247,9 +247,8 @@ def main(args):
         max_workers=config.agent_process_pool_size
     )
 
-    run_agent_return_reward = dynamic_import(
-        module_path=config.agent_module_path,
-        function_name="run_agent_return_reward",
+    run_agent_return_reward = import_from_string(
+        ".".join(config.agent_module_path, "run_agent_return_reward"),
     )
 
     workflow = ProxyRLVRWorkflow(
@@ -313,14 +312,14 @@ def main(args):
             if config.async_training:
                 batch = actor.prepare_batch(
                     train_dataloader,
-                    granularity=1, # for multi-turn rollouts, granularity must be 1
+                    granularity=1,  # for multi-turn rollouts, granularity must be 1
                     workflow=workflow,
                     should_accept_fn=lambda sample: True,
                 )
             else:
                 batch = actor.rollout_batch(
                     next(data_generator),
-                    granularity=1, # for multi-turn rollouts, granularity must be 1
+                    granularity=1,  # for multi-turn rollouts, granularity must be 1
                     workflow=workflow,
                     should_accept_fn=lambda sample: True,
                 )
