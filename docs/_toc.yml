@@ -36,6 +36,7 @@ parts:
     - file: references/reproduce
   - caption: Algorithms
     chapters:
+    - file: algorithms/async
     - file: algorithms/grpo
     - file: algorithms/rloo
     - file: algorithms/dapo
