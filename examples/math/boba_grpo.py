@@ -1,17 +1,16 @@
 import os
 import sys
 
-import torch
 import torch.distributed as dist
 from datasets import load_dataset
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo
+from areal.api.io_struct import AllocationMode, FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
-from areal.utils import logging, seeding, stats_tracker
+from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     cycle_dataloader,
 )
@@ -19,7 +18,7 @@ from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.model import get_model_update_meta
+from areal.utils.perf_tracer import Category
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
@@ -27,25 +26,22 @@ from areal.workflow.rlvr import RLVRWorkflow
 
 logger = logging.getLogger("boba_grpo")
 
-REWARD_TIMEOUT_SECONDS = 30
-
 
 def get_input_ids_fn(data, tokenizer, enable_thinking):
     user_token = "<｜User｜>"
     assistant_token = "<｜Assistant｜>"
     think_token = "<think>"
-    if user_token in data:
-        data = data.replace("<｜User｜>", "")
-    if assistant_token in data:
-        data = data.replace("<｜Assistant｜>", "")
-    if think_token in data:
-        enable_thinking = True
-        data = data.replace("<think>", "")
+    has_think_token = think_token in data
+    data = (
+        data.replace(user_token, "")
+        .replace(assistant_token, "")
+        .replace(think_token, "")
+    )
     input_ids = tokenizer.apply_chat_template(
         [{"role": "user", "content": data}],
         tokenize=True,
         add_generation_prompt=True,
-        enable_thinking=enable_thinking,
+        enable_thinking=enable_thinking or has_think_token,
     )
     return input_ids
 
@@ -91,6 +87,10 @@ def main(args):
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
+    # Configure performance tracer
+    if config.perf_tracer is not None:
+        perf_tracer.configure(config.perf_tracer, rank=rank)
+
     world_size = actor.data_parallel_world_size
     if config.train_dataset.batch_size < world_size:
         raise ValueError(
@@ -107,12 +107,7 @@ def main(args):
         dataset_config=config.train_dataset,
     )
 
-    device = torch.device(int(os.environ["LOCAL_RANK"]))
     train_dataset_len = len(train_dataloader)
-    dataset_len_tensor = torch.tensor(
-        [train_dataset_len], dtype=torch.long, device=device
-    )
-    train_dataset_len = int(dataset_len_tensor.item())
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=train_dataset_len * config.train_dataset.batch_size,
@@ -126,7 +121,7 @@ def main(args):
         rollout = RemoteSGLangEngine(config.rollout)
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
 
-    weight_update_meta = get_model_update_meta(config)
+    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
 
     # Initialize train engine
     actor.initialize(None, ft_spec)
@@ -146,6 +141,7 @@ def main(args):
         reward_fn=boba_reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
+        enable_thinking=True,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
@@ -193,7 +189,14 @@ def main(args):
             steps_per_epoch=steps_per_epoch,
         )
 
-        with stats_tracker.record_timing("rollout"):
+        with (
+            stats_tracker.record_timing("rollout"),
+            perf_tracer.trace_scope(
+                "train.rollout",
+                category=Category.COMPUTE,
+                args={"global_step": global_step},
+            ),
+        ):
             if config.async_training:
                 batch = actor.prepare_batch(
                     train_dataloader,
@@ -210,23 +213,49 @@ def main(args):
                 )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
-            with stats_tracker.record_timing("recompute_logp"):
+            with (
+                stats_tracker.record_timing("recompute_logp"),
+                perf_tracer.trace_scope(
+                    "train.recompute_logp",
+                    category=Category.COMPUTE,
+                    args={"global_step": global_step},
+                ),
+            ):
                 logp = actor.compute_logp(batch)
                 batch["prox_logp"] = logp
                 log_gpu_stats("recompute logp")
 
         if ref is not None:
-            with stats_tracker.record_timing("ref_logp"):
+            with (
+                stats_tracker.record_timing("ref_logp"),
+                perf_tracer.trace_scope(
+                    "train.ref_logp",
+                    category=Category.COMPUTE,
+                    args={"global_step": global_step},
+                ),
+            ):
                 batch["ref_logp"] = ref.compute_logp(batch)
                 log_gpu_stats("ref logp")
 
-        with stats_tracker.record_timing("compute_advantage"):
+        with (
+            stats_tracker.record_timing("compute_advantage"),
+            perf_tracer.trace_scope(
+                "train.compute_advantage",
+                category=Category.COMPUTE,
+                args={"global_step": global_step},
+            ),
+        ):
             actor.compute_advantages(batch)
             log_gpu_stats("compute advantages")
 
         with (
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
+            perf_tracer.trace_scope(
+                "train.ppo_update",
+                category=Category.COMPUTE,
+                args={"global_step": global_step},
+            ),
         ):
             stats = actor.ppo_update(batch)
             actor.step_lr_scheduler()
@@ -235,18 +264,37 @@ def main(args):
         # pause inference for updating weights, save, and evaluation
         rollout.pause()
 
-        with stats_tracker.record_timing("update_weights"):
+        with (
+            stats_tracker.record_timing("update_weights"),
+            perf_tracer.trace_scope(
+                "train.update_weights",
+                category=Category.COMM,
+                args={"global_step": global_step},
+            ),
+        ):
             actor.update_weights(weight_update_meta)
 
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
 
-        rollout.resume()
-
-        with stats_tracker.record_timing("save"):
+        with (
+            stats_tracker.record_timing("save"),
+            perf_tracer.trace_scope(
+                "train.save",
+                category=Category.IO,
+                args={"global_step": global_step},
+            ),
+        ):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
 
-        with stats_tracker.record_timing("checkpoint_for_recover"):
+        with (
+            stats_tracker.record_timing("checkpoint_for_recover"),
+            perf_tracer.trace_scope(
+                "train.checkpoint",
+                category=Category.IO,
+                args={"global_step": global_step},
+            ),
+        ):
             recover_handler.dump(
                 actor,
                 step_info,
@@ -261,10 +309,15 @@ def main(args):
         current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(
-            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-        )
-        stats_logger.commit(epoch, step, global_step, stats)
+        with perf_tracer.trace_scope(
+            "train.log_stats",
+            category=Category.INSTR,
+            args={"global_step": global_step},
+        ):
+            stats[0].update(
+                stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+            )
+            stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
@@ -272,11 +325,14 @@ def main(args):
         # Resume rollout
         rollout.resume()
 
+        perf_tracer.save(step=global_step)
+
     stats_logger.close()
     rollout.destroy()
     if ref is not None:
         ref.destroy()
     actor.destroy()
+    perf_tracer.save(force=True)
 
 
 if __name__ == "__main__":

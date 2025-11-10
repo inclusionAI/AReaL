@@ -209,8 +209,10 @@ filterwarnings = [
     "ignore::UserWarning:transformers.*",
 ]
 markers = [
-    "slow: mark test as slow.",
+    "slow: mark test as slow, expected to cost more than 30 seconds and will not run in CI by default.",
     "ci: mark test as must-run in CI (only marked for slow tests).",
+    "gpu: mark test that uses a single GPU",
+    "multi_gpu: mark test that uses more than one GPU",
 ]
 
 [tool.ruff]

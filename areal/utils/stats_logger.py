@@ -1,6 +1,7 @@
 import getpass
 import os
 import time
+from dataclasses import asdict
 
 import swanlab
 import torch.distributed as dist
@@ -12,6 +13,7 @@ from areal.api.cli_args import BaseExperimentConfig, StatsLoggerConfig
 from areal.api.io_struct import FinetuneSpec
 from areal.utils import logging
 from areal.utils.printing import tabulate_stats
+from areal.version import version_info
 
 logger = logging.getLogger("StatsLogger", "system")
 
@@ -48,6 +50,14 @@ class StatsLogger:
         if suffix == "timestamp":
             suffix = time.strftime("%Y_%m_%d_%H_%M_%S")
 
+        exp_config_dict = asdict(self.exp_config)
+        exp_config_dict["version_info"] = {
+            "commit_id": version_info.commit,
+            "branch": version_info.branch,
+            "is_dirty": version_info.is_dirty,
+            "version": version_info.full_version_with_dirty_description,
+        }
+
         wandb.init(
             mode=self.config.wandb.mode,
             entity=self.config.wandb.entity,
@@ -58,7 +68,7 @@ class StatsLogger:
             or f"{self.config.experiment_name}_{self.config.trial_name}",
             notes=self.config.wandb.notes,
             tags=self.config.wandb.tags,
-            config=self.exp_config,  # save all experiment config to wandb
+            config=exp_config_dict,  # save all experiment config to wandb
             dir=self.get_log_path(self.config),
             force=True,
             id=f"{self.config.experiment_name}_{self.config.trial_name}_{suffix}",
@@ -77,7 +87,7 @@ class StatsLogger:
             project=swanlab_config.project or self.config.experiment_name,
             experiment_name=swanlab_config.name or self.config.trial_name + "_train",
             # NOTE: change from swanlab_config.config to log all experiment config, to be tested
-            config=self.exp_config,
+            config=exp_config_dict,
             logdir=self.get_log_path(self.config),
             mode=swanlab_config.mode,
         )

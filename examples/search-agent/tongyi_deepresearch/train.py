@@ -7,7 +7,6 @@ import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
 
 import torch.distributed as dist
 from datasets import load_dataset
@@ -160,7 +159,7 @@ class AgentRLConfig(GRPOConfig):
         default=False,
         metadata={"help": "Log stats for agent trajectories"},
     )
-    log_agent_stats_keys: List[str] = field(
+    log_agent_stats_keys: list[str] = field(
         default_factory=lambda: [],
         metadata={"help": "Keys of log stats for agent trajectories"},
     )
@@ -354,7 +353,6 @@ def main(args):
     rollout.destroy()
     judge_engine.destroy()
     actor.destroy()
-    actor.destroy_process_groups()
 
 
 if __name__ == "__main__":

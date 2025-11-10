@@ -114,6 +114,8 @@ class WeightUpdateMeta:
 
     use_lora: bool = False
 
+    clear_checkpoint_after_load: bool = True
+
     @classmethod
     def from_disk(
         cls,
@@ -122,6 +124,7 @@ class WeightUpdateMeta:
         file_root: str,
         name: str = "default",
         use_lora: bool = False,
+        clear_checkpoint_after_load: bool = True,
     ) -> "WeightUpdateMeta":
         from areal.utils.saver import Saver
 
@@ -133,6 +136,7 @@ class WeightUpdateMeta:
             type="disk",
             path=path,
             use_lora=use_lora,
+            clear_checkpoint_after_load=clear_checkpoint_after_load,
         )
 
     @classmethod
@@ -206,8 +210,9 @@ class SaveLoadMeta:
 
 @dataclass
 class RolloutStat:
-    submitted: int = 0
     accepted: int = 0
+    enqueued: int = 0
+    rejected: int = 0
     running: int = 0
 
 

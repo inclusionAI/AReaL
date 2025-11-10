@@ -80,6 +80,12 @@ class MicroBatchSpec:
             "help": "Maximum tokens per micro-batch for each forward pass. When set, n_mbs becomes the minimum number of micro-batches.",
         },
     )
+    n_mbs_divisor: int = field(
+        default=1,
+        metadata={
+            "help": "Divisor for the number of micro-batches. The final number of micro-batches will be adjusted to be divisible by this value.",
+        },
+    )
 
     @classmethod
     def new(cls, mb_spec: "MicroBatchSpec", **kwargs):
@@ -88,6 +94,7 @@ class MicroBatchSpec:
             n_mbs=mb_spec.n_mbs,
             granularity=mb_spec.granularity,
             max_tokens_per_mb=mb_spec.max_tokens_per_mb,
+            n_mbs_divisor=mb_spec.n_mbs_divisor,
         )
         fields.update(kwargs)
         return cls(**fields)
@@ -307,6 +314,15 @@ class MegatronEngineConfig:
     ddp: DistributedDataParallelConfig = field(
         default_factory=DistributedDataParallelConfig
     )
+    virtual_pipeline_parallel_size: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Virtual pipeline parallel size for Megatron interleaved schedule. "
+                "Set to >1 to enable VPP. Default is 1 (disabled)."
+            )
+        },
+    )
     # Don't use MegatronOptimizerConfig here because OmegaConf
     # does not recognize the annotation "torch.dtype"
     overlap_param_gather_with_optimizer_step: bool = False
@@ -441,6 +457,10 @@ class PPOActorConfig(TrainEngineConfig):
     temperature: float = field(
         default=1.0, metadata={"help": "Temperature during generation."}
     )
+    # M2PO
+    m2_threshold: float | None = field(
+        default=None, metadata={"help": "The second momentum threshold for M2PO."}
+    )
     # Reward
     reward_norm: NormConfig | None = field(
         default=None,
@@ -509,6 +529,13 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "Filter out tokens where behav_imp_weight exceeds behav_imp_weight_cap when computing loss. Must be > 1.0. use_decoupled_loss must be true."
         },
     )
+    importance_sampling_level: str = field(
+        default="token",
+        metadata={
+            "help": "Level at which to compute importance sampling ratios. 'token': per-token ratios (standard PPO). 'sequence': sequence-level geometric mean of per-token ratios (GSPO).",
+            "choices": ["token", "sequence"],
+        },
+    )
     # Advanced Options
     dynamic_sampling: bool = field(
         default=False,
@@ -553,6 +580,24 @@ class PPOCriticConfig(TrainEngineConfig):
     )
 
 
+def get_py_cmd(module: str, args: dict[str, Any]):
+    # convert to flags
+    cmd = ["python3", "-m", module]
+    for k, v in args.items():
+        if v is None or v is False or v == "" or (isinstance(v, list) and not v):
+            continue
+        flag = f"--{k.replace('_', '-')}"
+        if v is True:
+            cmd.append(flag)
+        elif isinstance(v, list):
+            cmd.append(flag)
+            cmd.extend(map(str, v))
+        else:
+            cmd.append(flag)
+            cmd.append(str(v))
+    return cmd
+
+
 @dataclass
 class vLLMConfig:
     """Configuration for vLLM runtime. Refer to:
@@ -593,9 +638,10 @@ class vLLMConfig:
     @staticmethod
     def build_args(
         vllm_config: "vLLMConfig",
-        tp_size,
-        host,
-        port,
+        tp_size: int,
+        pp_size: int,
+        host: str,
+        port: int,
         dist_init_addr: str | None = None,
     ):
         args: dict = conf_as_dict(vllm_config)
@@ -607,37 +653,33 @@ class vLLMConfig:
             load_format="auto",
             trust_remote_code=True,
             tensor_parallel_size=tp_size,
+            pipeline_parallel_size=pp_size,
             **args,
         )
         return args
 
     @staticmethod
+    def build_cmd_from_args(args: dict[str, Any]):
+        return get_py_cmd("areal.thirdparty.vllm.areal_vllm_server", args)
+
+    @staticmethod
     def build_cmd(
         vllm_config: "vLLMConfig",
-        tp_size,
-        host,
-        port,
+        tp_size: int,
+        pp_size: int,
+        host: str,
+        port: int,
         dist_init_addr: str | None = None,
     ):
         args = vLLMConfig.build_args(
             vllm_config=vllm_config,
             tp_size=tp_size,
+            pp_size=pp_size,
             host=host,
             port=port,
             dist_init_addr=dist_init_addr,
         )
-        # convert to flags
-        flags = []
-        for k, v in args.items():
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_', '-')}")
-            elif isinstance(v, list):
-                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
-            else:
-                flags.append(f"--{k.replace('_', '-')} {v}")
-        return f"python3 -m areal.thirdparty.vllm.areal_vllm_server {' '.join(flags)}"
+        return vLLMConfig.build_cmd_from_args(args)
 
 
 @dataclass
@@ -735,28 +777,19 @@ class SGLangConfig:
             node_rank=node_rank,
         )
 
-        # convert to flags
-        flags = []
-        for k, v in args.items():
-            if is_version_less("sglang", "0.4.10.post2") and "max_loaded_loras" in k:
-                continue
-            if v is None or v is False or v == "":
-                continue
-            if v is True:
-                flags.append(f"--{k.replace('_', '-')}")
-            elif isinstance(v, list):
-                flags.append(f"--{k.replace('_', '-')} {' '.join(map(str, v))}")
-            else:
-                flags.append(f"--{k.replace('_', '-')} {v}")
-        return f"python3 -m sglang.launch_server {' '.join(flags)}"
+        return SGLangConfig.build_cmd_from_args(args)
+
+    @staticmethod
+    def build_cmd_from_args(args: dict[str, Any]):
+        return get_py_cmd("sglang.launch_server", args)
 
     @staticmethod
     def build_args(
         sglang_config: "SGLangConfig",
-        tp_size,
-        base_gpu_id,
-        host,
-        port,
+        tp_size: int,
+        base_gpu_id: int,
+        host: str | None = None,
+        port: str | None = None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
@@ -772,19 +805,17 @@ class SGLangConfig:
                 enable_multithread_load=sglang_config.enable_multithread_load,
                 enable_fast_load=sglang_config.enable_fast_load,
             )
-            args.pop("enable_multithread_load", None)
-            args.pop("enable_fast_load", None)
             args["model_loader_extra_config"] = json.dumps(
                 model_loader_extra_config, separators=(",", ":")
             )
+        args.pop("enable_multithread_load", None)
+        args.pop("enable_fast_load", None)
         # Map "all-linear" to "all"
         if "lora_target_modules" in args and args["lora_target_modules"]:
             args["lora_target_modules"] = [
                 x.replace("-linear", "") for x in args["lora_target_modules"]
             ]
         args = dict(
-            host=host,
-            port=port,
             # Model and tokenizer
             tokenizer_path=sglang_config.model_path,
             tokenizer_mode="auto",
@@ -802,8 +833,14 @@ class SGLangConfig:
             dist_init_addr=dist_init_addr,
             **args,
         )
+        if host is not None:
+            args["host"] = host
+        if port is not None:
+            args["port"] = port
         if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"):
             raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
+        if is_version_less("sglang", "0.4.10.post2"):
+            args.pop("max_loaded_loras", None)
         return args
 
 
@@ -983,6 +1020,60 @@ class StatsLoggerConfig:
     tensorboard: TensorBoardConfig = field(
         default_factory=TensorBoardConfig,
         metadata={"help": "TensorBoard configuration. Only 'path' field required."},
+    )
+
+
+@dataclass
+class RequestTracerConfig:
+    """Configuration for per-request lifecycle tracing."""
+
+    enabled: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Enable per-request lifecycle tracing alongside perf events. "
+                "When true, request metadata is captured to requests.jsonl."
+            )
+        },
+    )
+    flush_threshold: int = field(
+        default=256,
+        metadata={
+            "help": (
+                "Flush request trace records once this many entries are ready. "
+                "Values <= 0 fall back to 1."
+            )
+        },
+    )
+
+
+@dataclass
+class PerfTracerConfig:
+    """Configuration for perf tracer emission."""
+
+    experiment_name: str = MISSING
+    trial_name: str = MISSING
+    fileroot: str = MISSING
+    enabled: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Explicitly enable or disable perf tracing. Set to true to capture perf traces."
+            )
+        },
+    )
+    save_interval: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Flush trace events to disk every N calls to save(step=...). "
+                "A value of 1 writes on every step; values <= 0 fall back to 1."
+            )
+        },
+    )
+    request_tracer: RequestTracerConfig | None = field(
+        default=None,
+        metadata={"help": "Request tracing configuration."},
     )
 
 
@@ -1188,10 +1279,7 @@ class BaseExperimentConfig:
     )
     allocation_mode: str = field(
         default="",
-        metadata={
-            "help": "GPU parallel strategy allocation mode. "
-            "Options: manual/heuristic or pattern-based."
-        },
+        metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
     )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
     total_train_epochs: int = field(
@@ -1222,6 +1310,10 @@ class BaseExperimentConfig:
     saver: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     stats_logger: StatsLoggerConfig = field(default_factory=StatsLoggerConfig)
+    perf_tracer: PerfTracerConfig | None = field(
+        default=None,
+        metadata={"help": "Performance tracer configuration. None means disabled."},
+    )
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
