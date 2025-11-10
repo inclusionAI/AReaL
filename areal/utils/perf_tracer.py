@@ -48,6 +48,30 @@ _THREAD_LOCAL = threading.local()
 
 
 class PerfTraceCategory(str, Enum):
+    """Categories for classifying performance trace events.
+
+    These categories help organize and filter trace events in visualization tools
+    like Perfetto or Chrome Tracing. Categories are used in @trace_perf decorators,
+    trace_scope context managers, and instant markers.
+
+    Attributes
+    ----------
+    COMPUTE : str
+        CPU/GPU computation (forward pass, backward pass, loss calculation).
+    COMM : str
+        Distributed communication (all-reduce, broadcast, point-to-point).
+    IO : str
+        Disk I/O operations (checkpoint save/load, data loading).
+    SYNC : str
+        Synchronization barriers and locks.
+    SCHEDULER : str
+        Task scheduling and queue management.
+    INSTR : str
+        Instrumentation and profiling overhead.
+    MISC : str
+        Miscellaneous events that don't fit other categories.
+    """
+
     COMPUTE = "compute"
     COMM = "comm"
     IO = "io"
@@ -83,6 +107,13 @@ _SESSION_TRACE_FILENAME = "sessions.jsonl"
 
 
 class _NullContext(AbstractContextManager, AbstractAsyncContextManager):
+    """No-op context manager returned when tracing is disabled.
+
+    Provides both sync and async context manager interfaces that do nothing,
+    allowing trace_scope and atrace_scope to be called unconditionally without
+    overhead when tracing is disabled or session_id is None.
+    """
+
     def __enter__(self):
         return self
 
@@ -124,6 +155,23 @@ def _normalize_flush_threshold(config: SessionTracerConfig) -> int:
 
 
 def _rollout_stats_to_dict(data: Any) -> dict[str, int] | None:
+    """Convert rollout statistics from various formats to a standard dict.
+
+    Attempts to extract rollout statistics (accepted, enqueued, rejected, running)
+    from different input formats including dicts, objects with attributes, or objects
+    with to_dict() methods.
+
+    Parameters
+    ----------
+    data : Any
+        Statistics data in various formats (dict, object, etc.).
+
+    Returns
+    -------
+    dict[str, int] | None
+        Normalized statistics dict with int values, or None if conversion fails.
+    """
+
     if data is None:
         return None
     if isinstance(data, dict):
@@ -155,6 +203,22 @@ def _rollout_stats_to_dict(data: Any) -> dict[str, int] | None:
 
 
 def _normalize_category(category: CategoryLike) -> str:
+    """Normalize a category specification to a standard string value.
+
+    Converts various category representations (enum, string, aliases) to their
+    canonical string values. Returns "misc" for None or invalid inputs.
+
+    Parameters
+    ----------
+    category : CategoryLike
+        Category as PerfTraceCategory enum, string, or None.
+
+    Returns
+    -------
+    str
+        Normalized category string value.
+    """
+
     if category is None:
         return PerfTraceCategory.MISC.value
     if isinstance(category, PerfTraceCategory):
@@ -175,6 +239,28 @@ def _default_trace_path(
     filename: str = _PERF_TRACE_FILENAME,
     subdir: str | None = None,
 ) -> str:
+    """Generate the default output path for trace files.
+
+    Constructs a standardized path under fileroot/logs/user/experiment/trial/
+    with rank-qualified filename. Used for both performance traces and session traces.
+
+    Parameters
+    ----------
+    config : PerfTracerConfig
+        Configuration containing fileroot, experiment_name, and trial_name.
+    rank : int
+        Rank identifier to include in filename.
+    filename : str, default="traces.jsonl"
+        Base filename before rank qualification.
+    subdir : str | None, default=None
+        Optional subdirectory under trial_name (e.g., "perf_tracer", "session_tracer").
+
+    Returns
+    -------
+    str
+        Absolute path to the trace output file.
+    """
+
     base_dir = os.path.join(
         os.path.expanduser(os.path.expandvars(config.fileroot)),
         "logs",
@@ -188,6 +274,48 @@ def _default_trace_path(
 
 
 class SessionTraceEvent(str, Enum):
+    """Enumeration of lifecycle events for session tracking.
+
+    These events represent key points in a session's lifecycle and are used to
+    trigger state updates, timestamp recording, and metric computation. Events
+    are typically recorded via trace_session_event() or through context managers
+    like atrace_session_phase().
+
+    Event categories:
+    - Lifecycle: ENQUEUED, EXECUTION_START, EXECUTION_END, CONSUMED, DROPPED
+    - Phase boundaries: GENERATE_START, GENERATE_END, REWARD_START, REWARD_END
+
+    The events map to SessionRecord state transitions and are bound to specific
+    actions through EventBinding configurations in SessionRecord.build_event_rules().
+
+    Attributes
+    ----------
+    ENQUEUED : str
+        Session has been enqueued for execution in AsyncTaskRunner.
+    EXECUTION_START : str
+        Session execution has started (workflow.arun_episode called).
+    EXECUTION_END : str
+        Session execution has completed with a status (accepted/rejected/failed).
+    CONSUMED : str
+        Session result has been consumed by the training loop.
+    GENERATE_START : str
+        Generation phase has started within the workflow.
+    GENERATE_END : str
+        Generation phase has completed.
+    REWARD_START : str
+        Reward computation phase has started.
+    REWARD_END : str
+        Reward computation phase has completed.
+    DROPPED : str
+        Session was dropped before execution (e.g., queue full).
+
+    See Also
+    --------
+    trace_session_event : Function to record these events
+    SessionRecord : Class that processes these events
+    EventBinding : Configuration for event handling
+    """
+
     ENQUEUED = "enqueued"
     EXECUTION_START = "execution_start"
     EXECUTION_END = "execution_end"
@@ -201,6 +329,19 @@ class SessionTraceEvent(str, Enum):
 
 @dataclass
 class PhaseSpan:
+    """Represents a single execution of a phase with start and end timestamps.
+
+    A phase may execute multiple times within a session (e.g., multiple generate calls),
+    and each execution is tracked as a separate PhaseSpan.
+
+    Attributes
+    ----------
+    start_ts : float
+        Timestamp when the phase started (from time.perf_counter()).
+    end_ts : float | None
+        Timestamp when the phase ended, or None if still in progress.
+    """
+
     start_ts: float
     end_ts: float | None = None
 
@@ -214,6 +355,27 @@ class PhaseSpan:
 # NOTE: frozen=True is valid despite Pydantic warnings
 @dataclass(frozen=True)
 class PhaseSpec:
+    """Configuration specification for a tracked phase in session lifecycle.
+
+    Defines how a phase should be tracked, including which events mark its boundaries,
+    whether multiple executions are allowed, and optional callbacks for state updates.
+
+    Attributes
+    ----------
+    name : str
+        Phase name (e.g., "generate", "reward", "execution").
+    start_event : SessionTraceEvent
+        Event that marks the start of this phase.
+    end_event : SessionTraceEvent
+        Event that marks the end of this phase.
+    allow_multiple : bool, default=False
+        Whether this phase can execute multiple times within a session.
+    ready_on_complete : bool, default=False
+        Whether session becomes ready for flushing when this phase completes.
+    on_end : Callable | None, default=None
+        Optional callback invoked when the phase ends for custom state updates.
+    """
+
     name: str
     start_event: SessionTraceEvent
     end_event: SessionTraceEvent
@@ -225,6 +387,27 @@ class PhaseSpec:
 # NOTE: frozen=True is valid despite Pydantic warnings
 @dataclass(frozen=True)
 class EventBinding:
+    """Binding configuration for how a SessionTraceEvent updates SessionRecord state.
+
+    Defines the actions to take when a specific event is recorded, such as updating
+    timestamps, starting/ending phases, invoking callbacks, or marking readiness.
+
+    Attributes
+    ----------
+    timestamp_attr : str | None, default=None
+        SessionRecord attribute to update with event timestamp (e.g., "enqueue_ts").
+    phase : str | None, default=None
+        Phase name to update if this event represents a phase boundary.
+    role : str | None, default=None
+        Phase role: "start" or "end" for phase boundary events.
+    allow_multiple : bool, default=False
+        Whether multiple executions of this phase are allowed.
+    payload_handler : Callable | None, default=None
+        Optional callback to process event payload and update record state.
+    mark_ready : bool, default=False
+        Whether this event marks the session as ready for flushing.
+    """
+
     timestamp_attr: str | None = None
     phase: str | None = None
     role: str | None = None
@@ -236,6 +419,24 @@ class EventBinding:
 # NOTE: frozen=True is valid despite Pydantic warnings
 @dataclass(frozen=True)
 class FieldSpec:
+    """Specification for serializing a field from SessionRecord to JSON output.
+
+    Defines how to extract or compute a value from a SessionRecord for inclusion
+    in the serialized output. Can either read a direct attribute or invoke a
+    computation function for derived metrics.
+
+    Attributes
+    ----------
+    attr : str | None, default=None
+        SessionRecord attribute name to read directly (e.g., "session_id", "status").
+    key : str | None, default=None
+        JSON key name in output. Defaults to attr if not specified.
+    compute : Callable | None, default=None
+        Function to compute derived value from SessionRecord (e.g., duration calculation).
+    omit_if_none : bool, default=True
+        Whether to omit this field from JSON if its value is None.
+    """
+
     attr: str | None = None
     key: str | None = None
     compute: Callable[[SessionRecord], Any] | None = None
@@ -258,6 +459,55 @@ class FieldSpec:
 
 @dataclass
 class SessionRecord:
+    """Record of a single session's lifecycle with timestamps and computed metrics.
+
+    This class represents the complete execution trace of a rollout session, including
+    all lifecycle events, phase executions, and derived performance metrics. It serves
+    as both an in-memory state tracker during execution and the serialization format
+    for persisted session traces.
+
+    The record tracks three main aspects:
+    1. Lifecycle events: submission, enqueue, execution, consumption
+    2. Phase executions: generate, reward, execution phases with start/end times
+    3. Derived metrics: computed from timestamps (queue_wait_s, execution_s, etc.)
+
+    State management:
+    - Starts with status="pending" on registration
+    - Updates to "accepted", "rejected", "failed", or "dropped" based on execution
+    - Becomes ready for flushing when reaching a terminal state or explicit completion
+    - Tracks multiple executions of phases (e.g., multiple generate calls)
+
+    The class uses ClassVar configurations (PHASE_CONFIGS, FIELD_SPECS) to define:
+    - Which phases to track and their event bindings
+    - Which fields to serialize and how to compute derived values
+    - Lifecycle event handling and state transitions
+
+    Parameters
+    ----------
+    session_id : int
+        Unique identifier for this session.
+    rank : int
+        Rank identifier for the process that created this session.
+    submit_ts : float
+        Timestamp when the session was submitted (from time.perf_counter()).
+    status : str, default="pending"
+        Current status: "pending", "accepted", "rejected", "failed", or "dropped".
+    rejection_reason : str | None, default=None
+        Reason for rejection if status is "rejected" or "dropped".
+    rollout_stats : dict[str, int] | None, default=None
+        Snapshot of rollout queue statistics at key lifecycle events.
+    enqueue_ts : float | None, default=None
+        Timestamp when the session was enqueued for execution.
+    wait_return_ts : float | None, default=None
+        Timestamp when the session result was consumed by the training loop.
+
+    See Also
+    --------
+    SessionTracer : Manager that creates and tracks SessionRecord instances
+    PhaseSpan : Represents a single phase execution with start/end timestamps
+    PhaseSpec : Configuration for tracked phases and their events
+    """
+
     session_id: int
     rank: int
     submit_ts: float
@@ -523,6 +773,35 @@ def trace_session_event(
     method: str,
     **payload: Any,
 ) -> None:
+    """Record a session lifecycle event for tracking.
+
+    This is the primary function for recording session events. It routes the event
+    to the global SessionTracer (if configured) and applies appropriate state updates
+    to the corresponding SessionRecord.
+
+    The function handles two types of operations:
+    1. Counter increments: method="increment_counter" with name and value in payload
+    2. Lifecycle events: method mapped to SessionTraceEvent enum values
+
+    Parameters
+    ----------
+    session_id : int | None
+        The session ID to record the event for. If None, the event is silently ignored.
+    method : str
+        Event method name. Standard methods: "mark_enqueued", "mark_execution_start",
+        "mark_execution_end", "mark_consumed", "mark_dropped", "mark_generate_start",
+        "mark_generate_end", "mark_reward_start", "mark_reward_end", "increment_counter".
+    **payload : Any
+        Additional event data. Common keys include "status", "rejection_reason",
+        "rollout_stats" for execution_end events, and "name", "value" for counters.
+
+    See Also
+    --------
+    SessionTraceEvent : Enum defining available lifecycle events
+    trace_session_phase : Context manager for automatic phase start/end pairing
+    atrace_session_phase : Async version of trace_session_phase
+    """
+
     if session_id is None:
         return
     tracer = get_session_tracer()
@@ -713,6 +992,42 @@ def atrace_session_phase(
 
 
 class SessionTracer:
+    """Tracer for tracking per-session lifecycle events and computing derived metrics.
+
+    This class manages the complete lifecycle of individual rollout sessions, from
+    submission through execution to consumption. It records timestamped events,
+    tracks phase executions (generate, reward, etc.), and computes derived metrics
+    like queue wait time, execution time, and total latency.
+
+    The tracer automatically flushes completed sessions to disk in JSONL format
+    when the flush threshold is reached or when explicitly requested. Each session
+    record includes lifecycle timestamps, status information, phase breakdowns,
+    and computed performance metrics.
+
+    Key features:
+    - Automatic session ID assignment on registration
+    - Event-driven state updates with timestamp tracking
+    - Phase execution tracking with support for multiple executions
+    - Derived metric computation (queue_wait_s, execution_s, total_s, etc.)
+    - Configurable flush threshold for batched I/O
+    - Thread-safe operation with internal locking
+
+    Parameters
+    ----------
+    config : SessionTracerConfig
+        Configuration for session tracing including flush threshold settings.
+    output_path : str
+        Absolute path to the output JSONL file where session records will be written.
+    rank : int
+        Rank identifier for this process in distributed training.
+
+    See Also
+    --------
+    SessionRecord : Data structure representing a single session's lifecycle
+    PerfTracer : Main tracer that optionally includes session tracking
+    trace_session_event : Function to record session lifecycle events
+    """
+
     def __init__(
         self,
         config: SessionTracerConfig,
@@ -855,6 +1170,13 @@ class SessionTracer:
 
 
 class _Scope(AbstractContextManager[Any]):
+    """Internal sync context manager for PerfTracer.trace_scope().
+
+    Automatically records complete events (duration spans) with proper timestamp
+    tracking and exception handling. Captures exception types in the args if an
+    exception occurs during execution.
+    """
+
     def __init__(
         self,
         tracer: PerfTracer,
@@ -891,6 +1213,12 @@ class _Scope(AbstractContextManager[Any]):
 
 
 class _AsyncScope(AbstractAsyncContextManager[Any]):
+    """Internal async context manager for PerfTracer.atrace_scope().
+
+    Wraps _Scope to provide async context manager interface while reusing the
+    same timestamp tracking and event recording logic.
+    """
+
     def __init__(
         self,
         tracer: PerfTracer,
