@@ -4,7 +4,7 @@ import sys
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future
-from typing import Any, Optional
+from typing import Any
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -251,12 +251,12 @@ class RemoteSGLangEngine(InferenceEngine):
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> None:
         """Submit a request to the inference engine."""
-        return self._engine.submit(data, workflow, workflow_builder, should_accept_fn)
+        return self._engine.submit(data, workflow, workflow_kwargs, should_accept_fn)
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
@@ -267,25 +267,25 @@ class RemoteSGLangEngine(InferenceEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results."""
         return self._engine.rollout_batch(
-            data, workflow, workflow_builder, should_accept_fn
+            data, workflow, workflow_kwargs, should_accept_fn
         )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
         return self._engine.prepare_batch(
-            dataloader, workflow, workflow_builder, should_accept_fn
+            dataloader, workflow, workflow_kwargs, should_accept_fn
         )
 
     def pause(self):

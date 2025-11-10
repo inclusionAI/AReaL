@@ -746,16 +746,16 @@ class MegatronEngine(TrainEngine):
         self,
         data: list[dict[str, Any]],
         granularity: int = 1,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
             data,
             granularity=granularity,
             workflow=workflow,
-            workflow_builder=workflow_builder,
+            workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
         )
 
@@ -763,16 +763,16 @@ class MegatronEngine(TrainEngine):
         self,
         dataloader: StatefulDataLoader,
         granularity: int = 1,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
             dataloader,
             granularity=granularity,
             workflow=workflow,
-            workflow_builder=workflow_builder,
+            workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
         )
 

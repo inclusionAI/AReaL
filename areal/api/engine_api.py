@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import abc
 from collections.abc import Callable
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
@@ -151,7 +153,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def connect_engine(self, engine: "InferenceEngine", meta: WeightUpdateMeta):
+    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
         """Connect to an inference engine for online training.
 
         Parameters
@@ -475,9 +477,9 @@ class InferenceEngine(abc.ABC):
     def submit(
         self,
         data: dict[str, Any],
-        workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         should_accept_fn: Callable | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
 
@@ -487,13 +489,17 @@ class InferenceEngine(abc.ABC):
         ----------
         data : Dict[str, Any]
             The input data for rollout. Used by the user's customized workflow implementation.
-        workflow : RolloutWorkflow, optional
-            The workflow instance to run. Note that a single workflow instance can run multiple data.
-            Use `workflow` when you want to share some resources between different rollouts.
-            Either `workflow` or `workflow_builder` should be specified, by default None.
-        workflow_builder : Callable, optional
-            A builder to create a workflow instance to run, guaranteed for source separation.
-            Either `workflow` or `workflow_builder` should be specified, by default None.
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+            The workflow to use for rollout generation. Can be:
+
+            - An instance of RolloutWorkflow (for sharing resources between rollouts)
+            - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
+            - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
+              and instantiated with workflow_kwargs)
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor when workflow is a type or string.
+            Required when workflow is a type or string, ignored when workflow is an instance.
+            By default None.
         should_accept_fn : Callable, optional
             A function used to decide whether to accept a specific trajectory, i.e., dynamic filtering.
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
@@ -532,8 +538,8 @@ class InferenceEngine(abc.ABC):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests to the inference engine and wait for the results.
@@ -544,10 +550,17 @@ class InferenceEngine(abc.ABC):
         ----------
         data : List[Dict[str, Any]]
             A list of input data dictionaries for rollout
-        workflow : RolloutWorkflow, optional
-            The workflow instance to run, by default None
-        workflow_builder : Callable, optional
-            A builder to create a workflow instance, by default None
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+            The workflow to use for rollout generation. Can be:
+
+            - An instance of RolloutWorkflow (for sharing resources between rollouts)
+            - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
+            - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
+              and instantiated with workflow_kwargs)
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor when workflow is a type or string.
+            Required when workflow is a type or string, ignored when workflow is an instance.
+            By default None.
         should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory, by default None
 
@@ -561,8 +574,8 @@ class InferenceEngine(abc.ABC):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.
@@ -573,10 +586,17 @@ class InferenceEngine(abc.ABC):
         ----------
         dataloader : StatefulDataLoader
             The data loader to pull data from for batch preparation
-        workflow : RolloutWorkflow, optional
-            The workflow instance to run, by default None
-        workflow_builder : Callable, optional
-            A builder to create a workflow instance, by default None
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+            The workflow to use for rollout generation. Can be:
+
+            - An instance of RolloutWorkflow (for sharing resources between rollouts)
+            - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
+            - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
+              and instantiated with workflow_kwargs)
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor when workflow is a type or string.
+            Required when workflow is a type or string, ignored when workflow is an instance.
+            By default None.
         should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory, by default None
 
