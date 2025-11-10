@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import shutil
+import subprocess
 import time
 import uuid
 from collections.abc import Callable
@@ -21,6 +22,7 @@ from areal.api.engine_api import NoResult
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
+    LocalInfServerInfo,
     ModelRequest,
     ModelResponse,
     ParamSpec,
@@ -32,6 +34,7 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
+from areal.utils.network import find_free_ports, gethostip
 
 from .workflow_executor import WorkflowExecutor
 
@@ -189,6 +192,21 @@ class RemoteInfBackendProtocol(Protocol):
         """
         ...
 
+    def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
+        """Launch inference server subprocess.
+
+        Parameters
+        ----------
+        server_args : dict[str, Any]
+            Server configuration arguments for build_cmd_from_args
+
+        Returns
+        -------
+        subprocess.Popen
+            The launched server process
+        """
+        ...
+
 
 class RemoteInfEngine:
     """
@@ -229,6 +247,7 @@ class RemoteInfEngine:
         self.lora_initialized = False
 
         self.workflow_executor: WorkflowExecutor
+        self.local_server_processes: list[LocalInfServerInfo] = []
 
     def _wait_for_server(self, address):
         """Wait for a server to become healthy."""
@@ -324,8 +343,10 @@ class RemoteInfEngine:
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
-        self.workflow_executor.destroy()
-        self.executor.shutdown()
+        if hasattr(self, "workflow_executor"):
+            self.workflow_executor.destroy()
+        if hasattr(self, "executor"):
+            self.executor.shutdown()
 
     def set_version(self, version):
         """Set the current weight version."""
@@ -767,6 +788,37 @@ class RemoteInfEngine:
     def resume(self):
         """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
+
+    def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
+        """Launch a local inference server."""
+        server_args["host"] = gethostip()
+        server_args["port"] = find_free_ports(1)[0]
+        process = self.backend.launch_server(server_args)
+        address = f"{server_args['host']}:{server_args['port']}"
+        self._wait_for_server(address)
+
+        server_info = LocalInfServerInfo(
+            host=server_args["host"],
+            port=server_args["port"],
+            process=process,
+        )
+        self.local_server_processes.append(server_info)
+        return server_info
+
+    def teardown_server(self):
+        """Teardown all locally launched servers."""
+        for server_info in self.local_server_processes:
+            if server_info.process.poll() is None:
+                server_info.process.terminate()
+                try:
+                    server_info.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.logger.warning(
+                        f"Server process {server_info.process.pid} did not terminate gracefully. Killing it."
+                    )
+                    server_info.process.kill()
+                    server_info.process.wait()
+        self.local_server_processes.clear()
 
 
 # Helper functions that run in ProcessPoolExecutor

@@ -615,14 +615,12 @@ class vLLMConfig:
         vllm_config: "vLLMConfig",
         tp_size: int,
         pp_size: int,
-        host: str,
-        port: int,
+        host: str | None = None,
+        port: int | None = None,
         dist_init_addr: str | None = None,
     ):
         args: dict = conf_as_dict(vllm_config)
         args = dict(
-            host=host,
-            port=port,
             # Model and tokenizer
             tokenizer=vllm_config.model,
             load_format="auto",
@@ -631,6 +629,10 @@ class vLLMConfig:
             pipeline_parallel_size=pp_size,
             **args,
         )
+        if port is not None:
+            args["port"] = port
+        if host is not None:
+            args["host"] = host
         return args
 
     @staticmethod
@@ -642,8 +644,8 @@ class vLLMConfig:
         vllm_config: "vLLMConfig",
         tp_size: int,
         pp_size: int,
-        host: str,
-        port: int,
+        host: str | None = None,
+        port: int | None = None,
         dist_init_addr: str | None = None,
     ):
         args = vLLMConfig.build_args(
@@ -735,8 +737,8 @@ class SGLangConfig:
         sglang_config: "SGLangConfig",
         tp_size,
         base_gpu_id,
-        host,
-        port,
+        host: str | None = None,
+        port: int | None = None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
