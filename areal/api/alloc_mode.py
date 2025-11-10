@@ -215,11 +215,11 @@ class FSDPParallelStrategy(ParallelStrategy):
 class MegatronParallelStrategy(ParallelStrategy):
     """Megatron parallel strategy with additional sequence parallelism and virtual pipeline parallelism."""
 
-    virtual_pipeline_parallel_size: int | None = field(
-        default=None,
+    virtual_pipeline_parallel_size: int = field(
+        default=1,
         metadata={
             "help": "Virtual pipeline parallelism size for megatron modules "
-            "for interleaved pipeline schedule."
+            "for interleaved pipeline schedule. Default value is 1 (disabled)."
         },
     )
     use_sequence_parallel: bool = field(
@@ -228,6 +228,16 @@ class MegatronParallelStrategy(ParallelStrategy):
             "help": "Enable sequence parallelism. Only used with tensor-model parallelism in Megatron",
         },
     )
+
+    def __post_init__(self):
+        super().__post_init__()
+        vpp = self.virtual_pipeline_parallel_size
+        if vpp <= 1:
+            self.virtual_pipeline_parallel_size = 1
+        elif self.pipeline_parallel_size <= 1:
+            raise AllocationValidationError(
+                "Virtual pipeline parallelism requires pipeline_parallel_size > 1."
+            )
 
     @staticmethod
     def parallelism_eq(this, other):

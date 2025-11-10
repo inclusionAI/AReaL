@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Dict, List
+from typing import Any
 
 import torch
 
@@ -9,6 +9,7 @@ from areal.engine.fsdp_engine import FSDPEngine
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import ppo_critic_loss_fn
+from areal.utils.perf_tracer import trace_perf
 
 
 class PPOCritic:
@@ -16,26 +17,24 @@ class PPOCritic:
         self.config = config
         self.engine = engine
 
+    @trace_perf("ppo_critic.compute_values", category="compute")
     @torch.no_grad()
-    def compute_values(self, data: Dict[str, Any]) -> torch.Tensor | None:
+    def compute_values(self, data: dict[str, Any]) -> torch.Tensor | None:
         self.engine.eval()
         return self.engine.forward(
             input_=data,
             aggregate_fn=lambda xs: torch.cat([x.squeeze(-1) for x in xs], dim=-1),
         )
 
-    def ppo_update(self, data: Dict[str, Any]) -> List[Dict[str, float]]:
-        all_stats = []
+    @trace_perf("ppo_critic.ppo_update", category="compute")
+    @stats_tracker.scope_func_wrapper("ppo_critic")
+    def ppo_update(self, data: dict[str, Any]) -> None:
         ########## Logging code starts ##########
         scalars = dict(
             mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
             eps_clip=self.config.eps_clip,
         )
         stats_tracker.scalar(**scalars)
-
-        global_stats = stats_tracker.export(
-            reduce_group=self.engine.data_parallel_group
-        )
         ########## Logging code ends ##########
 
         for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
@@ -57,15 +56,9 @@ class PPOCritic:
                 loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
             )
             stats_tracker.scalar(**train_stat)
-            all_stats.append(
-                stats_tracker.export(reduce_group=self.engine.data_parallel_group)
-            )
-        all_stats[0].update(global_stats)
-        return all_stats
 
 
 class FSDPPPOCritic(FSDPEngine):
-
     def __init__(self, config: PPOCriticConfig):
         super().__init__(config)
         self.critic = PPOCritic(config, self)
@@ -74,13 +67,13 @@ class FSDPPPOCritic(FSDPEngine):
     def compute_values(self, *args, **kwargs) -> torch.Tensor | None:
         return self.critic.compute_values(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
-        return self.critic.ppo_update(*args, **kwargs)
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.critic.ppo_update(*args, **kwargs)
 
 
 def ppo_loss_fn(
     value: torch.Tensor,
-    input_data: Dict,
+    input_data: dict,
     eps_clip: float,
 ):
     """Loss function for critic step, all inputs should be splitted into

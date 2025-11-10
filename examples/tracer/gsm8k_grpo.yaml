@@ -151,7 +151,7 @@ perf_tracer:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   enabled: true
-  request_tracer:
+  session_tracer:
     enabled: true
 
 launcher:

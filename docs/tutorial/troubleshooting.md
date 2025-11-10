@@ -69,3 +69,21 @@ The key to resolving this issue is identifying the phase where the error occurs:
 
 This issue may occur during data transfer. Try increasing `mem_per_model_worker` in the
 CLI arguments.
+
+## Permission Issues
+
+### Cache Directory Permission Errors
+
+If you encounter permission errors related to `/tmp/areal`, this typically occurs in
+multi-user environments where another user has already created the cache directory with
+restrictive permissions.
+
+**Solution:** Set the `AREAL_CACHE_DIR` environment variable to a user-specific path:
+
+```bash
+export AREAL_CACHE_DIR=/tmp/areal-$USER
+# or use your home directory
+export AREAL_CACHE_DIR=$HOME/.cache/areal
+```
+
+You can add this to your `~/.bashrc` or `~/.profile` to make it persistent.

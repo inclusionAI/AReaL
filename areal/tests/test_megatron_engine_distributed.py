@@ -8,7 +8,7 @@ from areal.utils.network import find_free_ports
 
 
 def _run_test_with_torchrun(
-    model_type: str, alloc_mode: str, test_type: str, output: str
+    model_type: str, alloc_mode: str, test_type: str, output: str, vpp_size: int = 1
 ):
     port = find_free_ports(1)[0]
     n_gpus = AllocationMode.from_str(alloc_mode).train.world_size
@@ -25,6 +25,7 @@ def _run_test_with_torchrun(
                 f"--allocation_mode={alloc_mode}",
                 f"--output={output}",
                 f"--test_type={test_type}",
+                f"--vpp_size={vpp_size}",
             ],
             check=True,
             capture_output=True,
@@ -60,6 +61,18 @@ def test_qwen3_context_parallel(tmp_path_factory):
     output = tmp_path_factory.mktemp("test_output") / "qwen3_context_parallel.out"
     _run_test_with_torchrun(
         "qwen3", "d1p1t1c2", test_type="forward", output=str(output)
+    )
+
+
+@pytest.mark.multi_gpu
+def test_qwen3_virtual_pipeline_parallel(tmp_path_factory):
+    if current_platform.device_count() < 2:
+        pytest.skip("virtual pipeline parallel requires 2 GPUs to run")
+    output = (
+        tmp_path_factory.mktemp("test_output") / "qwen3_virtual_pipeline_parallel.out"
+    )
+    _run_test_with_torchrun(
+        "qwen3", "d1p2t1", test_type="forward", output=str(output), vpp_size=2
     )
 
 

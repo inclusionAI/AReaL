@@ -124,12 +124,12 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         for reward in rewards:
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        completions_with_reward = {}
+        interactions_with_reward = {}
         for client in clients:
             client.apply_reward_discount(turn_discount=0.9)
-            completions = client.export_interactions(style="individual")
-            completions_with_reward.update(completions)
-        return completions_with_reward
+            interactions = client.export_interactions(style="individual")
+            interactions_with_reward.update(interactions)
+        return interactions_with_reward
 
 
 def main(args):
@@ -229,13 +229,13 @@ def main(args):
                 batch = actor.prepare_batch(
                     train_dataloader,
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
             else:
                 batch = actor.rollout_batch(
                     next(data_generator),
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
@@ -248,11 +248,8 @@ def main(args):
             actor.compute_advantages(batch)
             log_gpu_stats("compute advantages")
 
-        with (
-            stats_tracker.record_timing("train_step"),
-            stats_tracker.scope("grpo_actor"),
-        ):
-            stats = actor.ppo_update(batch)
+        with stats_tracker.record_timing("train_step"):
+            actor.ppo_update(batch)
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
@@ -286,9 +283,7 @@ def main(args):
         current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(
-            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-        )
+        stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])

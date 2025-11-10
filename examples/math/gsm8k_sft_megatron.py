@@ -119,11 +119,8 @@ def main(args):
                     group=engine.context_and_model_parallel_group,
                 )
 
-            with (
-                stats_tracker.record_timing("train_step"),
-                stats_tracker.scope("sft"),
-            ):
-                stats = engine.train_lm(data)
+            with stats_tracker.record_timing("train_step"):
+                engine.train_lm(data)
                 engine.step_lr_scheduler()
 
             with stats_tracker.record_timing("save"):
@@ -147,17 +144,16 @@ def main(args):
                 # No need to log anything. Logging will be handled outside
                 # via stats_tracker.export().
                 def evaluate_fn():
-                    with stats_tracker.scope("sft-eval"):
-                        for data in valid_dataloader:
-                            data = tensor_container_to(
-                                data, current_platform.current_device()
-                            )
-                            data = broadcast_tensor_container(
-                                data,
-                                src_rank=engine.current_data_parallel_head(),
-                                group=engine.context_and_model_parallel_group,
-                            )
-                            engine.evaluate_lm(data)
+                    for data in valid_dataloader:
+                        data = tensor_container_to(
+                            data, current_platform.current_device()
+                        )
+                        data = broadcast_tensor_container(
+                            data,
+                            src_rank=engine.current_data_parallel_head(),
+                            group=engine.context_and_model_parallel_group,
+                        )
+                        engine.evaluate_lm(data)
 
                 evaluator.evaluate(
                     evaluate_fn,
@@ -169,9 +165,7 @@ def main(args):
             dist.barrier(device_ids=[engine.device.index])
             current_platform.synchronize()
 
-            stats.update(
-                stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
-            )
+            stats = stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
             stats_logger.commit(epoch, step, global_step, stats)
             global_step += 1
 

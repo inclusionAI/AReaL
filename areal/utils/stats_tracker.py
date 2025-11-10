@@ -3,7 +3,6 @@ from collections import defaultdict
 from contextlib import contextmanager
 from enum import Enum, auto
 from threading import Lock
-from typing import Dict
 
 import torch
 import torch.distributed as dist
@@ -42,6 +41,18 @@ class DistributedStatsTracker:
         """Context manager for hierarchical scoping"""
         with self.lock:
             return self.Scope(self, name)
+
+    def scope_func_wrapper(self, name):
+        """Decorator for hierarchical scoping"""
+
+        def decorator(func):
+            def wrapper(*args, **kwargs):
+                with self.scope(name):
+                    return func(*args, **kwargs)
+
+            return wrapper
+
+        return decorator
 
     class Scope:
         def __init__(self, tracker, name):
@@ -136,7 +147,7 @@ class DistributedStatsTracker:
             raise ValueError("reduce_type must be a ReduceType enum")
         self.reduce_types[key] = reduce_type
 
-    def export(self, key=None, reduce_group=None, reset=True) -> Dict[str, float]:
+    def export(self, key=None, reduce_group=None, reset=True) -> dict[str, float]:
         """Get aggregated statistics"""
         with self.lock:
             if key is not None:
@@ -284,6 +295,7 @@ export = DEFAULT_TRACKER.export
 scope = DEFAULT_TRACKER.scope
 scalar = DEFAULT_TRACKER.scalar
 record_timing = DEFAULT_TRACKER.record_timing
+scope_func_wrapper = DEFAULT_TRACKER.scope_func_wrapper
 
 TRACKERS = {"": DEFAULT_TRACKER}
 LOCK = Lock()
@@ -297,7 +309,7 @@ def get(name: str = ""):
         return TRACKERS[name]
 
 
-def export_all(reduce_group=None, reset=True) -> Dict[str, float]:
+def export_all(reduce_group=None, reset=True) -> dict[str, float]:
     stat = {}
     duplicate_keys = set()
     tracker_keys = list(TRACKERS.keys())

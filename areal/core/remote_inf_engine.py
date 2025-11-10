@@ -18,9 +18,11 @@ import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
+from areal.api.engine_api import NoResult
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
+    LocalInfServerInfo,
     ModelRequest,
     ModelResponse,
     ParamSpec,
@@ -52,8 +54,6 @@ class RemoteInfBackendProtocol(Protocol):
 
     Implementations can raise NotImplementedError for unsupported features.
     """
-
-    def launch_server(self, server_args) -> subprocess.Popen: ...
 
     def build_generation_request(
         self, req: ModelRequest, with_lora: bool
@@ -192,6 +192,21 @@ class RemoteInfBackendProtocol(Protocol):
         """
         ...
 
+    def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
+        """Launch inference server subprocess.
+
+        Parameters
+        ----------
+        server_args : dict[str, Any]
+            Server configuration arguments for build_cmd_from_args
+
+        Returns
+        -------
+        subprocess.Popen
+            The launched server process
+        """
+        ...
+
 
 class RemoteInfEngine:
     """
@@ -232,26 +247,9 @@ class RemoteInfEngine:
         self.lora_initialized = False
 
         self.workflow_executor: WorkflowExecutor
+        self.local_server_processes: list[LocalInfServerInfo] = []
 
         self.server_process: subprocess.Popen | None = None
-
-    def launch_server(self, server_args):
-        server_args["host"] = host_ip = gethostip()
-        server_args["port"] = server_port = find_free_ports(1)[0]
-        self.server_process = self.backend.launch_server(server_args=server_args)
-        address = f"{host_ip}:{server_port}"
-        self._wait_for_server(address)
-        return address
-
-    def teardown_server(self):
-        if self.server_process is not None:
-            self.server_process.terminate()
-            try:
-                self.server_process.wait(timeout=5)
-            except TimeoutError:
-                self.server_process.kill()
-                self.server_process.wait()
-            self.server_process = None
 
     def _wait_for_server(self, address):
         """Wait for a server to become healthy."""
@@ -347,13 +345,10 @@ class RemoteInfEngine:
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
-        if getattr(self, "workflow_executor"):
+        if hasattr(self, "workflow_executor"):
             self.workflow_executor.destroy()
-            self.workflow_executor = None
-        if getattr(self, "executor"):
+        if hasattr(self, "executor"):
             self.executor.shutdown()
-            self.executor = None
-        self.teardown_server()
 
     def set_version(self, version):
         """Set the current weight version."""
@@ -645,9 +640,9 @@ class RemoteInfEngine:
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
 
@@ -655,21 +650,24 @@ class RemoteInfEngine:
         ----------
         data : Dict[str, Any]
             The input data for rollout
-        workflow : RolloutWorkflow, optional
-            The workflow instance to run
-        workflow_builder : Callable, optional
-            A builder to create a workflow instance
-        should_accept : Callable, optional
-            A function to decide whether to accept a trajectory
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+            The workflow to use for rollout generation
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
+            A function or module path for trajectory filtering
         """
+        assert workflow is not None, "Workflow must be specified for submit."
         return self.workflow_executor.submit(
             data,
             workflow=workflow,
-            workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
         )
 
-    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | NoResult:
         """Wait for a specified number of requests to complete.
 
         Parameters
@@ -678,20 +676,24 @@ class RemoteInfEngine:
             The number of accepted trajectories to wait for
         timeout : float, optional
             Timeout in seconds
+        raise_timeout : bool, optional
+            Whether to raise a TimeoutError when the timeout is exceeded, by default True
 
         Returns
         -------
-        Dict[str, Any]
-            A concatenated batch of trajectories
+        Dict[str, Any] | NoResult
+            A concatenated batch of trajectories, or NO_RESULT if timeout exceeded and raise_timeout is False
         """
-        return self.workflow_executor.wait(count, timeout=timeout)
+        return self.workflow_executor.wait(
+            count, timeout=timeout, raise_timeout=raise_timeout
+        )
 
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -699,31 +701,32 @@ class RemoteInfEngine:
         ----------
         data : List[Dict[str, Any]]
             A list of input data dictionaries for rollout
-        workflow : RolloutWorkflow, optional
-            The workflow instance to run
-        workflow_builder : Callable, optional
-            A builder to create a workflow instance
-        should_accept : Callable, optional
-            A function to decide whether to accept a trajectory
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+            The workflow to use for rollout generation
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
+            A function or module path for trajectory filtering
 
         Returns
         -------
         Dict[str, Any]
             A concatenated batch of trajectory results
         """
+        assert workflow is not None, "Workflow must be specified for rollout_batch."
         return self.workflow_executor.rollout_batch(
             data=data,
             workflow=workflow,
-            workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
         )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready.
 
@@ -731,23 +734,24 @@ class RemoteInfEngine:
         ----------
         dataloader : StatefulDataLoader
             The data loader to pull data from
-        workflow : RolloutWorkflow, optional
-            The workflow instance to run
-        workflow_builder : Callable, optional
-            A builder to create a workflow instance
-        should_accept : Callable, optional
-            A function to decide whether to accept a trajectory
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+            The workflow to use for rollout generation
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
+            A function or module path for trajectory filtering
 
         Returns
         -------
         Dict[str, Any]
             A full batch of trajectory results
         """
+        assert workflow is not None, "Workflow must be specified for prepare_batch."
         return self.workflow_executor.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,
-            workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
         )
 
     def pause_generation(self):
@@ -789,6 +793,37 @@ class RemoteInfEngine:
     def resume(self):
         """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
+
+    def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
+        """Launch a local inference server."""
+        server_args["host"] = gethostip()
+        server_args["port"] = find_free_ports(1)[0]
+        process = self.backend.launch_server(server_args)
+        address = f"{server_args['host']}:{server_args['port']}"
+        self._wait_for_server(address)
+
+        server_info = LocalInfServerInfo(
+            host=server_args["host"],
+            port=server_args["port"],
+            process=process,
+        )
+        self.local_server_processes.append(server_info)
+        return server_info
+
+    def teardown_server(self):
+        """Teardown all locally launched servers."""
+        for server_info in self.local_server_processes:
+            if server_info.process.poll() is None:
+                server_info.process.terminate()
+                try:
+                    server_info.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.logger.warning(
+                        f"Server process {server_info.process.pid} did not terminate gracefully. Killing it."
+                    )
+                    server_info.process.kill()
+                    server_info.process.wait()
+        self.local_server_processes.clear()
 
 
 # Helper functions that run in ProcessPoolExecutor

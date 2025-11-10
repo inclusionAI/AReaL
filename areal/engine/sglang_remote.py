@@ -1,15 +1,19 @@
+import os
 import subprocess
+import sys
+import uuid
 from collections.abc import Callable
 from concurrent.futures import Future
-from typing import Any, Optional
+from typing import Any
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig, SGLangConfig
-from areal.api.engine_api import InferenceEngine
+from areal.api.engine_api import InferenceEngine, NoResult
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
+    LocalInfServerInfo,
     ModelRequest,
     ModelResponse,
     ParamSpec,
@@ -18,18 +22,12 @@ from areal.api.io_struct import (
 )
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import RemoteInfEngine
-from areal.launcher.sglang_server import launch_server_cmd
 from areal.platforms import current_platform
+from areal.utils.launcher import TRITON_CACHE_PATH
 
 
 class SGLangBackend:
     """SGLang-specific backend implementation for remote inference."""
-
-    def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
-        # FIXME: avoid circular import
-
-        cmd = SGLangConfig.build_cmd_from_args(server_args)
-        return launch_server_cmd(cmd)
 
     def build_generation_request(
         self, req: ModelRequest, with_lora: bool
@@ -178,6 +176,21 @@ class SGLangBackend:
         """Get SGLang health check request."""
         return HttpRequest(endpoint="/health", payload={}, method="GET")
 
+    def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
+        """Launch SGLang server subprocess."""
+        cmd = SGLangConfig.build_cmd_from_args(server_args)
+
+        _env = os.environ.copy()
+        triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
+        _env["TRITON_CACHE_PATH"] = os.path.join(triton_cache_path, str(uuid.uuid4()))
+
+        return subprocess.Popen(
+            cmd,
+            env=_env,
+            stdout=sys.stdout,
+            stderr=sys.stdout,
+        )
+
 
 class RemoteSGLangEngine(InferenceEngine):
     """SGLang remote inference engine.
@@ -195,12 +208,6 @@ class RemoteSGLangEngine(InferenceEngine):
         self.config = config
         # Pure composition - create internal engine with SGLang backend
         self._engine = RemoteInfEngine(config, SGLangBackend())
-
-    def launch_server(self, server_args: dict[str, Any]):
-        return self._engine.launch_server(server_args)
-
-    def teardown_server(self):
-        return self._engine.teardown_server()
 
     def initialize(
         self,
@@ -244,39 +251,41 @@ class RemoteSGLangEngine(InferenceEngine):
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> None:
         """Submit a request to the inference engine."""
-        return self._engine.submit(data, workflow, workflow_builder, should_accept)
+        return self._engine.submit(data, workflow, workflow_kwargs, should_accept_fn)
 
-    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | NoResult:
         """Wait for a specified number of requests to complete."""
-        return self._engine.wait(count, timeout)
+        return self._engine.wait(count, timeout, raise_timeout)
 
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results."""
         return self._engine.rollout_batch(
-            data, workflow, workflow_builder, should_accept
+            data, workflow, workflow_kwargs, should_accept_fn
         )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
         return self._engine.prepare_batch(
-            dataloader, workflow, workflow_builder, should_accept
+            dataloader, workflow, workflow_kwargs, should_accept_fn
         )
 
     def pause(self):
@@ -291,10 +300,8 @@ class RemoteSGLangEngine(InferenceEngine):
     def continue_generation(self):
         return self._engine.continue_generation()
 
-    def wait_quiet(
-        self, count: int, timeout: float | None = None
-    ) -> dict[str, Any] | None:
-        try:
-            return self._engine.wait(count, timeout=timeout)
-        except TimeoutError:
-            return "NO_RESULT"
+    def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
+        return self._engine.launch_server(server_args)
+
+    def teardown_server(self):
+        return self._engine.teardown_server()

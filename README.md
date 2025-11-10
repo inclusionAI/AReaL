@@ -22,8 +22,8 @@ our project just as you enjoy real-world milk tea (cheers).
 
 - ⚡ **Flexibility**: Seamless customization for
   [multi-turn agentic rollout](https://inclusionai.github.io/AReaL/customization/agent.html)
-  workflows within a single file, and smooth integration with other agentic tooling
-  frameworks.
+  workflows within a single file, and smooth integration with
+  [other agentic tooling frameworks](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html).
 - 🚀 **Scalability**: Through algorithm-system co-design, AReaL delivers **stable** fully
   asynchronous RL training with **industry-leading speed**. AReaL seamlessly adapts to
   diverse computational environments, scaling from a single node to 1,000+ GPUs.
@@ -86,17 +86,18 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 
 ### 🧠 Algorithms
 
-| Algorithm                | Documentation                         | Paper                                          | Configuration                                                |
-| ------------------------ | ------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
-| **GRPO**                 | [📖 Docs](docs/algorithms/grpo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)            |
-| **PPO**                  | -                                     | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)             |
-| **DAPO**                 | [📖 Docs](docs/algorithms/dapo.md)    | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/experimental/dapo/gsm8k_dapo.py) |
-| **LitePPO**              | [📖 Docs](docs/algorithms/litePPO.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | -                                                            |
-| **Dr.GRPO**              | [📖 Docs](docs/algorithms/dr.GRPO.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | -                                                            |
-| **REINFORCE++**          | -                                     | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)       |
-| **RLOO**                 | [📖 Docs](docs/algorithms/rloo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)            |
-| **RLHF Reward Modeling** | -                                     | -                                              | [🔗 RLHF Example](examples/alignment/)                       |
-| **SFT**                  | -                                     | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)               |
+| Algorithm                | Documentation                         | Paper                                          | Configuration                                                  |
+| ------------------------ | ------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------- |
+| **GRPO**                 | [📖 Docs](docs/algorithms/grpo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)              |
+| **GSPO**                 | [📖 Docs](docs/algorithms/gspo.md)    | [📄 Paper](https://arxiv.org/abs/2507.18071)   | [🔗 GSM8K Example](examples/experimental/gspo/gsm8k_gspo.yaml) |
+| **PPO**                  | -                                     | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)               |
+| **DAPO**                 | [📖 Docs](docs/algorithms/dapo.md)    | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/experimental/dapo/gsm8k_dapo.py)   |
+| **LitePPO**              | [📖 Docs](docs/algorithms/litePPO.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | -                                                              |
+| **Dr.GRPO**              | [📖 Docs](docs/algorithms/dr.GRPO.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | -                                                              |
+| **REINFORCE++**          | -                                     | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)         |
+| **RLOO**                 | [📖 Docs](docs/algorithms/rloo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)              |
+| **RLHF Reward Modeling** | -                                     | -                                              | [🔗 RLHF Example](examples/alignment/)                         |
+| **SFT**                  | -                                     | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)                 |
 
 ### Models
 
@@ -152,6 +153,9 @@ For comprehensive setup instructions, see
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
 - [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
 - [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
+- [Asynchronous RL Explained](https://inclusionai.github.io/AReaL/algorithms/async.html)
+- [Fine-Tuning Large MoE](https://inclusionai.github.io/AReaL/tutorial/megatron.html)
+- [Agentic RL](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html)
 - [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
 - [Handling OOM Issues](https://inclusionai.github.io/AReaL/best_practices/handling_oom.html)
 
@@ -201,7 +205,7 @@ git push
 ## 🗺️ Future Roadmap
 
 - **[Full Roadmap](ROADMAP.md)**
-- **[2025 Q3 Roadmap](https://github.com/inclusionAI/AReaL/issues/257)**
+- **[2025 Q4 Roadmap](https://github.com/inclusionAI/AReaL/issues/542)**
 
 AReaL is under active development with planned minor releases weekly and major releases
 monthly. We warmly welcome community engagement and contributions. We are also

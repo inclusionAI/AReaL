@@ -15,6 +15,7 @@ parts:
     - file: tutorial/installation
     - file: tutorial/quickstart
     - file: tutorial/openai_workflows
+    - file: tutorial/agentic_rl
     - file: tutorial/eval
     - file: tutorial/megatron
     - file: cli_reference
@@ -35,6 +36,7 @@ parts:
     - file: references/reproduce
   - caption: Algorithms
     chapters:
+    - file: algorithms/async
     - file: algorithms/grpo
     - file: algorithms/rloo
     - file: algorithms/dapo

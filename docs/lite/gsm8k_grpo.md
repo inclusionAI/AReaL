@@ -324,7 +324,7 @@ def prepare_batch(
     dataloader: StatefulDataLoader,
     workflow: Optional["RolloutWorkflow"] = None,
     workflow_builder: Optional[Callable] = None,
-    should_accept: Callable | None = None,
+    should_accept_fn: Callable | None = None,
 ):
     if not hasattr(self, "data_generator"):
         self.data_generator = cycle_dataloader(dataloader)
@@ -342,7 +342,7 @@ def prepare_batch(
                     item,
                     workflow=workflow,
                     workflow_builder=workflow_builder,
-                    should_accept=should_accept,
+                    should_accept_fn=should_accept_fn,
                 )
         try:
             return self.wait(dataloader.batch_size, timeout=1)
@@ -371,17 +371,17 @@ data_generator = cycle_dataloader(train_dataloader)
 for global_step in range(max_steps):
     # rollout batched training data for current step
     if config.async_training:
-        batch = rollout.prepare_batch(train_dataloader, workflow=workflow, should_accept=lambda sample: True)
+        batch = rollout.prepare_batch(train_dataloader, workflow=workflow, should_accept_fn=lambda sample: True)
     else:
-        batch = rollout.rollout_batch(next(data_generator), workflow=workflow, should_accept=lambda sample: True)
+        batch = rollout.rollout_batch(next(data_generator), workflow=workflow, should_accept_fn=lambda sample: True)
 ```
 
 You may notice that the above code creates a dummy lambda function for the
-`should_accept` argument. This optional argument can be used for dynamic filtering ---
-an important training technique used in many RL papers. With asynchronous rollout under
-the hood, dynamic filtering is quite straight-forward: once a rollout completes, we run
-this `should_accept` function on the collected sample to determine whether this rollout
-is accepted or not.
+`should_accept_fn` argument. This optional argument can be used for dynamic filtering
+--- an important training technique used in many RL papers. With asynchronous rollout
+under the hood, dynamic filtering is quite straight-forward: once a rollout completes,
+we run this `should_accept_fn` function on the collected sample to determine whether
+this rollout is accepted or not.
 
 For example, if we want to filter out samples that provide all-positive or all-negative
 rewards, you should write:
@@ -389,7 +389,7 @@ rewards, you should write:
 ```python
 batch = rollout.prepare_batch(train_dataloader,
                               workflow=workflow,
-                              should_accept=lambda sample: sample['rewards'].mean() > 0 and sample['rewards'].mean() < 1)
+                              should_accept_fn=lambda sample: sample['rewards'].mean() > 0 and sample['rewards'].mean() < 1)
 ```
 
 However, we note that AReaL's implementation has a subtle difference from DAPO: we
@@ -436,7 +436,7 @@ if ref is not None:
     batch["ref_logp"] = ref.compute_logp(batch)
     log_gpu_stats("ref logp")
 actor.compute_advantages(batch)
-stats = actor.ppo_update(batch)
+actor.ppo_update(batch)
 actor.step_lr_scheduler()
 ```
 
@@ -497,7 +497,7 @@ for global_step in range(max_steps):
         batch["ref_logp"] = ref.compute_logp(batch)
         log_gpu_stats("ref logp")
     actor.compute_advantages(batch)
-    stats = actor.ppo_update(batch)
+    actor.ppo_update(batch)
     actor.step_lr_scheduler()
 
     rollout.pause()
@@ -574,6 +574,11 @@ with stats_tracker.scope("A"):
     stats_tracker.scalar(c=123) # key="A/c", value=123
     with stats_tracker.scope("B"):
         stats_tracker.scalar(c=234) # key="A/B/c", value=234
+
+@stats_tracker.scope_func_wrapper("A")
+def func(...):
+    # All stats recorded in this function is under scope A
+    ...
 ```
 
 After recording sufficient data, e.g. after a `train_batch` is finished,

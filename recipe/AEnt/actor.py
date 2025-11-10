@@ -36,30 +36,34 @@ class AEntPPOActor(PPOActor):
             self.coeff_box_low = config.aent.coeff_box_low
             self.warmup_steps = config.aent.warmup_steps
 
+    @stats_tracker.scope_func_wrapper("aent_ppo_actor")
     def aent_ppo_update(
         self, data: TensorDict, global_step: int
     ) -> List[Dict[str, float]]:
-        if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
-            data, sampling_stat = dynamic_sampling(data, self.group_size)
+        with stats_tracker.scope("dynamic_sampling"):
+            if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
+                data, sampling_stat = dynamic_sampling(data, self.group_size)
+                stats_tracker.scalar(**sampling_stat)
 
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
         seqlens = attn_mask.sum(-1)
 
-        all_stats = []
         ########## Logging code starts ##########
         result_denominators = {
             "correct_n_seqs": (reward_score > 0).bool(),
             "incorrect_n_seqs": (reward_score <= 0).bool(),
         }
         if self.config.log_agent_stats:
-            assert (
-                "begin_of_trajectory" in data
-            ), "'begin_of_trajectory' is expected to log agent statistics"
-            assert (
-                len(self.config.log_agent_stats_keys) > 0
-            ), "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
+            if "begin_of_trajectory" not in data:
+                raise RuntimeError(
+                    "'begin_of_trajectory' is expected to log agent statistics"
+                )
+            if len(self.config.log_agent_stats_keys) == 0:
+                raise RuntimeError(
+                    "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
+                )
             agent_denominator = (data["begin_of_trajectory"] > 0).bool()
             result_denominators["agent"] = agent_denominator
         global_denominators = dict(
@@ -110,15 +114,6 @@ class AEntPPOActor(PPOActor):
                 **{k: data[k].float() for k in self.config.log_agent_stats_keys},
                 denominator="agent",
             )
-
-        global_stats = stats_tracker.export(
-            reduce_group=self.engine.data_parallel_group
-        )
-        for k in global_denominators:
-            keys = list(global_stats.keys())
-            for k2 in keys:
-                if k2.endswith(k):
-                    global_stats.pop(k2)
         ########## Logging code ends ##########
 
         for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
@@ -129,39 +124,35 @@ class AEntPPOActor(PPOActor):
             data,
             mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
         )
-        ent_trace = []
-        for mb in mb_inputs.mbs:
-            train_stat = self.engine.train_batch(
-                mb,
-                loss_fn=functools.partial(
-                    aent_grpo_loss_fn,
-                    temperature=self.temperature,
-                    eps_clip=self.config.eps_clip,
-                    eps_clip_higher=self.config.eps_clip_higher,
-                    entropy_coeff=self.entropy_coeff,
-                    entropy_clamp=self.entropy_clamp,
-                    c_clip=self.config.c_clip,
-                    behav_imp_weight_cap=self.config.behav_imp_weight_cap,
-                    importance_sampling_level=self.config.importance_sampling_level,
-                ),
-                loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
-            )
-            stats_tracker.scalar(**train_stat)
-            all_stats.append(
-                stats_tracker.export(reduce_group=self.engine.data_parallel_group)
-            )
-            ent_trace.append(float(all_stats[-1]["grpo_actor/entropy/avg"]))
+        with stats_tracker.scope("update"):
+            for mb in mb_inputs.mbs:
+                train_stat = self.engine.train_batch(
+                    mb,
+                    loss_fn=functools.partial(
+                        aent_grpo_loss_fn,
+                        temperature=self.temperature,
+                        eps_clip=self.config.eps_clip,
+                        eps_clip_higher=self.config.eps_clip_higher,
+                        entropy_coeff=self.entropy_coeff,
+                        entropy_clamp=self.entropy_clamp,
+                        c_clip=self.config.c_clip,
+                        behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                        importance_sampling_level=self.config.importance_sampling_level,
+                    ),
+                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+                )
+                stats_tracker.scalar(**train_stat)
         if self.adaptive_coeff and global_step > self.warmup_steps:
-            entropy = sum(ent_trace) / len(ent_trace)
+            stats = stats_tracker.export(
+                reduce_group=self.engine.data_parallel_group, reset=False
+            )
+            entropy = stats["aent_ppo_actor/update/entropy/avg"]
             self.entropy_coeff -= self.coeff_lr * (
                 min(0, entropy - self.entropy_low) + max(0, entropy - self.entropy_high)
             )
             self.entropy_coeff = min(
                 max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high
             )
-
-        all_stats[0].update(global_stats)
-        return all_stats
 
 
 class FSDPAEntPPOActor(FSDPEngine):

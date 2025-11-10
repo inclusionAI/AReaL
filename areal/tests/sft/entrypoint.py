@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import List, cast
+from typing import cast
 
 import torch
 import torch.distributed as dist
@@ -64,7 +64,7 @@ def main() -> None:
         ft_spec=ft_spec,
     )
 
-    losses: List[float] = []
+    losses: list[float] = []
 
     global_step = 0
     for epoch in range(config.total_train_epochs):
@@ -86,7 +86,7 @@ def main() -> None:
             engine.step_lr_scheduler()
 
             stat = stats_tracker.export(reduce_group=engine.data_parallel_group)
-            losses.append(stat["loss/avg"])
+            losses.append(stat["sft/loss/avg"])
 
             global_step += 1
 

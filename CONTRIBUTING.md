@@ -28,27 +28,11 @@ helping with code reviews. This guide will help you get started.
 
    ```bash
    # If you are using a local pip environment:
-   bash examples/env/setup-pip-deps.sh
+   uv pip install -e ".[all]"
    # Or use the Docker image illustrated in the installation guide
    # In both environments, run the following command:
-   pip install -e ".[dev]"
+   pip install -e . --no-deps
    ```
-
-   **Note on package structure:** We separate packages like `flash-attn`, `sglang`, and
-   `vllm` from other pure Python dependencies in `requirements.txt` and
-   `pyproject.toml`. This is primarily due to historical reasons: we previously used the
-   NVIDIA PyTorch Docker image, which provides a customized PyTorch version. Installing
-   packages that require PyTorch header files would overwrite the existing PyTorch
-   version due to pip's dependency resolver. As a result, we isolate these
-   compilation-based packages and build them separately, either in the Dockerfile or in
-   `examples/env/setup-pip-deps.sh`. Both `requirements.txt` and `pyproject.toml` work
-   in local environments and our provided Docker container without overwriting the
-   existing PyTorch installation.
-
-   Starting from v0.3.4, AReaL uses the SGLang Docker image as the base image, which
-   provides an official PyTorch version. Almost all packages can now be installed
-   without compilation. The package dependency structure may be improved in future
-   releases.
 
 1. **Set Up Code Formatting:**
 
@@ -77,7 +61,8 @@ helping with code reviews. This guide will help you get started.
 1. **Test Your Changes:**
 
    ```bash
-   # Step-wise debugging: run the last failed test first
+   # --sw: step-wise debugging
+   # --lf: run the last failed test first
    pytest -sv --sw --lf areal/tests/
    ```
 
@@ -108,11 +93,9 @@ helping with code reviews. This guide will help you get started.
 
    **NOTE on CI/CD**: We have updated our CI/CD workflow so that tests for PRs could run
    on ephemeral GCP compute engines with 2 A100 GPUs (40GB memory). If you have
-   submitted a PR with breaking changes, please contact the core developers to trigger
-   the CI/CD workflow. If you have implemented a new feature, you are highly recommended
-   to write your own tests and add them to our pytest workflow. Please put your tests in
-   files under `areal/tests/test_*.py` and mark the tests with our pre-defined pytest
-   markers:
+   implemented a new feature, you are highly recommended to write your own tests and add
+   them to our pytest workflow. Please put your tests in files under
+   `areal/tests/test_*.py` and mark the tests with our pre-defined pytest markers:
 
    - `slow`: Tests that are expected to cost more than 30 seconds. They will not run in
      the CI/CD workflow unless marked with `ci`.

@@ -9,39 +9,100 @@ the most recent version.
 
 ## 2025 Q4 Roadmap (due January 31, 2026)
 
-### High Priority
+[GitHub Issue #542](https://github.com/inclusionAI/AReaL/issues/542).
 
-**🔧 Core Features**
+This roadmap tracks major planned enhancements through January 31, 2026. Items are
+organized into two categories:
+
+- **On-going:** Features currently under active development by the core AReaL team
+- **Planned but not in progress:** Features with concrete implementation plans where we
+  welcome community contributions
+
+### Backends
+
+**On-going**
 
 - [ ] Single-controller mode: https://github.com/inclusionAI/AReaL/issues/260
-- [ ] Interactive tutorial notebooks
-- [ ] Organize common training scripts into trainers (e.g., `GRPOTrainer`, `SFTTrainer`)
-  to reduce code duplication in example scripts
+- [ ] Detailed profiling for optimal performance across different scales
+- [ ] RL training with cross-node vLLM pipeline/context parallelism
 
-**🌐 Ecosystem Integration**
+**Planned but not in progress**
 
-- [ ] OpenAI-agents and Camel-AI compatible API for agentic workflow building
-- [ ] Integration with popular inference/training frameworks: ollama, litellm, etc.
-- [ ] Additional VLM model support, especially Vision-MoE models
+- [ ] Multi-LLM training (different agents with different parameters)
+- [ ] Data transfer optimization in single-controller mode
+- [ ] Auto-scaling inference engines in single-controller mode
+- [ ] Elastic weight update setup and acceleration
+- [ ] Low-precision RL training
 
-**📚 Documentation & Examples**
+### Usability
 
-- [ ] More domain-specific examples (terminal use, tau2 bench)
-- [ ] Performance tuning guides for different hardware and model setups
+**Planned but not in progress**
 
-**🏗️ Infrastructure**
+- [ ] Wrap training scripts into trainers
+- [ ] Fully respect allocation mode in trainers/training scripts
+- [ ] Support distributed training and debugging in Jupyter notebooks
+- [ ] Refactor FSDP/Megatron engine/controller APIs to finer granularity
+- [ ] Add CI pipeline to build Docker images upon release
+- [ ] Example of using a generative or critic-like reward model
 
-- [ ] Simplified package management and image building
-- [ ] Kubernetes deployment support
-- [ ] Auto-scaling based on workload
-- [ ] Multi-cloud support enhancements
-- [ ] Better monitoring and profiling tools
+### Documentation
+
+**Planned but not in progress**
+
+- [ ] Tutorial on how to write efficient async rollout workflows
+- [ ] Benchmarking and profiling guide
+- [ ] Use case guides: offline inference, offline evaluation, multi-agent training
+- [ ] AReaL performance tuning guide
+  - [ ] Device allocation strategies for training and inference
+  - [ ] Parallelism strategy configuration for training and inference
 
 ## Historical Roadmaps
 
 ### 2025 Q3
 
 [GitHub Issue #257](https://github.com/inclusionAI/AReaL/issues/257).
+
+**Backends**
+
+Completed:
+
+- Megatron training backend support
+- SGLang large expert parallelism (EP) inference support
+- Remote vLLM inference engine
+- Ulysses context parallelism & tensor parallelism for FSDP backend
+- End-to-end MoE RL training with large EP inference and Megatron expert parallelism
+- Distributed weight resharder for Megatron training backend
+
+Canceled:
+
+- Local SGLang inference engine with inference/training colocation (hybrid engine)
+- RL training with SGLang pipeline parallelism
+
+**Usability**
+
+Completed:
+
+- OpenAI-compatible client support
+- Support RLOO
+- Provide benchmarking configuration examples:
+  - DAPO
+  - Bradley-Terry reward modeling
+  - PPO with critic models
+  - REINFORCE++
+
+**Documentation**
+
+Completed:
+
+- OpenAI-compatible client documentation
+- Out-of-memory (OOM) troubleshooting guide
+- AReaL debugging best practices:
+  - LLM server-only debugging - How to launch LLM servers independently and debug agent
+    workflows
+  - Mock data and torchrun debugging - Creating synthetic data and using `torchrun` for
+    algorithm debugging
+  - Training-free evaluation experiments - Running evaluations without training or
+    additional GPUs
 
 ## How to Influence the Roadmap
 
@@ -87,7 +148,7 @@ agentic AI systems** that is:
 
 ______________________________________________________________________
 
-**Last Updated:** 2025-10-21
+**Last Updated:** 2025-11-06
 
 **Questions about the roadmap?** Open a discussion in
 [GitHub Discussions](https://github.com/inclusionAI/AReaL/discussions) or ask in our

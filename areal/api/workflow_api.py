@@ -1,5 +1,6 @@
 from __future__ import annotations  # noqa
 
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
@@ -8,7 +9,8 @@ if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
 
 
-class RolloutWorkflow:
+class RolloutWorkflow(ABC):
+    @abstractmethod
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, Any] | None | dict[str, InteractionWithTokenLogpReward]:

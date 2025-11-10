@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from areal.api.cli_args import PerfTracerConfig, RequestTracerConfig
+from areal.api.cli_args import PerfTracerConfig, SessionTracerConfig
 from areal.platforms import current_platform
 from areal.utils import perf_tracer
 from areal.utils.network import find_free_ports
-from areal.utils.perf_tracer import Category
+from areal.utils.perf_tracer import Category, SessionTraceEvent
 
 
 def _make_config(
@@ -48,20 +48,20 @@ def _expected_trace_path(
     )
 
 
-def _expected_request_trace_path(
+def _expected_session_trace_path(
     config: PerfTracerConfig,
     *,
     rank: int,
 ) -> Path:
     base_dir = Path(os.path.expanduser(config.fileroot))
-    filename = f"requests-r{rank}.jsonl"
+    filename = f"sessions-r{rank}.jsonl"
     return (
         base_dir
         / "logs"
         / getpass.getuser()
         / config.experiment_name
         / config.trial_name
-        / "request_tracer"
+        / "session_tracer"
         / filename
     )
 
@@ -205,46 +205,46 @@ async def test_global_tracer_configure_roundtrip(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_async_multi_request_cross_phase_trace(tmp_path):
-    config = _make_config(tmp_path, experiment="async", trial="requests")
+async def test_async_multi_session_cross_phase_trace(tmp_path):
+    config = _make_config(tmp_path, experiment="async", trial="sessions")
     tracer = perf_tracer.configure(
         config,
         rank=0,
     )
 
     phase_schedules = {
-        "req-0": [
+        "sess-0": [
             ("rollout", 0.1),
             ("train", 0.2),
             ("reward", 0.15),
         ],
-        "req-1": [
+        "sess-1": [
             ("rollout", 0.12),
             ("train", 0.11),
             ("reward", 0.18),
         ],
     }
 
-    async def run_request(
-        req_id: str, phases: list[tuple[str, float]], offset: float
+    async def run_session(
+        session_id: str, phases: list[tuple[str, float]], offset: float
     ) -> None:
         if offset:
             await asyncio.sleep(offset)
         loop = asyncio.get_running_loop()
         async with perf_tracer.atrace_scope(
-            "request", category=f"request.{req_id}", args={"request_id": req_id}
+            "session", category=f"session.{session_id}", args={"session_id": session_id}
         ):
             for phase, duration in phases:
                 with perf_tracer.trace_scope(
                     phase,
-                    category=f"{phase}.{req_id}",
-                    args={"request_id": req_id},
+                    category=f"{phase}.{session_id}",
+                    args={"session_id": session_id},
                 ):
                     await loop.run_in_executor(None, time.sleep, duration)
 
     await asyncio.gather(
-        run_request("req-0", phase_schedules["req-0"], 0.0),
-        run_request("req-1", phase_schedules["req-1"], 0.05),
+        run_session("sess-0", phase_schedules["sess-0"], 0.0),
+        run_session("sess-1", phase_schedules["sess-1"], 0.05),
     )
 
     tracer.save()
@@ -253,29 +253,31 @@ async def test_async_multi_request_cross_phase_trace(tmp_path):
     events = [evt for evt in _load_trace_events(saved_path) if evt.get("ph") != "M"]
 
     observed = {
-        (evt["args"].get("request_id"), evt["name"])
+        (evt["args"].get("session_id"), evt["name"])
         for evt in events
         if evt["ph"] == "X"
     }
     expected_phases = {
-        ("req-0", "request"),
-        ("req-0", "rollout"),
-        ("req-0", "train"),
-        ("req-0", "reward"),
-        ("req-1", "request"),
-        ("req-1", "rollout"),
-        ("req-1", "train"),
-        ("req-1", "reward"),
+        ("sess-0", "session"),
+        ("sess-0", "rollout"),
+        ("sess-0", "train"),
+        ("sess-0", "reward"),
+        ("sess-1", "session"),
+        ("sess-1", "rollout"),
+        ("sess-1", "train"),
+        ("sess-1", "reward"),
     }
     assert expected_phases.issubset(observed)
 
-    request_timestamps = {
-        req_id: [evt["ts"] for evt in events if evt["args"].get("request_id") == req_id]
-        for req_id in phase_schedules
+    session_timestamps = {
+        sess_id: [
+            evt["ts"] for evt in events if evt["args"].get("session_id") == sess_id
+        ]
+        for sess_id in phase_schedules
     }
-    overlap = min(request_timestamps["req-1"]) < max(
-        request_timestamps["req-0"]
-    ) and min(request_timestamps["req-0"]) < max(request_timestamps["req-1"])
+    overlap = min(session_timestamps["sess-1"]) < max(
+        session_timestamps["sess-0"]
+    ) and min(session_timestamps["sess-0"]) < max(session_timestamps["sess-1"])
     assert overlap
 
 
@@ -338,33 +340,33 @@ def test_perf_tracer_respects_save_interval(tmp_path):
     assert {"mark-3", "mark-4"}.issubset(names)
 
 
-def test_request_tracer_configuration(tmp_path):
-    config = _make_config(tmp_path, experiment="request", trial="enabled")
-    config.request_tracer = RequestTracerConfig(enabled=True, flush_threshold=1)
+def test_session_tracer_configuration(tmp_path):
+    config = _make_config(tmp_path, experiment="session", trial="enabled")
+    config.session_tracer = SessionTracerConfig(enabled=True, flush_threshold=1)
     tracer = perf_tracer.PerfTracer(config, rank=0)
 
-    request_tracer = tracer.request_tracer
-    assert request_tracer is not None
+    session_tracer = tracer.session_tracer
+    assert session_tracer is not None
 
-    request_id = request_tracer.register_submission()
-    request_tracer.mark_execution_start(request_id)
-    request_tracer.mark_execution_end(
-        request_id,
+    session_id = session_tracer.register_submission()
+    session_tracer.record_event(session_id, SessionTraceEvent.EXECUTION_START)
+    session_tracer.record_event(
+        session_id,
+        SessionTraceEvent.EXECUTION_END,
         status="accepted",
-        should_accept=True,
     )
-    request_tracer.mark_consumed(request_id)
+    session_tracer.record_event(session_id, SessionTraceEvent.CONSUMED)
     tracer.save(force=True)
 
-    request_path = _expected_request_trace_path(config, rank=0)
-    assert request_path.exists()
-    payload = [json.loads(line) for line in request_path.read_text().splitlines()]
+    session_path = _expected_session_trace_path(config, rank=0)
+    assert session_path.exists()
+    payload = [json.loads(line) for line in session_path.read_text().splitlines()]
     assert any(entry["status"] == "accepted" for entry in payload)
 
-    updated = _make_config(tmp_path, experiment="request", trial="enabled")
-    updated.request_tracer = RequestTracerConfig(enabled=False)
+    updated = _make_config(tmp_path, experiment="session", trial="enabled")
+    updated.session_tracer = SessionTracerConfig(enabled=False)
     tracer_disabled = perf_tracer.PerfTracer(updated, rank=1)
-    assert tracer_disabled.request_tracer is None
+    assert tracer_disabled.session_tracer is None
 
 
 def _run_perf_tracer_torchrun(tmp_path: Path, world_size: int) -> None:
@@ -422,3 +424,140 @@ def test_perf_tracer_torchrun_multi_rank(tmp_path, world_size):
         evt["args"].get("rank") for evt in payload if evt["name"] == "torchrun-mark"
     }
     assert mark_ranks == set(range(world_size))
+
+
+@pytest.mark.asyncio
+async def test_trace_session_phase(tmp_path):
+    """Test that atrace_session_phase context manager works correctly."""
+    config = PerfTracerConfig(
+        experiment_name="test-phase",
+        trial_name="trial",
+        fileroot=str(tmp_path),
+        enabled=True,
+        session_tracer=SessionTracerConfig(enabled=True, flush_threshold=1),
+    )
+    perf_tracer.configure(config, rank=0)
+    try:
+        tracer = perf_tracer.get_session_tracer()
+        assert tracer is not None
+
+        # Register a session
+        session_id = tracer.register_submission()
+
+        # Use context manager for generate phase
+        async with perf_tracer.atrace_session_phase(session_id, "generate"):
+            await asyncio.sleep(0.01)  # Simulate work
+
+        # Use context manager for reward phase
+        async with perf_tracer.atrace_session_phase(session_id, "reward"):
+            await asyncio.sleep(0.01)  # Simulate work
+
+        # Mark as completed
+        perf_tracer.trace_session_event(
+            session_id, "mark_execution_end", status="accepted"
+        )
+        perf_tracer.trace_session_event(session_id, "mark_consumed")
+
+        # Force flush
+        tracer.flush(force=True)
+
+        # Read the trace file
+        session_trace_path = (
+            Path(tmp_path)
+            / "logs"
+            / getpass.getuser()
+            / "test-phase"
+            / "trial"
+            / "session_tracer"
+            / "sessions-r0.jsonl"
+        )
+        assert session_trace_path.exists()
+
+        with open(session_trace_path) as f:
+            records = [json.loads(line) for line in f]
+
+        assert len(records) == 1
+        record = records[0]
+
+        # Verify phases exist
+        assert "phases" in record
+        assert "generate" in record["phases"]
+        assert "reward" in record["phases"]
+
+        # Verify each phase has start and end timestamps
+        generate_phase = record["phases"]["generate"]
+        assert len(generate_phase) == 1
+        assert generate_phase[0]["start_ts"] is not None
+        assert generate_phase[0]["end_ts"] is not None
+
+        reward_phase = record["phases"]["reward"]
+        assert len(reward_phase) == 1
+        assert reward_phase[0]["start_ts"] is not None
+        assert reward_phase[0]["end_ts"] is not None
+
+        # Verify computed times
+        assert "generate_s" in record
+        assert record["generate_s"] > 0
+        assert "reward_calc_s" in record
+        assert record["reward_calc_s"] > 0
+
+    finally:
+        perf_tracer.reset()
+
+
+@pytest.mark.asyncio
+async def test_trace_session_phase_with_exception(tmp_path):
+    """Test that atrace_session_phase handles exceptions correctly."""
+    config = PerfTracerConfig(
+        experiment_name="test-phase-exc",
+        trial_name="trial",
+        fileroot=str(tmp_path),
+        enabled=True,
+        session_tracer=SessionTracerConfig(enabled=True, flush_threshold=1),
+    )
+    perf_tracer.configure(config, rank=0)
+    try:
+        tracer = perf_tracer.get_session_tracer()
+        assert tracer is not None
+
+        session_id = tracer.register_submission()
+
+        # Even if exception occurs, end event should be recorded
+        with pytest.raises(ValueError):
+            async with perf_tracer.atrace_session_phase(session_id, "generate"):
+                raise ValueError("Simulated error")
+
+        # Complete the session
+        perf_tracer.trace_session_event(
+            session_id, "mark_execution_end", status="failed"
+        )
+        tracer.flush(force=True)
+
+        # Read the trace
+        session_trace_path = (
+            Path(tmp_path)
+            / "logs"
+            / getpass.getuser()
+            / "test-phase-exc"
+            / "trial"
+            / "session_tracer"
+            / "sessions-r0.jsonl"
+        )
+        assert session_trace_path.exists()
+
+        with open(session_trace_path) as f:
+            records = [json.loads(line) for line in f]
+
+        assert len(records) == 1
+        record = records[0]
+
+        # Verify generate phase was recorded with both start and end
+        assert "phases" in record
+        assert "generate" in record["phases"]
+        generate_phase = record["phases"]["generate"]
+        assert len(generate_phase) == 1
+        assert generate_phase[0]["start_ts"] is not None
+        assert generate_phase[0]["end_ts"] is not None
+
+    finally:
+        perf_tracer.reset()

@@ -80,6 +80,12 @@ class MicroBatchSpec:
             "help": "Maximum tokens per micro-batch for each forward pass. When set, n_mbs becomes the minimum number of micro-batches.",
         },
     )
+    n_mbs_divisor: int = field(
+        default=1,
+        metadata={
+            "help": "Divisor for the number of micro-batches. The final number of micro-batches will be adjusted to be divisible by this value.",
+        },
+    )
 
     @classmethod
     def new(cls, mb_spec: "MicroBatchSpec", **kwargs):
@@ -88,6 +94,7 @@ class MicroBatchSpec:
             n_mbs=mb_spec.n_mbs,
             granularity=mb_spec.granularity,
             max_tokens_per_mb=mb_spec.max_tokens_per_mb,
+            n_mbs_divisor=mb_spec.n_mbs_divisor,
         )
         fields.update(kwargs)
         return cls(**fields)
@@ -281,6 +288,15 @@ class MegatronEngineConfig:
     use_custom_fsdp: bool = False  # TODO: pending test
     ddp: DistributedDataParallelConfig = field(
         default_factory=DistributedDataParallelConfig
+    )
+    virtual_pipeline_parallel_size: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Virtual pipeline parallel size for Megatron interleaved schedule. "
+                "Set to >1 to enable VPP. Default is 1 (disabled)."
+            )
+        },
     )
     # Don't use MegatronOptimizerConfig here because OmegaConf
     # does not recognize the annotation "torch.dtype"
@@ -554,7 +570,7 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Enable dynamic sampling (within DAPO). If enabled, groups with the same reward will be masked out. "
             "Note that enabling this option will lead to variable batch sizes. If you want to use a constant batch size with dynamic filtering, "
-            "you should use the `should_accept` parameter in `rollout_batch` and `prepare_batch`."
+            "you should use the `should_accept_fn` parameter in `rollout_batch` and `prepare_batch`."
         },
     )
 
@@ -652,14 +668,12 @@ class vLLMConfig:
         vllm_config: "vLLMConfig",
         tp_size: int,
         pp_size: int,
-        host: str,
-        port: int,
+        host: str | None = None,
+        port: int | None = None,
         dist_init_addr: str | None = None,
     ):
         args: dict = conf_as_dict(vllm_config)
         args = dict(
-            host=host,
-            port=port,
             # Model and tokenizer
             tokenizer=vllm_config.model,
             load_format="auto",
@@ -668,6 +682,10 @@ class vLLMConfig:
             pipeline_parallel_size=pp_size,
             **args,
         )
+        if port is not None:
+            args["port"] = port
+        if host is not None:
+            args["host"] = host
         return args
 
     @staticmethod
@@ -679,8 +697,8 @@ class vLLMConfig:
         vllm_config: "vLLMConfig",
         tp_size: int,
         pp_size: int,
-        host: str,
-        port: int,
+        host: str | None = None,
+        port: int | None = None,
         dist_init_addr: str | None = None,
     ):
         args = vLLMConfig.build_args(
@@ -772,8 +790,8 @@ class SGLangConfig:
         sglang_config: "SGLangConfig",
         tp_size,
         base_gpu_id,
-        host,
-        port,
+        host: str | None = None,
+        port: int | None = None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
@@ -1043,15 +1061,15 @@ class StatsLoggerConfig:
 
 
 @dataclass
-class RequestTracerConfig:
-    """Configuration for per-request lifecycle tracing."""
+class SessionTracerConfig:
+    """Configuration for per-session lifecycle tracing."""
 
     enabled: bool = field(
         default=False,
         metadata={
             "help": (
-                "Enable per-request lifecycle tracing alongside perf events. "
-                "When true, request metadata is captured to requests.jsonl."
+                "Enable per-session lifecycle tracing alongside perf events. "
+                "When true, session metadata is captured to sessions.jsonl."
             )
         },
     )
@@ -1059,7 +1077,7 @@ class RequestTracerConfig:
         default=256,
         metadata={
             "help": (
-                "Flush request trace records once this many entries are ready. "
+                "Flush session trace records once this many entries are ready. "
                 "Values <= 0 fall back to 1."
             )
         },
@@ -1090,9 +1108,9 @@ class PerfTracerConfig:
             )
         },
     )
-    request_tracer: RequestTracerConfig | None = field(
+    session_tracer: SessionTracerConfig | None = field(
         default=None,
-        metadata={"help": "Request tracing configuration."},
+        metadata={"help": "Session tracing configuration."},
     )
 
 

@@ -1,4 +1,5 @@
 import os
+import subprocess
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -29,7 +30,7 @@ class ModelRequest:
     tokenizer: PreTrainedTokenizerFast | None = None
 
     # vlm
-    image_data: list[ImageObject | str] | None = field(default_factory=list)
+    image_data: list[str] | None = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
 
     def copy(self):
@@ -234,3 +235,12 @@ class StepInfo:
             global_step=self.global_step + 1,
             steps_per_epoch=self.steps_per_epoch,
         )
+
+
+@dataclass
+class LocalInfServerInfo:
+    """Information about a locally launched inference server."""
+
+    host: str
+    port: int
+    process: subprocess.Popen

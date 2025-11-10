@@ -241,7 +241,10 @@ def unpack_sequence(
 def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: list[int]) -> list[list[int]]:
     assert mb_spec.max_tokens_per_mb is not None
     group_indices = datapack.ffd_allocate(
-        lens, mb_spec.max_tokens_per_mb, min_groups=mb_spec.n_mbs
+        lens,
+        mb_spec.max_tokens_per_mb,
+        min_groups=mb_spec.n_mbs,
+        n_groups_divisor=mb_spec.n_mbs_divisor,
     )
     group_indices = sorted([sorted(g) for g in group_indices])
     return group_indices
@@ -319,9 +322,8 @@ def pack_tensor_dict(data: dict[str, Any]) -> dict[str, Any]:
 def pad_and_stack_tensors_along_first_dim(tensor_list: list[torch.Tensor]):
     max_length = max(tensor.shape[0] for tensor in tensor_list)
     n_dim = tensor_list[0].ndim
-    assert all(tensor.ndim == n_dim for tensor in tensor_list), (
-        "All tensors must have the same number of dimensions."
-    )
+    if not all(tensor.ndim == n_dim for tensor in tensor_list):
+        raise ValueError("All tensors must have the same number of dimensions.")
 
     padded_tensors = []
     for tensor in tensor_list:
@@ -420,9 +422,8 @@ def split_padded_tensor_dict_into_mb_list(
         MicroBatchList: A structure containing the split micro-batches and metadata.
     """
     # TODO: should align sequences first and then split, needs refactor
-    assert "attention_mask" in data, (
-        "Input data must be padded and contain 'attention_mask' key."
-    )
+    if "attention_mask" not in data:
+        raise ValueError("Input data must be padded and contain 'attention_mask' key.")
     if mb_spec.max_tokens_per_mb is None:
         mb_spec = MicroBatchSpec.new(
             mb_spec, max_tokens_per_mb=DEFAULT_MAX_TOKENS_PER_MB
@@ -556,9 +557,10 @@ def pad_packed_tensor_dict(
     sequence_padded_data = {}
     align_to_length = None
     if align_sequences:
-        assert align_to_multiple_of is not None, (
-            "align_to_multiple_of must be specified when align_sequences is True."
-        )
+        if align_to_multiple_of is None:
+            raise ValueError(
+                "align_to_multiple_of must be specified when align_sequences is True."
+            )
         input_lens = cu_seqlens[1:] - cu_seqlens[:-1]
         batch_size = input_lens.shape[0]
         # Align sequences to an integer multiple of align_to_multiple_of
@@ -645,9 +647,10 @@ def pad_packed_tensor_dict(
 
     # Pad batch
     pad_length = pad_to_length - total_length
-    assert pad_length >= 0, (
-        f"pad_to_length {pad_to_length} must be greater than or equal to total length {total_length}."
-    )
+    if pad_length < 0:
+        raise ValueError(
+            f"pad_to_length {pad_to_length} is smaller than total length {total_length}."
+        )
     new_cu_seqlens = F.pad(cu_seqlens, (0, 1), value=pad_to_length)
     new_max_seqlen = max(max_seqlen, pad_length)
     padded_data = {}
@@ -708,9 +711,10 @@ def pad_mb_list(
         MicroBatchList: The padded micro-batch list.
     """
     if align_sequences:
-        assert align_to_multiple_of is not None, (
-            "align_to_multiple_of must be specified when align_sequences is True."
-        )
+        if align_to_multiple_of is None:
+            raise ValueError(
+                "align_to_multiple_of must be specified when align_sequences is True."
+            )
     padded_mb_inputs, pad_lengths = [], []
     pad_to_lengths = []
     old_cu_seqlens_list = []
@@ -723,7 +727,7 @@ def pad_mb_list(
             "Unable to pad to maximum because max_tokens_per_mb is not properly set."
         )
         pad_to_maximum = False
-    for mb, _len in zip(mb_list.mbs, mb_list.group_lens):
+    for mb, length in zip(mb_list.mbs, mb_list.group_lens):
         if pad_to_maximum:
             pad_to_length = mb_list.mb_spec.max_tokens_per_mb
         else:
@@ -731,7 +735,7 @@ def pad_mb_list(
             # Take hidden size 4096 with bf16 dtype as an example,
             # the batch size of a page is 256
             pad_to_length = (
-                (int(_len) + N_TOKENS_PER_PAGE - 1)
+                (int(length) + N_TOKENS_PER_PAGE - 1)
                 // N_TOKENS_PER_PAGE
                 * N_TOKENS_PER_PAGE
             )
@@ -787,9 +791,7 @@ def unpad_logits(
     return logits
 
 
-def unsqueeze_packed_tensor_dict(
-    data: dict[str, Any],
-) -> dict[str, Any]:
+def unsqueeze_packed_tensor_dict(data: dict[str, Any]) -> dict[str, Any]:
     assert "cu_seqlens" in data, "Input data must contain 'cu_seqlens' key."
     assert "max_seqlen" in data, "Input data must contain 'max_seqlen' key."
 

@@ -1,5 +1,3 @@
-from typing import Optional
-
 from datasets import load_dataset
 
 
@@ -7,7 +5,7 @@ def get_hhrlhf_rw_dataset(
     path: str,
     split: str,
     tokenizer,
-    max_length: Optional[int] = None,
+    max_length: int | None = None,
 ):
     dataset = load_dataset(path=path, split=split)
 
