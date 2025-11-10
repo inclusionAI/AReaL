@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from areal.utils import logging
 
@@ -28,7 +28,7 @@ class ToolCall:
     """Tool call data structure"""
 
     tool_type: ToolType
-    parameters: Dict[str, Any]
+    parameters: dict[str, Any]
     raw_text: str
 
 
@@ -38,7 +38,7 @@ class ToolDescription:
 
     name: str
     description: str
-    parameters: Dict[str, str]  # Parameter name -> parameter description
+    parameters: dict[str, str]  # Parameter name -> parameter description
     parameter_prompt: str  # Prompt for parameter parsing
     example: str
 
@@ -47,8 +47,8 @@ class ToolDescription:
 class ToolMarkers:
     """Tool markers data structure"""
 
-    start_markers: List[str]  # Start markers for the tool
-    end_markers: List[str]  # End markers for the tool
+    start_markers: list[str]  # Start markers for the tool
+    end_markers: list[str]  # End markers for the tool
 
 
 class BaseTool(ABC):
@@ -74,11 +74,11 @@ class BaseTool(ABC):
         """Tool markers for parsing"""
 
     @abstractmethod
-    def parse_parameters(self, text: str) -> Dict[str, Any]:
+    def parse_parameters(self, text: str) -> dict[str, Any]:
         """Parse parameters"""
 
     @abstractmethod
-    def execute(self, parameters: Dict[str, Any]) -> Tuple[str, ToolCallStatus]:
+    def execute(self, parameters: dict[str, Any]) -> tuple[str, ToolCallStatus]:
         """Execute tool
 
         Returns:

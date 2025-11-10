@@ -4,7 +4,6 @@ import pathlib
 import random
 import re
 import sys
-from typing import Dict
 
 from tqdm import tqdm
 from transformers import AutoTokenizer
@@ -279,19 +278,19 @@ def combine_nums(a, b):
     # Implicitly makes assumptions about the order of operations and valid operations
     a = int(a)
     b = int(b)
-    possible = [[a + b, f"{a}+{b}={a+b}"], [a * b, f"{a}*{b}={a*b}"]]
+    possible = [[a + b, f"{a}+{b}={a + b}"], [a * b, f"{a}*{b}={a * b}"]]
     if a <= b:
-        possible.append([b - a, f"{b}-{a}={b-a}"])
+        possible.append([b - a, f"{b}-{a}={b - a}"])
         if a != 0 and b % a == 0:
-            possible.append([b // a, f"{b}/{a}={round(b//a,0)}"])
+            possible.append([b // a, f"{b}/{a}={round(b // a, 0)}"])
     else:
-        possible.append([a - b, f"{a}-{b}={a-b}"])
+        possible.append([a - b, f"{a}-{b}={a - b}"])
         if b != 0 and a % b == 0:
-            possible.append([a // b, f"{a}/{b}={round(a//b,0)}"])
+            possible.append([a // b, f"{a}/{b}={round(a // b, 0)}"])
     return possible
 
 
-class CountDown(object):
+class CountDown:
     def __init__(
         self,
         max_target=25,
@@ -330,7 +329,7 @@ class CountDown(object):
                 found = True
         return nums, solution
 
-    def get_task(self, apply_chat_template=False, return_raw=False) -> Dict[str, str]:
+    def get_task(self, apply_chat_template=False, return_raw=False) -> dict[str, str]:
         target = random.randint(self.min_target, self.max_target)
         nums, solution = self.generate(target)
 

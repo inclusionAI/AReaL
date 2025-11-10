@@ -2,8 +2,9 @@ import abc
 import argparse
 import os
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Type
+from typing import Any
 
 import yaml
 from deepmerge import always_merger
@@ -17,11 +18,10 @@ FEAT_WARNING = (
 
 @dataclass
 class ArgSpec:
-
     arg: str = ""
-    arg_type: Type[Any] = field(default=str)
+    arg_type: type[Any] = field(default=str)
     description: str = ""
-    map_fn: Optional[Callable] = field(default=None)
+    map_fn: Callable | None = field(default=None)
 
 
 class Converter(abc.ABC):
@@ -43,7 +43,7 @@ class Converter(abc.ABC):
         """
         Load the areal template from the specified file.
         """
-        with open(template_path, "r", encoding="utf-8") as f:
+        with open(template_path, encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     def flatten_dict(self, d, parent_key="", sep="."):
@@ -74,7 +74,7 @@ class Converter(abc.ABC):
                 argspec = ARG_MAP[k]
                 if not argspec.arg:
                     print(
-                        colored(f"## Warning: For ", "yellow")
+                        colored("## Warning: For ", "yellow")
                         + colored(f"{k:>40}", "yellow", attrs=["bold"])
                         + colored(f",    # {argspec.description}!", "yellow")
                     )
@@ -87,23 +87,23 @@ class Converter(abc.ABC):
                 if v is not None:
                     try:
                         # type conversion
-                        if arg_type == bool:
+                        if arg_type is bool:
                             v = (
                                 bool(v)
                                 if isinstance(v, bool)
                                 else v.lower() in ("1", "true", "yes", "on")
                             )
-                        elif arg_type == int:
+                        elif arg_type is int:
                             v = int(v)
-                        elif arg_type == float:
+                        elif arg_type is float:
                             v = float(v)
-                        elif arg_type == str:
+                        elif arg_type is str:
                             v = str(v)
                         else:
                             raise ValueError(f"Unsupported type: {arg_type}")
                     except Exception as e:
                         print(
-                            colored(f"## Error: For ", "red")
+                            colored("## Error: For ", "red")
                             + colored(f"{k:>40} {v}", "red", attrs=["bold"])
                             + colored(f",    # {e}!", "red")
                         )
@@ -117,7 +117,7 @@ class Converter(abc.ABC):
             else:
                 unmapped[k] = v
                 print(
-                    colored(f"## Warning: For ", "yellow")
+                    colored("## Warning: For ", "yellow")
                     + colored(f"{k:>50}", "yellow", attrs=["bold"])
                     + colored(f",    # {CVRT_WARNING}!", "yellow")
                 )
@@ -135,7 +135,6 @@ class Converter(abc.ABC):
 
 
 class OpenRLHFConverter(Converter):
-
     ARG_MAP = {
         # Ray and vLLM
         "ref_num_nodes": ArgSpec("", int, CVRT_WARNING),
@@ -361,7 +360,7 @@ class OpenRLHFConverter(Converter):
         in_command_block = False
 
         try:
-            with open(script_path, "r", encoding="utf-8") as f:
+            with open(script_path, encoding="utf-8") as f:
                 for line in f:
                     stripped_line = line.strip()
 
@@ -425,7 +424,6 @@ class OpenRLHFConverter(Converter):
 
 
 def post_process_args(args: dict):
-
     if "allocation_mode" in args:
         # convert allocation_mode to sglang.dX.tY.pZ
         dp = args["cluster"]["n_nodes"] * args["cluster"]["n_gpus_per_node"]
@@ -442,7 +440,7 @@ def post_process_args(args: dict):
                 allocation_mode += "t1"
             else:
                 allocation_mode += f"t{args['allocation_mode']['sglang']['t']}"
-            allocation_mode += f"p1"
+            allocation_mode += "p1"
         allocation_mode += "+"
         if "engine" not in args["allocation_mode"]:
             allocation_mode += f"d{dp}t1p1"
@@ -452,7 +450,7 @@ def post_process_args(args: dict):
                 allocation_mode += "t1"
             else:
                 allocation_mode += f".t{args['allocation_mode']['engine']['t']}"
-            allocation_mode += f"p1"
+            allocation_mode += "p1"
 
         args["allocation_mode"] = allocation_mode
         args["cluster"]["n_nodes"] = args["cluster"]["n_nodes"] * 2
@@ -830,7 +828,7 @@ class AReaLConverter(Converter):
         self.template_path = template_path
 
     def parse(self) -> dict:
-        with open(self.src_config_path, "r", encoding="utf-8") as f:
+        with open(self.src_config_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         return cfg
 
@@ -895,7 +893,7 @@ def main():
         **converter_args[args.convert_src]
     )
     lite_args = converter.convert()
-    yaml_str = yaml.dump(lite_args, sort_keys=False, allow_unicode=True)
+    # yaml_str = yaml.dump(lite_args, sort_keys=False, allow_unicode=True)
     with open(args.output_path, "w", encoding="utf-8") as f:
         yaml.dump(lite_args, f, sort_keys=False, allow_unicode=True)
     print(f"Converted areal config saved to {args.output_path}")

@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, Tuple
+from typing import Any
 
 from areal.utils import logging
 
@@ -74,12 +74,12 @@ class PythonTool(BaseTool):
             start_markers=["```python", "<python>"], end_markers=["```", "</python>"]
         )
 
-    def parse_parameters(self, text: str) -> Dict[str, Any]:
+    def parse_parameters(self, text: str) -> dict[str, Any]:
         """Extract Python code from text, supporting two formats: ```python``` and <python>"""
         code = extract_python_code(text)
         return {"code": code}
 
-    def execute(self, parameters: Dict[str, Any]) -> Tuple[str, ToolCallStatus]:
+    def execute(self, parameters: dict[str, Any]) -> tuple[str, ToolCallStatus]:
         """Execute Python code"""
         code = parameters.get("code", "")
         if not code:
