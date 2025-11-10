@@ -20,6 +20,7 @@ from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
+from areal.utils.perf_tracer import trace_perf
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class PPOActor:
         logger.info(f"  eps_clip: {config.eps_clip}")
         logger.info(f"  group_size: {config.group_size}")
 
+    @trace_perf("ppo_actor.compute_logp", category="compute")
     @torch.no_grad()
     def compute_logp(
         self,
@@ -87,6 +89,7 @@ class PPOActor:
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 
+    @trace_perf("ppo_actor.compute_advantages", category="compute")
     def compute_advantages(self, data: dict[str, Any]) -> None:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
@@ -181,6 +184,7 @@ class PPOActor:
         # because we have rolled old_logp by -1
         data["logprobs"] = old_logp
 
+    @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
     def ppo_update(self, data: dict[str, Any]) -> None:
         with stats_tracker.scope("dynamic_sampling"):

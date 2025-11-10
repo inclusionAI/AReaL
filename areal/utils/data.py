@@ -789,9 +789,7 @@ def unpad_logits(
     return logits
 
 
-def unsqueeze_packed_tensor_dict(
-    data: dict[str, Any],
-) -> dict[str, Any]:
+def unsqueeze_packed_tensor_dict(data: dict[str, Any]) -> dict[str, Any]:
     assert "cu_seqlens" in data, "Input data must contain 'cu_seqlens' key."
     assert "max_seqlen" in data, "Input data must contain 'max_seqlen' key."
 

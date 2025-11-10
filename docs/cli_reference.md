@@ -74,8 +74,8 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 - [DistributedDataParallel Configuration](section-distributed-data-parallel)
 - [MegatronEngine Configuration](section-megatron-engine)
 - [PerfTracer Configuration](section-perf-tracer)
-- [RequestTracer Configuration](section-request-tracer)
 - [Scheduler Configuration](section-scheduler)
+- [SessionTracer Configuration](section-session-tracer)
 
 ______________________________________________________________________
 
@@ -821,18 +821,7 @@ Configuration for perf tracer emission.
 | `fileroot`        | string                                                  | **Required** | -                                                                                                                           |
 | `enabled`         | boolean                                                 | `False`      | Explicitly enable or disable perf tracing. Set to true to capture perf traces.                                              |
 | `save_interval`   | integer                                                 | `1`          | Flush trace events to disk every N calls to save(step=...). A value of 1 writes on every step; values \<= 0 fall back to 1. |
-| `request_tracer`  | [`RequestTracerConfig`](section-request-tracer) \| None | `None`       | Request tracing configuration.                                                                                              |
-
-(section-request-tracer)=
-
-## RequestTracer Configuration
-
-Configuration for per-request lifecycle tracing.
-
-| Parameter         | Type    | Default | Description                                                                                                            |
-| ----------------- | ------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `enabled`         | boolean | `False` | Enable per-request lifecycle tracing alongside perf events. When true, request metadata is captured to requests.jsonl. |
-| `flush_threshold` | integer | `256`   | Flush request trace records once this many entries are ready. Values \<= 0 fall back to 1.                             |
+| `session_tracer`  | [`SessionTracerConfig`](section-session-tracer) \| None | `None`       | Session tracing configuration.                                                                                              |
 
 (section-scheduler)=
 
@@ -848,3 +837,14 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 | `reward_functioncall_config`  | `dict` | **Required**                        | -           |
 | `reward_model_path`           | string | `""`                                | -           |
 | `reward_model_service_url`    | string | `"http://localhost:30000/classify"` | -           |
+
+(section-session-tracer)=
+
+## SessionTracer Configuration
+
+Configuration for per-session lifecycle tracing.
+
+| Parameter         | Type    | Default | Description                                                                                                            |
+| ----------------- | ------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `enabled`         | boolean | `False` | Enable per-session lifecycle tracing alongside perf events. When true, session metadata is captured to sessions.jsonl. |
+| `flush_threshold` | integer | `256`   | Flush session trace records once this many entries are ready. Values \<= 0 fall back to 1.                             |

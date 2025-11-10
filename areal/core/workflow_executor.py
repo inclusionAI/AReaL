@@ -21,10 +21,10 @@ from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
+from areal.utils.perf_tracer import trace_perf, trace_session_event
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
-    from areal.utils.perf_tracer import RequestTracer
 
 
 def check_trajectory_format(
@@ -215,14 +215,14 @@ class _RolloutTaskInput:
 
     data: dict[str, Any]
     workflow: RolloutWorkflow
-    should_accept_fn: Callable | None = None
-    request_id: int | None = None
+    should_accept_fn: Callable[[dict[str, Any]], bool] | None = None
+    session_id: int | None = None
 
 
 @dataclass
 class _RolloutResult:
     trajectory: dict[str, Any]
-    request_id: int | None = None
+    session_id: int | None = None
 
 
 class WorkflowExecutor:
@@ -238,7 +238,7 @@ class WorkflowExecutor:
     - Integration with InferenceEngine for model generation
     - Staleness-aware capacity control via StalenessManager
     - Trajectory format validation
-    - Result filtering via should_accept callbacks
+    - Result filtering via should_accept_fn callbacks
     - InteractionWithTokenLogpReward processing
 
     Parameters
@@ -276,7 +276,7 @@ class WorkflowExecutor:
 
         # Use provided staleness manager or create a default one
         # The manager will be properly initialized in initialize()
-        self.staleness_manager = staleness_manager
+        self._staleness_manager = staleness_manager
 
         # Create the generic async task runner
         qsize = config.queue_size or self.max_concurrent_rollouts * 16
@@ -291,7 +291,6 @@ class WorkflowExecutor:
         # Cache for tracking inputs and accepted/rejected results
         self._pending_results: list[_RolloutResult] = []
         self._pending_inputs: list[_RolloutTaskInput] = []
-        self._request_tracer: RequestTracer | None = None
 
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start the async task runner.
@@ -316,7 +315,7 @@ class WorkflowExecutor:
         self.logger = logger
 
         # Initialize staleness manager if not provided
-        if self.staleness_manager is None:
+        if self._staleness_manager is None:
             if train_data_parallel_size is not None:
                 dp_world_size = train_data_parallel_size
             else:
@@ -334,7 +333,7 @@ class WorkflowExecutor:
             )
             consumer_batch_size = max(1, self.consumer_batch_size // dp_world_size)
 
-            self.staleness_manager = StalenessManager(
+            self._staleness_manager = StalenessManager(
                 max_concurrent_rollouts=max_concurrent_rollouts,
                 consumer_batch_size=consumer_batch_size,
                 max_staleness=self.config.max_head_offpolicyness,
@@ -342,14 +341,10 @@ class WorkflowExecutor:
 
         # Initialize the generic async task runner
         self.runner.initialize(logger=logger)
-        self._request_tracer = perf_tracer.get_request_tracer()
 
     def destroy(self):
         """Shutdown the workflow executor and clean up resources."""
-        # Get tracer, preferring instance-level but falling back to global
-        tracer = self._request_tracer
-        if tracer is None:
-            tracer = perf_tracer.get_request_tracer()
+        tracer = perf_tracer.get_session_tracer()
         # Flush if a tracer was found
         if tracer is not None:
             tracer.flush(force=True)
@@ -443,15 +438,15 @@ class WorkflowExecutor:
                 f"with kwargs {workflow_kwargs}: {e}"
             ) from e
 
-    def _resolve_should_accept(
-        self, should_accept: Callable[[dict[str, Any]], bool] | str | None
+    def _resolve_should_accept_fn(
+        self, should_accept_fn: Callable[[dict[str, Any]], bool] | str | None
     ) -> Callable[[dict[str, Any]], bool] | None:
-        """Resolve should_accept parameter to a callable or None.
+        """Resolve should_accept_fn parameter to a callable or None.
 
         Parameters
         ----------
-        should_accept : Callable[[Dict[str, Any]], bool] | str | None
-            The should_accept specification
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str | None
+            The should_accept_fn specification
 
         Returns
         -------
@@ -465,24 +460,24 @@ class WorkflowExecutor:
         TypeError
             If imported object is not callable
         """
-        if should_accept is None or callable(should_accept):
-            return should_accept
+        if should_accept_fn is None or callable(should_accept_fn):
+            return should_accept_fn
 
-        if isinstance(should_accept, str):
+        if isinstance(should_accept_fn, str):
             try:
-                func = import_from_string(should_accept)
+                func = import_from_string(should_accept_fn)
             except (ValueError, ImportError, AttributeError) as e:
                 raise ValueError(
-                    f"Failed to import should_accept from string {should_accept!r}: {e}"
+                    f"Failed to import should_accept_fn from string {should_accept_fn!r}: {e}"
                 ) from e
             if not callable(func):
                 raise TypeError(
-                    f"Imported object {func} from {should_accept!r} is not callable"
+                    f"Imported object {func} from {should_accept_fn!r} is not callable"
                 )
             return func
 
         raise TypeError(
-            f"Invalid should_accept type: {type(should_accept)}. "
+            f"Invalid should_accept_fn type: {type(should_accept_fn)}. "
             f"Expected callable or string module path."
         )
 
@@ -502,16 +497,16 @@ class WorkflowExecutor:
         )
 
     def _create_workflow_task(
-        self, task_input: _RolloutTaskInput
-    ) -> Callable[[], Awaitable[dict[str, Any] | None]]:
+        self, pending_task: _RolloutTaskInput
+    ) -> Callable[[], Awaitable[_RolloutResult | None]]:
         """Wrapper to create an async function that will be executed by AsyncTaskRunner.
 
         This is a synchronous function that returns an async function, which allows
-        us to capture the task_input context.
+        us to capture the pending_task context.
 
         Parameters
         ----------
-        task_input : _RolloutTaskInput
+        pending_task : _RolloutTaskInput
             The rollout task input containing workflow, data, and filter callback.
 
         Returns
@@ -521,18 +516,24 @@ class WorkflowExecutor:
             filtering/validation.
         """
 
-        async def _execute_workflow():
+        async def _execute_workflow() -> _RolloutResult | None:
             """Execute workflow.arun_episode and apply AReaL-specific logic."""
-            request_id = task_input.request_id
-            self._trace(request_id, "mark_execution_start")
+            session_id = pending_task.session_id
 
+            # Set session_id in ContextVar before entering arun_episode
+            # This makes session_id available throughout the async context
+            perf_tracer.set_session_id(session_id)
+
+            manager = self.staleness_manager
             traj: dict[str, Any] | None = None
-            should_accept_result: bool | None = None
+            should_accept_fn = pending_task.should_accept_fn
+            should_accept: bool | None = None
             rejection_reason: str | None = None
 
             try:
-                traj = await task_input.workflow.arun_episode(
-                    self.inference_engine, task_input.data
+                trace_session_event(session_id, "mark_execution_start")
+                traj = await pending_task.workflow.arun_episode(
+                    self.inference_engine, pending_task.data
                 )
 
                 # Trajectory format checking
@@ -565,45 +566,40 @@ class WorkflowExecutor:
                     should_accept_traj = False
                     rejection_reason = "workflow_returned_none"
                 else:
-                    if task_input.should_accept_fn is None:
-                        should_accept_result = True
+                    if should_accept_fn is None:
+                        should_accept = True
                     else:
-                        should_accept_result = bool(task_input.should_accept_fn(traj))
-                    should_accept_traj = bool(should_accept_result)
-                    if (
-                        not should_accept_traj
-                        and task_input.should_accept_fn is not None
-                    ):
+                        should_accept = bool(should_accept_fn(traj))
+                    should_accept_traj = bool(should_accept)
+                    if not should_accept_traj and should_accept_fn is not None:
                         rejection_reason = "should_accept_false"
 
                 if should_accept_traj:
-                    self.staleness_manager.on_rollout_accepted()
-                    stats = self.staleness_manager.get_stats()
-                    self._trace(
-                        request_id,
+                    manager.on_rollout_accepted()
+                    stats = manager.get_stats()
+                    trace_session_event(
+                        session_id,
                         "mark_execution_end",
                         status="accepted",
-                        should_accept=should_accept_result,
-                        staleness=stats,
+                        rollout_stats=stats,
                     )
                     if self.config.enable_rollout_tracing:
                         self.logger.info(
                             f"Finish and accept rollout. {self._rollout_stats()}",
                         )
                     return _RolloutResult(
-                        request_id=request_id,
+                        session_id=session_id,
                         trajectory=traj,
                     )
 
-                self.staleness_manager.on_rollout_rejected()
-                stats = self.staleness_manager.get_stats()
-                self._trace(
-                    request_id,
+                manager.on_rollout_rejected()
+                stats = manager.get_stats()
+                trace_session_event(
+                    session_id,
                     "mark_execution_end",
                     status="rejected",
-                    should_accept=should_accept_result,
                     rejection_reason=rejection_reason,
-                    staleness=stats,
+                    rollout_stats=stats,
                 )
                 if self.config.enable_rollout_tracing:
                     self.logger.info(
@@ -612,15 +608,14 @@ class WorkflowExecutor:
                 return None
 
             except Exception as exc:  # pragma: no cover - workflow execution errors
-                self.staleness_manager.on_rollout_rejected()
-                stats = self.staleness_manager.get_stats()
-                self._trace(
-                    request_id,
+                manager.on_rollout_rejected()
+                stats = manager.get_stats()
+                trace_session_event(
+                    session_id,
                     "mark_execution_end",
                     status="failed",
-                    should_accept=None,
                     rejection_reason="workflow_exception",
-                    staleness=stats,
+                    rollout_stats=stats,
                 )
                 if self.logger is not None:
                     self.logger.error(
@@ -644,18 +639,18 @@ class WorkflowExecutor:
         """
         # Resolve workflow and should_accept to their concrete forms
         resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
-        resolved_should_accept = self._resolve_should_accept(should_accept_fn)
+        resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
 
-        request_id = None
-        current_tracer = self._request_tracer
-        if current_tracer is not None:
-            request_id = current_tracer.register_submission()
+        session_id = None
+        tracer = perf_tracer.get_session_tracer()
+        if tracer is not None:
+            session_id = tracer.register_submission()
         self._pending_inputs.append(
             _RolloutTaskInput(
                 data=data,
                 workflow=resolved_workflow,
-                should_accept_fn=resolved_should_accept,
-                request_id=request_id,
+                should_accept_fn=resolved_should_accept_fn,
+                session_id=session_id,
             )
         )
 
@@ -665,24 +660,33 @@ class WorkflowExecutor:
             self.logger.info(f"Enqueue rollout. {self._rollout_stats()}")
 
     def _commit_one_to_runner(self):
-        task_input = self._pending_inputs.pop(0)
+        manager = self.staleness_manager
+        if not self._pending_inputs:
+            return
+        pending_task = self._pending_inputs.pop(0)
         # Create the async workflow execution function and submit to runner
-        workflow_fn = self._create_workflow_task(task_input)
+        workflow_fn = self._create_workflow_task(pending_task)
+        session_id = pending_task.session_id
         try:
             self.runner.submit(workflow_fn)
-            self._trace(task_input.request_id, "mark_enqueued")
+            trace_session_event(
+                session_id,
+                "mark_enqueued",
+            )
         except TaskQueueFullError:
-            self._trace(
-                task_input.request_id,
+            stats = manager.get_stats()
+            trace_session_event(
+                session_id,
                 "mark_dropped",
-                reason="input_queue_full",
+                rejection_reason="input_queue_full",
+                rollout_stats=stats,
             )
             # Convert RuntimeError from AsyncTaskRunner to queue.Full for
             # backward compatibility
             raise queue.Full("Input queue full. Please increase queue_size.")
 
         # Notify staleness manager of submission only after successful submission
-        self.staleness_manager.on_rollout_submitted()
+        manager.on_rollout_submitted()
         if self.config.enable_rollout_tracing:
             self.logger.info(f"Submit rollout. {self._rollout_stats()}")
 
@@ -694,6 +698,10 @@ class WorkflowExecutor:
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for detailed
         documentation.
         """
+        if count <= 0:
+            raise ValueError(
+                f"count must be positive when waiting for rollouts, got {count}"
+            )
         start_time = time.perf_counter()
         timeout = timeout or float(7 * 24 * 3600)
 
@@ -767,11 +775,12 @@ class WorkflowExecutor:
         # Concatenate into batch tensor format
         trajectories: list[dict[str, Any]] = []
         for result in results:
-            self._trace(result.request_id, "mark_consumed")
+            trace_session_event(result.session_id, "mark_consumed")
             trajectories.append(result.trajectory)
 
         return concat_padded_tensors(trajectories)
 
+    @trace_perf("workflow_executor.rollout_batch", category="scheduler")
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
@@ -798,6 +807,7 @@ class WorkflowExecutor:
             )
         return self.wait(count=len(data))
 
+    @trace_perf("workflow_executor.prepare_batch", category="scheduler")
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
@@ -810,13 +820,14 @@ class WorkflowExecutor:
         See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for
         detailed documentation.
         """
+        manager = self.staleness_manager
         if not hasattr(self, "data_generator"):
             self.data_generator = cycle_dataloader(dataloader)
         assert dataloader.batch_size is not None
         while True:
             # Submit at least two batches to allow maximum overlap
             if (
-                len(self._pending_inputs) < self.staleness_manager.get_pending_limit()
+                len(self._pending_inputs) < manager.get_pending_limit()
                 and self.runner.get_input_queue_size() + dataloader.batch_size
                 < self.runner.max_queue_size
             ):
@@ -856,3 +867,12 @@ class WorkflowExecutor:
 
     def is_paused(self):
         return self.runner.paused.is_set()
+
+    @property
+    def staleness_manager(self) -> StalenessManager:
+        manager = self._staleness_manager
+        if manager is None:
+            raise RuntimeError(
+                "WorkflowExecutor.initialize() must be called before scheduling rollouts."
+            )
+        return manager

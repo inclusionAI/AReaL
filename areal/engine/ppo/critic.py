@@ -9,6 +9,7 @@ from areal.engine.fsdp_engine import FSDPEngine
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import ppo_critic_loss_fn
+from areal.utils.perf_tracer import trace_perf
 
 
 class PPOCritic:
@@ -16,6 +17,7 @@ class PPOCritic:
         self.config = config
         self.engine = engine
 
+    @trace_perf("ppo_critic.compute_values", category="compute")
     @torch.no_grad()
     def compute_values(self, data: dict[str, Any]) -> torch.Tensor | None:
         self.engine.eval()
@@ -24,6 +26,7 @@ class PPOCritic:
             aggregate_fn=lambda xs: torch.cat([x.squeeze(-1) for x in xs], dim=-1),
         )
 
+    @trace_perf("ppo_critic.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_critic")
     def ppo_update(self, data: dict[str, Any]) -> None:
         ########## Logging code starts ##########

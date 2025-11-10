@@ -1001,15 +1001,15 @@ class StatsLoggerConfig:
 
 
 @dataclass
-class RequestTracerConfig:
-    """Configuration for per-request lifecycle tracing."""
+class SessionTracerConfig:
+    """Configuration for per-session lifecycle tracing."""
 
     enabled: bool = field(
         default=False,
         metadata={
             "help": (
-                "Enable per-request lifecycle tracing alongside perf events. "
-                "When true, request metadata is captured to requests.jsonl."
+                "Enable per-session lifecycle tracing alongside perf events. "
+                "When true, session metadata is captured to sessions.jsonl."
             )
         },
     )
@@ -1017,7 +1017,7 @@ class RequestTracerConfig:
         default=256,
         metadata={
             "help": (
-                "Flush request trace records once this many entries are ready. "
+                "Flush session trace records once this many entries are ready. "
                 "Values <= 0 fall back to 1."
             )
         },
@@ -1048,9 +1048,9 @@ class PerfTracerConfig:
             )
         },
     )
-    request_tracer: RequestTracerConfig | None = field(
+    session_tracer: SessionTracerConfig | None = field(
         default=None,
-        metadata={"help": "Request tracing configuration."},
+        metadata={"help": "Session tracing configuration."},
     )
 
 
