@@ -169,7 +169,7 @@ def apply_monkey_patch(
     ):
         raise ValueError(
             f"num_key_value_heads {num_key_value_heads} must be divisible by ulysses_sp_size "
-            f"{ulysses_sp_size}or vise versa. Upon ulysses_sp_size % num_key_value_heads == 0,"
+            f"{ulysses_sp_size} or vice versa. Upon ulysses_sp_size % num_key_value_heads == 0,"
             "kv heads are repeated to ensure correctness."
         )
 
