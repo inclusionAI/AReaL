@@ -214,7 +214,7 @@ class _RolloutTaskInput:
 
     data: dict[str, Any]
     workflow: RolloutWorkflow
-    should_accept: Callable | None = None
+    should_accept_fn: Callable | None = None
     request_id: int | None = None
 
 
@@ -445,12 +445,15 @@ class WorkflowExecutor:
                     should_accept_traj = False
                     rejection_reason = "workflow_returned_none"
                 else:
-                    if task_input.should_accept is None:
+                    if task_input.should_accept_fn is None:
                         should_accept_result = True
                     else:
-                        should_accept_result = bool(task_input.should_accept(traj))
+                        should_accept_result = bool(task_input.should_accept_fn(traj))
                     should_accept_traj = bool(should_accept_result)
-                    if not should_accept_traj and task_input.should_accept is not None:
+                    if (
+                        not should_accept_traj
+                        and task_input.should_accept_fn is not None
+                    ):
                         rejection_reason = "should_accept_false"
 
                 if should_accept_traj:
@@ -512,7 +515,7 @@ class WorkflowExecutor:
         data: dict[str, Any],
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> None:
         """Submit a request to the workflow executor.
 
@@ -531,7 +534,7 @@ class WorkflowExecutor:
             _RolloutTaskInput(
                 data=data,
                 workflow=workflow,
-                should_accept=should_accept,
+                should_accept_fn=should_accept_fn,
                 request_id=request_id,
             )
         )
@@ -654,7 +657,7 @@ class WorkflowExecutor:
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -671,7 +674,7 @@ class WorkflowExecutor:
                 data=item,
                 workflow=workflow,
                 workflow_builder=workflow_builder,
-                should_accept=should_accept,
+                should_accept_fn=should_accept_fn,
             )
         return self.wait(count=len(data))
 
@@ -680,7 +683,7 @@ class WorkflowExecutor:
         dataloader: StatefulDataLoader,
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ):
         """Prepare a batch with controlled staleness.
 
@@ -708,7 +711,7 @@ class WorkflowExecutor:
                         item,
                         workflow=workflow,
                         workflow_builder=workflow_builder,
-                        should_accept=should_accept,
+                        should_accept_fn=should_accept_fn,
                     )
             try:
                 return self.wait(dataloader.batch_size, timeout=1)

@@ -619,7 +619,7 @@ class RemoteInfEngine:
         data: dict[str, Any],
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
 
@@ -631,14 +631,14 @@ class RemoteInfEngine:
             The workflow instance to run
         workflow_builder : Callable, optional
             A builder to create a workflow instance
-        should_accept : Callable, optional
+        should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory
         """
         return self.workflow_executor.submit(
             data,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def wait(
@@ -669,7 +669,7 @@ class RemoteInfEngine:
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -681,7 +681,7 @@ class RemoteInfEngine:
             The workflow instance to run
         workflow_builder : Callable, optional
             A builder to create a workflow instance
-        should_accept : Callable, optional
+        should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory
 
         Returns
@@ -693,7 +693,7 @@ class RemoteInfEngine:
             data=data,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def prepare_batch(
@@ -701,7 +701,7 @@ class RemoteInfEngine:
         dataloader: StatefulDataLoader,
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready.
 
@@ -713,7 +713,7 @@ class RemoteInfEngine:
             The workflow instance to run
         workflow_builder : Callable, optional
             A builder to create a workflow instance
-        should_accept : Callable, optional
+        should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory
 
         Returns
@@ -725,7 +725,7 @@ class RemoteInfEngine:
             dataloader=dataloader,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def pause_generation(self):

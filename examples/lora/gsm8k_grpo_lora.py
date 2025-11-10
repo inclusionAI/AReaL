@@ -1,7 +1,6 @@
 import os
 import sys
 from copy import deepcopy
-from typing import Dict
 
 import torch.distributed as dist
 
@@ -37,7 +36,7 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
     return int(process_results(completions, answer)[0])
 
 
-def bcast_and_split_from_rank0(batch: Dict | None, granularity: int) -> Dict:
+def bcast_and_split_from_rank0(batch: dict | None, granularity: int) -> dict:
     batch = broadcast_tensor_container(batch, src_rank=0)
     bs = get_batch_size(batch)
     assert bs % dist.get_world_size() == 0
@@ -191,13 +190,13 @@ def main(args):
                     batch = rollout.prepare_batch(
                         train_dataloader,
                         workflow=workflow,
-                        should_accept=lambda sample: True,
+                        should_accept_fn=lambda sample: True,
                     )
                 else:
                     batch = rollout.rollout_batch(
                         next(data_generator),
                         workflow=workflow,
-                        should_accept=lambda sample: True,
+                        should_accept_fn=lambda sample: True,
                     )
                 batch = tensor_container_to(batch, actor.device)
             batch = bcast_and_split_from_rank0(
