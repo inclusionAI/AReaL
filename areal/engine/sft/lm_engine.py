@@ -14,24 +14,24 @@ class LMEngine:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
+    @stats_tracker.scope_func_wrapper("sft")
     def train_lm(self, data: dict[str, Any]):
         self.engine.train()
-        with stats_tracker.scope("sft"):
-            stats = self.engine.train_batch(
-                input_=data,
-                loss_fn=compute_packed_sft_loss,
-                loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
-            )
-            stats_tracker.scalar(**stats)
+        stats = self.engine.train_batch(
+            input_=data,
+            loss_fn=compute_packed_sft_loss,
+            loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+        )
+        stats_tracker.scalar(**stats)
 
+    @stats_tracker.scope_func_wrapper("sft-eval")
     def evaluate_lm(self, data):
         self.engine.eval()
-        with stats_tracker.scope("sft-eval"):
-            self.engine.eval_batch(
-                input_=data,
-                loss_fn=compute_packed_sft_loss,
-                loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
-            )
+        self.engine.eval_batch(
+            input_=data,
+            loss_fn=compute_packed_sft_loss,
+            loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+        )
 
 
 class FSDPLMEngine(FSDPEngine):

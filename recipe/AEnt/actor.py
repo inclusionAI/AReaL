@@ -36,127 +36,127 @@ class AEntPPOActor(PPOActor):
             self.coeff_box_low = config.aent.coeff_box_low
             self.warmup_steps = config.aent.warmup_steps
 
+    @stats_tracker.scope_func_wrapper("aent_ppo_actor")
     def aent_ppo_update(
         self, data: TensorDict, global_step: int
     ) -> List[Dict[str, float]]:
-        with stats_tracker.scope("aent_ppo_actor"):
-            with stats_tracker.scope("dynamic_sampling"):
-                if (
-                    self.dynamic_sampling
-                    and len(data["rewards"]) % self.group_size == 0
-                ):
-                    data, sampling_stat = dynamic_sampling(data, self.group_size)
-                    stats_tracker.scalar(**sampling_stat)
+        with stats_tracker.scope("dynamic_sampling"):
+            if (
+                self.dynamic_sampling
+                and len(data["rewards"]) % self.group_size == 0
+            ):
+                data, sampling_stat = dynamic_sampling(data, self.group_size)
+                stats_tracker.scalar(**sampling_stat)
 
-            attn_mask = data["attention_mask"]
-            loss_mask = data["loss_mask"]
-            reward_score = data["rewards"]
-            seqlens = attn_mask.sum(-1)
+        attn_mask = data["attention_mask"]
+        loss_mask = data["loss_mask"]
+        reward_score = data["rewards"]
+        seqlens = attn_mask.sum(-1)
 
-            ########## Logging code starts ##########
-            result_denominators = {
-                "correct_n_seqs": (reward_score > 0).bool(),
-                "incorrect_n_seqs": (reward_score <= 0).bool(),
-            }
-            if self.config.log_agent_stats:
-                if "begin_of_trajectory" not in data:
-                    raise RuntimeError(
-                        "'begin_of_trajectory' is expected to log agent statistics"
-                    )
-                if len(self.config.log_agent_stats_keys) == 0:
-                    raise RuntimeError(
-                        "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
-                    )
-                agent_denominator = (data["begin_of_trajectory"] > 0).bool()
-                result_denominators["agent"] = agent_denominator
-            global_denominators = dict(
-                n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
-                n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
-                n_valid_tokens=loss_mask.bool(),
-                **result_denominators,
-            )
-            stats_tracker.denominator(**global_denominators)
+        ########## Logging code starts ##########
+        result_denominators = {
+            "correct_n_seqs": (reward_score > 0).bool(),
+            "incorrect_n_seqs": (reward_score <= 0).bool(),
+        }
+        if self.config.log_agent_stats:
+            if "begin_of_trajectory" not in data:
+                raise RuntimeError(
+                    "'begin_of_trajectory' is expected to log agent statistics"
+                )
+            if len(self.config.log_agent_stats_keys) == 0:
+                raise RuntimeError(
+                    "`log_agent_stats_keys` should not be empty when log_agent_stats=True"
+                )
+            agent_denominator = (data["begin_of_trajectory"] > 0).bool()
+            result_denominators["agent"] = agent_denominator
+        global_denominators = dict(
+            n_seqs=torch.ones_like(reward_score, dtype=torch.bool),
+            n_tokens=torch.ones_like(loss_mask, dtype=torch.bool),
+            n_valid_tokens=loss_mask.bool(),
+            **result_denominators,
+        )
+        stats_tracker.denominator(**global_denominators)
+        stats_tracker.stat(
+            correct_seq_len=seqlens.float(), denominator="correct_n_seqs"
+        )
+        stats_tracker.stat(
+            incorrect_seq_len=seqlens.float(), denominator="incorrect_n_seqs"
+        )
+
+        stats = dict(
+            advantages=data["advantages"],
+            kl_rewards=data["kl_rewards"],
+            final_reward=data["tot_rewards"],
+        )
+        stats_tracker.stat(**stats, denominator="n_valid_tokens")
+
+        prompt_lens = []
+        prompt_lens = data["attention_mask"].sum(-1) - data["loss_mask"].sum(-1)
+        seq_stats = dict(
+            no_eos_ratios=(seqlens == attn_mask.shape[-1]).float(),
+            task_reward=reward_score.float(),
+            prompt_len=prompt_lens.float(),
+            seq_len=seqlens.float(),
+        )
+        stats_tracker.stat(**seq_stats, denominator="n_seqs")
+        scalars = dict(
+            mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
+            eps_clip=self.config.eps_clip,
+        )
+        if self.config.c_clip is not None:
+            scalars["c_clip"] = self.config.c_clip
+            scalars["use_dual_clip"] = 1
+        else:
+            scalars["use_dual_clip"] = 0
+        if self.config.behav_imp_weight_cap is not None:
+            scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
+        stats_tracker.scalar(**scalars)
+
+        if self.config.log_agent_stats:
             stats_tracker.stat(
-                correct_seq_len=seqlens.float(), denominator="correct_n_seqs"
+                **{k: data[k].float() for k in self.config.log_agent_stats_keys},
+                denominator="agent",
             )
-            stats_tracker.stat(
-                incorrect_seq_len=seqlens.float(), denominator="incorrect_n_seqs"
-            )
+        ########## Logging code ends ##########
 
-            stats = dict(
-                advantages=data["advantages"],
-                kl_rewards=data["kl_rewards"],
-                final_reward=data["tot_rewards"],
-            )
-            stats_tracker.stat(**stats, denominator="n_valid_tokens")
-
-            prompt_lens = []
-            prompt_lens = data["attention_mask"].sum(-1) - data["loss_mask"].sum(-1)
-            seq_stats = dict(
-                no_eos_ratios=(seqlens == attn_mask.shape[-1]).float(),
-                task_reward=reward_score.float(),
-                prompt_len=prompt_lens.float(),
-                seq_len=seqlens.float(),
-            )
-            stats_tracker.stat(**seq_stats, denominator="n_seqs")
-            scalars = dict(
-                mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
-                eps_clip=self.config.eps_clip,
-            )
-            if self.config.c_clip is not None:
-                scalars["c_clip"] = self.config.c_clip
-                scalars["use_dual_clip"] = 1
-            else:
-                scalars["use_dual_clip"] = 0
-            if self.config.behav_imp_weight_cap is not None:
-                scalars["behav_imp_weight_cap"] = self.config.behav_imp_weight_cap
-            stats_tracker.scalar(**scalars)
-
-            if self.config.log_agent_stats:
-                stats_tracker.stat(
-                    **{k: data[k].float() for k in self.config.log_agent_stats_keys},
-                    denominator="agent",
+        for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
+            data.pop(key, None)
+        # NOTE: calling engine.train() is critical to enabling gradient checkpointing
+        self.engine.train()
+        mb_inputs = split_padded_tensor_dict_into_mb_list(
+            data,
+            mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
+        )
+        with stats_tracker.scope("update"):
+            for mb in mb_inputs.mbs:
+                train_stat = self.engine.train_batch(
+                    mb,
+                    loss_fn=functools.partial(
+                        aent_grpo_loss_fn,
+                        temperature=self.temperature,
+                        eps_clip=self.config.eps_clip,
+                        eps_clip_higher=self.config.eps_clip_higher,
+                        entropy_coeff=self.entropy_coeff,
+                        entropy_clamp=self.entropy_clamp,
+                        c_clip=self.config.c_clip,
+                        behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                        importance_sampling_level=self.config.importance_sampling_level,
+                    ),
+                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
-            ########## Logging code ends ##########
-
-            for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
-                data.pop(key, None)
-            # NOTE: calling engine.train() is critical to enabling gradient checkpointing
-            self.engine.train()
-            mb_inputs = split_padded_tensor_dict_into_mb_list(
-                data,
-                mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
+                stats_tracker.scalar(**train_stat)
+        if self.adaptive_coeff and global_step > self.warmup_steps:
+            stats = stats_tracker.export(
+                reduce_group=self.engine.data_parallel_group, reset=False
             )
-            with stats_tracker.scope("update"):
-                for mb in mb_inputs.mbs:
-                    train_stat = self.engine.train_batch(
-                        mb,
-                        loss_fn=functools.partial(
-                            aent_grpo_loss_fn,
-                            temperature=self.temperature,
-                            eps_clip=self.config.eps_clip,
-                            eps_clip_higher=self.config.eps_clip_higher,
-                            entropy_coeff=self.entropy_coeff,
-                            entropy_clamp=self.entropy_clamp,
-                            c_clip=self.config.c_clip,
-                            behav_imp_weight_cap=self.config.behav_imp_weight_cap,
-                            importance_sampling_level=self.config.importance_sampling_level,
-                        ),
-                        loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
-                    )
-                    stats_tracker.scalar(**train_stat)
-            if self.adaptive_coeff and global_step > self.warmup_steps:
-                stats = stats_tracker.export(
-                    reduce_group=self.engine.data_parallel_group, reset=False
-                )
-                entropy = stats["aent_ppo_actor/update/entropy/avg"]
-                self.entropy_coeff -= self.coeff_lr * (
-                    min(0, entropy - self.entropy_low)
-                    + max(0, entropy - self.entropy_high)
-                )
-                self.entropy_coeff = min(
-                    max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high
-                )
+            entropy = stats["aent_ppo_actor/update/entropy/avg"]
+            self.entropy_coeff -= self.coeff_lr * (
+                min(0, entropy - self.entropy_low)
+                + max(0, entropy - self.entropy_high)
+            )
+            self.entropy_coeff = min(
+                max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high
+            )
 
 
 class FSDPAEntPPOActor(FSDPEngine):

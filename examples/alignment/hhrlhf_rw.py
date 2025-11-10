@@ -124,13 +124,9 @@ def main(args):
                     group=engine.context_and_model_parallel_group,
                 )
 
-            with (
-                stats_tracker.record_timing("train_step"),
-                stats_tracker.scope("rw"),
-            ):
-                stats = engine.train_rw(data)
+            with stats_tracker.record_timing("train_step"):
+                engine.train_rw(data)
                 engine.step_lr_scheduler()
-                stats_tracker.scalar(**stats)
 
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)

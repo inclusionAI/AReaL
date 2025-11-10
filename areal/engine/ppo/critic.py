@@ -24,35 +24,35 @@ class PPOCritic:
             aggregate_fn=lambda xs: torch.cat([x.squeeze(-1) for x in xs], dim=-1),
         )
 
+    @stats_tracker.scope_func_wrapper("ppo_critic")
     def ppo_update(self, data: dict[str, Any]) -> None:
-        with stats_tracker.scope("ppo_critic"):
-            ########## Logging code starts ##########
-            scalars = dict(
-                mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
-                eps_clip=self.config.eps_clip,
-            )
-            stats_tracker.scalar(**scalars)
-            ########## Logging code ends ##########
+        ########## Logging code starts ##########
+        scalars = dict(
+            mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
+            eps_clip=self.config.eps_clip,
+        )
+        stats_tracker.scalar(**scalars)
+        ########## Logging code ends ##########
 
-            for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
-                data.pop(key, None)
+        for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
+            data.pop(key, None)
 
-            # NOTE: calling engine.train() is critical to enabling gradient checkpointing
-            self.engine.train()
-            mb_inputs = split_padded_tensor_dict_into_mb_list(
-                data,
-                mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
+        # NOTE: calling engine.train() is critical to enabling gradient checkpointing
+        self.engine.train()
+        mb_inputs = split_padded_tensor_dict_into_mb_list(
+            data,
+            mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
+        )
+        for mb in mb_inputs.mbs:
+            train_stat = self.engine.train_batch(
+                mb,
+                loss_fn=functools.partial(
+                    ppo_loss_fn,
+                    eps_clip=self.config.eps_clip,
+                ),
+                loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
             )
-            for mb in mb_inputs.mbs:
-                train_stat = self.engine.train_batch(
-                    mb,
-                    loss_fn=functools.partial(
-                        ppo_loss_fn,
-                        eps_clip=self.config.eps_clip,
-                    ),
-                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
-                )
-                stats_tracker.scalar(**train_stat)
+            stats_tracker.scalar(**train_stat)
 
 
 class FSDPPPOCritic(FSDPEngine):
