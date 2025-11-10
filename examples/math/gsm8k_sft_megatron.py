@@ -120,7 +120,7 @@ def main(args):
                 )
 
             with stats_tracker.record_timing("train_step"):
-                stats = engine.train_lm(data)
+                engine.train_lm(data)
                 engine.step_lr_scheduler()
 
             with stats_tracker.record_timing("save"):
@@ -165,9 +165,7 @@ def main(args):
             dist.barrier(device_ids=[engine.device.index])
             current_platform.synchronize()
 
-            stats.update(
-                stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
-            )
+            stats = stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
             stats_logger.commit(epoch, step, global_step, stats)
             global_step += 1
 

@@ -115,9 +115,8 @@ def main(args):
                 )
 
             with stats_tracker.record_timing("train_step"):
-                stats = engine.train_lm(data)
+                engine.train_lm(data)
                 engine.step_lr_scheduler()
-                stats_tracker.scalar(**stats)
 
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)

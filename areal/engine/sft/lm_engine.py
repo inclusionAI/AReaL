@@ -17,16 +17,17 @@ class LMEngine:
     def train_lm(self, data: dict[str, Any]):
         self.engine.train()
         with stats_tracker.scope("sft"):
-            return self.engine.train_batch(
+            stats = self.engine.train_batch(
                 input_=data,
                 loss_fn=compute_packed_sft_loss,
                 loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
             )
+            stats_tracker.scalar(**stats)
 
     def evaluate_lm(self, data):
         self.engine.eval()
         with stats_tracker.scope("sft-eval"):
-            return self.engine.eval_batch(
+            self.engine.eval_batch(
                 input_=data,
                 loss_fn=compute_packed_sft_loss,
                 loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),

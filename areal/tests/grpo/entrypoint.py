@@ -132,7 +132,7 @@ def main() -> None:
             rollout.set_version(global_step + 1)
 
             stat = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-            rewards.append(stat["task_reward/avg"])
+            rewards.append(stat["ppo_actor/task_reward/avg"])
 
             global_step += 1
 
