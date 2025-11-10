@@ -8,6 +8,7 @@ from areal.utils import logging
 from areal.utils.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
+    get_ulysses_sequence_parallel_rank,
     get_ulysses_sequence_parallel_world_size,
     slice_input_tensor,
 )
@@ -104,9 +105,6 @@ def patch_vlm_for_ulysses_input_slicing(model_class: type):
                         if num_visual_in_shard > 0 and num_visual_before > 0:
                             # Calculate which visual embeddings belong to this shard
                             # We need to find the offset of visual tokens in this shard
-                            from areal.utils.ulysses import (
-                                get_ulysses_sequence_parallel_rank,
-                            )
 
                             rank = get_ulysses_sequence_parallel_rank()
                             seq_len = original_visual_mask.shape[1]
