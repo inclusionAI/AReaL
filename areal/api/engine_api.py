@@ -344,7 +344,35 @@ class InferenceEngine(abc.ABC):
         raise NotImplementedError()
 
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
-        """Launch a inference server via subprocess and return its info."""
+        """Launch a local inference server via subprocess and return its connection info.
+
+        By default, an `InferenceEngine` instance acts as a client that connects to an existing
+        remote inference server without occupying GPU resources. This is the typical usage in
+        SPMD mode, where each training process has an attached inference client.
+
+        This method enables launching a local inference server process, which is useful for:
+
+        1. **Single-controller mode**: Launch a local server to serve the `InferenceEngine`
+           instance with direct GPU worker control.
+
+        2. **Standalone inference**: Use AReaL's inference engine in independent scripts or notebooks
+           for running agentic workflows without managing separate server processes.
+
+        Parameters
+        ----------
+        server_args : Dict[str, Any]
+            CLI arguments for the inference server (e.g., model path, GPU indices,
+            port numbers, backend-specific settings)
+
+        Returns
+        -------
+        LocalInfServerInfo
+            Information about the launched server, including connection details and process metadata
+
+        See Also
+        --------
+        teardown_server : Teardown the server launched by this method
+        """
         raise NotImplementedError()
 
     def teardown_server(self):
