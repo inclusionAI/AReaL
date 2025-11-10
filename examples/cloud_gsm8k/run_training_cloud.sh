@@ -75,10 +75,17 @@ case "$CONFIG_NAME" in
         echo "Note: Uses limited dataset (500 samples) from docker_gsm8k script"
         ;;
     3hour)
-        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_3hour.yaml"
+        # Auto-detect GPU and use appropriate config
+        if nvidia-smi --query-gpu=name --format=csv,noheader | grep -qi "A40"; then
+            CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_3hour_a40.yaml"
+            echo "Using 3-HOUR training configuration (~4-4.5 hours) - A40 OPTIMIZED"
+            echo "Note: A40 GPU detected, using memory-optimized config"
+        else
+            CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_3hour.yaml"
+            echo "Using 3-HOUR training configuration (~3-4 hours)"
+        fi
         TRAIN_SCRIPT="examples/docker_gsm8k/gsm8k_grpo_3hour.py"
         EXPERIMENT_NAME="gsm8k-grpo-cloud-3hour"
-        echo "Using 3-HOUR training configuration (~3-4 hours)"
         echo "Note: Uses limited dataset (1000 samples) from docker_gsm8k script"
         ;;
     full)
