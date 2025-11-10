@@ -211,9 +211,10 @@ def main(args):
             critic.step_lr_scheduler()
             log_gpu_stats("ppo critic update")
 
-        assert len(actor_stats) == len(critic_stats), (
-            "actor and critic should have same number of update steps"
-        )
+        if len(actor_stats) != len(critic_stats):
+            raise ValueError(
+                f"actor and critic should have same number of update steps, got {len(actor_stats)} and {len(critic_stats)}"
+            )
         stats = [
             {**actor_stat, **critic_stat}
             for actor_stat, critic_stat in zip(actor_stats, critic_stats)
