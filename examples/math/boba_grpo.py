@@ -250,14 +250,13 @@ def main(args):
 
         with (
             stats_tracker.record_timing("train_step"),
-            stats_tracker.scope("grpo_actor"),
             perf_tracer.trace_scope(
                 "train.ppo_update",
                 category=Category.COMPUTE,
                 args={"global_step": global_step},
             ),
         ):
-            stats = actor.ppo_update(batch)
+            actor.ppo_update(batch)
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
@@ -314,9 +313,7 @@ def main(args):
             category=Category.INSTR,
             args={"global_step": global_step},
         ):
-            stats[0].update(
-                stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-            )
+            stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
             stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])

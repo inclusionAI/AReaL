@@ -190,11 +190,8 @@ class GRPOTrainer:
                 self.actor.compute_advantages(batch)
                 log_gpu_stats("compute advantages")
 
-            with (
-                stats_tracker.record_timing("train_step"),
-                stats_tracker.scope("grpo_actor"),
-            ):
-                stats = self.actor.ppo_update(batch)
+            with stats_tracker.record_timing("train_step"):
+                self.actor.ppo_update(batch)
                 self.actor.step_lr_scheduler()
                 log_gpu_stats("ppo update")
 
@@ -259,8 +256,8 @@ class GRPOTrainer:
             current_platform.synchronize()
 
             # Upload statistics to the logger (e.g., wandb)
-            stats[0].update(
-                stats_tracker.export_all(reduce_group=self.actor.data_parallel_group)
+            stats = stats_tracker.export_all(
+                reduce_group=self.actor.data_parallel_group
             )
             self.stats_logger.commit(epoch, step, global_step, stats)
 

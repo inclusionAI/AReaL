@@ -114,13 +114,9 @@ def main(args):
                     group=engine.context_and_model_parallel_group,
                 )
 
-            with (
-                stats_tracker.record_timing("train_step"),
-                stats_tracker.scope("sft"),
-            ):
-                stats = engine.train_lm(data)
+            with stats_tracker.record_timing("train_step"):
+                engine.train_lm(data)
                 engine.step_lr_scheduler()
-                stats_tracker.scalar(**stats)
 
             with stats_tracker.record_timing("save"):
                 saver.save(engine, epoch, step, global_step, tokenizer=tokenizer)
@@ -143,17 +139,16 @@ def main(args):
                 # No need to log anything. Logging will be handled outside
                 # via stats_tracker.export().
                 def evaluate_fn():
-                    with stats_tracker.scope("sft-eval"):
-                        for data in valid_dataloader:
-                            data = tensor_container_to(
-                                data, current_platform.current_device()
-                            )
-                            data = broadcast_tensor_container(
-                                data,
-                                src_rank=engine.current_data_parallel_head(),
-                                group=engine.context_and_model_parallel_group,
-                            )
-                            engine.evaluate_lm(data)
+                    for data in valid_dataloader:
+                        data = tensor_container_to(
+                            data, current_platform.current_device()
+                        )
+                        data = broadcast_tensor_container(
+                            data,
+                            src_rank=engine.current_data_parallel_head(),
+                            group=engine.context_and_model_parallel_group,
+                        )
+                        engine.evaluate_lm(data)
 
                 evaluator.evaluate(
                     evaluate_fn,

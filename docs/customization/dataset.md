@@ -28,7 +28,7 @@ def main(args):
     # Run training loop
     for epoch in range(total_epochs):
         for step, data in enumerate(train_dataloader):
-            stats = engine.train_lm(data)
+            engine.train_lm(data)
 ```
 
 In this case, the `train_lm` method requires the keys "input_ids", "attention_mask", and

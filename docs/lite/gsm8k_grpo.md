@@ -436,7 +436,7 @@ if ref is not None:
     batch["ref_logp"] = ref.compute_logp(batch)
     log_gpu_stats("ref logp")
 actor.compute_advantages(batch)
-stats = actor.ppo_update(batch)
+actor.ppo_update(batch)
 actor.step_lr_scheduler()
 ```
 
@@ -497,7 +497,7 @@ for global_step in range(max_steps):
         batch["ref_logp"] = ref.compute_logp(batch)
         log_gpu_stats("ref logp")
     actor.compute_advantages(batch)
-    stats = actor.ppo_update(batch)
+    actor.ppo_update(batch)
     actor.step_lr_scheduler()
 
     rollout.pause()
@@ -574,6 +574,11 @@ with stats_tracker.scope("A"):
     stats_tracker.scalar(c=123) # key="A/c", value=123
     with stats_tracker.scope("B"):
         stats_tracker.scalar(c=234) # key="A/B/c", value=234
+
+@stats_tracker.scope_func_wrapper("A")
+def func(...):
+    # All stats recorded in this function is under scope A
+    ...
 ```
 
 After recording sufficient data, e.g. after a `train_batch` is finished,

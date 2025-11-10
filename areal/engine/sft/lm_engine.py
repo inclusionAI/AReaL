@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import torch
 
@@ -14,17 +14,20 @@ class LMEngine:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
-    def train_lm(self, data: Dict[str, Any]):
+    @stats_tracker.scope_func_wrapper("sft")
+    def train_lm(self, data: dict[str, Any]):
         self.engine.train()
-        return self.engine.train_batch(
+        stats = self.engine.train_batch(
             input_=data,
             loss_fn=compute_packed_sft_loss,
             loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
         )
+        stats_tracker.scalar(**stats)
 
+    @stats_tracker.scope_func_wrapper("sft-eval")
     def evaluate_lm(self, data):
         self.engine.eval()
-        return self.engine.eval_batch(
+        self.engine.eval_batch(
             input_=data,
             loss_fn=compute_packed_sft_loss,
             loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
@@ -56,7 +59,7 @@ class MegatronLMEngine(MegatronEngine):
 
 
 def compute_packed_sft_loss(
-    logits: torch.Tensor, input_: Dict[str, Any]
+    logits: torch.Tensor, input_: dict[str, Any]
 ) -> torch.Tensor:
     # Use rolled input_ids. Ulysses SP will roll input_ids in ulysses_prepare_inputs().
     labels: torch.Tensor = input_.get(

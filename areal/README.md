@@ -229,7 +229,7 @@ def main_grpo():
         batch['advantages'] = adv_batch['advantages']
 
         # Execute PPO update
-        stats = actor.ppo_update(batch)
+        actor.ppo_update(batch)
 
         # Update inference engine weights (non-blocking to prevent NCCL blocking)
         actor.update_weights(wcfg)
@@ -281,7 +281,7 @@ def main_grpo():
         batch['advantages'] = adv_batch['advantages']
 
         # Execute PPO update
-        stats = actor.ppo_update(batch)
+        actor.ppo_update(batch)
 
         # Update weights (coordinated across processes)
         actor.update_weights(wcfg)

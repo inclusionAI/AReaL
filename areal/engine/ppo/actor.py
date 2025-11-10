@@ -181,16 +181,18 @@ class PPOActor:
         # because we have rolled old_logp by -1
         data["logprobs"] = old_logp
 
-    def ppo_update(self, data: dict[str, Any]) -> list[dict[str, float]]:
-        if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
-            data, sampling_stat = dynamic_sampling(data, self.group_size)
+    @stats_tracker.scope_func_wrapper("ppo_actor")
+    def ppo_update(self, data: dict[str, Any]) -> None:
+        with stats_tracker.scope("dynamic_sampling"):
+            if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
+                data, sampling_stat = dynamic_sampling(data, self.group_size)
+                stats_tracker.scalar(**sampling_stat)
 
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
         seqlens = attn_mask.sum(-1)
 
-        all_stats = []
         ########## Logging code starts ##########
         result_denominators = {
             "correct_n_seqs": (reward_score > 0).bool(),
@@ -228,7 +230,6 @@ class PPOActor:
         )
         stats_tracker.stat(**stats, denominator="n_valid_tokens")
 
-        prompt_lens = []
         prompt_lens = data["attention_mask"].sum(-1) - data["loss_mask"].sum(-1)
         seq_stats = dict(
             no_eos_ratios=(seqlens == attn_mask.shape[-1]).float(),
@@ -255,15 +256,6 @@ class PPOActor:
                 **{k: data[k].float() for k in self.config.log_agent_stats_keys},
                 denominator="agent",
             )
-
-        global_stats = stats_tracker.export(
-            reduce_group=self.engine.data_parallel_group
-        )
-        for k in global_denominators:
-            keys = list(global_stats.keys())
-            for k2 in keys:
-                if k2.endswith(k):
-                    global_stats.pop(k2)
         ########## Logging code ends ##########
 
         for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
@@ -274,27 +266,24 @@ class PPOActor:
             data,
             mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
         )
-        for mb in mb_inputs.mbs:
-            train_stat = self.engine.train_batch(
-                mb,
-                loss_fn=functools.partial(
-                    grpo_loss_fn,
-                    temperature=self.temperature,
-                    eps_clip=self.config.eps_clip,
-                    eps_clip_higher=self.config.eps_clip_higher,
-                    c_clip=self.config.c_clip,
-                    behav_imp_weight_cap=self.config.behav_imp_weight_cap,
-                    m2_threshold=self.m2_threshold,
-                    importance_sampling_level=self.config.importance_sampling_level,
-                ),
-                loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
-            )
-            stats_tracker.scalar(**train_stat)
-            all_stats.append(
-                stats_tracker.export(reduce_group=self.engine.data_parallel_group)
-            )
-        all_stats[0].update(global_stats)
-        return all_stats
+
+        with stats_tracker.scope("update"):
+            for mb in mb_inputs.mbs:
+                train_stat = self.engine.train_batch(
+                    mb,
+                    loss_fn=functools.partial(
+                        grpo_loss_fn,
+                        temperature=self.temperature,
+                        eps_clip=self.config.eps_clip,
+                        eps_clip_higher=self.config.eps_clip_higher,
+                        c_clip=self.config.c_clip,
+                        behav_imp_weight_cap=self.config.behav_imp_weight_cap,
+                        m2_threshold=self.m2_threshold,
+                        importance_sampling_level=self.config.importance_sampling_level,
+                    ),
+                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+                )
+                stats_tracker.scalar(**train_stat)
 
 
 class FSDPPPOActor(FSDPEngine):
@@ -310,8 +299,8 @@ class FSDPPPOActor(FSDPEngine):
     def compute_advantages(self, *args, **kwargs) -> None:
         self.actor.compute_advantages(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
-        return self.actor.ppo_update(*args, **kwargs)
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.actor.ppo_update(*args, **kwargs)
 
 
 class MegatronPPOActor(MegatronEngine):
@@ -327,8 +316,8 @@ class MegatronPPOActor(MegatronEngine):
     def compute_advantages(self, *args, **kwargs) -> None:
         self.actor.compute_advantages(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
-        return self.actor.ppo_update(*args, **kwargs)
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.actor.ppo_update(*args, **kwargs)
 
 
 def grpo_loss_fn(

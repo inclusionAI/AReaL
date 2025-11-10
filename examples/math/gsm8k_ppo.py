@@ -195,30 +195,15 @@ def main(args):
             actor.compute_advantages(batch)
             log_gpu_stats("compute advantages")
 
-        with (
-            stats_tracker.record_timing("train_step"),
-            stats_tracker.scope("ppo_actor"),
-        ):
-            actor_stats = actor.ppo_update(batch)
+        with stats_tracker.record_timing("train_step"):
+            actor.ppo_update(batch)
             actor.step_lr_scheduler()
             log_gpu_stats("ppo actor update")
 
-        with (
-            stats_tracker.record_timing("train_step"),
-            stats_tracker.scope("ppo_critic"),
-        ):
-            critic_stats = critic.ppo_update(batch)
+        with stats_tracker.record_timing("train_step"):
+            critic.ppo_update(batch)
             critic.step_lr_scheduler()
             log_gpu_stats("ppo critic update")
-
-        if len(actor_stats) != len(critic_stats):
-            raise ValueError(
-                f"actor and critic should have same number of update steps, got {len(actor_stats)} and {len(critic_stats)}"
-            )
-        stats = [
-            {**actor_stat, **critic_stat}
-            for actor_stat, critic_stat in zip(actor_stats, critic_stats)
-        ]
 
         # pause inference for updating weights, save, and evaluation
         rollout.pause()
@@ -275,9 +260,7 @@ def main(args):
         current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(
-            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-        )
+        stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
