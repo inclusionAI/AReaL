@@ -34,9 +34,6 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def destroy_process_group(self):
-        raise NotImplementedError()
-
     def initialize(self, *args, **kwargs):
         """Initialize environments for distributed training and load models.
 

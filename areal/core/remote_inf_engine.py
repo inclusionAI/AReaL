@@ -249,8 +249,6 @@ class RemoteInfEngine:
         self.workflow_executor: WorkflowExecutor
         self.local_server_processes: list[LocalInfServerInfo] = []
 
-        self.server_process: subprocess.Popen | None = None
-
     def _wait_for_server(self, address):
         """Wait for a server to become healthy."""
         base_url = f"http://{address}"
