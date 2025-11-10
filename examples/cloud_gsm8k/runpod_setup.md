@@ -20,7 +20,7 @@ RunPod (https://runpod.io) provides serverless GPU pods with Docker support. **T
    - **Container Image**: `ghcr.io/inclusionai/areal-runtime:v0.3.4`
    - **Docker Command**: 
      ```bash
-     bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch && git checkout DL4Math && git pull || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd AReaL && pip install -e . && bash examples/cloud_gsm8k/run_training_cloud.sh"
+     bash -c "set -e && pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && pip install -e . && bash examples/cloud_gsm8k/run_training_cloud.sh"
      ```
    - **Environment Variables**:
      - `WANDB_API_KEY`: Your WandB API key

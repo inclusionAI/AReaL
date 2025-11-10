@@ -13,7 +13,7 @@ async_training: true
 cluster:
   n_nodes: 1
   n_gpus_per_node: 1
-  fileroot: ./outputs/grpo  # Cloud-friendly path
+  fileroot: /workspace/outputs/grpo  # Absolute path to mounted volume
   name_resolve:
     type: nfs
     nfs_record_root: ./tmp/areal/name_resolve

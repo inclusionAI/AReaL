@@ -15,7 +15,7 @@
       "value": "/workspace/AReaL"
     }
   ],
-  "dockerCommand": "bash -c \"pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch && git checkout DL4Math && git pull || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd AReaL && pip install -e . && export WANDB_API_KEY=\\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour\"",
+  "dockerCommand": "bash -c \"set -e && pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && pip install -e . && export WANDB_API_KEY=\\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour\"",
   "ports": "",
   "isPublicIp": false,
   "isServerless": false,
