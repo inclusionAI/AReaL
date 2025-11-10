@@ -1,0 +1,289 @@
+2025-11-10T03:24:40.880549824Z ==========
+2025-11-10T03:24:40.880553739Z == CUDA ==
+2025-11-10T03:24:40.880555819Z ==========
+2025-11-10T03:24:40.885308475Z CUDA Version 12.9.1
+2025-11-10T03:24:40.886622321Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:24:40.888414309Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:24:40.888416880Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:24:40.888419341Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:24:40.888423157Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:24:40.907915100Z Cloning into 'AReaL'...
+2025-11-10T03:24:42.605766965Z Looking in indexes: https://pypi.antfin-inc.com/simple
+2025-11-10T03:24:42.606290132Z Obtaining file:///workspace/AReaL
+2025-11-10T03:24:42.610699993Z   Installing build dependencies: started
+2025-11-10T03:25:44.076128658Z   Installing build dependencies: still running...
+2025-11-10T03:26:44.950645292Z   Installing build dependencies: still running...
+2025-11-10T03:27:46.827700641Z   Installing build dependencies: still running...
+2025-11-10T03:28:49.673311401Z   Installing build dependencies: still running...
+2025-11-10T03:29:54.037779260Z   Installing build dependencies: still running...
+2025-11-10T03:30:54.647506625Z   Installing build dependencies: still running...
+2025-11-10T03:30:54.726473096Z   Installing build dependencies: finished with status 'error'
+2025-11-10T03:30:54.737624321Z   error: subprocess-exited-with-error
+2025-11-10T03:30:54.737668968Z   × pip subprocess to install build dependencies did not run successfully.
+2025-11-10T03:30:54.737674841Z   │ exit code: 1
+2025-11-10T03:30:54.737680265Z   ╰─> [8 lines of output]
+2025-11-10T03:30:54.737685681Z       Looking in indexes: https://pypi.antfin-inc.com/simple
+2025-11-10T03:30:54.737691535Z       WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<pip._vendor.urllib3.connection.HTTPSConnection object at 0x7c0296b065a0>, 'Connection to pypi.antfin-inc.com timed out. (connect timeout=15)')': /simple/setuptools/
+2025-11-10T03:30:54.737699848Z       WARNING: Retrying (Retry(total=3, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<pip._vendor.urllib3.connection.HTTPSConnection object at 0x7c0295bf6de0>, 'Connection to pypi.antfin-inc.com timed out. (connect timeout=15)')': /simple/setuptools/
+2025-11-10T03:30:54.737704945Z       WARNING: Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<pip._vendor.urllib3.connection.HTTPSConnection object at 0x7c0295bf72f0>, 'Connection to pypi.antfin-inc.com timed out. (connect timeout=15)')': /simple/setuptools/
+2025-11-10T03:30:54.737709852Z       WARNING: Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<pip._vendor.urllib3.connection.HTTPSConnection object at 0x7c0295bf7500>, 'Connection to pypi.antfin-inc.com timed out. (connect timeout=15)')': /simple/setuptools/
+2025-11-10T03:30:54.737715108Z       WARNING: Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<pip._vendor.urllib3.connection.HTTPSConnection object at 0x7c0295bf7710>, 'Connection to pypi.antfin-inc.com timed out. (connect timeout=15)')': /simple/setuptools/
+2025-11-10T03:30:54.737720292Z       ERROR: Could not find a version that satisfies the requirement setuptools<80,>=77.0.3 (from versions: none)
+2025-11-10T03:30:54.737725228Z       ERROR: No matching distribution found for setuptools<80,>=77.0.3
+2025-11-10T03:30:54.737730612Z       [end of output]
+2025-11-10T03:30:54.737778791Z   note: This error originates from a subprocess, and is likely not a problem with pip.
+2025-11-10T03:31:15.642148292Z error: subprocess-exited-with-error
+2025-11-10T03:31:15.642217352Z × pip subprocess to install build dependencies did not run successfully.
+2025-11-10T03:31:15.642223193Z │ exit code: 1
+2025-11-10T03:31:15.642228826Z ╰─> See above for output.
+2025-11-10T03:31:15.642239593Z note: This error originates from a subprocess, and is likely not a problem with pip.
+2025-11-10T03:31:33.371835137Z ==========
+2025-11-10T03:31:33.371837553Z == CUDA ==
+2025-11-10T03:31:33.371864895Z ==========
+2025-11-10T03:31:33.377924029Z CUDA Version 12.9.1
+2025-11-10T03:31:33.379769850Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:31:33.382742489Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:31:33.382748809Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:31:33.382754540Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:31:33.382765313Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:31:33.403132021Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:31:50.181843580Z ==========
+2025-11-10T03:31:50.181845662Z == CUDA ==
+2025-11-10T03:31:50.181850666Z ==========
+2025-11-10T03:31:50.187214026Z CUDA Version 12.9.1
+2025-11-10T03:31:50.188721620Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:31:50.190528540Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:31:50.190532694Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:31:50.190535933Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:31:50.190542110Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:31:50.211445623Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:32:07.072269037Z ==========
+2025-11-10T03:32:07.072271856Z == CUDA ==
+2025-11-10T03:32:07.072273681Z ==========
+2025-11-10T03:32:07.076806751Z CUDA Version 12.9.1
+2025-11-10T03:32:07.078108282Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:32:07.079554654Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:32:07.079558296Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:32:07.079561042Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:32:07.079565851Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:32:07.099778650Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:32:23.870461902Z ==========
+2025-11-10T03:32:23.870469977Z == CUDA ==
+2025-11-10T03:32:23.870508375Z ==========
+2025-11-10T03:32:23.876253920Z CUDA Version 12.9.1
+2025-11-10T03:32:23.879538784Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:32:23.881665724Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:32:23.881688140Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:32:23.881690547Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:32:23.881695069Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:32:23.902186658Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:32:40.685054027Z ==========
+2025-11-10T03:32:40.685061744Z == CUDA ==
+2025-11-10T03:32:40.685066784Z ==========
+2025-11-10T03:32:40.690389635Z CUDA Version 12.9.1
+2025-11-10T03:32:40.691813005Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:32:40.693403563Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:32:40.693406185Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:32:40.693409168Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:32:40.693413458Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:32:40.712638678Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:32:57.433039906Z ==========
+2025-11-10T03:32:57.433042182Z == CUDA ==
+2025-11-10T03:32:57.433053060Z ==========
+2025-11-10T03:32:57.438593446Z CUDA Version 12.9.1
+2025-11-10T03:32:57.440351429Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:32:57.441931939Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:32:57.441937266Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:32:57.441941001Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:32:57.441949128Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:32:57.462056156Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:33:14.239338847Z ==========
+2025-11-10T03:33:14.239341440Z == CUDA ==
+2025-11-10T03:33:14.239343482Z ==========
+2025-11-10T03:33:14.243274869Z CUDA Version 12.9.1
+2025-11-10T03:33:14.244668600Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:33:14.246204988Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:33:14.246208210Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:33:14.246210876Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:33:14.246215702Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:33:14.265616551Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:33:31.041161826Z ==========
+2025-11-10T03:33:31.041164112Z == CUDA ==
+2025-11-10T03:33:31.041165937Z ==========
+2025-11-10T03:33:31.046489942Z CUDA Version 12.9.1
+2025-11-10T03:33:31.048197773Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:33:31.050494614Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:33:31.050511374Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:33:31.050514929Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:33:31.050519474Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:33:31.071724363Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:33:47.829912688Z ==========
+2025-11-10T03:33:47.829916222Z == CUDA ==
+2025-11-10T03:33:47.829918594Z ==========
+2025-11-10T03:33:47.834590993Z CUDA Version 12.9.1
+2025-11-10T03:33:47.835991205Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:33:47.837857974Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:33:47.837861312Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:33:47.837866986Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:33:47.837871200Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:33:47.862741561Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:34:04.595587583Z ==========
+2025-11-10T03:34:04.595591565Z == CUDA ==
+2025-11-10T03:34:04.595592961Z ==========
+2025-11-10T03:34:04.601562421Z CUDA Version 12.9.1
+2025-11-10T03:34:04.603101688Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:34:04.604569769Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:34:04.604572446Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:34:04.604574999Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:34:04.604579656Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:34:04.624616541Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:34:21.711477994Z ==========
+2025-11-10T03:34:21.711482731Z == CUDA ==
+2025-11-10T03:34:21.711485414Z ==========
+2025-11-10T03:34:21.716825760Z CUDA Version 12.9.1
+2025-11-10T03:34:21.719608638Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:34:21.722176228Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:34:21.722180847Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:34:21.722184611Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:34:21.722189973Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:34:21.745658327Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:34:38.494212978Z ==========
+2025-11-10T03:34:38.494221185Z == CUDA ==
+2025-11-10T03:34:38.494227374Z ==========
+2025-11-10T03:34:38.499497847Z CUDA Version 12.9.1
+2025-11-10T03:34:38.502000258Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:34:38.503867037Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:34:38.503897071Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:34:38.503903037Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:34:38.503913287Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:34:38.524151187Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:34:55.309997658Z ==========
+2025-11-10T03:34:55.310000401Z == CUDA ==
+2025-11-10T03:34:55.310011601Z ==========
+2025-11-10T03:34:55.314070249Z CUDA Version 12.9.1
+2025-11-10T03:34:55.316328462Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:34:55.317946170Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:34:55.317950353Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:34:55.317954293Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:34:55.317961654Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:34:55.336890565Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:35:12.109999221Z ==========
+2025-11-10T03:35:12.110002133Z == CUDA ==
+2025-11-10T03:35:12.110003729Z ==========
+2025-11-10T03:35:12.114510371Z CUDA Version 12.9.1
+2025-11-10T03:35:12.116082630Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:35:12.117441546Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:35:12.117444387Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:35:12.117446294Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:35:12.117450311Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:35:12.136239453Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:35:28.913188782Z ==========
+2025-11-10T03:35:28.913191632Z == CUDA ==
+2025-11-10T03:35:28.913195851Z ==========
+2025-11-10T03:35:28.919330809Z CUDA Version 12.9.1
+2025-11-10T03:35:28.920900420Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:35:28.922428250Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:35:28.922430833Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:35:28.922433238Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:35:28.922436862Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:35:28.942049184Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:35:45.724711782Z ==========
+2025-11-10T03:35:45.724716621Z == CUDA ==
+2025-11-10T03:35:45.724720205Z ==========
+2025-11-10T03:35:45.730705403Z CUDA Version 12.9.1
+2025-11-10T03:35:45.732427833Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:35:45.734105199Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:35:45.734129924Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:35:45.734132479Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:35:45.734136572Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:35:45.757445331Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:35:54.240845147Z ==========
+2025-11-10T03:35:54.240858117Z == CUDA ==
+2025-11-10T03:35:54.240897062Z ==========
+2025-11-10T03:35:54.245894990Z CUDA Version 12.9.1
+2025-11-10T03:35:54.247511481Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:35:54.248960494Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:35:54.248964378Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:35:54.248967823Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:35:54.248974813Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:35:54.270200970Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:36:13.147263149Z ==========
+2025-11-10T03:36:13.147267344Z == CUDA ==
+2025-11-10T03:36:13.147270451Z ==========
+2025-11-10T03:36:13.151648590Z CUDA Version 12.9.1
+2025-11-10T03:36:13.153109544Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:36:13.154608065Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:36:13.154610949Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:36:13.154613552Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:36:13.154618461Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:36:13.173439767Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:36:29.946644294Z ==========
+2025-11-10T03:36:29.946647559Z == CUDA ==
+2025-11-10T03:36:29.946649259Z ==========
+2025-11-10T03:36:29.951103085Z CUDA Version 12.9.1
+2025-11-10T03:36:29.952508324Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:36:29.954098078Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:36:29.954101230Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:36:29.954103548Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:36:29.954107674Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:36:29.974157734Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:36:46.711560377Z ==========
+2025-11-10T03:36:46.711562734Z == CUDA ==
+2025-11-10T03:36:46.711564587Z ==========
+2025-11-10T03:36:46.717360808Z CUDA Version 12.9.1
+2025-11-10T03:36:46.719004066Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:36:46.720468946Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:36:46.720476083Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:36:46.720495145Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:36:46.720500487Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:36:46.741008939Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:37:03.506512289Z ==========
+2025-11-10T03:37:03.506515851Z == CUDA ==
+2025-11-10T03:37:03.506518227Z ==========
+2025-11-10T03:37:03.511432884Z CUDA Version 12.9.1
+2025-11-10T03:37:03.512905416Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:37:03.514505479Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:37:03.514512812Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:37:03.514518657Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:37:03.514529709Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:37:03.536611835Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:37:20.337107432Z ==========
+2025-11-10T03:37:20.337110681Z == CUDA ==
+2025-11-10T03:37:20.337115821Z ==========
+2025-11-10T03:37:20.341560211Z CUDA Version 12.9.1
+2025-11-10T03:37:20.344561539Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:37:20.346111357Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:37:20.346114223Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:37:20.346116571Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:37:20.346120461Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:37:20.365930815Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:37:37.225670990Z ==========
+2025-11-10T03:37:37.225675583Z == CUDA ==
+2025-11-10T03:37:37.225677440Z ==========
+2025-11-10T03:37:37.231084217Z CUDA Version 12.9.1
+2025-11-10T03:37:37.232876922Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:37:37.234411920Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:37:37.234414716Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:37:37.234417437Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:37:37.234421204Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:37:37.255888923Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:37:54.041393180Z ==========
+2025-11-10T03:37:54.041395618Z == CUDA ==
+2025-11-10T03:37:54.041397243Z ==========
+2025-11-10T03:37:54.047774525Z CUDA Version 12.9.1
+2025-11-10T03:37:54.050138681Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:37:54.052307348Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:37:54.052311053Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:37:54.052329218Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:37:54.052335047Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:37:54.072964713Z fatal: destination path 'AReaL' already exists and is not an empty directory.
+2025-11-10T03:38:10.897530966Z ==========
+2025-11-10T03:38:10.897535942Z == CUDA ==
+2025-11-10T03:38:10.897539646Z ==========
+2025-11-10T03:38:10.902215363Z CUDA Version 12.9.1
+2025-11-10T03:38:10.903813118Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-10T03:38:10.905468693Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-10T03:38:10.905471210Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-10T03:38:10.905473918Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-10T03:38:10.905478236Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-10T03:38:10.925882899Z fatal: destination path 'AReaL' already exists and is not an empty directory.
