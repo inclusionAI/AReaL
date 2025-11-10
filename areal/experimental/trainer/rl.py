@@ -3,7 +3,6 @@ from copy import deepcopy
 
 import torch.distributed as dist
 from datasets import Dataset
-from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
@@ -166,14 +165,14 @@ class GRPOTrainer:
                         self.train_dataloader,
                         granularity=self.actor.config.group_size,
                         workflow=workflow,
-                        should_accept=lambda sample: True,
+                        should_accept_fn=lambda sample: True,
                     )
                 else:
                     batch = self.actor.rollout_batch(
                         next(data_generator),
                         granularity=self.actor.config.group_size,
                         workflow=workflow,
-                        should_accept=lambda sample: True,
+                        should_accept_fn=lambda sample: True,
                     )
 
             if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
