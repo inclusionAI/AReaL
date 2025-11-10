@@ -1,4 +1,5 @@
 import os
+import subprocess
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -234,3 +235,12 @@ class StepInfo:
             global_step=self.global_step + 1,
             steps_per_epoch=self.steps_per_epoch,
         )
+
+
+@dataclass
+class LocalInfServerInfo:
+    """Information about a locally launched inference server."""
+
+    host: str
+    port: int
+    process: subprocess.Popen

@@ -1,14 +1,19 @@
+import os
+import subprocess
+import sys
+import uuid
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any, Optional
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import InferenceEngineConfig
+from areal.api.cli_args import InferenceEngineConfig, vLLMConfig
 from areal.api.engine_api import InferenceEngine, NoResult
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
+    LocalInfServerInfo,
     ModelRequest,
     ModelResponse,
     ParamSpec,
@@ -18,6 +23,7 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import RemoteInfEngine
 from areal.platforms import current_platform
+from areal.utils.launcher import TRITON_CACHE_PATH
 
 
 class VLLMBackend:
@@ -140,6 +146,25 @@ class VLLMBackend:
         """Get vLLM health check request."""
         return HttpRequest(endpoint="/health", payload={}, method="GET")
 
+    def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
+        """Launch vLLM server subprocess."""
+        cmd = vLLMConfig.build_cmd_from_args(server_args)
+
+        _env = os.environ.copy()
+        triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
+        _env["TRITON_CACHE_PATH"] = os.path.join(triton_cache_path, str(uuid.uuid4()))
+
+        vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
+        if vllm_cache_path:
+            _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
+
+        return subprocess.Popen(
+            cmd,
+            env=_env,
+            stdout=sys.stdout,
+            stderr=sys.stdout,
+        )
+
 
 class RemotevLLMEngine(InferenceEngine):
     """vLLM remote inference engine.
@@ -249,3 +274,9 @@ class RemotevLLMEngine(InferenceEngine):
 
     def continue_generation(self):
         return self._engine.continue_generation()
+
+    def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
+        return self._engine.launch_server(server_args)
+
+    def teardown_server(self):
+        return self._engine.teardown_server()
