@@ -1,7 +1,6 @@
 import json
 import multiprocessing
 import re
-from typing import List, Union
 
 import regex
 from latex2sympy2 import latex2sympy
@@ -166,7 +165,7 @@ def _fix_fracs(string):
             else:
                 try:
                     assert len(substr) >= 2
-                except:
+                except AssertionError:
                     return string
                 a = substr[0]
                 b = substr[1]
@@ -196,10 +195,10 @@ def _fix_a_slash_b(string):
             a = int(a)
         if "sqrt" not in b:
             b = int(b)
-        assert string == "{}/{}".format(a, b)
+        assert string == f"{a}/{b}"
         new_string = "\\frac{" + str(a) + "}{" + str(b) + "}"
         return new_string
-    except:
+    except Exception:
         return string
 
 
@@ -211,7 +210,7 @@ def _fix_sqrt(string):
 def convert_word_number(text: str) -> str:
     try:
         text = str(w2n.word_to_num(text))
-    except:
+    except Exception:
         pass
     return text
 
@@ -287,7 +286,7 @@ def strip_string(string, skip_unit=False):
 
     # remove percentage
     string = string.replace("\\%", "")
-    string = string.replace("\%", "")
+    string = string.replace(r"\%", "")
     string = string.replace("%", "")
 
     # " 0." equivalent to " ." and "{0." equivalent to "{." Alternatively, add "0" if "." is the start of the string
@@ -397,7 +396,7 @@ def extract_answer(pred_str, data_name, use_last_number=True):
         pred = pred_str.split("答案是")[1].strip().split("\n\n")[0].strip()
     else:  # use the last number
         if use_last_number:
-            pattern = "-?\d*\.?\d+"
+            pattern = r"-?\d*\.?\d+"
             pred = re.findall(pattern, pred_str.replace(",", ""))
             if len(pred) >= 1:
                 pred = pred[-1]
@@ -444,14 +443,14 @@ def parse_digits(num):
     num = regex.sub(",", "", str(num))
     try:
         return float(num)
-    except:
+    except Exception:
         if num.endswith("%"):
             num = num[:-1]
             if num.endswith("\\"):
                 num = num[:-1]
             try:
                 return float(num) / 100
-            except:
+            except Exception:
                 pass
     return None
 
@@ -493,8 +492,8 @@ def symbolic_equal_process(a, b, output_queue):
 
 
 def math_equal(
-    prediction: Union[bool, float, str],
-    reference: Union[float, str],
+    prediction: bool | float | str,
+    reference: float | str,
     include_percentage: bool = True,
     is_close: bool = True,
     timeout: bool = False,
@@ -535,7 +534,7 @@ def math_equal(
                 except Exception:
                     continue
             return False
-    except:
+    except Exception:
         pass
 
     if not prediction and prediction not in [0, False]:
@@ -546,7 +545,7 @@ def math_equal(
     prediction = str(prediction).strip()
 
     ## pmatrix (amps)
-    if "pmatrix" in prediction and not "pmatrix" in reference:
+    if "pmatrix" in prediction and "pmatrix" not in reference:
         reference = str_to_pmatrix(reference)
 
     ## deal with [], (), {}
@@ -705,10 +704,10 @@ def symbolic_equal(a, b):
         for f in [parse_latex, parse_expr, latex2sympy]:
             try:
                 return f(s.replace("\\\\", "\\"))
-            except:
+            except Exception:
                 try:
                     return f(s)
-                except:
+                except Exception:
                     pass
         return s
 
@@ -719,27 +718,27 @@ def symbolic_equal(a, b):
     try:
         if str(a) == str(b) or a == b:
             return True
-    except:
+    except Exception:
         pass
 
     # simplify equal
     try:
         if a.equals(b) or simplify(a - b) == 0:
             return True
-    except:
+    except Exception:
         pass
 
     # equation equal
     try:
         if (abs(a.lhs - a.rhs)).equals(abs(b.lhs - b.rhs)):
             return True
-    except:
+    except Exception:
         pass
 
     try:
         if numeric_equal(float(N(a)), float(N(b))):
             return True
-    except:
+    except Exception:
         pass
 
     # matrix
@@ -750,14 +749,13 @@ def symbolic_equal(a, b):
             _b = b.applyfunc(lambda x: round(x, 3))
             if _a.equals(_b):
                 return True
-    except:
+    except Exception:
         pass
 
     return False
 
 
 def process_results(answer, solution):
-
     try:
         extracted_answer = extract_answer(answer, "math", use_last_number=False)
         extracted_solution = extract_answer(solution, "math", use_last_number=True)
@@ -780,12 +778,12 @@ def process_results(answer, solution):
             retval = 0
 
         return retval, (extracted_answer, extracted_solution)
-    except:
+    except Exception:
         return 0, ("None", "None")
 
 
 def loadJson(dataDir):
-    with open(dataDir, "r") as f:
+    with open(dataDir) as f:
         if dataDir.endswith(".jsonl"):
             samples = [json.loads(line) for line in f.readlines()]
         else:
@@ -805,11 +803,11 @@ def parse_line(id2info, prompt_str, generated, query_id):
 
 def parse_lines_in_parallel(
     id2info,
-    generateds: List,
-    query_ids: List,
+    generateds: list,
+    query_ids: list,
     max_workers=22,
     check_xml_format=False,
-) -> List:
+) -> list:
     assert len(generateds) == len(query_ids), (
         len(generateds),
         len(query_ids),
@@ -833,7 +831,7 @@ def parse_lines_in_parallel(
                 x = job.result()
             except TimeoutError:
                 # print("[debug: timeout]")
-                logger.warning(f"Timeout occurred while justifying the math answer.")
+                logger.warning("Timeout occurred while justifying the math answer.")
                 x = (0, "timeout", "timeout")
             except ProcessExpired as e:
                 logger.warning(f"Process terminated abnormally: {e}")

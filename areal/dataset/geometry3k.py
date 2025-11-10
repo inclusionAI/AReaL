@@ -1,5 +1,5 @@
 from io import BytesIO
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 from datasets import load_dataset
 from PIL import Image
@@ -8,7 +8,6 @@ from torchvision import transforms
 
 
 def pad_to_square(img: Image.Image, fill=(0, 0, 0)) -> Image.Image:
-
     w, h = img.size
     side = max(w, h)
     new_img = Image.new(img.mode, (side, side), color=fill)
@@ -18,9 +17,9 @@ def pad_to_square(img: Image.Image, fill=(0, 0, 0)) -> Image.Image:
 
 
 def convert_image(
-    image: Union[Dict[str, Any], ImageObject, str],
-    fixed_width: Optional[int] = None,
-    fixed_height: Optional[int] = None,
+    image: dict[str, Any] | ImageObject | str,
+    fixed_width: int | None = None,
+    fixed_height: int | None = None,
 ) -> ImageObject:
     if (
         fixed_width is not None
@@ -44,7 +43,7 @@ def get_geometry3k_sft_dataset(
     path: str,
     split: str,
     processor,
-    max_length: Optional[int] = None,
+    max_length: int | None = None,
 ):
     """
     "geometry3k": {
@@ -124,7 +123,7 @@ def get_geometry3k_rl_dataset(
     path: str,
     split: str,
     processor,
-    max_length: Optional[int] = None,
+    max_length: int | None = None,
 ):
     dataset = load_dataset(path=path, split=split)
 
@@ -142,7 +141,7 @@ def get_geometry3k_rl_dataset(
         system_prompt = {
             "role": "system",
             "content": (
-                "Solve the following geometric problem based on the image. You may explain your reasoning before providing the final answer. The answer should be enclosed in [ ] and can be a number, decimal, or LaTeX format (e.g. \frac { 4 }{ 9 } \sqrt { 3 }).\n"
+                "Solve the following geometric problem based on the image. You may explain your reasoning before providing the final answer. The answer should be enclosed in [ ] and can be a number, decimal, or LaTeX format (e.g. \frac { 4 }{ 9 } \\sqrt { 3 }).\n"
             ),
         }
 

@@ -1,7 +1,7 @@
 import math
 import os
 from io import BytesIO
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 import torch.distributed as dist
 from datasets import load_dataset
@@ -15,13 +15,14 @@ DATASET_NUM_PROC = 16
 
 
 def convert_image(
-    image: Union[Dict[str, Any], ImageObject, str],
-    max_pixels: Optional[int],
+    image: dict[str, Any] | ImageObject | str,
+    max_pixels: int | None,
 ) -> ImageObject:
     if max_pixels is not None and (image.width * image.height) > max_pixels:
         resize_factor = math.sqrt(max_pixels / (image.width * image.height))
-        width, height = int(image.width * resize_factor), int(
-            image.height * resize_factor
+        width, height = (
+            int(image.width * resize_factor),
+            int(image.height * resize_factor),
         )
         image = image.resize((width, height))
 
@@ -36,7 +37,7 @@ def get_clevr_count_70k_sft_dataset(
     path: str,
     split: str,
     processor,
-    max_length: Optional[int] = None,
+    max_length: int | None = None,
 ):
     """
     "clevr_count_70k": {
@@ -152,7 +153,7 @@ def get_clevr_count_70k_rl_dataset(
     path: str,
     split: str,
     processor,
-    max_length: Optional[int] = None,
+    max_length: int | None = None,
 ):
     def _do_preprocess(
         path: str,
