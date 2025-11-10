@@ -1,6 +1,5 @@
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -21,13 +20,13 @@ from areal.utils.datapack import ffd_allocate
 
 @dataclass
 class RedistributedData:
-    all_data: list[dict[str, Any]]
-    data: dict[str, Any]
+    all_data: List[Dict[str, Any]]
+    data: Dict[str, Any]
     rank: int
-    group_indices: list[list[int]]
+    group_indices: List[List[int]]
 
 
-def _slice_tensor_dict(data: dict[str, Any], start: int, end: int) -> dict[str, Any]:
+def _slice_tensor_dict(data: Dict[str, Any], start: int, end: int) -> Dict[str, Any]:
     """Slices tensors in a dictionary along the first dimension."""
     sliced_data = {}
     batch_size = -1
@@ -42,7 +41,7 @@ def _slice_tensor_dict(data: dict[str, Any], start: int, end: int) -> dict[str, 
 
 
 def redistribute(
-    data: dict[str, Any], granularity: int = 1, group=None
+    data: Dict[str, Any], granularity: int = 1, group=None
 ) -> RedistributedData:
     """Redistribute a batch across a process group.
 
@@ -57,9 +56,7 @@ def redistribute(
     all_data = []
     for d in all_gathered:
         bs = get_batch_size(d)
-        assert bs % granularity == 0, (
-            f"Batch size {bs} not divisible by granularity {granularity}"
-        )
+        assert bs % granularity == 0
         all_data += [
             _slice_tensor_dict(d, i, i + granularity) for i in range(0, bs, granularity)
         ]
@@ -68,7 +65,7 @@ def redistribute(
 
     # Remove pad positions
     for d in all_data:
-        length = d["attention_mask"].sum(-1).max().item()
+        l = d["attention_mask"].sum(-1).max().item()
         attn_mask_shape = d["attention_mask"].shape
         for k, v in d.items():
             if (
@@ -76,7 +73,7 @@ def redistribute(
                 and len(v.shape) >= 2
                 and v.shape[:2] == attn_mask_shape[:2]
             ):
-                d[k] = v[:, :length]
+                d[k] = v[:, :l]
 
     # No capacity limit leads to balanced partition across this group
     group_indices = ffd_allocate(
@@ -95,14 +92,15 @@ def redistribute(
 
 class DistRolloutCoordinator:
     def __init__(self, rollout_engine: InferenceEngine, train_engine: TrainEngine):
+
         self.rollout_engine = rollout_engine
         self.train_engine = train_engine
 
     def _broadcast_and_redistribute_batch(
         self,
-        batch: dict[str, Any] | None,
+        batch: Dict[str, Any] | None,
         granularity: int = 1,
-    ) -> dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Broadcast and redistribute batch across distributed workers.
 
         This helper encapsulates:
@@ -125,16 +123,13 @@ class DistRolloutCoordinator:
         Dict[str, Any]
             Redistributed and broadcast batch available on all ranks
         """
-        # TODO: in agent async training, some tasks are slow or failed, and always encounter the following error
-        #   AssertionError: Batch size 365 not divisible by granularity 4
-        # comment this code temporarily
-        # if batch is not None:
-        #     redist = redistribute(
-        #         batch,
-        #         granularity=granularity,
-        #         group=self.train_engine.data_parallel_group,
-        #     )
-        #     batch = redist.data
+        if batch is not None:
+            redist = redistribute(
+                batch,
+                granularity=granularity,
+                group=self.train_engine.data_parallel_group,
+            )
+            batch = redist.data
 
         dist.barrier(device_ids=[current_platform.current_device()])
         current_platform.synchronize()
@@ -152,12 +147,12 @@ class DistRolloutCoordinator:
 
     def rollout_batch(
         self,
-        data: list[dict[str, Any]],
+        data: List[Dict[str, Any]],
         granularity: int = 1,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Generate rollout batch with distributed coordination (synchronous).
 
         This method orchestrates distributed rollout generation:
@@ -211,10 +206,10 @@ class DistRolloutCoordinator:
         self,
         dataloader: StatefulDataLoader,
         granularity: int = 1,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
+        workflow: Optional[RolloutWorkflow] = None,
+        workflow_builder: Optional[Callable] = None,
         should_accept: Callable | None = None,
-    ) -> dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Prepare async rollout batch with distributed coordination.
 
         Similar to rollout_batch but uses prepare_batch for async training,
