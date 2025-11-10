@@ -217,8 +217,22 @@ For 3-hour training:
 - Verify container image name
 - Check environment variables
 
-### Out of Memory
-- Use RTX 4090 or A100
+### Out of Memory (OOM)
+
+**For A40 GPU**: Use the A40-optimized config:
+```bash
+# The script auto-detects A40 and uses optimized config
+bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
+```
+
+**Manual fix**: If still OOM, reduce memory usage:
+- Enable `gradient_checkpointing: true` in config
+- Reduce `sglang.mem_fraction_static: 0.5` (from 0.8)
+- Reduce `train_dataset.batch_size: 4` (from 8)
+- Reduce `gconfig.max_new_tokens: 256` (from 512)
+
+**For other GPUs**: 
+- Use RTX 4090 or A100 (more memory)
 - Reduce batch size in config
 - Enable gradient checkpointing
 

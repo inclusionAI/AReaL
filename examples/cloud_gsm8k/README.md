@@ -68,7 +68,8 @@ bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
 
 ### Configurations
 - `gsm8k_grpo_cloud.yaml` - Full training (cloud-optimized)
-- `gsm8k_grpo_1hour.yaml` - 1-hour training
+- `gsm8k_grpo_1hour.yaml` - 1-hour training (RTX 4090/A100)
+- `gsm8k_grpo_1hour_a40.yaml` - 1-hour training (A40 GPU optimized) ⭐
 - `gsm8k_grpo_3hour.yaml` - 3-hour training
 - `gsm8k_grpo_fast.yaml` - Fast training (20-30 min)
 
@@ -77,8 +78,11 @@ bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
 For 3-hour training:
 - **RunPod RTX 4090 Spot**: ~$0.27 ⭐ **Best Value**
 - **RunPod RTX 4090**: ~$0.87
+- **RunPod A40**: ~$1.20-1.50 (if RTX 4090 unavailable)
 - **Lambda AI A100**: ~$3.30
 - **Vast.ai RTX 4090**: ~$0.60-1.20
+
+**Note**: A40 GPU requires memory-optimized config. The training script auto-detects A40 and uses `gsm8k_grpo_1hour_a40.yaml` automatically.
 
 ## Key Differences from Local Setup
 
@@ -100,10 +104,17 @@ For 3-hour training:
 
 See `DOCKER_IMAGE_EXPLANATION.md` for detailed explanation.
 
+## Troubleshooting
+
+- **Pip installation fails**: See `RUNPOD_COMPLETE_GUIDE.md` - "Pip Installation Fails" section
+- **CUDA Out of Memory on A40**: See `A40_GPU_FIX.md` ⚠️ or `RUNPOD_COMPLETE_GUIDE.md` - "CUDA Out of Memory" section
+- **Model persistence**: See `RUNPOD_COMPLETE_GUIDE.md` - "Resuming Training" section
+
 ## Next Steps
 
 1. **For RunPod**: See `RUNPOD_QUICK_START.md` ⭐
-2. **For Docker image explanation**: See `DOCKER_IMAGE_EXPLANATION.md`
-3. **For other platforms**: See `CLOUD_DEPLOYMENT.md`
-4. **For comparison**: See `PLATFORM_COMPARISON.md`
+2. **For A40 GPU issues**: See `A40_GPU_FIX.md` ⚠️
+3. **For Docker image explanation**: See `DOCKER_IMAGE_EXPLANATION.md`
+4. **For other platforms**: See `CLOUD_DEPLOYMENT.md`
+5. **For comparison**: See `PLATFORM_COMPARISON.md`
 

@@ -42,8 +42,14 @@ fi
 
 # Verify GPU
 echo "Checking GPU..."
-if ! nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null; then
+GPU_INFO=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null)
+if [ -z "$GPU_INFO" ]; then
     echo "WARNING: nvidia-smi not available. GPU may not be accessible."
+else
+    echo "$GPU_INFO"
+    # Set PyTorch memory allocator for better memory management (especially for A40)
+    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    echo "Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management"
 fi
 
 # Select configuration
@@ -55,10 +61,17 @@ case "$CONFIG_NAME" in
         echo "Using FAST training configuration (20-30 minutes)"
         ;;
     1hour)
-        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml"
+        # Auto-detect GPU and use appropriate config
+        if nvidia-smi --query-gpu=name --format=csv,noheader | grep -qi "A40"; then
+            CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_1hour_a40.yaml"
+            echo "Using 1-HOUR training configuration (~1-2 hours) - A40 OPTIMIZED"
+            echo "Note: A40 GPU detected, using memory-optimized config"
+        else
+            CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml"
+            echo "Using 1-HOUR training configuration (~1-2 hours)"
+        fi
         TRAIN_SCRIPT="examples/docker_gsm8k/gsm8k_grpo_1hour.py"
         EXPERIMENT_NAME="gsm8k-grpo-cloud-1hour"
-        echo "Using 1-HOUR training configuration (~1-2 hours)"
         echo "Note: Uses limited dataset (500 samples) from docker_gsm8k script"
         ;;
     3hour)

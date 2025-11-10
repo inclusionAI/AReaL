@@ -502,6 +502,85 @@ bash -c "pip config set global.index-url https://pypi.org/simple && pip config s
 - Verify batch size is appropriate
 - Check network volume performance
 
+### CUDA Out of Memory (OOM) on A40 GPU
+
+**Problem**: A40 GPU (44GB) runs out of memory when both SGLang inference server and trainer share the same GPU.
+
+**Error message:**
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 48.00 MiB. 
+GPU 0 has a total capacity of 44.42 GiB of which 27.50 MiB is free.
+Process 2963820 has 36.34 GiB memory in use.  # SGLang server
+Process 2965022 has 8.05 GiB memory in use.   # Trainer
+```
+
+**Solutions** (apply in order):
+
+1. **Use A40-optimized config** (recommended):
+   ```bash
+   # Use the A40-optimized config file
+   bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
+   # But override config to use A40 version:
+   python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_1hour.py \
+       --config examples/cloud_gsm8k/gsm8k_grpo_1hour_a40.yaml \
+       experiment_name=gsm8k-grpo-cloud-1hour \
+       trial_name=trial0
+   ```
+
+2. **Enable gradient checkpointing** (reduces training memory by ~30-40%):
+   ```yaml
+   actor:
+     gradient_checkpointing: true  # Change from false to true
+   ```
+
+3. **Reduce SGLang memory fraction** (leaves more memory for trainer):
+   ```yaml
+   sglang:
+     mem_fraction_static: 0.5  # Reduce from 0.8 to 0.5
+   ```
+
+4. **Reduce batch size**:
+   ```yaml
+   train_dataset:
+     batch_size: 4  # Reduce from 8 to 4
+   ```
+
+5. **Reduce max_new_tokens**:
+   ```yaml
+   gconfig:
+     max_new_tokens: 256  # Reduce from 512 to 256
+   ```
+
+6. **Reduce max_tokens_per_mb**:
+   ```yaml
+   actor:
+     mb_spec:
+       max_tokens_per_mb: 4096  # Reduce from 5120
+   ```
+
+7. **Set PyTorch memory allocator** (reduces fragmentation):
+   ```bash
+   export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+   ```
+
+8. **Reduce max_concurrent_rollouts**:
+   ```yaml
+   rollout:
+     max_concurrent_rollouts: 16  # Reduce from 32
+   ```
+
+**Quick fix for A40**: Use the provided `gsm8k_grpo_1hour_a40.yaml` config file which includes all these optimizations.
+
+**Memory breakdown on A40**:
+- SGLang server: ~36GB (with `mem_fraction_static: 0.8`)
+- Trainer: ~8GB
+- Total: ~44GB (exceeds A40 capacity)
+
+**With A40 optimizations**:
+- SGLang server: ~22GB (with `mem_fraction_static: 0.5`)
+- Trainer: ~6GB (with gradient checkpointing)
+- Total: ~28GB (fits comfortably in A40)
+
 ## Best Practices
 
 1. ✅ **Always use spot instances** (50-70% savings)
