@@ -41,7 +41,10 @@ class AEntPPOActor(PPOActor):
     ) -> List[Dict[str, float]]:
         with stats_tracker.scope("aent_ppo_actor"):
             with stats_tracker.scope("dynamic_sampling"):
-                if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
+                if (
+                    self.dynamic_sampling
+                    and len(data["rewards"]) % self.group_size == 0
+                ):
                     data, sampling_stat = dynamic_sampling(data, self.group_size)
                     stats_tracker.scalar(**sampling_stat)
 
@@ -50,7 +53,6 @@ class AEntPPOActor(PPOActor):
             reward_score = data["rewards"]
             seqlens = attn_mask.sum(-1)
 
-            all_stats = []
             ########## Logging code starts ##########
             result_denominators = {
                 "correct_n_seqs": (reward_score > 0).bool(),
@@ -144,13 +146,18 @@ class AEntPPOActor(PPOActor):
                     )
                     stats_tracker.scalar(**train_stat)
             if self.adaptive_coeff and global_step > self.warmup_steps:
-                entropy = stats_tracker.export(reduce_group=self.engine.data_parallel_group, reset=False)["aent_ppo_actor/update/entropy/avg"]
+                stats = stats_tracker.export(
+                    reduce_group=self.engine.data_parallel_group, reset=False
+                )
+                entropy = stats["aent_ppo_actor/update/entropy/avg"]
                 self.entropy_coeff -= self.coeff_lr * (
-                    min(0, entropy - self.entropy_low) + max(0, entropy - self.entropy_high)
+                    min(0, entropy - self.entropy_low)
+                    + max(0, entropy - self.entropy_high)
                 )
                 self.entropy_coeff = min(
                     max(self.entropy_coeff, self.coeff_box_low), self.coeff_box_high
                 )
+
 
 class FSDPAEntPPOActor(FSDPEngine):
 
