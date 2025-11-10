@@ -165,14 +165,14 @@ def main(args):
                     train_dataloader,
                     granularity=actor.config.group_size,
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
             else:
                 batch = actor.rollout_batch(
                     next(data_generator),
                     granularity=actor.config.group_size,
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
 
         with stats_tracker.record_timing("critic_values"):

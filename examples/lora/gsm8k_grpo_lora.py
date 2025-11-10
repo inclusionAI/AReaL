@@ -190,13 +190,13 @@ def main(args):
                     batch = rollout.prepare_batch(
                         train_dataloader,
                         workflow=workflow,
-                        should_accept=lambda sample: True,
+                        should_accept_fn=lambda sample: True,
                     )
                 else:
                     batch = rollout.rollout_batch(
                         next(data_generator),
                         workflow=workflow,
-                        should_accept=lambda sample: True,
+                        should_accept_fn=lambda sample: True,
                     )
                 batch = tensor_container_to(batch, actor.device)
             batch = bcast_and_split_from_rank0(

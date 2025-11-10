@@ -252,11 +252,11 @@ def main(args):
     data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(max_steps):
         with stats_tracker.record_timing("rollout"):
-            # the `should_accept` parameter is used for dynamic filtering
+            # the `should_accept_fn` parameter is used for dynamic filtering
             if config.async_training:
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow, should_accept=lambda sample: True)
+                batch = rollout.prepare_batch(train_dataloader, workflow=workflow, should_accept_fn=lambda sample: True)
             else:
-                batch = rollout.rollout_batch(next(data_generator), workflow=workflow, should_accept=lambda sample: True)
+                batch = rollout.rollout_batch(next(data_generator), workflow=workflow, should_accept_fn=lambda sample: True)
         # ... continue with training loop ...
 ```
 
