@@ -29,8 +29,7 @@ def import_from_string(module_path: str) -> Any:
         obj = getattr(module, object_name)
     except AttributeError as e:
         raise AttributeError(
-            f"Module '{module_name}' has no attribute '{object_name}'. "
-            f"Available attributes: {dir(module)}"
+            f"Module '{module_name}' has no attribute '{object_name}'."
         ) from e
 
     return obj

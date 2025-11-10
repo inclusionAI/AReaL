@@ -638,7 +638,7 @@ class RemoteInfEngine:
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> None:
@@ -648,13 +648,14 @@ class RemoteInfEngine:
         ----------
         data : Dict[str, Any]
             The input data for rollout
-        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
         should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
             A function or module path for trajectory filtering
         """
+        assert workflow is not None, "Workflow must be specified for submit."
         return self.workflow_executor.submit(
             data,
             workflow=workflow,
@@ -688,7 +689,7 @@ class RemoteInfEngine:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
@@ -698,7 +699,7 @@ class RemoteInfEngine:
         ----------
         data : List[Dict[str, Any]]
             A list of input data dictionaries for rollout
-        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
@@ -710,6 +711,7 @@ class RemoteInfEngine:
         Dict[str, Any]
             A concatenated batch of trajectory results
         """
+        assert workflow is not None, "Workflow must be specified for rollout_batch."
         return self.workflow_executor.rollout_batch(
             data=data,
             workflow=workflow,
@@ -720,7 +722,7 @@ class RemoteInfEngine:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ):
@@ -730,7 +732,7 @@ class RemoteInfEngine:
         ----------
         dataloader : StatefulDataLoader
             The data loader to pull data from
-        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
@@ -742,6 +744,7 @@ class RemoteInfEngine:
         Dict[str, Any]
             A full batch of trajectory results
         """
+        assert workflow is not None, "Workflow must be specified for prepare_batch."
         return self.workflow_executor.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,

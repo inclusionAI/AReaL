@@ -369,14 +369,14 @@ class WorkflowExecutor:
 
     def _resolve_workflow(
         self,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None,
     ) -> RolloutWorkflow:
         """Resolve workflow parameter to a RolloutWorkflow instance.
 
         Parameters
         ----------
-        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str | None
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             The workflow specification
         workflow_kwargs : Dict[str, Any] | None
             Keyword arguments for workflow initialization
@@ -389,15 +389,10 @@ class WorkflowExecutor:
         Raises
         ------
         ValueError
-            If workflow_kwargs is required but not provided, or if workflow is None
+            If workflow_kwargs is required but not provided
         TypeError
             If workflow type is invalid
         """
-        if workflow is None:
-            raise ValueError(
-                "workflow must be provided. It can be a RolloutWorkflow instance, "
-                "a RolloutWorkflow class, or a string module path."
-            )
 
         # Case 1: Already a workflow instance
         if isinstance(workflow, RolloutWorkflow):
@@ -407,58 +402,46 @@ class WorkflowExecutor:
                 )
             return workflow
 
-        # Case 2: Workflow class type
-        if isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
-            if workflow_kwargs is None:
-                raise ValueError(
-                    f"workflow_kwargs is required when workflow is a class type. "
-                    f"Got workflow={workflow}, but workflow_kwargs=None."
-                )
-            try:
-                return workflow(**workflow_kwargs)
-            except Exception as e:
-                raise TypeError(
-                    f"Failed to instantiate workflow class {workflow} "
-                    f"with kwargs {workflow_kwargs}: {e}"
-                ) from e
+        workflow_class: type[RolloutWorkflow]
 
-        # Case 3: String module path
+        # Resolve to a class type
         if isinstance(workflow, str):
-            if workflow_kwargs is None:
-                raise ValueError(
-                    f"workflow_kwargs is required when workflow is a string. "
-                    f"Got workflow={workflow!r}, but workflow_kwargs=None."
-                )
             try:
-                workflow_class = import_from_string(workflow)
+                imported_obj = import_from_string(workflow)
             except (ValueError, ImportError, AttributeError) as e:
                 raise ValueError(
                     f"Failed to import workflow from string {workflow!r}: {e}"
                 ) from e
 
-            if not isinstance(workflow_class, type):
+            if not isinstance(imported_obj, type) or not issubclass(
+                imported_obj, RolloutWorkflow
+            ):
                 raise TypeError(
-                    f"Imported object {workflow_class} from {workflow!r} is not a class"
+                    f"Imported object from {workflow!r} is not a valid RolloutWorkflow class."
                 )
+            workflow_class = imported_obj
+        elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
+            workflow_class = workflow
+        else:
+            raise TypeError(
+                f"Invalid workflow type: {type(workflow)}. "
+                f"Expected RolloutWorkflow instance, RolloutWorkflow class, or string module path."
+            )
 
-            if not issubclass(workflow_class, RolloutWorkflow):
-                raise TypeError(
-                    f"Imported class {workflow_class} from {workflow!r} "
-                    f"is not a subclass of RolloutWorkflow"
-                )
+        # Instantiate the class
+        if workflow_kwargs is None:
+            raise ValueError(
+                f"workflow_kwargs is required when workflow is a class or string. "
+                f"Got workflow={workflow}, but workflow_kwargs=None."
+            )
 
-            try:
-                return workflow_class(**workflow_kwargs)
-            except Exception as e:
-                raise TypeError(
-                    f"Failed to instantiate workflow class {workflow_class} "
-                    f"from string {workflow!r} with kwargs {workflow_kwargs}: {e}"
-                ) from e
-
-        raise TypeError(
-            f"Invalid workflow type: {type(workflow)}. "
-            f"Expected RolloutWorkflow instance, RolloutWorkflow class, or string module path."
-        )
+        try:
+            return workflow_class(**workflow_kwargs)
+        except Exception as e:
+            raise TypeError(
+                f"Failed to instantiate workflow class {workflow_class} "
+                f"with kwargs {workflow_kwargs}: {e}"
+            ) from e
 
     def _resolve_should_accept(
         self, should_accept: Callable[[dict[str, Any]], bool] | str | None
@@ -650,7 +633,7 @@ class WorkflowExecutor:
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> None:
@@ -792,7 +775,7 @@ class WorkflowExecutor:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
@@ -818,7 +801,7 @@ class WorkflowExecutor:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ):

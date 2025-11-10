@@ -776,6 +776,9 @@ class MegatronEngine(TrainEngine):
             should_accept_fn=should_accept_fn,
         )
 
+    def set_version(self, version: int):
+        self._version = version
+
     def get_version(self) -> int:
         return self._version
 

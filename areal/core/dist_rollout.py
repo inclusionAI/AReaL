@@ -172,7 +172,7 @@ class DistRolloutCoordinator:
             - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
             - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
             - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str, optional
             Workflow defining rollout logic
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
@@ -226,7 +226,7 @@ class DistRolloutCoordinator:
             - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
             - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
             - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str, optional
             Workflow defining rollout logic
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor

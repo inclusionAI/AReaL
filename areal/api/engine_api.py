@@ -487,15 +487,13 @@ class InferenceEngine(abc.ABC):
         ----------
         data : Dict[str, Any]
             The input data for rollout. Used by the user's customized workflow implementation.
-        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             The workflow to use for rollout generation. Can be:
 
             - An instance of RolloutWorkflow (for sharing resources between rollouts)
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
-
-            By default None.
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
@@ -550,15 +548,13 @@ class InferenceEngine(abc.ABC):
         ----------
         data : List[Dict[str, Any]]
             A list of input data dictionaries for rollout
-        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             The workflow to use for rollout generation. Can be:
 
             - An instance of RolloutWorkflow (for sharing resources between rollouts)
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
-
-            By default None.
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
@@ -588,15 +584,13 @@ class InferenceEngine(abc.ABC):
         ----------
         dataloader : StatefulDataLoader
             The data loader to pull data from for batch preparation
-        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             The workflow to use for rollout generation. Can be:
 
             - An instance of RolloutWorkflow (for sharing resources between rollouts)
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
-
-            By default None.
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
