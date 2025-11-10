@@ -8,25 +8,16 @@ import torch
 from torch import nn
 from torch.distributed.tensor import DTensor, Replicate
 from transformers.integrations.flash_attention import flash_attention_forward
+from transformers.models.qwen3_vl.modeling_qwen3_vl import (
+    apply_rotary_pos_emb,
+    repeat_kv,
+)
 
-from areal.utils import logging
 from areal.utils.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
     get_ulysses_sequence_parallel_world_size,
 )
-
-logger = logging.getLogger("Qwen3VL")
-
-
-# Import qwen3_vl specific functions
-try:
-    from transformers.models.qwen3_vl.modeling_qwen3_vl import (
-        apply_rotary_pos_emb,
-        repeat_kv,
-    )
-except ImportError:
-    logger.warning("transformers >= 4.57.1 is required for qwen3_vl.")
 
 
 def ulysses_flash_attn_forward(
