@@ -8,12 +8,14 @@ from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import stats_tracker
 from areal.utils.functional import gather_logprobs
+from areal.utils.perf_tracer import trace_perf
 
 
 class LMEngine:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
+    @trace_perf("lm_engine.train_lm", category="compute")
     @stats_tracker.scope_func_wrapper("sft")
     def train_lm(self, data: dict[str, Any]):
         self.engine.train()
@@ -24,6 +26,7 @@ class LMEngine:
         )
         stats_tracker.scalar(**stats)
 
+    @trace_perf("lm_engine.evaluate_lm", category="compute")
     @stats_tracker.scope_func_wrapper("sft-eval")
     def evaluate_lm(self, data):
         self.engine.eval()

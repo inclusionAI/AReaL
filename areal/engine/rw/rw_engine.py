@@ -8,6 +8,7 @@ from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.platforms import current_platform
 from areal.utils import logging, stats_tracker
+from areal.utils.perf_tracer import trace_perf
 
 logger = logging.getLogger("RW engine")
 
@@ -16,6 +17,7 @@ class RWEngine:
     def __init__(self, engine: TrainEngine):
         self.engine = engine
 
+    @trace_perf("rw_engine.train_rw", category="compute")
     @stats_tracker.scope_class_wrapper("rw")
     def train_rw(self, data: dict[str, Any]):
         """Train on a batch(reward model)"""
@@ -30,6 +32,7 @@ class RWEngine:
             ),
         )
 
+    @trace_perf("rw_engine.evaluate_rw", category="compute")
     @stats_tracker.scope_class_wrapper("rw-eval")
     def evaluate_rw(self, data: dict[str, Any]):
         self.engine.eval()

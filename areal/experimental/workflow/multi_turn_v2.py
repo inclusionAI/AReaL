@@ -2,6 +2,7 @@ import asyncio
 import os
 import uuid
 from copy import deepcopy
+from typing import Any
 
 import aiofiles
 import aiofiles.os
@@ -44,11 +45,13 @@ class MultiTurnWorkflow(RolloutWorkflow):
             {
                 "role": "user",
                 "content": "Your answer is either wrong or not parsable to the reward function. You may misunderstand the original question. "
-                "Please carefully read the original question, check the preivous errors, and try to answer it again.",
+                "Please carefully read the original question, check the previous errors, and try to answer it again.",
             }
         ]
 
-    async def _run_one_episode(self, engine: InferenceEngine, data, rid):
+    async def _run_one_episode(
+        self, engine: InferenceEngine, data: dict, rid: str
+    ) -> tuple[dict, Any]:
         client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
         messages = deepcopy(data["messages"])
         # Run multi-turn rollout until correct
@@ -56,7 +59,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         discount = 1
         while reward == 0 and t < self.max_turns:
             # Send generate request to get the response.
-            _comp = await client.chat.completions.create(
+            _comp = await client.chat.completions.create(  # type: ignore[arg-type]
                 messages=messages,
                 frequency_penalty=self.gconfig.frequency_penalty,
                 max_completion_tokens=self.gconfig.max_new_tokens,
@@ -96,9 +99,9 @@ class MultiTurnWorkflow(RolloutWorkflow):
         stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward, num_turns=t)
 
         client.set_reward(_comp.id, reward)
-        return client.export_completions(turn_discount=0.0), comp
+        return client.export_completions(), comp
 
-    async def arun_episode(self, engine: InferenceEngine, data):
+    async def arun_episode(self, engine: InferenceEngine, data: dict[str, Any]) -> dict:
         rid = uuid.uuid4().hex
         tasks = [
             self._run_one_episode(engine, data, rid)
@@ -136,8 +139,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
                     )
                     await f.write(info + "\n")
 
-        data = [res[0] for res in results]
-        ret = {}
-        for d in data:
-            ret.update(d)
-        return ret
+        merged: dict = {}
+        for rollout_data, _ in results:
+            merged.update(rollout_data)
+        return merged

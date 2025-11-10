@@ -34,7 +34,7 @@ from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, perf_tracer
+from areal.utils import logging, name_resolve, names
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -64,6 +64,7 @@ from areal.utils.megatron import (
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
+from areal.utils.perf_tracer import trace_perf, trace_scope
 
 
 class _MegatronModelList(list):
@@ -623,6 +624,7 @@ class MegatronEngine(TrainEngine):
 
             fut.result()
 
+    @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
@@ -680,6 +682,7 @@ class MegatronEngine(TrainEngine):
         dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
 
+    @trace_perf("megatron_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
         fut = Future()
 
@@ -910,6 +913,7 @@ class MegatronEngine(TrainEngine):
         assert self.lr_scheduler is not None, "LR Scheduler is not initialized."
         self.lr_scheduler.step(1)
 
+    @trace_perf("megatron_engine.train_batch", category="compute")
     def train_batch(
         self,
         input_: dict[str, Any],
@@ -977,7 +981,7 @@ class MegatronEngine(TrainEngine):
             return output, functools.partial(_scaled_loss_fn, orig_input)
 
         forward_backward_func = get_forward_backward_func()
-        with perf_tracer.trace_scope("megatron_engine.train_batch.forward_backward"):
+        with trace_scope("megatron_engine.train_batch.forward_backward"):
             data_iterator = (
                 micro_batch_generator
                 if len(self.model) > 1
@@ -992,7 +996,7 @@ class MegatronEngine(TrainEngine):
                 micro_batch_size=1,  # no use when input_shapes was set
                 forward_only=False,
             )
-        with perf_tracer.trace_scope("megatron_engine.train_batch.step"):
+        with trace_scope("megatron_engine.train_batch.step"):
             update_successful, grad_norm, _ = self.optimizer.step()
         current_lr = self.optimizer.param_groups[0]["lr"]
 
@@ -1002,6 +1006,7 @@ class MegatronEngine(TrainEngine):
             lr=current_lr,
         )
 
+    @trace_perf("megatron_engine.eval_batch", category="compute")
     @torch.no_grad()
     def eval_batch(
         self,
@@ -1064,7 +1069,7 @@ class MegatronEngine(TrainEngine):
             return output, functools.partial(_scaled_loss_fn, orig_input)
 
         forward_backward_func = get_forward_backward_func()
-        with perf_tracer.trace_scope("megatron_engine.eval_batch.forward"):
+        with trace_scope("megatron_engine.eval_batch.forward"):
             data_iterator = (
                 micro_batch_generator
                 if len(self.model) > 1
@@ -1082,6 +1087,7 @@ class MegatronEngine(TrainEngine):
 
         return None
 
+    @trace_perf("megatron_engine.forward", category="compute")
     @torch.no_grad()
     def forward(
         self,
@@ -1142,7 +1148,7 @@ class MegatronEngine(TrainEngine):
 
         forward_backward_func = get_forward_backward_func()
 
-        with perf_tracer.trace_scope("megatron_engine.forward.forward"):
+        with trace_scope("megatron_engine.forward.forward"):
             data_iterator = (
                 micro_batch_generator
                 if len(self.model) > 1
