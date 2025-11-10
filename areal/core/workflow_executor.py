@@ -575,7 +575,6 @@ class WorkflowExecutor:
                         rejection_reason = "should_accept_false"
 
                 if should_accept_traj:
-                    assert traj is not None
                     manager.on_rollout_accepted()
                     stats = manager.get_stats()
                     trace_session_event(

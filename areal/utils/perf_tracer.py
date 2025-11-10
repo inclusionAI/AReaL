@@ -1427,11 +1427,8 @@ def trace_session(phase: str):
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
                 session_id = get_session_id()
-                trace_session_event(session_id, f"mark_{phase}_start")
-                try:
+                async with atrace_session_phase(session_id, phase):
                     return await func(*args, **kwargs)
-                finally:
-                    trace_session_event(session_id, f"mark_{phase}_end")
 
             return async_wrapper
         else:
@@ -1439,11 +1436,8 @@ def trace_session(phase: str):
             @functools.wraps(func)
             def sync_wrapper(*args, **kwargs):
                 session_id = get_session_id()
-                trace_session_event(session_id, f"mark_{phase}_start")
-                try:
+                with trace_session_phase(session_id, phase):
                     return func(*args, **kwargs)
-                finally:
-                    trace_session_event(session_id, f"mark_{phase}_end")
 
             return sync_wrapper
 
