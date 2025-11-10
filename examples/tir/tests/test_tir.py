@@ -74,7 +74,7 @@ def test_data_loading():
     data_file = Path(__file__).parent / "data" / "sample_math.jsonl"
     assert data_file.exists(), f"Data file not found: {data_file}"
 
-    with open(data_file) as f:
+    with open(data_file, encoding="utf-8") as f:
         data = [json.loads(line) for line in f]
 
     assert len(data) > 0, "No data loaded"
