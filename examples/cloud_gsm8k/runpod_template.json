@@ -1,0 +1,24 @@
+{
+  "name": "areal-grpo-training",
+  "imageName": "ghcr.io/inclusionai/areal-runtime:v0.3.4",
+  "dockerArgs": "",
+  "containerDiskInGb": 20,
+  "volumeInGb": 50,
+  "volumeMountPath": "/workspace/outputs",
+  "env": [
+    {
+      "key": "WANDB_API_KEY",
+      "value": "your-api-key-here"
+    },
+    {
+      "key": "PYTHONPATH",
+      "value": "/workspace/AReaL"
+    }
+  ],
+  "dockerCommand": "bash -c \"pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL && pip install -e . && export WANDB_API_KEY=\\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour\"",
+  "ports": "",
+  "isPublicIp": false,
+  "isServerless": false,
+  "readme": "AReaL GRPO training template for RunPod. Automatically clones repository, installs AReaL, and runs training."
+}
+
