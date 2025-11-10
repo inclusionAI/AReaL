@@ -51,14 +51,16 @@ RunPod is the most economical cloud GPU platform. This complete guide covers eve
    **Basic Info:**
    - **Name**: `areal-grpo-training`
    - **Container Image**: `ghcr.io/inclusionai/areal-runtime:v0.3.4`
-   - **Container Disk**: 20GB (enough for code and dependencies)
+   - **Container Disk**: 15GB (enough for code and dependencies, with headroom for training artifacts)
 
    **Docker Command:**
    ```bash
-   bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL && pip install -e . && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
+   bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch && git checkout DL4Math && git pull || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd AReaL && pip install -e . && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
    ```
    
-   **⚠️ Critical Fix**: The Docker image (`ghcr.io/inclusionai/areal-runtime:v0.3.4`) is configured to use an internal PyPI mirror (`pypi.antfin-inc.com`) that's not accessible from RunPod. The command above overrides it to use the public PyPI (`pypi.org`).
+   **⚠️ Important**: 
+   - **Smart git handling**: If AReaL exists and is a valid git repo, it updates with `git pull` (preserves code during container restarts). Only removes/clones if invalid or missing. This prevents deleting code during training.
+   - **Pip fix**: The Docker image (`ghcr.io/inclusionai/areal-runtime:v0.3.4`) is configured to use an internal PyPI mirror (`pypi.antfin-inc.com`) that's not accessible from RunPod. The command above overrides it to use the public PyPI (`pypi.org`).
 
    **Environment Variables:**
    - Click "Add Environment Variable" for each:
@@ -97,7 +99,7 @@ RunPod is the most economical cloud GPU platform. This complete guide covers eve
 6. **Volume Mounts**:
    - `/workspace/outputs` → Your `areal-outputs` volume
 7. **Spot Instance**: ✅ **Enable** (highly recommended!)
-8. **Container Disk**: 20GB
+8. **Container Disk**: 15GB
 9. **Click "Deploy"**
 
 ### Step 4: Connect to Pod
@@ -493,6 +495,87 @@ bash -c "pip config set global.index-url https://pypi.org/simple && pip config s
 ```
 
 **Why this happens**: The AReaL Docker image (`ghcr.io/inclusionai/areal-runtime:v0.3.4`) is built for internal use at Ant Group and includes pip configuration pointing to their internal PyPI mirror, which is not accessible from external cloud platforms like RunPod.
+
+### Container Restart Loop ⚠️
+
+**Problem**: Container keeps restarting every ~17 seconds, never actually runs training.
+
+**Symptoms:**
+- Container status shows "Restarting" repeatedly
+- System logs show container starting every ~17 seconds
+- Container logs show: `fatal: destination path 'AReaL' already exists and is not an empty directory`
+- No training output
+- GPU never gets used
+
+**Root Cause**: Docker command tries to `git clone` AReaL, but directory already exists from previous run. `git clone` fails, container exits, RunPod auto-restarts it, creating infinite loop.
+
+**Solution**: Updated Docker command to remove AReaL before cloning:
+```bash
+bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && (rm -rf AReaL || true) && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL && pip install -e . && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
+```
+
+**Key change**: Smart git handling:
+- If AReaL exists and is a valid git repo: Updates it with `git pull` (preserves code during restarts)
+- If AReaL exists but is invalid: Removes and clones fresh
+- If AReaL doesn't exist: Clones fresh
+
+This prevents deleting code during training while still handling restart scenarios.
+
+**Detailed guide**: See `CONTAINER_RESTART_LOOP_FIX.md` for complete analysis.
+
+### Training Crashes Around Step 50-60 (Repeating Pattern)
+
+**Problem**: Training consistently crashes around step 50-60 with terminal closing and GPU stopping. This is **not** a spot interruption but an execution crash.
+
+**Symptoms:**
+- Training runs for ~50-60 steps
+- Terminal closes suddenly
+- GPU utilization drops to zero
+- Pattern repeats across multiple runs
+- No error messages in terminal
+
+**Root Cause**: Likely a **timeout or crash during disk-based weight updates**. The weight update process has hardcoded timeouts that may be insufficient.
+
+**Solutions** (try in order):
+
+1. **Increase timeouts in config** (already done in A40 config):
+   ```yaml
+   rollout:
+     request_timeout: 7200  # 2 hours (from default 3600)
+     request_retries: 5  # More retries (from default 3)
+     setup_timeout: 300  # 5 minutes (from default 120)
+   ```
+
+2. **Check system logs for crash details**:
+   ```bash
+   # Inside pod
+   dmesg | tail -50
+   journalctl -n 50
+   dmesg | grep -i "out of memory\|killed"
+   ```
+
+3. **Check SGLang server logs**:
+   ```bash
+   tail -100 /workspace/AReaL/outputs/grpo/logs/*/llm_server.log
+   grep -i "error\|crash\|timeout" /workspace/AReaL/outputs/grpo/logs/*/llm_server.log
+   ```
+
+4. **Check disk space and I/O**:
+   ```bash
+   df -h /workspace/outputs
+   # Test disk speed
+   dd if=/dev/zero of=/workspace/outputs/test bs=1G count=1 oflag=direct
+   ```
+
+5. **Check memory usage**:
+   ```bash
+   # Monitor during training
+   watch -n 1 'free -h && nvidia-smi'
+   ```
+
+6. **Try regular (non-spot) instance** to rule out spot interruptions
+
+**Detailed guide**: See `CRASH_DIAGNOSIS.md` for complete analysis and solutions.
 
 ### Training Too Slow
 

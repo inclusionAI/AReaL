@@ -108,6 +108,8 @@ See `DOCKER_IMAGE_EXPLANATION.md` for detailed explanation.
 
 - **Pip installation fails**: See `RUNPOD_COMPLETE_GUIDE.md` - "Pip Installation Fails" section
 - **CUDA Out of Memory on A40**: See `A40_GPU_FIX.md` ⚠️ or `RUNPOD_COMPLETE_GUIDE.md` - "CUDA Out of Memory" section
+- **Container restart loop**: See `CONTAINER_RESTART_LOOP_FIX.md` ⚠️ (container restarts every ~17 seconds)
+- **Training crashes around step 50-60**: See `CRASH_DIAGNOSIS.md` ⚠️ or `RUNPOD_COMPLETE_GUIDE.md` - "Training Crashes" section
 - **Model persistence**: See `RUNPOD_COMPLETE_GUIDE.md` - "Resuming Training" section
 
 ## Next Steps

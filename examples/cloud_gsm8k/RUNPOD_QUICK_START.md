@@ -43,10 +43,12 @@ RunPod is the most economical option for cloud GPU training. This guide gets you
    - **Container Image**: `ghcr.io/inclusionai/areal-runtime:v0.3.4`
    - **Docker Command**: 
      ```bash
-     bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL && pip install -e . && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
+     bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch && git checkout DL4Math && git pull || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd AReaL && pip install -e . && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
      ```
      
-     **⚠️ Important**: The Docker image uses an internal PyPI mirror that's not accessible from RunPod. The command above overrides it to use the public PyPI.
+     **⚠️ Important**: 
+     - The Docker image uses an internal PyPI mirror that's not accessible from RunPod. The command above overrides it to use the public PyPI.
+     - Smart git handling: If AReaL exists and is valid, it updates with `git pull` (safe during restarts). Only removes/clones if invalid or missing.
    - **Environment Variables** (Click "Add Environment Variable" for each):
      - **Key**: `WANDB_API_KEY`
      - **Value**: `your-actual-wandb-api-key-here` (get it from https://wandb.ai → Settings → API Keys)
