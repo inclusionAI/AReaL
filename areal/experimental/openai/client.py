@@ -49,8 +49,8 @@ if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
 
 # reset OpenAI keys when using the wrapped client.
-os.environ["OPENAI_API_KEY"] = "none"
-os.environ["OPENAI_BASE_URL"] = "none"
+os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "none")
+os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 
 logger = logging.getLogger("AReaLOpenAI Client")
 
