@@ -1,7 +1,8 @@
 import argparse
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import MISSING as dataclass_missing
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -13,10 +14,12 @@ from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
 from areal.platforms import current_platform
-from areal.utils import name_resolve, pkg_version
+from areal.utils import logging, name_resolve, pkg_version
 from areal.utils.pkg_version import is_version_less
 
 uvloop.install()
+
+logger = logging.getLogger("CLI args")
 
 
 @dataclass
@@ -159,6 +162,47 @@ class GenerationHyperparameters:
         args = asdict(self)
         args.update(kwargs)
         return GenerationHyperparameters(**args)
+
+    def to_openai_args_dict(
+        self, exclude_args: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Convert the generation hyperparameters to a dictionary of arguments for OpenAI client."""
+        final_exclude_args = set(exclude_args) if exclude_args is not None else set()
+        final_exclude_args.update(
+            {
+                "min_new_tokens",  # Not supported by OpenAI
+                "greedy",  # Not directly supported by OpenAI
+                "top_k",  # Not supported by OpenAI
+                "stop_token_ids",  # Not supported by OpenAI
+            }
+        )
+
+        mapping = {
+            "n_samples": "n",
+            "max_new_tokens": "max_completion_tokens",
+        }
+        res = {}
+        for k, v in asdict(self).items():
+            if k in final_exclude_args:
+                should_warn = False
+
+                current_value = getattr(self, k)
+                f = next(_field for _field in fields(self) if _field.name == k)
+
+                # Check if equal to the default value
+                if f.default is not dataclass_missing:
+                    if current_value != f.default:
+                        should_warn = True
+                elif f.default_factory is not dataclass_missing:
+                    if current_value != f.default_factory():
+                        should_warn = True
+
+                if should_warn:
+                    logger.warning(f"Unsupported arg for openai format: `{k}`")
+                continue
+            res[mapping.get(k, k)] = v
+
+        return res
 
 
 # Train Engine Configs
