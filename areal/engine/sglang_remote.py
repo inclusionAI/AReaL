@@ -251,7 +251,7 @@ class RemoteSGLangEngine(InferenceEngine):
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type["RolloutWorkflow"] | str,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> None:

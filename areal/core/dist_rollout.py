@@ -148,8 +148,8 @@ class DistRolloutCoordinator:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         granularity: int = 1,
-        workflow: RolloutWorkflow | None | type[RolloutWorkflow] | str = None,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
@@ -172,7 +172,7 @@ class DistRolloutCoordinator:
             - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
             - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
             - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             Workflow defining rollout logic
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
@@ -205,8 +205,8 @@ class DistRolloutCoordinator:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         granularity: int = 1,
-        workflow: RolloutWorkflow | None | type[RolloutWorkflow] | str = None,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
@@ -226,7 +226,7 @@ class DistRolloutCoordinator:
             - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
             - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
             - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str, optional
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             Workflow defining rollout logic
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor

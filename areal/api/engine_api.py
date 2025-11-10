@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import abc
 from collections.abc import Callable
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
@@ -151,7 +153,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def connect_engine(self, engine: "InferenceEngine", meta: WeightUpdateMeta):
+    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
         """Connect to an inference engine for online training.
 
         Parameters
@@ -475,8 +477,8 @@ class InferenceEngine(abc.ABC):
     def submit(
         self,
         data: dict[str, Any],
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         should_accept_fn: Callable | None = None,
-        workflow: Optional["RolloutWorkflow"] | type["RolloutWorkflow"] | str = None,
         workflow_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
@@ -536,7 +538,7 @@ class InferenceEngine(abc.ABC):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: Optional["RolloutWorkflow"] | type["RolloutWorkflow"] | str = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
@@ -572,7 +574,7 @@ class InferenceEngine(abc.ABC):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: Optional["RolloutWorkflow"] | type["RolloutWorkflow"] | str = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
