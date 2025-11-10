@@ -3,7 +3,6 @@ import copy
 import json
 import os
 import time
-from typing import List, Optional, Union
 
 import aiohttp
 import tiktoken
@@ -61,15 +60,15 @@ class Visit(BaseTool):
     }
 
     # The `call` method is the main function of the tool.
-    def __init__(self, cfg: Optional[dict] = None, summary_client=None):
+    def __init__(self, cfg: dict | None = None, summary_client=None):
         super().__init__(cfg)
         self._llm_client = summary_client
 
-    async def call(self, params: Union[str, dict], **kwargs) -> str:  # type: ignore[override]
+    async def call(self, params: str | dict, **kwargs) -> str:  # type: ignore[override]
         try:
             url = params["url"]
             goal = params["goal"]
-        except:
+        except Exception:
             return "[Visit] Invalid request format: Input must be a JSON object containing 'url' and 'goal' fields"
 
         start_time = time.time()
@@ -84,13 +83,11 @@ class Visit(BaseTool):
         else:
             response = []
             logger.debug(f"Visiting multiple URLs: {url}")
-            assert isinstance(url, List)
+            assert isinstance(url, list)
             start_time = time.time()
             for u in url:
                 if time.time() - start_time > 900:
-                    cur_response = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
-                        url=url, goal=goal
-                    )
+                    cur_response = f"The useful information in {url} for user goal {goal} as follows: \n\n"
                     cur_response += (
                         "Evidence in page: \n"
                         + "The provided webpage content could not be accessed. Please check the URL or file format."
@@ -139,7 +136,7 @@ class Visit(BaseTool):
                 if content:
                     try:
                         json.loads(content)
-                    except:
+                    except Exception:
                         left = content.find("{")
                         right = content.rfind("}")
                         if left != -1 and right != -1 and left <= right:
@@ -194,7 +191,9 @@ class Visit(BaseTool):
     async def html_readpage_jina(self, url: str) -> str:
         max_attempts = 8
         for attempt in range(max_attempts):
-            logger.debug(f"html_readpage_jina {url} attempt {attempt+1}/{max_attempts}")
+            logger.debug(
+                f"html_readpage_jina {url} attempt {attempt + 1}/{max_attempts}"
+            )
             content = await self.jina_readpage(url)
             if (
                 content
@@ -221,8 +220,8 @@ class Visit(BaseTool):
             f"readpage_jina content: {len(content)}, valid_content: {valid_content}"
         )
         if not valid_content:
-            useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
-                url=url, goal=goal
+            useful_information = (
+                f"The useful information in {url} for user goal {goal} as follows: \n\n"
             )
             useful_information += (
                 "Evidence in page: \n"
@@ -281,8 +280,8 @@ class Visit(BaseTool):
             useful_information = f"The provided webpage content: {_content[:1000]}"
             return useful_information
 
-        useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(
-            url=url, goal=goal
+        useful_information = (
+            f"The useful information in {url} for user goal {goal} as follows: \n\n"
         )
         useful_information += (
             "Evidence in page: \n" + str(raw_obj.get("evidence", "")) + "\n\n"

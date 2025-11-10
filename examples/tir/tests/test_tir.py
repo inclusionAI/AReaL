@@ -54,7 +54,7 @@ async def test_tir_workflow():
     tool_manager = ToolManager()
 
     # Create TIR workflow
-    workflow = TIRWorkflow(
+    _ = TIRWorkflow(
         reward_fn=math_reward_fn,
         gconfig=None,  # Simplified here, actual needs GenerationHyperparameters
         tokenizer=tokenizer,
@@ -74,7 +74,7 @@ def test_data_loading():
     data_file = Path(__file__).parent / "data" / "sample_math.jsonl"
     assert data_file.exists(), f"Data file not found: {data_file}"
 
-    with open(data_file, "r") as f:
+    with open(data_file) as f:
         data = [json.loads(line) for line in f]
 
     assert len(data) > 0, "No data loaded"

@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-from typing import List, Optional, Union
 
 import aiohttp
 from qwen_agent.tools.base import BaseTool, register_tool
@@ -25,7 +24,7 @@ class Search(BaseTool):
         "required": ["query"],
     }
 
-    def __init__(self, cfg: Optional[dict] = None):
+    def __init__(self, cfg: dict | None = None):
         super().__init__(cfg)
 
     async def google_search_with_serp(self, query: str):
@@ -72,7 +71,7 @@ class Search(BaseTool):
                             snippet = (
                                 f"\n{page['snippet']}" if page.get("snippet") else ""
                             )
-                            redacted_version = f"{idx}. [{page.get('title','')}]({page.get('link','')}){date_published}{source}\n{snippet}"
+                            redacted_version = f"{idx}. [{page.get('title', '')}]({page.get('link', '')}){date_published}{source}\n{snippet}"
                             redacted_version = redacted_version.replace(
                                 "Your browser can't play this video.", ""
                             )
@@ -93,7 +92,7 @@ class Search(BaseTool):
     async def search_with_serp(self, query: str):
         return await self.google_search_with_serp(query)
 
-    async def call(self, params: Union[str, dict], **kwargs) -> str:  # type: ignore[override]
+    async def call(self, params: str | dict, **kwargs) -> str:  # type: ignore[override]
         try:
             query = params["query"]
         except Exception:
@@ -102,7 +101,7 @@ class Search(BaseTool):
         if isinstance(query, str):
             return await self.search_with_serp(query)
 
-        assert isinstance(query, List)
+        assert isinstance(query, list)
         tasks = [self.search_with_serp(q) for q in query]
         responses = await asyncio.gather(*tasks)
         return "\n=======\n".join(responses)

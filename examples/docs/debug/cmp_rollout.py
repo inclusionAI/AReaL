@@ -1,6 +1,5 @@
 import base64
 from io import BytesIO
-from typing import List
 
 import datasets
 import requests
@@ -9,7 +8,7 @@ from PIL.Image import Image as ImageObject
 from transformers import AutoProcessor, Gemma3ForConditionalGeneration
 
 
-def image2base64(images: List[ImageObject] | ImageObject) -> List[str] | str:
+def image2base64(images: list[ImageObject] | ImageObject) -> list[str] | str:
     if isinstance(images, ImageObject):
         images = [images]
 
