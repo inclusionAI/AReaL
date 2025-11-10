@@ -153,15 +153,14 @@ def main(args):
                 # No need to log anything. Logging will be handled outside
                 # via stats_tracker.export().
                 def evaluate_fn():
-                    with stats_tracker.scope("sft-eval"):
-                        for data in valid_dataloader:
-                            data = data.to(current_platform.current_device())
-                            data = broadcast_tensor_container(
-                                data,
-                                src_rank=engine.current_data_parallel_head(),
-                                group=engine.context_and_model_parallel_group,
-                            )
-                            engine.evaluate_rw(data)
+                    for data in valid_dataloader:
+                        data = data.to(current_platform.current_device())
+                        data = broadcast_tensor_container(
+                            data,
+                            src_rank=engine.current_data_parallel_head(),
+                            group=engine.context_and_model_parallel_group,
+                        )
+                        engine.evaluate_rw(data)
 
                 evaluator.evaluate(
                     evaluate_fn,

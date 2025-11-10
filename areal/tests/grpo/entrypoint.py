@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import List, cast
+from typing import cast
 
 import torch
 import torch.distributed as dist
@@ -18,7 +18,7 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.reward.math_parser import process_results
-from areal.utils import seeding
+from areal.utils import stats_tracker
 from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
@@ -94,7 +94,7 @@ def main() -> None:
         ),
     )
 
-    rewards: List[float] = []
+    rewards: list[float] = []
 
     global_step = 0
     for epoch in range(config.total_train_epochs):
@@ -122,7 +122,7 @@ def main() -> None:
 
             actor.compute_advantages(batch)
 
-            stats = actor.ppo_update(batch)
+            actor.ppo_update(batch)
             actor.step_lr_scheduler()
 
             rollout.pause()
@@ -131,7 +131,8 @@ def main() -> None:
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
 
-            rewards.append(stats[0]["task_reward/avg"])
+            stat = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+            rewards.append(stat["task_reward/avg"])
 
             global_step += 1
 

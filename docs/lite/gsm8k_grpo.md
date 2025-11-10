@@ -436,7 +436,7 @@ if ref is not None:
     batch["ref_logp"] = ref.compute_logp(batch)
     log_gpu_stats("ref logp")
 actor.compute_advantages(batch)
-stats = actor.ppo_update(batch)
+actor.ppo_update(batch)
 actor.step_lr_scheduler()
 ```
 
@@ -497,7 +497,7 @@ for global_step in range(max_steps):
         batch["ref_logp"] = ref.compute_logp(batch)
         log_gpu_stats("ref logp")
     actor.compute_advantages(batch)
-    stats = actor.ppo_update(batch)
+    actor.ppo_update(batch)
     actor.step_lr_scheduler()
 
     rollout.pause()
