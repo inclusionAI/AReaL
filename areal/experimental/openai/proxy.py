@@ -46,10 +46,6 @@ async def _post_json_with_retry(
         return await response.json()
 
 
-class AReaLChatCompletionRequest(ChatCompletionRequest):
-    pass
-
-
 class AReaLStartSessionRequest(BaseModel):
     init_from_session_id: str | None = None
 
@@ -285,7 +281,7 @@ def build_app(
         dependencies=[Depends(validate_json_request)],
     )
     async def chat_completions(
-        request: AReaLChatCompletionRequest, session_id: str
+        request: ChatCompletionRequest, session_id: str
     ) -> ChatCompletion:
         state = get_shared_data()
         session_cache = state.session_cache
@@ -330,7 +326,7 @@ def build_app(
         dropped_non_default_args = [
             (k, v)
             for k, v in dropped_args
-            if v != AReaLChatCompletionRequest.model_fields[k].default
+            if v != ChatCompletionRequest.model_fields[k].default
         ]
         if len(dropped_non_default_args):
             dropped_args_str = "\n".join(
