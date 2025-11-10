@@ -111,6 +111,9 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
 QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
 if not os.path.exists(QWEN25_VL_PATH):
     QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-3B-Instruct"
+QWEN3_VL_PATH = "/storage/openpsi/models/Qwen3-VL-2B-Instruct"
+if not os.path.exists(QWEN3_VL_PATH):
+    QWEN3_VL_PATH = "Qwen/Qwen3-VL-2B-Instruct"
 GEMMA3_PATH = "/storage/openpsi/models/google__gemma-3-4b-it/"
 if not os.path.exists(GEMMA3_PATH):
     GEMMA3_PATH = "google/gemma-3-4b-it"
@@ -121,6 +124,8 @@ def mock_padded_vlm_data(model_path):
         model_type = "gemma3"
     elif model_path == QWEN25_VL_PATH:
         model_type = "qwen25"
+    elif model_path == QWEN3_VL_PATH:
+        model_type = "qwen3"
     else:
         raise NotImplementedError()
     # TODO: create mock vlm image data
@@ -142,7 +147,7 @@ def mock_padded_vlm_data(model_path):
 
             image = torch.randint(0, 255, size=(3, VISION_H, VISION_W)).float() / 255.0
             images.append(image)
-            if model_type == "qwen25":
+            if model_type == "qwen25" or model_type == "qwen3":
                 image_tokens.append("<|vision_start|><|image_pad|><|vision_end|>")
             else:
                 assert model_type == "gemma3"
@@ -207,7 +212,11 @@ def mock_padded_vlm_data(model_path):
 
 @pytest.mark.parametrize(
     "model_path",
-    [pytest.param(QWEN25_VL_PATH), pytest.param(GEMMA3_PATH, marks=pytest.mark.slow)],
+    [
+        pytest.param(QWEN25_VL_PATH),
+        pytest.param(QWEN3_VL_PATH),
+        pytest.param(GEMMA3_PATH, marks=pytest.mark.slow),
+    ],
 )
 def test_vlm_consistency(model_path):
     # Set random seed for reproducibility.
