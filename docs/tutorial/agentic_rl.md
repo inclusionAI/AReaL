@@ -348,6 +348,8 @@ follows a similar pattern to using CAMEL. The key difference is that instead of 
 CAMEL's `AReaLOpenAICompatibleModel` adapter, you can use AReaL's `ArealOpenAI` client
 directly with the SDK's `RunConfig`.
 
+### Building An Agent with OpenAI SDK
+
 #### Step 1: Basic Agent Implementation
 
 ```python

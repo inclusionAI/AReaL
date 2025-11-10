@@ -153,6 +153,7 @@ For comprehensive setup instructions, see
 - [Installation](https://inclusionai.github.io/AReaL/tutorial/installation.html)
 - [Quickstart](https://inclusionai.github.io/AReaL/tutorial/quickstart.html)
 - [CLI Configurations](https://inclusionai.github.io/AReaL/cli_reference.html)
+- [Asynchronous RL Explained](https://inclusionai.github.io/AReaL/algorithms/async.html)
 - [Fine-Tuning Large MoE](https://inclusionai.github.io/AReaL/tutorial/megatron.html)
 - [Agentic RL](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html)
 - [Debugging Best Practices](https://inclusionai.github.io/AReaL/best_practices/debugging.html)
