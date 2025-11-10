@@ -1,10 +1,6 @@
 import os
-import subprocess
-import sys
-import time
 
 import pytest
-import requests
 import torch.distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
@@ -29,15 +25,6 @@ DIST_PORT = 15998
 GROUP_NAME = "test_nccl_group"
 MASTER_PORT = DIST_PORT + 1
 HOST = network.gethostip()
-RUN_SERVER_TIMEOUT = 180
-
-
-def check_server_health(base_url):
-    try:
-        response = requests.get(f"{base_url}/health", timeout=30)
-        return response.status_code == 200
-    except requests.exceptions.RequestException:
-        return False
 
 
 @pytest.fixture(scope="module")
@@ -45,7 +32,7 @@ def sglang_server_nccl():
     from areal.utils import seeding
 
     seeding.set_random_seed(1, EXPR_NAME)
-    cmd = SGLangConfig.build_cmd(
+    sglang_args = SGLangConfig.build_args(
         sglang_config=SGLangConfig(
             mem_fraction_static=0.2,
             model_path=MODEL_PATH,
@@ -60,35 +47,21 @@ def sglang_server_nccl():
     )
     os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
 
-    print(f"full_command to start sglang server: {cmd}", flush=True)
-    process = subprocess.Popen(
-        cmd,
-        stdout=sys.stdout,
-        stderr=sys.stdout,
+    # Create engine instance for server management
+    temp_config = InferenceEngineConfig(
+        experiment_name=EXPR_NAME,
+        trial_name=TRIAL_NAME,
     )
-    base_url = f"http://{HOST}:{PORT}"
-    tik = time.time()
+    server_manager = RemoteSGLangEngine(temp_config)
+
     try:
-        while time.time() - tik < RUN_SERVER_TIMEOUT:
-            if check_server_health(base_url):
-                break
-            time.sleep(1)
-        if time.time() - tik > RUN_SERVER_TIMEOUT:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-            raise RuntimeError("server launch failed")
+        # Launch server via engine API
+        server_manager.launch_server(sglang_args)
         yield
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+        # Cleanup using engine API
+        server_manager.teardown_server()
+        server_manager.destroy()
 
 
 def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server_nccl):

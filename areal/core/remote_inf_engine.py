@@ -796,7 +796,8 @@ class RemoteInfEngine:
         self._wait_for_server(address)
 
         server_info = LocalInfServerInfo(
-            address=f"http://{address}",
+            host=server_args["host"],
+            port=server_args["port"],
             process=process,
         )
         self.local_server_processes.append(server_info)

@@ -241,5 +241,6 @@ class StepInfo:
 class LocalInfServerInfo:
     """Information about a locally launched inference server."""
 
-    address: str
+    host: str
+    port: int
     process: subprocess.Popen
