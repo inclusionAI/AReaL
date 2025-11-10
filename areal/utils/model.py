@@ -20,7 +20,7 @@ def is_valid_vision_model(model_type: str) -> bool:
 
 
 def is_qwen2_vl_model(model_type: str) -> bool:
-    return model_type in ["qwen2_vl", "qwen2_5_vl", "qwen3_vl"]
+    return model_type in ["qwen2_vl", "qwen2_5_vl"]
 
 
 def is_qwen3_vl_model(model_type: str) -> bool:
