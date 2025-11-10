@@ -17,6 +17,7 @@ import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
+from areal.api.engine_api import NoResult
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
@@ -618,7 +619,7 @@ class RemoteInfEngine:
         data: dict[str, Any],
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
 
@@ -630,17 +631,19 @@ class RemoteInfEngine:
             The workflow instance to run
         workflow_builder : Callable, optional
             A builder to create a workflow instance
-        should_accept : Callable, optional
+        should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory
         """
         return self.workflow_executor.submit(
             data,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
-    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | NoResult:
         """Wait for a specified number of requests to complete.
 
         Parameters
@@ -649,20 +652,24 @@ class RemoteInfEngine:
             The number of accepted trajectories to wait for
         timeout : float, optional
             Timeout in seconds
+        raise_timeout : bool, optional
+            Whether to raise a TimeoutError when the timeout is exceeded, by default True
 
         Returns
         -------
-        Dict[str, Any]
-            A concatenated batch of trajectories
+        Dict[str, Any] | NoResult
+            A concatenated batch of trajectories, or NO_RESULT if timeout exceeded and raise_timeout is False
         """
-        return self.workflow_executor.wait(count, timeout=timeout)
+        return self.workflow_executor.wait(
+            count, timeout=timeout, raise_timeout=raise_timeout
+        )
 
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -674,7 +681,7 @@ class RemoteInfEngine:
             The workflow instance to run
         workflow_builder : Callable, optional
             A builder to create a workflow instance
-        should_accept : Callable, optional
+        should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory
 
         Returns
@@ -686,7 +693,7 @@ class RemoteInfEngine:
             data=data,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def prepare_batch(
@@ -694,7 +701,7 @@ class RemoteInfEngine:
         dataloader: StatefulDataLoader,
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready.
 
@@ -706,7 +713,7 @@ class RemoteInfEngine:
             The workflow instance to run
         workflow_builder : Callable, optional
             A builder to create a workflow instance
-        should_accept : Callable, optional
+        should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory
 
         Returns
@@ -718,7 +725,7 @@ class RemoteInfEngine:
             dataloader=dataloader,
             workflow=workflow,
             workflow_builder=workflow_builder,
-            should_accept=should_accept,
+            should_accept_fn=should_accept_fn,
         )
 
     def pause_generation(self):

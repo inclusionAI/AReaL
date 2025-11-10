@@ -165,14 +165,14 @@ def main(args):
                     train_dataloader,
                     granularity=actor.config.group_size,
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
             else:
                 batch = actor.rollout_batch(
                     next(data_generator),
                     granularity=actor.config.group_size,
                     workflow=workflow,
-                    should_accept=lambda sample: True,
+                    should_accept_fn=lambda sample: True,
                 )
 
         with stats_tracker.record_timing("critic_values"):
@@ -211,9 +211,10 @@ def main(args):
             critic.step_lr_scheduler()
             log_gpu_stats("ppo critic update")
 
-        assert len(actor_stats) == len(
-            critic_stats
-        ), "actor and critic should have same number of update steps"
+        if len(actor_stats) != len(critic_stats):
+            raise ValueError(
+                f"actor and critic should have same number of update steps, got {len(actor_stats)} and {len(critic_stats)}"
+            )
         stats = [
             {**actor_stat, **critic_stat}
             for actor_stat, critic_stat in zip(actor_stats, critic_stats)

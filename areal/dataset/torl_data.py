@@ -1,6 +1,5 @@
 import os
 import time
-from typing import Optional
 
 import requests
 from datasets import load_dataset
@@ -62,7 +61,7 @@ def get_torl_data_sft_dataset(
     path: str,
     split: str,
     tokenizer,
-    max_length: Optional[int] = None,
+    max_length: int | None = None,
 ):
     raise NotImplementedError("ToRL dataset not supported in SFT training")
 
@@ -71,7 +70,7 @@ def get_torl_data_rl_dataset(
     path: str,
     split: str,
     tokenizer,
-    max_length: Optional[int] = None,
+    max_length: int | None = None,
 ):
     prepare_torl_data(int(os.getenv("RANK", "0")))
     # Load parquet dataset instead of json

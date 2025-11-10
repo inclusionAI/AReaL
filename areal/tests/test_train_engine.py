@@ -51,9 +51,8 @@ def mock_input(
 
 def get_engine(engine_type: str, model_path: str):
     from areal.engine.fsdp_engine import FSDPEngine
-    from areal.experimental.autotp_engine import DeepSpeedAutoTPEngine
 
-    engine_cls = {"auto_tp": DeepSpeedAutoTPEngine, "fsdp": FSDPEngine}[engine_type]
+    engine_cls = {"fsdp": FSDPEngine}[engine_type]
 
     engine_config = TrainEngineConfig(
         experiment_name=f"test-{engine_type}-engine",
@@ -138,12 +137,6 @@ def test_train_batch(engine, mock_input):
 
 @torch.no_grad()
 def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
-    from areal.experimental.autotp_engine import DeepSpeedAutoTPEngine
-
-    if isinstance(engine, DeepSpeedAutoTPEngine):
-        print("AutoTP engine does not support HF save/load for now.")
-        return
-
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     path = tmp_path_factory.mktemp("hf_engine_test")
     save_load_meta = SaveLoadMeta(
@@ -168,12 +161,6 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
 
 @torch.no_grad()
 def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
-    from areal.experimental.autotp_engine import DeepSpeedAutoTPEngine
-
-    if isinstance(engine, DeepSpeedAutoTPEngine):
-        print("AutoTP engine does not support DCP save/load for now.")
-        return
-
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     path = tmp_path_factory.mktemp("dcp_engine_test")
     save_load_meta = SaveLoadMeta(

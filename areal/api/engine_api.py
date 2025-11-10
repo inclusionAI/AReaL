@@ -314,6 +314,14 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
 
+class NoResult:
+    def __repr__(self):
+        return "NO_RESULT"
+
+
+NO_RESULT = NoResult()
+
+
 class InferenceEngine(abc.ABC):
     def initialize(self, *args, **kwargs):
         """Initialize environments and launch the background thread for asynchronous distributed inference.
@@ -432,7 +440,7 @@ class InferenceEngine(abc.ABC):
         data: dict[str, Any],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
 
@@ -449,13 +457,15 @@ class InferenceEngine(abc.ABC):
         workflow_builder : Callable, optional
             A builder to create a workflow instance to run, guaranteed for source separation.
             Either `workflow` or `workflow_builder` should be specified, by default None.
-        should_accept : Callable, optional
+        should_accept_fn : Callable, optional
             A function used to decide whether to accept a specific trajectory, i.e., dynamic filtering.
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
         """
         raise NotImplementedError()
 
-    def wait(self, count: int, timeout: float | None = None) -> dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | NoResult:
         """Wait for a specified number of requests to complete, with a timeout.
 
         Should be used together with preceding `submit`.
@@ -466,6 +476,9 @@ class InferenceEngine(abc.ABC):
             The number of accepted trajectories to wait for
         timeout : float, optional
             Timeout in seconds. Exceeding the timeout will raise a `TimeoutError`, by default None
+        raise_timeout : bool, optional
+            Whether to raise a `TimeoutError` when the timeout is exceeded,
+            otherwise return a special NO_RESULT sentinel, by default True
 
         Returns
         -------
@@ -484,7 +497,7 @@ class InferenceEngine(abc.ABC):
         data: list[dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests to the inference engine and wait for the results.
 
@@ -498,7 +511,7 @@ class InferenceEngine(abc.ABC):
             The workflow instance to run, by default None
         workflow_builder : Callable, optional
             A builder to create a workflow instance, by default None
-        should_accept : Callable, optional
+        should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory, by default None
 
         Returns
@@ -513,7 +526,7 @@ class InferenceEngine(abc.ABC):
         dataloader: StatefulDataLoader,
         workflow: Optional["RolloutWorkflow"] = None,
         workflow_builder: Callable | None = None,
-        should_accept: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.
 
@@ -527,7 +540,7 @@ class InferenceEngine(abc.ABC):
             The workflow instance to run, by default None
         workflow_builder : Callable, optional
             A builder to create a workflow instance, by default None
-        should_accept : Callable, optional
+        should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory, by default None
 
         Returns

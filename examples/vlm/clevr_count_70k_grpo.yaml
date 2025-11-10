@@ -98,7 +98,7 @@ sglang:
 
 # datasets
 train_dataset:
-  batch_size: 32
+  batch_size: 28
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -106,7 +106,7 @@ train_dataset:
   type: rl
 
 valid_dataset:
-  batch_size: 32
+  batch_size: 28
   shuffle: true
   pin_memory: true
   num_workers: 4

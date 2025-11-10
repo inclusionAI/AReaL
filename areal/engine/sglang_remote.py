@@ -1,10 +1,11 @@
+from collections.abc import Callable
 from concurrent.futures import Future
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Optional
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.engine_api import InferenceEngine
+from areal.api.engine_api import InferenceEngine, NoResult
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
@@ -56,7 +57,7 @@ class SGLangBackend:
         return HttpRequest(endpoint="/generate", payload=payload)
 
     def parse_generation_response(
-        self, response: Dict[str, Any]
+        self, response: dict[str, Any]
     ) -> HttpGenerationResult:
         """Parse SGLang generation response."""
         meta_info = response["meta_info"]
@@ -119,7 +120,7 @@ class SGLangBackend:
             )
 
     def build_distributed_weight_update_requests(
-        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> WeightUpdateRequests:
         """Build SGLang distributed weight update requests."""
         return WeightUpdateRequests(
@@ -189,8 +190,8 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def initialize(
         self,
-        engine_id: Optional[str] = None,
-        addr: str | List[str] | None = None,
+        engine_id: str | None = None,
+        addr: str | list[str] | None = None,
         train_data_parallel_size: int | None = None,
     ):
         """Initialize the engine by discovering and connecting to servers."""
@@ -217,7 +218,7 @@ class RemoteSGLangEngine(InferenceEngine):
         return self._engine.init_weights_update_group(meta)
 
     def update_weights_from_distributed(
-        self, meta: WeightUpdateMeta, param_specs: List[ParamSpec]
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ) -> Future[None]:
         """Update weights from distributed memory."""
         return self._engine.update_weights_from_distributed(meta, param_specs)
@@ -228,40 +229,42 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def submit(
         self,
-        data: Dict[str, Any],
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
+        data: dict[str, Any],
+        workflow: RolloutWorkflow | None = None,
+        workflow_builder: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ) -> None:
         """Submit a request to the inference engine."""
-        return self._engine.submit(data, workflow, workflow_builder, should_accept)
+        return self._engine.submit(data, workflow, workflow_builder, should_accept_fn)
 
-    def wait(self, count: int, timeout: float | None = None) -> Dict[str, Any]:
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | NoResult:
         """Wait for a specified number of requests to complete."""
-        return self._engine.wait(count, timeout)
+        return self._engine.wait(count, timeout, raise_timeout)
 
     def rollout_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         workflow: Optional["RolloutWorkflow"] = None,
-        workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
-    ) -> Dict[str, Any]:
+        workflow_builder: Callable | None = None,
+        should_accept_fn: Callable | None = None,
+    ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results."""
         return self._engine.rollout_batch(
-            data, workflow, workflow_builder, should_accept
+            data, workflow, workflow_builder, should_accept_fn
         )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: Optional[RolloutWorkflow] = None,
-        workflow_builder: Optional[Callable] = None,
-        should_accept: Callable | None = None,
+        workflow: RolloutWorkflow | None = None,
+        workflow_builder: Callable | None = None,
+        should_accept_fn: Callable | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
         return self._engine.prepare_batch(
-            dataloader, workflow, workflow_builder, should_accept
+            dataloader, workflow, workflow_builder, should_accept_fn
         )
 
     def pause(self):

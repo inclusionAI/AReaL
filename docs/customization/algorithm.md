@@ -137,8 +137,8 @@ class FSDPReinforceActor(FSDPEngine):
 **Why two classes?** This design separates concerns:
 
 1. **Backend Agnostic Logic**: `ReinforceActor` contains the core REINFORCE algorithm
-   that works with any backend (FSDP, DeepSpeed, Megatron) since they share the same
-   `train_batch` API.
+   that works with any backend (FSDP, Megatron) since they share the same `train_batch`
+   API.
 
 1. **Backend-Specific Features**: `FSDPReinforceActor` inherits from `FSDPEngine` to
    provide backend-specific utilities like `save`, `load`, and `update_weights`. For
