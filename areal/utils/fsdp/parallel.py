@@ -117,9 +117,10 @@ class ParallelHelper:
         for d in (sp, tp, ep, etp):
             assert d >= 1, "Parallelism degree should be >= 1"
 
-        assert dp * sp * tp == world_size, (
-            f"Invalid parallel dims: dp({dp}) * sp({sp}) * tp({tp}) != WORLD_SIZE({world_size})"
-        )
+        if dp * sp * tp != world_size:
+            raise ValueError(
+                f"Invalid parallel dims: dp({dp}) * sp({sp}) * tp({tp}) != WORLD_SIZE({world_size})"
+            )
 
         if ep > 1:
             assert etp == tp or etp == 1, "Currently we only support ETP=TP or ETP=1"
