@@ -129,7 +129,7 @@ class StatsLogger:
                 # Update to merge data in the last pipeline rank
                 # and data parallel head rank (rank 0)
                 if isinstance(data, dict):
-                    data = data.update(data_list[0])
+                    data.update(data_list[0])
                 elif isinstance(data, list):
                     assert len(data) == len(data_list[0])
                     for i in range(len(data)):
