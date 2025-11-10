@@ -13,12 +13,14 @@ from areal.api.cli_args import (
     InferenceEngineConfig,
     PPOActorConfig,
 )
+from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
-from areal.utils import seeding, stats_tracker
+from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import cycle_dataloader
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
@@ -27,6 +29,8 @@ from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+
+logger = logging.getLogger("GRPOTrainer")
 
 
 class GRPOTrainer:
@@ -38,7 +42,7 @@ class GRPOTrainer:
         tokenizer: PreTrainedTokenizerFast | None = None,
     ):
         self.config = config
-        rank = int(os.getenv("RANK"))
+        rank = int(os.getenv("RANK", "0"))
 
         self.tokenizer = tokenizer
         if self.tokenizer is None:
@@ -56,13 +60,19 @@ class GRPOTrainer:
         self.parallel_strategy = self.allocation_mode.train
         assert self.parallel_strategy is not None
 
-        # Create actor
-        self.actor = self._create_train_engine(config.actor)
+        self.inference_gen_backend = self.allocation_mode.gen_backend
+        if self.inference_gen_backend not in ["sglang", "vllm"]:
+            raise ValueError(
+                f"Invalid inference generation backend: {self.inference_gen_backend}, expected sglang or vllm"
+            )
+
         if self.config.actor.backend not in ["fsdp", "megatron"]:
             raise ValueError(
                 f"Invalid backend: {self.config.actor.backend}, expected fsdp or megatron"
             )
         self.is_megatron_backend = self.config.actor.backend == "megatron"
+        # Create actor
+        self.actor = self._create_train_engine(config.actor)
 
         # Create dataloaders
         self.train_dataset = train_dataset
@@ -221,6 +231,14 @@ class GRPOTrainer:
             with stats_tracker.record_timing("eval"):
 
                 def evaluate_fn():
+                    if self.valid_dataloader is None:
+                        # skip evaluation if no validation dataset is provided
+                        if self.actor.is_data_parallel_head():
+                            logger.info(
+                                "No validation dataset found, skipping evaluation"
+                            )
+                        return
+
                     if self.actor.is_data_parallel_head():
                         cnt = 0
                         for data in self.valid_dataloader:
@@ -243,7 +261,7 @@ class GRPOTrainer:
 
             # Upload statistics to the logger (e.g., wandb)
             stats[0].update(
-                stats_tracker.export_all(reduce_group=self._get_data_parallel_group())
+                stats_tracker.export_all(reduce_group=self.actor.data_parallel_group)
             )
             self.stats_logger.commit(epoch, step, global_step, stats)
 
@@ -261,24 +279,6 @@ class GRPOTrainer:
             self.ref.destroy()
         self.actor.destroy()
 
-    def _get_data_parallel_rank(self) -> int:
-        if self.is_megatron_backend:
-            return mpu.get_data_parallel_rank()
-        else:
-            return self.actor.data_parallel_rank
-
-    def _get_data_parallel_group(self) -> dist.ProcessGroup:
-        if self.is_megatron_backend:
-            return mpu.get_data_parallel_group()
-        else:
-            return self.actor.data_parallel_group
-
-    def _get_data_parallel_world_size(self) -> int:
-        if self.is_megatron_backend:
-            return mpu.get_data_parallel_world_size()
-        else:
-            return self.actor.data_parallel_world_size
-
     def _create_dataloader(
         self, dataset: Dataset | None, split: str = "train"
     ) -> StatefulDataLoader | None:
@@ -293,8 +293,8 @@ class GRPOTrainer:
         )
         return create_dataloader(
             dataset,
-            rank=self._get_data_parallel_rank(),
-            world_size=self._get_data_parallel_world_size(),
+            rank=self.actor.data_parallel_rank,
+            world_size=self.actor.data_parallel_world_size,
             dataset_config=dataset_config,
         )
 
@@ -304,16 +304,28 @@ class GRPOTrainer:
         # Initialize train engine
         if actor_config.backend == "fsdp":
             actor = FSDPPPOActor(config=actor_config)
-        else:
+        elif actor_config.backend == "megatron":
             actor = MegatronPPOActor(config=actor_config)
+        else:
+            raise ValueError(
+                f"Invalid backend: {actor_config.backend}, expected fsdp or megatron"
+            )
         actor.create_process_group(parallel_strategy=self.parallel_strategy)
         return actor
 
     def _init_inference_engine(
         self, rollout_config: InferenceEngineConfig, is_eval: bool = False
-    ) -> RemoteSGLangEngine:
+    ) -> InferenceEngine:
         # Initialize inference engine
-        engine = RemoteSGLangEngine(deepcopy(rollout_config))
+        if self.inference_gen_backend == "sglang":
+            engine = RemoteSGLangEngine(deepcopy(rollout_config))
+        elif self.inference_gen_backend == "vllm":
+            engine = RemotevLLMEngine(deepcopy(rollout_config))
+        else:
+            raise ValueError(
+                f"Invalid backend: {self.allocation_mode.gen_backend}, expected sglang or vllm"
+            )
+
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             engine.config.max_head_offpolicyness = int(1e12)
