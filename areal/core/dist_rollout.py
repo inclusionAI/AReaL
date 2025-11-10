@@ -149,9 +149,9 @@ class DistRolloutCoordinator:
         self,
         data: list[dict[str, Any]],
         granularity: int = 1,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | None | type[RolloutWorkflow] | str = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Generate rollout batch with distributed coordination (synchronous).
 
@@ -172,11 +172,11 @@ class DistRolloutCoordinator:
             - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
             - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
             - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow, optional
+        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
             Workflow defining rollout logic
-        workflow_builder : Callable, optional
-            Builder function for workflow
-        should_accept_fn : Callable, optional
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
             Filter function for accepting samples
 
         Returns
@@ -195,7 +195,7 @@ class DistRolloutCoordinator:
             batch = self.rollout_engine.rollout_batch(
                 data,
                 workflow=workflow,
-                workflow_builder=workflow_builder,
+                workflow_kwargs=workflow_kwargs,
                 should_accept_fn=should_accept_fn,
             )
             batch = tensor_container_to(batch, current_platform.current_device())
@@ -206,9 +206,9 @@ class DistRolloutCoordinator:
         self,
         dataloader: StatefulDataLoader,
         granularity: int = 1,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | None | type[RolloutWorkflow] | str = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Prepare async rollout batch with distributed coordination.
 
@@ -226,11 +226,11 @@ class DistRolloutCoordinator:
             - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
             - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
             - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
-        workflow : RolloutWorkflow, optional
+        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
             Workflow defining rollout logic
-        workflow_builder : Callable, optional
-            Builder function for workflow
-        should_accept_fn : Callable, optional
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
             Filter function for accepting samples based on staleness
 
         Returns
@@ -249,7 +249,7 @@ class DistRolloutCoordinator:
             batch = self.rollout_engine.prepare_batch(
                 dataloader,
                 workflow=workflow,
-                workflow_builder=workflow_builder,
+                workflow_kwargs=workflow_kwargs,
                 should_accept_fn=should_accept_fn,
             )
             batch = tensor_container_to(batch, current_platform.current_device())

@@ -20,6 +20,10 @@ from areal.core.staleness_manager import StalenessManager
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.utils.dynamic_import import (
+    import_callable_from_string,
+    import_class_from_string,
+)
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
@@ -366,6 +370,127 @@ class WorkflowExecutor:
         capacity = self.staleness_manager.get_capacity(version)
         return capacity
 
+    def _resolve_workflow(
+        self,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None,
+        workflow_kwargs: dict[str, Any] | None,
+    ) -> RolloutWorkflow:
+        """Resolve workflow parameter to a RolloutWorkflow instance.
+
+        Parameters
+        ----------
+        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str | None
+            The workflow specification
+        workflow_kwargs : Dict[str, Any] | None
+            Keyword arguments for workflow initialization
+
+        Returns
+        -------
+        RolloutWorkflow
+            A workflow instance ready to use
+
+        Raises
+        ------
+        ValueError
+            If workflow_kwargs is required but not provided, or if workflow is None
+        TypeError
+            If workflow type is invalid
+        """
+        if workflow is None:
+            raise ValueError(
+                "workflow must be provided. It can be a RolloutWorkflow instance, "
+                "a RolloutWorkflow class, or a string module path."
+            )
+
+        # Case 1: Already a workflow instance
+        if isinstance(workflow, RolloutWorkflow):
+            if workflow_kwargs is not None:
+                self.logger.warning(
+                    "workflow_kwargs is ignored when workflow is already an instance"
+                )
+            return workflow
+
+        # Case 2: Workflow class type
+        if isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
+            if workflow_kwargs is None:
+                raise ValueError(
+                    f"workflow_kwargs is required when workflow is a class type. "
+                    f"Got workflow={workflow}, but workflow_kwargs=None."
+                )
+            try:
+                return workflow(**workflow_kwargs)
+            except Exception as e:
+                raise TypeError(
+                    f"Failed to instantiate workflow class {workflow} "
+                    f"with kwargs {workflow_kwargs}: {e}"
+                ) from e
+
+        # Case 3: String module path
+        if isinstance(workflow, str):
+            if workflow_kwargs is None:
+                raise ValueError(
+                    f"workflow_kwargs is required when workflow is a string. "
+                    f"Got workflow={workflow!r}, but workflow_kwargs=None."
+                )
+            try:
+                workflow_class = import_class_from_string(workflow)
+            except (ValueError, ImportError, AttributeError, TypeError) as e:
+                raise ValueError(
+                    f"Failed to import workflow from string {workflow!r}: {e}"
+                ) from e
+
+            try:
+                return workflow_class(**workflow_kwargs)
+            except Exception as e:
+                raise TypeError(
+                    f"Failed to instantiate workflow class {workflow_class} "
+                    f"from string {workflow!r} with kwargs {workflow_kwargs}: {e}"
+                ) from e
+
+        raise TypeError(
+            f"Invalid workflow type: {type(workflow)}. "
+            f"Expected RolloutWorkflow instance, RolloutWorkflow class, or string module path."
+        )
+
+    def _resolve_should_accept(
+        self, should_accept: Callable[[dict[str, Any]], bool] | str | None
+    ) -> Callable[[dict[str, Any]], bool] | None:
+        """Resolve should_accept parameter to a callable or None.
+
+        Parameters
+        ----------
+        should_accept : Callable[[Dict[str, Any]], bool] | str | None
+            The should_accept specification
+
+        Returns
+        -------
+        Callable[[Dict[str, Any]], bool] | None
+            A callable for trajectory filtering, or None
+
+        Raises
+        ------
+        ValueError
+            If string import fails
+        TypeError
+            If imported object is not callable
+        """
+        if should_accept is None or callable(should_accept):
+            return should_accept
+
+        if isinstance(should_accept, str):
+            try:
+                func = import_callable_from_string(should_accept)
+            except (ValueError, ImportError, AttributeError, TypeError) as e:
+                raise ValueError(
+                    f"Failed to import should_accept callable from string {should_accept!r}: {e}"
+                ) from e
+            return func
+
+        raise TypeError(
+            f"Invalid should_accept type: {type(should_accept)}. "
+            f"Expected callable or string module path."
+        )
+
     def _trace(self, request_id: int | None, method: str, **kwargs) -> None:
         tracer = self._request_tracer
         if tracer is None or request_id is None:
@@ -513,18 +638,18 @@ class WorkflowExecutor:
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> None:
         """Submit a request to the workflow executor.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.submit` for detailed
         documentation.
         """
-        # Create workflow if builder provided
-        if workflow is None:
-            workflow = workflow_builder()
+        # Resolve workflow and should_accept to their concrete forms
+        resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
+        resolved_should_accept = self._resolve_should_accept(should_accept_fn)
 
         request_id = None
         current_tracer = self._request_tracer
@@ -533,8 +658,8 @@ class WorkflowExecutor:
         self._pending_inputs.append(
             _RolloutTaskInput(
                 data=data,
-                workflow=workflow,
-                should_accept_fn=should_accept_fn,
+                workflow=resolved_workflow,
+                should_accept_fn=resolved_should_accept,
                 request_id=request_id,
             )
         )
@@ -655,9 +780,9 @@ class WorkflowExecutor:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -673,7 +798,7 @@ class WorkflowExecutor:
             self.submit(
                 data=item,
                 workflow=workflow,
-                workflow_builder=workflow_builder,
+                workflow_kwargs=workflow_kwargs,
                 should_accept_fn=should_accept_fn,
             )
         return self.wait(count=len(data))
@@ -681,9 +806,9 @@ class WorkflowExecutor:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ):
         """Prepare a batch with controlled staleness.
 
@@ -710,8 +835,8 @@ class WorkflowExecutor:
                     self.submit(
                         item,
                         workflow=workflow,
-                        workflow_builder=workflow_builder,
                         should_accept_fn=should_accept_fn,
+                        workflow_kwargs=workflow_kwargs,
                     )
             try:
                 return self.wait(dataloader.batch_size, timeout=1)

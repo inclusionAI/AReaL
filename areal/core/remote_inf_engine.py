@@ -638,9 +638,9 @@ class RemoteInfEngine:
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> None:
         """Submit a request to the inference engine and return immediately.
 
@@ -648,17 +648,17 @@ class RemoteInfEngine:
         ----------
         data : Dict[str, Any]
             The input data for rollout
-        workflow : RolloutWorkflow, optional
-            The workflow instance to run
-        workflow_builder : Callable, optional
-            A builder to create a workflow instance
-        should_accept_fn : Callable, optional
-            A function to decide whether to accept a trajectory
+        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+            The workflow to use for rollout generation
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
+            A function or module path for trajectory filtering
         """
         return self.workflow_executor.submit(
             data,
             workflow=workflow,
-            workflow_builder=workflow_builder,
+            workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
         )
 
@@ -688,9 +688,9 @@ class RemoteInfEngine:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -698,12 +698,12 @@ class RemoteInfEngine:
         ----------
         data : List[Dict[str, Any]]
             A list of input data dictionaries for rollout
-        workflow : RolloutWorkflow, optional
-            The workflow instance to run
-        workflow_builder : Callable, optional
-            A builder to create a workflow instance
-        should_accept_fn : Callable, optional
-            A function to decide whether to accept a trajectory
+        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+            The workflow to use for rollout generation
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
+            A function or module path for trajectory filtering
 
         Returns
         -------
@@ -713,16 +713,16 @@ class RemoteInfEngine:
         return self.workflow_executor.rollout_batch(
             data=data,
             workflow=workflow,
-            workflow_builder=workflow_builder,
+            workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
         )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | None = None,
-        workflow_builder: Callable | None = None,
-        should_accept_fn: Callable | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ):
         """Asynchronously submit and wait until a full batch is ready.
 
@@ -730,12 +730,12 @@ class RemoteInfEngine:
         ----------
         dataloader : StatefulDataLoader
             The data loader to pull data from
-        workflow : RolloutWorkflow, optional
-            The workflow instance to run
-        workflow_builder : Callable, optional
-            A builder to create a workflow instance
-        should_accept_fn : Callable, optional
-            A function to decide whether to accept a trajectory
+        workflow : RolloutWorkflow | Type[RolloutWorkflow] | str, optional
+            The workflow to use for rollout generation
+        workflow_kwargs : Dict[str, Any], optional
+            Keyword arguments to pass to the workflow constructor
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
+            A function or module path for trajectory filtering
 
         Returns
         -------
@@ -745,7 +745,7 @@ class RemoteInfEngine:
         return self.workflow_executor.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,
-            workflow_builder=workflow_builder,
+            workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
         )
 
