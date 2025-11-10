@@ -1,10 +1,9 @@
-import argparse
 import asyncio
+import os
 import threading
 import time
 import uuid
 from collections import OrderedDict
-from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
 
@@ -12,11 +11,6 @@ import aiohttp
 import requests
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
-from openai import AsyncOpenAI
-from openai.resources.chat.completions.completions import AsyncCompletions
-from openai.resources.responses.responses import AsyncResponses
-from openai.types.chat.chat_completion import ChatCompletion
-from openai.types.responses.response import Response
 from pydantic import BaseModel
 from sglang.srt.entrypoints.http_server import validate_json_request
 from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest
@@ -26,6 +20,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+from openai.types.chat.chat_completion import ChatCompletion
 
 from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
@@ -51,7 +47,7 @@ async def _post_json_with_retry(
 
 
 class AReaLChatCompletionRequest(ChatCompletionRequest):
-    session_id: str
+    pass
 
 
 class AReaLStartSessionRequest(BaseModel):
@@ -284,11 +280,15 @@ def build_app(
         state.session_cache[session_id].completions[completion_id].reward = reward
         return {"message": "success"}
 
-    @app.post("/v1/chat/completions", dependencies=[Depends(validate_json_request)])
-    async def chat_completions(request: AReaLChatCompletionRequest) -> ChatCompletion:
+    @app.post(
+        "/v1/{session_id}/chat/completions",
+        dependencies=[Depends(validate_json_request)],
+    )
+    async def chat_completions(
+        request: AReaLChatCompletionRequest, session_id: str
+    ) -> ChatCompletion:
         state = get_shared_data()
         session_cache = state.session_cache
-        session_id = request.session_id
 
         if state.client is None:
             raise HTTPException(
@@ -339,6 +339,24 @@ def build_app(
             logger.warning(
                 f"dropped unsupported non-default arguments for areal client:\n"
                 f"{dropped_args_str}"
+            )
+
+        if "temperature" not in kwargs:
+            kwargs["temperature"] = 1.0
+            logger.warning("temperature not set in request, defaulting to 1.0")
+        elif kwargs["temperature"] != 1.0:
+            logger.warning(
+                f"temperature is set to {kwargs['temperature']} in request, "
+                f"we suggest using 1.0 for RL tasks"
+            )
+
+        if "top_p" not in kwargs:
+            kwargs["top_p"] = 1.0
+            logger.warning("top_p not set in request, defaulting to 1.0")
+        elif kwargs["top_p"] != 1.0:
+            logger.warning(
+                f"top_p is set to {kwargs['top_p']} in request, "
+                f"we suggest using 1.0 for RL tasks"
             )
 
         try:
@@ -449,42 +467,15 @@ def insert_session_id_to_kwargs(kwargs: dict, session_id: str) -> None:
     kwargs["extra_body"] = extra_body
 
 
-proxy_session_id = ContextVar[str]("proxy_session_id")
-
-
-class AsyncProxyCompletions(AsyncCompletions):
-    async def create(self, *args, **kwargs) -> ChatCompletion:
-        session_id = proxy_session_id.get()
-        insert_session_id_to_kwargs(kwargs, session_id)
-        return await super().create(*args, **kwargs)
-
-
-class AsyncProxyResponses(AsyncResponses):
-    async def create(self, *args, **kwargs) -> Response:
-        session_id = proxy_session_id.get()
-        insert_session_id_to_kwargs(kwargs, session_id)
-        return await super().create(*args, **kwargs)
-
-
-class PatchedAsyncOpenAI(AsyncOpenAI):
-    def __init__(
-        self,
-        base_url: str,
-        api_key: str = "not_provided",
-        **kwargs,
-    ):
-        super().__init__(base_url=base_url, api_key=api_key, **kwargs)
-        # Override self.chat.completions and self.responses to insert session_id to extra_body
-        self.chat.completions = AsyncProxyCompletions(self)
-        self.responses = AsyncProxyResponses(self)
-
-
 class ProxySession:
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str = None):
+        assert base_url is not None
         self.stripped_base_url = base_url.rstrip("/")
         self.session_id = None
         self.final_reward = None
         self.http_session = aiohttp.ClientSession()
+        self.ori_openai_base_url = None
+        self.ori_openai_api_key = None
 
     async def set_reward(self, reward: float, completion_id: str | None = None):
         if self.session_id is None:
@@ -514,7 +505,12 @@ class ProxySession:
             payload={},
         )
         self.session_id = data["session_id"]
-        proxy_session_id.set(self.session_id)
+
+        self.ori_openai_base_url = os.getenv("OPENAI_BASE_URL")
+        self.ori_openai_api_key = os.getenv("OPENAI_API_KEY")
+
+        os.environ["OPENAI_BASE_URL"] = f"{self.stripped_base_url}/{self.session_id}"
+        os.environ["OPENAI_API_KEY"] = f"{self.session_id}"
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
@@ -528,7 +524,6 @@ class ProxySession:
         payload = AReaLEndSessionRequest(
             session_id=self.session_id, final_reward=self.final_reward
         ).model_dump()
-        proxy_session_id.set(None)
         await _post_json_with_retry(
             self.http_session,
             f"{self.stripped_base_url}/rl/end_session",
@@ -536,17 +531,20 @@ class ProxySession:
         )
         await self.http_session.close()
 
+        os.environ["OPENAI_BASE_URL"] = self.ori_openai_base_url
+        os.environ["OPENAI_API_KEY"] = self.ori_openai_api_key
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
 
-    server = ProxyServer(args.port)
-    server.start(wait_until_ready=True)
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("--port", type=int, default=8000)
+#     args = parser.parse_args()
 
-    async def run_client():
-        async with ProxyClient(f"{server.public_addr}/v1") as client:
-            await client.set_reward(1.0)
+#     server = ProxyServer(args.port)
+#     server.start(wait_until_ready=True)
 
-    asyncio.run(run_client())
+#     async def run_client():
+#         async with ProxyClient(f"{server.public_addr}/v1") as client:
+#             await client.set_reward(1.0)
+
+#     asyncio.run(run_client())
