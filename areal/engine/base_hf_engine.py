@@ -37,9 +37,9 @@ from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokeni
 from areal.utils.model import (
     disable_dropout_in_model,
     is_gemma3_model,
-    is_qwen2_vl_model,
     is_qwen3_moe_model,
     is_qwen3_vl_model,
+    is_qwen_vl_model,
     is_valid_vision_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
@@ -260,10 +260,8 @@ class BaseHFEngine(TrainEngine):
         assert "attention_mask" in input_ and "input_ids" in input_
         input_ = input_.copy()
 
-        if is_qwen2_vl_model(self.model_config.model_type) or is_qwen3_vl_model(
-            self.model_config.model_type
-        ):
-            # Create the special t,h,w position IDs for qwen 2.5 VL
+        if is_qwen_vl_model(self.model_config.model_type):
+            # Create the special t,h,w position IDs for qwen 2.5/3 VL
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
             image_grid_thw = None
@@ -308,9 +306,7 @@ class BaseHFEngine(TrainEngine):
         # NOTE: We unsqueeze here because huggingface transformer models requires
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)
-        if is_qwen2_vl_model(self.model_config.model_type) or is_qwen3_vl_model(
-            self.model_config.model_type
-        ):
+        if is_qwen_vl_model(self.model_config.model_type):
             assert mb_list.padded_mbs is not None
             for mb in mb_list.padded_mbs:
                 # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
@@ -384,10 +380,7 @@ class BaseHFEngine(TrainEngine):
 
     def get_model_name_parameters(self):
         name_params_iterator = self.model.named_parameters()
-        if self.is_vision_model and (
-            is_qwen2_vl_model(self.model_config.model_type)
-            or is_qwen3_vl_model(self.model_config.model_type)
-        ):
+        if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
             # Qwen2_5_VLForConditionalGeneration has a different naming convention in SGLang
             def name_remapping_generator():
                 for name, value in name_params_iterator:

@@ -27,6 +27,10 @@ def is_qwen3_vl_model(model_type: str) -> bool:
     return model_type in ["qwen3_vl"]
 
 
+def is_qwen_vl_model(model_type: str) -> bool:
+    return is_qwen2_vl_model(model_type) or is_qwen3_vl_model(model_type)
+
+
 def is_gemma3_model(model_type: str) -> bool:
     return model_type in ["gemma3"]
 
