@@ -64,8 +64,8 @@ class FSDPPPOCritic(FSDPEngine):
     def compute_values(self, *args, **kwargs) -> torch.Tensor | None:
         return self.critic.compute_values(*args, **kwargs)
 
-    def ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
-        return self.critic.ppo_update(*args, **kwargs)
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.critic.ppo_update(*args, **kwargs)
 
 
 def ppo_loss_fn(

@@ -214,7 +214,7 @@ def main(args):
             log_gpu_stats("compute advantages")
 
         with stats_tracker.record_timing("train_step"):
-            stats = actor.aent_ppo_update(batch, global_step)
+            actor.aent_ppo_update(batch, global_step)
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 

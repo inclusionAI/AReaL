@@ -1,4 +1,3 @@
-import copy
 import getpass
 import os
 import time
@@ -120,7 +119,7 @@ class StatsLogger:
         if dist.is_initialized() and mpu.is_initialized():
             if mpu.get_pipeline_model_parallel_world_size() > 1:
                 # Some log info only exist in last pipeline rank
-                data_list = [copy.deepcopy(data)]
+                data_list = [data]
                 dist.broadcast_object_list(
                     data_list,
                     src=mpu.get_pipeline_model_parallel_last_rank(),
