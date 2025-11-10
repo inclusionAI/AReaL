@@ -87,7 +87,7 @@ class Visit(BaseTool):
             start_time = time.time()
             for u in url:
                 if time.time() - start_time > 900:
-                    cur_response = f"The useful information in {url} for user goal {goal} as follows: \n\n"
+                    cur_response = f"The useful information in {u} for user goal {goal} as follows: \n\n"
                     cur_response += (
                         "Evidence in page: \n"
                         + "The provided webpage content could not be accessed. Please check the URL or file format."
