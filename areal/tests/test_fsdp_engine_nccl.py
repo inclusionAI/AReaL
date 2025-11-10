@@ -20,18 +20,13 @@ TRIAL_NAME = "trial_nccl"
 MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
     MODEL_PATH = "Qwen/Qwen3-0.6B"
-PORT = 13998
-DIST_PORT = 15998
 GROUP_NAME = "test_nccl_group"
-MASTER_PORT = DIST_PORT + 1
-HOST = network.gethostip()
 
 
 @pytest.fixture(scope="module")
-def sglang_server_nccl():
-    from areal.utils import seeding
-
-    seeding.set_random_seed(1, EXPR_NAME)
+def sglang_server():
+    host = network.gethostip()
+    dist_port = network.find_free_ports(1)[0]
     sglang_args = SGLangConfig.build_args(
         sglang_config=SGLangConfig(
             mem_fraction_static=0.2,
@@ -41,11 +36,8 @@ def sglang_server_nccl():
         ),
         tp_size=1,
         base_gpu_id=1,
-        host=HOST,
-        port=PORT,
-        dist_init_addr=f"{HOST}:{DIST_PORT}",
+        dist_init_addr=f"{host}:{dist_port}",
     )
-    os.environ["AREAL_LLM_SERVER_ADDRS"] = f"{HOST}:{PORT}"
 
     # Create engine instance for server management
     temp_config = InferenceEngineConfig(
@@ -56,21 +48,20 @@ def sglang_server_nccl():
 
     try:
         # Launch server via engine API
-        server_manager.launch_server(sglang_args)
-        yield
+        yield server_manager.launch_server(sglang_args)
     finally:
         # Cleanup using engine API
         server_manager.teardown_server()
         server_manager.destroy()
 
 
-def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server_nccl):
+def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server):
     # Set environment variables for torch distributed
     os.environ["WORLD_SIZE"] = "1"
     os.environ["RANK"] = "0"
     os.environ["LOCAL_RANK"] = "0"
-    os.environ["MASTER_ADDR"] = HOST
-    os.environ["MASTER_PORT"] = str(MASTER_PORT)
+    os.environ["MASTER_ADDR"] = network.gethostip()
+    os.environ["MASTER_PORT"] = str(network.find_free_ports(1)[0])
     # required by sglang
     os.environ["NCCL_CUMEM_ENABLE"] = "0"
     os.environ["NCCL_NVLS_ENABLE"] = "0"
@@ -93,9 +84,8 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
 
         # Initialize RemoteSGLangEngine
         config = InferenceEngineConfig(experiment_name=EXPR_NAME, trial_name=TRIAL_NAME)
-        config.server_addrs = [f"{HOST}:{PORT}"]
         remote_engine = RemoteSGLangEngine(config)
-        remote_engine.initialize()
+        remote_engine.initialize(addr=f"{sglang_server.host}:{sglang_server.port}")
 
         # Get WeightUpdateMeta
         meta = WeightUpdateMeta.from_fsdp_xccl(

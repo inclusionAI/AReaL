@@ -45,7 +45,7 @@ def inference_engine(request):
 
     seeding.set_random_seed(1, expr_name)
 
-    port, dist_port = network.find_free_ports(2)
+    dist_port = network.find_free_ports(1)[0]
     host = network.gethostip()
 
     # Configure SGLang
@@ -59,8 +59,6 @@ def inference_engine(request):
         sglang_config=sglang_config,
         tp_size=1,
         base_gpu_id=0,
-        host=host,
-        port=port,
         dist_init_addr=f"{host}:{dist_port}",
     )
 
@@ -75,8 +73,6 @@ def inference_engine(request):
         vllm_config=vllm_config,
         tp_size=1,
         pp_size=1,
-        host=host,
-        port=port,
     )
 
     # Launch remote server and initialize engine
@@ -110,7 +106,7 @@ def inference_engine(request):
             "expr_name": expr_name,
             "trial_name": trial_name,
             "host": host,
-            "port": port,
+            "port": server_info.port,
         }
     finally:
         # Cleanup using engine API

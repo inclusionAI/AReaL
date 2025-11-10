@@ -343,8 +343,10 @@ class RemoteInfEngine:
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
-        self.workflow_executor.destroy()
-        self.executor.shutdown()
+        if hasattr(self, "workflow_executor"):
+            self.workflow_executor.destroy()
+        if hasattr(self, "executor"):
+            self.executor.shutdown()
 
     def set_version(self, version):
         """Set the current weight version."""
