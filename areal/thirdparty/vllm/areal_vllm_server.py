@@ -141,8 +141,8 @@ async def pause_generation(raw_request: Request):
     logger.info("API server starts pause_generation and aborts all requests")
     llm = raw_request.app.state.engine_client
     # Abort all running and waiting requests
-    await llm.engine_core.call_utility_async("abort_all_reqs")
     _generation_pause_event.clear()
+    await llm.engine_core.call_utility_async("abort_all_reqs")
     return to_json_response(True, "Generation paused and all requests aborted")
 
 
