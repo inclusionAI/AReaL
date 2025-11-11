@@ -25,6 +25,7 @@ parts:
     chapters:
     - file: best_practices/debugging
     - file: best_practices/handling_oom
+    - file: best_practices/perf_profiling
   - caption: Customization
     chapters:
     - file: customization/dataset
