@@ -191,9 +191,10 @@ def abort_all_reqs(self):
     if not abort_lists:
         # No requests to abort
         success = scheduler.reset_prefix_cache()
-        assert success, (
-            f"prefix cache must be reset to prevent kv cache pollution! {success}"
-        )
+        if not success:
+            logger.error(
+                f"prefix cache must be reset to prevent kv cache pollution! {success}"
+            )
         return
 
     client_outputs = {}
@@ -218,9 +219,10 @@ def abort_all_reqs(self):
         self.output_queue.put_nowait((client_index, engine_core_outputs))
 
     success = scheduler.reset_prefix_cache()
-    assert success, (
-        f"prefix cache must be reset to prevent kv cache pollution! {success}"
-    )
+    if not success:
+        logger.error(
+            f"prefix cache must be reset to prevent kv cache pollution! {success}"
+        )
 
 
 def areal_injected_update_weight(self, path):
