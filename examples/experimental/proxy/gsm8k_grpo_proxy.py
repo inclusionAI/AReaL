@@ -248,7 +248,7 @@ def main(args):
     )
 
     run_agent_return_reward = import_from_string(
-        ".".join(config.agent_module_path, "run_agent_return_reward"),
+        ".".join([config.agent_module_path, "run_agent_return_reward"]),
     )
 
     workflow = ProxyRLVRWorkflow(
