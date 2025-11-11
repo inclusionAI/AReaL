@@ -400,11 +400,10 @@ class FSDPEngine(BaseHFEngine):
         named_tensors = []
 
         for name, param in self.get_model_name_parameters():
-            with trace_scope("fsdp_engine.gather_tensors", category="comm"):
-                if isinstance(param.data, DTensor):
-                    tensor = param.data.full_tensor()
-                else:
-                    tensor = param.data
+            if isinstance(param.data, DTensor):
+                tensor = param.data.full_tensor()
+            else:
+                tensor = param.data
 
             # Ranks other than 0 only help to get the full tensor
             if dist.get_rank() != 0:
