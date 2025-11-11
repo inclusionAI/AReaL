@@ -1021,7 +1021,7 @@ traitlets==5.14.3
     # via
     #   ipython
     #   matplotlib-inline
-transformers==4.56.1
+transformers==4.57.1
     # via
     #   areal (pyproject.toml)
     #   compressed-tensors
