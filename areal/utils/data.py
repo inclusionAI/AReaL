@@ -339,12 +339,14 @@ def tensor_container_to(
     """Apply `t.to(*args, **kwargs)` to all tensors in the dictionary.
     Support nested dictionaries.
     """
-    new_dict = {}
     if torch.is_tensor(d):
         return d.to(*args, **kwargs)
-    elif isinstance(d, list):
+
+    if isinstance(d, list):
         return [tensor_container_to(v, *args, **kwargs) for v in d]
-    elif isinstance(d, dict):
+
+    if isinstance(d, dict):
+        new_dict = {}
         for key, value in d.items():
             if isinstance(value, dict) or isinstance(value, list):
                 new_dict[key] = tensor_container_to(value, *args, **kwargs)
@@ -353,8 +355,8 @@ def tensor_container_to(
             else:
                 new_dict[key] = value
         return new_dict
-    else:
-        raise ValueError(f"Unsupported type: {type(d)}")
+
+    return d
 
 
 @dataclass

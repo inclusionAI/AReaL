@@ -19,7 +19,7 @@ class PPOCritic:
 
     @trace_perf("ppo_critic.compute_values", category="compute")
     @torch.no_grad()
-    def compute_values(self, data: dict[str, Any]) -> torch.Tensor | None:
+    def compute_values(self, data: dict[str, Any]) -> torch.Tensor:
         self.engine.eval()
         return self.engine.forward(
             input_=data,
@@ -64,7 +64,7 @@ class FSDPPPOCritic(FSDPEngine):
         self.critic = PPOCritic(config, self)
 
     @torch.no_grad()
-    def compute_values(self, *args, **kwargs) -> torch.Tensor | None:
+    def compute_values(self, *args, **kwargs) -> torch.Tensor:
         return self.critic.compute_values(*args, **kwargs)
 
     def ppo_update(self, *args, **kwargs) -> None:
