@@ -232,7 +232,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 ):
                     data, workflow = self.input_queue.get_nowait()
 
-                    # logger.info(f"Get data from puller: {data}")
+                    logger.info(f"_rollout_thread_async before arun_episode data: {data}")
                     task = asyncio.create_task(
                         (
                             workflow.arun_episode(self, data)
@@ -427,6 +427,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         return capacity
 
     def update_weights(self, meta):
+        logger.info(f"[DEBUG] update_weights called with meta: {meta}")
+        logger.info(f"[DEBUG] Available addresses: {self.addresses}")
         self._update_weights(meta)
         return True
 
@@ -460,7 +462,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 wait_future_ordered(futures)
 
             logger.info(
-                f"Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms, updated version: {meta.model_version}"
+                f"Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
             )
         elif meta.type == "nccl" or meta.type == "astate":
             load_timestamp = time.time_ns()
@@ -498,7 +500,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 wait_future_ordered(futures)
 
             logger.info(
-                f"Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms, updated version: {meta.model_version}"
+                f"Loading weights done in {(time.time_ns() - load_timestamp) / 1e6:.2f} ms"
             )
         else:
             raise FrameworkError(
@@ -506,7 +508,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 "InferenceWorkerError",
                 f"Unknown weight update type {meta.type}",
             )
-        self.set_version(meta.model_version)
+        # self.set_version(meta.model_version)
 
     def pause(self):
         self.paused.set()

@@ -46,6 +46,7 @@ class RemoteHybridTrainWorker(TrainEngine):
         self.megatron_addr = None
         self.global_step = self.config.global_step
         self.global_rank = 0
+        self._version: int = 0
 
         # initialization
         self.initialized = False
@@ -930,6 +931,11 @@ class RemoteHybridTrainWorker(TrainEngine):
 
         return None
 
+    def set_version(self, version: int):
+        self._version = version
+
+    def get_version(self) -> int:
+        return self._version
 
 def serialize_and_compress(data):
     serialized_data = cloudpickle.dumps(data)

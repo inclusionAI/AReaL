@@ -78,11 +78,11 @@ class RLVRWorkflow(RolloutWorkflow):
             self.reward_fn = getattr(module, fname)
             self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
 
-        print(f"debug: data: {data}")
         input_ids = self.get_input_ids_fn(
             self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking
         )
-
+        debug_prompt = self.tokenizer.decode(input_ids)
+        print(f"RLVRWorkflow arun_episode data: {data}, decode input_ids: {debug_prompt}")
         n_samples = self.gconfig.n_samples
         req = ModelRequest(
             rid=uuid.uuid4().hex,
@@ -107,6 +107,9 @@ class RLVRWorkflow(RolloutWorkflow):
 
             prompt_str = self.tokenizer.decode(input_ids)
             completions_str = self.tokenizer.decode(resp.output_tokens)
+            print(
+                f"RLVRWorkflow arun_episode prompt_str: {prompt_str}, completions_str: {completions_str}"
+            )
             prompt_strs.append(prompt_str)
             completions_strs.append(completions_str)
             seqlens.append(len(seq))

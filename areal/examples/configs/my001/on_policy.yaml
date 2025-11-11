@@ -1,11 +1,12 @@
 experiment_name: mini-model
-trial_name: on-policy
-allocation_mode: "sglang:d8t4p1+d8t1p4"
+trial_name: test
+allocation_mode: "sglang:d2t4p1+d2t1p4"
 seed: 42
-total_train_epochs: 10
-total_train_steps: 1145
+total_train_epochs: 1
+total_train_steps: 2
 weight_update_type: "astate"
-enable_colocate_mode: true
+enable_colocate_mode: false
+async_training: false
 
 storage_prefix: "/storage/openpsi"
 
@@ -14,7 +15,7 @@ train_dataset:
   path: "/storage/dataset/nlp/areal/moe_lite_math_0527_merge_train_areal.jsonl"
   shuffle: true
   max_length: 1024
-  batch_size: 64
+  batch_size: 8
   type: "rl"
 
 scheduler:
@@ -36,13 +37,13 @@ stats_logger:
     path: "/home/admin/logs/tfevent/asystem"
 
 gconfig:
-  n_samples: 8
+  n_samples: 1
   min_new_tokens: 0
   # NOTE!!
   # Due to the limitations of sglang, max_new_tokens + max_prompt_len must be less than the model's context_len (set in the model's config.json),
   # and cannot be equal to it. See https://github.com/sgl-project/sglang/blob/f98366604b23e331422bf3c62d4e7410ae4fab87/python/sglang/srt/managers/tokenizer_manager.py#L638C9-L638C11
-  max_new_tokens: 15360
-  max_tokens: 16383
+  max_new_tokens: 256
+  max_tokens: 1280
   greedy: false
   temperature: 1.0
   top_k: 1000000
@@ -176,7 +177,7 @@ actor: &actor_ref
       distributed_backend: "nccl"
       distributed_timeout_minutes: 600
       enable_one_logger: false
-      expert_model_parallel_size: 8
+      expert_model_parallel_size: 1
       ffn_hidden_size: 5120
       first_k_dense_replace: 1
       global_batch_size: 512

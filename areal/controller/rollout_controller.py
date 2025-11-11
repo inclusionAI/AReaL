@@ -403,7 +403,6 @@ class RolloutController:
             capacity = self.get_capacity()
             # Submit pending tasks
             self.logger.info(f"Capacity: {capacity}, pending inputs: {len(self._pending_inputs)}")
-
             for _ in range(capacity):
                 if len(self._pending_inputs) == 0:
                     break
@@ -484,6 +483,7 @@ class RolloutController:
             A concatenated batch of trajectory results
         """
         # Submit all requests
+
         for item in data:
             self.submit(
                 item,

@@ -13,6 +13,7 @@ from areal.scheduler.exceptions import (
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging
 from areal.utils.http import response_retryable
+from areal.extension.asystem.utils.async_utils import run_async_with_loop
 
 logger = logging.getLogger("RPCClient")
 
@@ -172,9 +173,18 @@ class RPCClient:
             WorkerFailedError: If worker process has failed
             EngineCallError: If method call fails
         """
-        return asyncio.run(
-            self.async_call_engine(worker_id, method, max_retries, *args, **kwargs)
-        )
+        # 创建新的事件循环并运行异步任务
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(
+                self.async_call_engine(worker_id, method, max_retries, *args, **kwargs)
+            )
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
 
     async def async_call_engine(
         self, worker_id, method, max_retries=3, *args, **kwargs
@@ -241,7 +251,7 @@ class RPCClient:
         for attempt in range(1, max_retries + 1):
             try:
                 logger.info(
-                    f"Async calling method '{method}' on worker '{worker_id}' (attempt {attempt})"
+                    f"Async calling method '{method}' on worker '{worker_id}' (attempt {attempt}), url: {url}"
                 )
 
                 response = await self._async_http_client.post(

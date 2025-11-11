@@ -8,6 +8,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from areal.api.alloc_mode import AllocationMode
+from areal.api.io_struct import WeightUpdateMeta
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.scheduler_api import Job, Scheduler
@@ -20,6 +21,7 @@ from areal.core.async_task_runner import AsyncTaskRunner
 from areal.extension.asystem.remote_hybrid_inference_worker import (
     RemoteHypidInferenceInitConfig,
 )
+from areal.extension.asystem.controller.util import execute_parallel_tasks
 from areal.utils import logging
 
 
@@ -204,3 +206,8 @@ class RolloutController(BaseRolloutController):
             init_configs.append(init_config)
 
         return init_configs
+
+    async def update_weights(self, meta: WeightUpdateMeta) -> None:
+        self.logger.info("begin update_weights")
+        execute_parallel_tasks(self.workers, self.scheduler, "update_weights", meta)
+        self.logger.info("finish update_weights")
