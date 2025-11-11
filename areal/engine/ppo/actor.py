@@ -73,7 +73,7 @@ class PPOActor:
         self,
         data: dict[str, Any],
         temperature: float | None = None,
-    ) -> torch.Tensor | None:
+    ) -> torch.Tensor:
         def calc_logprobs(logits, input_data):
             labels = input_data.get(
                 "rolled_input_ids",
@@ -90,7 +90,7 @@ class PPOActor:
         )
 
     @trace_perf("ppo_actor.compute_advantages", category="compute")
-    def compute_advantages(self, data: dict[str, Any]) -> None:
+    def compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
@@ -183,6 +183,8 @@ class PPOActor:
         data["loss_mask"] = loss_mask
         # because we have rolled old_logp by -1
         data["logprobs"] = old_logp
+
+        return data
 
     @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
@@ -296,12 +298,12 @@ class FSDPPPOActor(FSDPEngine):
         self.actor = PPOActor(config, self)
 
     @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+    def compute_logp(self, *args, **kwargs) -> torch.Tensor:
         return self.actor.compute_logp(*args, **kwargs)
 
     @torch.no_grad()
-    def compute_advantages(self, *args, **kwargs) -> None:
-        self.actor.compute_advantages(*args, **kwargs)
+    def compute_advantages(self, *args, **kwargs) -> dict[str, Any]:
+        return self.actor.compute_advantages(*args, **kwargs)
 
     def ppo_update(self, *args, **kwargs) -> None:
         self.actor.ppo_update(*args, **kwargs)
@@ -313,12 +315,12 @@ class MegatronPPOActor(MegatronEngine):
         self.actor = PPOActor(config, self)
 
     @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+    def compute_logp(self, *args, **kwargs) -> torch.Tensor:
         return self.actor.compute_logp(*args, **kwargs)
 
     @torch.no_grad()
-    def compute_advantages(self, *args, **kwargs) -> None:
-        self.actor.compute_advantages(*args, **kwargs)
+    def compute_advantages(self, *args, **kwargs) -> dict[str, Any]:
+        return self.actor.compute_advantages(*args, **kwargs)
 
     def ppo_update(self, *args, **kwargs) -> None:
         self.actor.ppo_update(*args, **kwargs)
