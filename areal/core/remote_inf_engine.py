@@ -35,6 +35,7 @@ from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
 from areal.utils.network import find_free_ports, gethostip
+from areal.utils.perf_tracer import trace_perf
 
 from .workflow_executor import WorkflowExecutor
 
@@ -752,6 +753,7 @@ class RemoteInfEngine:
             should_accept_fn=should_accept_fn,
         )
 
+    @trace_perf("remote_inf_engine.pause_generation", category="misc")
     def pause_generation(self):
         """Pause request submission for async rollout."""
         try:
@@ -769,6 +771,7 @@ class RemoteInfEngine:
         # The following line waits until all requests are indeed dropped.
         time.sleep(self.config.pause_grace_period)
 
+    @trace_perf("remote_inf_engine.continue_generation", category="misc")
     def continue_generation(self):
         """Resume request submission for async rollout."""
         try:

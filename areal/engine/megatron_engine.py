@@ -447,6 +447,7 @@ class MegatronEngine(TrainEngine):
             model.train(mode=mode)
         return self
 
+    @trace_perf("megatron_engine.update_bucket", category="comm")
     def _update_bucket_weights_from_distributed(
         self,
         meta: WeightUpdateMeta,
@@ -496,6 +497,7 @@ class MegatronEngine(TrainEngine):
     ) -> int:
         param = all_gather_param(name, param)
         param = remove_padding(name, param, self.hf_config.vocab_size)
+
         if not self.is_pipeline_parallel_head():
             return buffer_size
 
@@ -510,6 +512,7 @@ class MegatronEngine(TrainEngine):
         buffer_size += param_size
         return buffer_size
 
+    @trace_perf("megatron_engine.update_expert_bucket", category="comm")
     def _update_bucket_expert_weights_from_distributed(
         self,
         meta: WeightUpdateMeta,
@@ -572,7 +575,8 @@ class MegatronEngine(TrainEngine):
             converted_hf_tensors.extend(
                 convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
             )
-        return self._update_bucket_weights_from_distributed(meta, converted_hf_tensors)
+
+        self._update_bucket_weights_from_distributed(meta, converted_hf_tensors)
 
     def _impl_update_expert_weight_from_distributed(
         self,

@@ -41,7 +41,7 @@ from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.base_hf_engine import BaseHFEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, perf_tracer, pkg_version
+from areal.utils import logging, name_resolve, names, pkg_version
 from areal.utils.data import (
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
@@ -55,7 +55,7 @@ from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
-from areal.utils.perf_tracer import trace_perf
+from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
@@ -323,6 +323,7 @@ class FSDPEngine(BaseHFEngine):
         if self.rank == 0:
             self.model.print_trainable_parameters()
 
+    @trace_perf("fsdp_engine.update_bucket", category="comm")
     def _update_bucket_weights_from_distributed(
         self,
         meta: WeightUpdateMeta,
@@ -599,7 +600,7 @@ class FSDPEngine(BaseHFEngine):
             else:
                 inputs = padded_mb_input
 
-            with perf_tracer.trace_scope("fsdp_engine.train_batch.forward"):
+            with trace_scope("fsdp_engine.train_batch.forward"):
                 outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
@@ -615,7 +616,7 @@ class FSDPEngine(BaseHFEngine):
             loss_scale *= self.parallel_helper.dp_size
 
             loss *= loss_scale
-            with perf_tracer.trace_scope("fsdp_engine.train_batch.backward"):
+            with trace_scope("fsdp_engine.train_batch.backward"):
                 loss.backward()
 
         grad_norm = fsdp2_clip_grad_norm(
@@ -628,7 +629,7 @@ class FSDPEngine(BaseHFEngine):
             self.optimizer.zero_grad()
             update_successful = False
         else:
-            with perf_tracer.trace_scope("fsdp_engine.train_batch.step"):
+            with trace_scope("fsdp_engine.train_batch.step"):
                 self.optimizer.step()
             update_successful = True
 
@@ -708,7 +709,7 @@ class FSDPEngine(BaseHFEngine):
             else:
                 inputs = padded_mb_input
 
-            with perf_tracer.trace_scope("fsdp_engine.eval_batch.forward"):
+            with trace_scope("fsdp_engine.eval_batch.forward"):
                 outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
@@ -794,7 +795,7 @@ class FSDPEngine(BaseHFEngine):
             else:
                 inputs = padded_mb_input
 
-            with perf_tracer.trace_scope("fsdp_engine.forward.forward"):
+            with trace_scope("fsdp_engine.forward.forward"):
                 outputs = self.model(**inputs)
 
             logits = outputs.logits.squeeze(0)
