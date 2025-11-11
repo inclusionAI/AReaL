@@ -1,13 +1,25 @@
+import asyncio
 import logging
-from typing import List, Optional
+from http import HTTPStatus
 
 import uvloop
-from fastapi import Request
-from fastapi.responses import JSONResponse, Response
-from vllm.entrypoints.openai.api_server import router, run_server
+from fastapi import Depends, Request
+from fastapi.responses import JSONResponse
+from vllm.entrypoints.openai.api_server import (
+    create_completion as original_create_completion,
+)
+from vllm.entrypoints.openai.api_server import (
+    router,
+    run_server,
+    validate_json_request,
+)
 from vllm.entrypoints.openai.cli_args import make_arg_parser, validate_parsed_serve_args
-from vllm.entrypoints.openai.protocol import OpenAIBaseModel
-from vllm.entrypoints.utils import cli_env_setup
+from vllm.entrypoints.openai.protocol import (
+    CompletionRequest,
+    ErrorResponse,
+    OpenAIBaseModel,
+)
+from vllm.entrypoints.utils import cli_env_setup, load_aware_call, with_cancellation
 from vllm.logger import init_logger
 from vllm.utils import FlexibleArgumentParser
 from vllm.v1.engine import EngineCoreOutput, EngineCoreOutputs, FinishReason
@@ -17,12 +29,16 @@ from vllm.v1.request import RequestStatus
 logger = init_logger("areal_vllm_server")
 logger.setLevel(logging.INFO)
 
+# Global event to control generation pause/resume
+_generation_pause_event = asyncio.Event()
+_generation_pause_event.set()  # Initially not paused
+
 
 class UpdateWeightsRequest(OpenAIBaseModel):
     # The model path with the new weights
     model_path: str
     # The format to load the weights
-    load_format: Optional[str] = "auto"
+    load_format: str | None = "auto"
     # Whether to abort all requests before updating weights
     abort_all_requests: bool = False
 
@@ -37,9 +53,9 @@ class UpdateGroupRequest(OpenAIBaseModel):
 
 
 class UpdateWeightsFromXcclRequest(OpenAIBaseModel):
-    names: List[str]
-    dtypes: List[str]
-    shapes: List[List[int]]
+    names: list[str]
+    dtypes: list[str]
+    shapes: list[list[int]]
     group_name: str
 
 
@@ -77,7 +93,7 @@ async def update_weight(request: UpdateWeightsRequest, raw_request: Request):
 
 @router.post("/areal_update_weights_xccl")
 async def update_weight_xccl(raw_request: Request):
-    logger.info(f"API server starts update_weight")
+    logger.info("API server starts update_weight")
     llm = raw_request.app.state.engine_client
     ret_list = await llm.engine_core.call_utility_async(
         "areal_injected_update_weight_xccl",
@@ -87,7 +103,7 @@ async def update_weight_xccl(raw_request: Request):
 
 @router.post("/areal_init_weights_update_group")
 async def init_weights_update_group(request: UpdateGroupRequest, raw_request: Request):
-    logger.info(f"API server starts init_weights_update_group")
+    logger.info("API server starts init_weights_update_group")
     llm = raw_request.app.state.engine_client
     ret_list = await llm.collective_rpc(
         "init_update_weight_group",
@@ -107,7 +123,7 @@ async def init_weights_update_group(request: UpdateGroupRequest, raw_request: Re
 async def set_weight_meta_xccl(
     request: UpdateWeightsFromXcclRequest, raw_request: Request
 ):
-    logger.info(f"API server starts upload meta")
+    logger.info("API server starts upload meta")
     llm = raw_request.app.state.engine_client
     ret_list = await llm.collective_rpc(
         "set_weight_meta",
@@ -121,15 +137,49 @@ async def set_weight_meta_xccl(
 
 
 @router.post("/areal_pause_generation")
-async def dummy_pause_generation(raw_request: Request):
-    logger.info(f"API server starts dummy_pause_generation")
-    return Response(status_code=200)
+async def pause_generation(raw_request: Request):
+    logger.info("API server starts pause_generation and aborts all requests")
+    llm = raw_request.app.state.engine_client
+    # Abort all running and waiting requests
+    await llm.engine_core.call_utility_async("abort_all_reqs")
+    _generation_pause_event.clear()
+    return to_json_response(True, "Generation paused and all requests aborted")
 
 
 @router.post("/areal_continue_generation")
-async def dummy_continue_generation(raw_request: Request):
-    logger.info(f"API server starts dummy_continue_generation")
-    return Response(status_code=200)
+async def continue_generation(raw_request: Request):
+    logger.info("API server starts continue_generation")
+    _generation_pause_event.set()
+    return to_json_response(True, "Generation continued")
+
+
+async def _wait_if_paused():
+    """Wait if generation is paused."""
+    if not _generation_pause_event.is_set():
+        await _generation_pause_event.wait()
+
+
+@router.post(
+    "/v1/completions",
+    dependencies=[Depends(validate_json_request)],
+    responses={
+        HTTPStatus.OK.value: {"content": {"text/event-stream": {}}},
+        HTTPStatus.BAD_REQUEST.value: {"model": ErrorResponse},
+        HTTPStatus.NOT_FOUND.value: {"model": ErrorResponse},
+        HTTPStatus.INTERNAL_SERVER_ERROR.value: {"model": ErrorResponse},
+    },
+)
+@with_cancellation
+@load_aware_call
+async def create_completion(request: CompletionRequest, raw_request: Request):
+    """Wrapped completions endpoint that respects pause state."""
+
+    await _wait_if_paused()
+
+    # Will not use streaming response here.
+    response = await original_create_completion(request, raw_request)
+
+    return response
 
 
 # engine core related hook functions
@@ -141,9 +191,9 @@ def abort_all_reqs(self):
     if not abort_lists:
         # No requests to abort
         success = scheduler.reset_prefix_cache()
-        assert (
-            success
-        ), f"prefix cache must be reset to prevent kv cache pollution! {success}"
+        assert success, (
+            f"prefix cache must be reset to prevent kv cache pollution! {success}"
+        )
         return
 
     client_outputs = {}
@@ -168,9 +218,9 @@ def abort_all_reqs(self):
         self.output_queue.put_nowait((client_index, engine_core_outputs))
 
     success = scheduler.reset_prefix_cache()
-    assert (
-        success
-    ), f"prefix cache must be reset to prevent kv cache pollution! {success}"
+    assert success, (
+        f"prefix cache must be reset to prevent kv cache pollution! {success}"
+    )
 
 
 def areal_injected_update_weight(self, path):
@@ -194,6 +244,7 @@ def hook():
 
 
 hook()
+
 
 if __name__ == "__main__":
     # NOTE(simon):
