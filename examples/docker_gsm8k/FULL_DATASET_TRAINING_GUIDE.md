@@ -188,6 +188,24 @@ bash examples/docker_gsm8k/run_full_training.sh
 
 ## Troubleshooting
 
+### SGLang Server Crash (Connection Refused)
+
+**Problem**: Training stops with `ConnectionRefusedError` to SGLang server, task reward drops to zero.
+
+**Symptoms:**
+- Connection refused errors: `Connect call failed ('172.17.0.2', 13231)`
+- Task reward suddenly drops to zero
+- Training continues but learns nothing
+
+**Root Cause**: SGLang inference server crashed (likely OOM during long training).
+
+**Solution**:
+1. **Diagnose**: Run `bash examples/docker_gsm8k/check_sglang_health.sh`
+2. **Resume**: Run `bash examples/docker_gsm8k/run_full_training.sh` (auto-detects checkpoint)
+3. **Prevent**: Config updated with safer memory settings (see `RECOVER_FROM_CRASH.md`)
+
+**Detailed guide**: See `DIAGNOSE_SGLANG_CRASH.md` and `RECOVER_FROM_CRASH.md`
+
 ### Training Not Resuming
 
 **Problem**: Training starts from step 0 instead of resuming.
