@@ -122,6 +122,7 @@ def test_model(
     max_new_tokens: int = 1024,
     stop_on_hash: bool = True,
     log_dir: str | None = None,
+    test_all: bool = False,
 ):
     """Test the model on GSM8K samples."""
     
@@ -171,10 +172,18 @@ def test_model(
     
     dataset = load_dataset("openai/gsm8k", "main", split="test")
     
+    # Determine how many samples to test
+    if test_all or max_samples == -1:
+        num_samples = len(dataset)
+        _log(f"Testing on FULL dataset: {num_samples} samples")
+    else:
+        num_samples = min(max_samples, len(dataset))
+        _log(f"Testing on {num_samples} samples (out of {len(dataset)} total)")
+    
     results = []
     correct = 0
     
-    for i, sample in enumerate(dataset.select(range(min(max_samples, len(dataset))))):
+    for i, sample in enumerate(dataset.select(range(num_samples))):
         question = sample["question"]
         correct_answer = sample["answer"]
         
@@ -337,7 +346,7 @@ def test_model(
     }
 
 
-def compare_models(base_model: str, trained_model: str, max_samples: int = 10):
+def compare_models(base_model: str, trained_model: str, max_samples: int = 10, test_all: bool = False):
     """Compare base model and trained model."""
     
     print(f"\n{'#'*60}")
@@ -345,10 +354,10 @@ def compare_models(base_model: str, trained_model: str, max_samples: int = 10):
     print(f"{'#'*60}\n")
     
     # Test base model
-    base_results = test_model(base_model, max_samples=max_samples)
+    base_results = test_model(base_model, max_samples=max_samples, test_all=test_all)
     
     # Test trained model
-    trained_results = test_model(trained_model, max_samples=max_samples)
+    trained_results = test_model(trained_model, max_samples=max_samples, test_all=test_all)
     
     # Print comparison
     print(f"\n{'#'*60}")
@@ -394,7 +403,7 @@ def main():
     parser.add_argument(
         "--trained-model",
         type=str,
-        default="./outputs/gsm8k-local",
+        default="./outputs/gsm8k-training",
         help="Trained model path",
     )
     parser.add_argument(
@@ -406,7 +415,12 @@ def main():
         "--max-samples",
         type=int,
         default=10,
-        help="Maximum number of samples to test",
+        help="Maximum number of samples to test (use -1 or --all for full test set)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Test on full GSM8K test set (all 1319 samples)",
     )
     parser.add_argument(
         "--log-dir",
@@ -428,8 +442,15 @@ def main():
     
     args = parser.parse_args()
     
+    # Determine if testing all samples
+    test_all = args.all or args.max_samples == -1
+    
     if args.compare:
-        compare_models(args.base_model, args.trained_model, max_samples=args.max_samples)
+        compare_models(
+            args.base_model, 
+            args.trained_model, 
+            max_samples=args.max_samples if not test_all else -1
+        )
     elif args.model:
         test_model(
             args.model,
@@ -437,6 +458,7 @@ def main():
             max_new_tokens=args.max_new_tokens,
             stop_on_hash=not args.no_stop_on_hash,
             log_dir=args.log_dir,
+            test_all=test_all,
         )
     else:
         # Default: test trained model
@@ -446,6 +468,7 @@ def main():
             max_new_tokens=args.max_new_tokens,
             stop_on_hash=not args.no_stop_on_hash,
             log_dir=args.log_dir,
+            test_all=test_all,
         )
 
 
