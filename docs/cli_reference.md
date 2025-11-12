@@ -558,7 +558,7 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 | `model`                        | string          | `""`                                                                | -           |
 | `seed`                         | integer         | `1`                                                                 | -           |
 | `skip_tokenizer_init`          | boolean         | `False`                                                             | -           |
-| `enforce_eager`                | boolean         | `True`                                                              | -           |
+| `enforce_eager`                | boolean         | `False`                                                             | -           |
 | `dtype`                        | string          | `"bfloat16"`                                                        | -           |
 | `distributed_executor_backend` | string          | `"mp"`                                                              | -           |
 | `max_num_seqs`                 | integer         | `256`                                                               | -           |

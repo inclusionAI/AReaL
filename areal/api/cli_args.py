@@ -626,7 +626,7 @@ class vLLMConfig:
     model: str = ""
     seed: int = 1
     skip_tokenizer_init: bool = False
-    enforce_eager: bool = True
+    enforce_eager: bool = False
     dtype: str = "bfloat16"
     distributed_executor_backend: str = "mp"
     # original
