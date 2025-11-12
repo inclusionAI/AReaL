@@ -10,6 +10,7 @@
 #   - 1hour: 1-hour training (500 samples, 2 epochs) [default]
 #   - 3hour: 3-hour training (1000 samples, 3 epochs)
 #   - full: Full training (all samples, 5 epochs) - takes days
+#   - h200: Full training on H200 GPU (all samples, 5 epochs) - optimized for H200
 
 set -e
 
@@ -94,9 +95,16 @@ case "$CONFIG_NAME" in
         EXPERIMENT_NAME="gsm8k-grpo-cloud-full"
         echo "Using FULL training configuration (~5 days)"
         ;;
+    h200)
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_cloud.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_cloud.py"
+        EXPERIMENT_NAME="gsm8k-grpo-cloud-h200"
+        echo "Using H200 FULL training configuration (full dataset, 5 epochs)"
+        echo "H200 GPU detected: 141GB memory - using full dataset training"
+        ;;
     *)
         echo "ERROR: Unknown config name: $CONFIG_NAME"
-        echo "Valid options: fast, 1hour, 3hour, full"
+        echo "Valid options: fast, 1hour, 3hour, full, h200"
         exit 1
         ;;
 esac
