@@ -3,6 +3,7 @@ import sys
 from copy import deepcopy
 
 import torch.distributed as dist
+import logging
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
@@ -166,6 +167,11 @@ def main(args):
     print(f"  Estimated time: ~{max_steps} minutes (~{max_steps/60:.1f} hours) at ~1 step/min")
     print(f"{'='*80}\n")
 
+    # Circuit breaker: Track consecutive zero rewards
+    zero_reward_streak = 0
+    CIRCUIT_BREAKER_THRESHOLD = 10  # Stop after 10 consecutive zero-reward steps
+    CIRCUIT_BREAKER_ENABLED = True
+    
     data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
@@ -271,6 +277,66 @@ def main(args):
             stats_tracker.export_all(reduce_group=actor.data_parallel_group)
         )
         stats_logger.commit(epoch, step, global_step, stats)
+
+        # Circuit breaker: Check task reward and stop if zero for too long
+        if CIRCUIT_BREAKER_ENABLED:
+            task_reward_avg = stats[0].get("grpo_actor/task_reward/avg", None)
+            if task_reward_avg is not None:
+                if task_reward_avg == 0.0:
+                    zero_reward_streak += 1
+                    if zero_reward_streak >= CIRCUIT_BREAKER_THRESHOLD:
+                        error_msg = (
+                            f"\n{'='*80}\n"
+                            f"CIRCUIT BREAKER TRIGGERED!\n"
+                            f"{'='*80}\n"
+                            f"Task reward has been zero for {zero_reward_streak} consecutive steps.\n"
+                            f"Current step: {global_step} (Epoch {epoch}, Step {step})\n"
+                            f"Stopping training to prevent model corruption.\n"
+                            f"\nPossible causes:\n"
+                            f"  - SGLang server crashed or disconnected\n"
+                            f"  - Inference server not responding\n"
+                            f"  - Network connectivity issues\n"
+                            f"\nNext steps:\n"
+                            f"  1. Check SGLang server logs for errors\n"
+                            f"  2. Verify SGLang server is running\n"
+                            f"  3. Resume training from checkpoint before step {global_step - zero_reward_streak + 1}\n"
+                            f"  4. Use: python examples/cloud_gsm8k/resume_training.py \\\n"
+                            f"         --experiment-name {config.experiment_name} \\\n"
+                            f"         --trial-name {config.trial_name} \\\n"
+                            f"         --before-step {global_step - zero_reward_streak + 1}\n"
+                            f"{'='*80}\n"
+                        )
+                        if actor.is_data_parallel_head():
+                            print(error_msg)
+                            logging.error(error_msg)
+                        # Save a final checkpoint before stopping
+                        saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
+                        recover_handler.dump(
+                            actor,
+                            step_info,
+                            saver,
+                            evaluator,
+                            stats_logger,
+                            train_dataloader,
+                            tokenizer=tokenizer,
+                        )
+                        # Clean shutdown
+                        stats_logger.close()
+                        eval_rollout.destroy()
+                        rollout.destroy()
+                        if ref is not None:
+                            ref.destroy()
+                        actor.destroy()
+                        sys.exit(1)
+                else:
+                    # Reset streak if reward is non-zero
+                    if zero_reward_streak > 0:
+                        if actor.is_data_parallel_head():
+                            print(f"✅ Task reward recovered: {task_reward_avg:.4f} (was zero for {zero_reward_streak} steps)")
+                    zero_reward_streak = 0
+            elif actor.is_data_parallel_head() and global_step % 10 == 0:
+                # Log warning if task_reward is missing from stats
+                print(f"⚠️  Warning: task_reward/avg not found in stats at step {global_step}")
 
         dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()

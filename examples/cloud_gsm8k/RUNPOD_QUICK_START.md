@@ -322,5 +322,5 @@ When you restart a pod (after stopping or interruption):
 - Don't forget to mount the volume when creating pod
 - Don't use different experiment_name when resuming (won't find checkpoint)
 
-See `runpod_setup.md` for more detailed instructions.
+See `RUNPOD_COMPLETE_GUIDE.md` for more detailed instructions.
 

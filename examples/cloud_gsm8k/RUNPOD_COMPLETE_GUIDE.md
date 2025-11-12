@@ -521,7 +521,7 @@ bash -c "pip config set global.index-url https://pypi.org/simple && pip config s
 
 This prevents deleting code during training while still handling restart scenarios.
 
-**Detailed guide**: See `CONTAINER_RESTART_LOOP_FIX.md` for complete analysis.
+**Note**: Container restart loops are usually caused by Docker command errors or missing dependencies. Check the Docker command in your template and ensure all required environment variables are set.
 
 ### Training Crashes Around Step 50-60 (Repeating Pattern)
 
@@ -575,7 +575,7 @@ This prevents deleting code during training while still handling restart scenari
 
 6. **Try regular (non-spot) instance** to rule out spot interruptions
 
-**Detailed guide**: See `CRASH_DIAGNOSIS.md` for complete analysis and solutions.
+**Note**: Training crashes can be caused by OOM, SGLang server disconnects, or configuration issues. See `H200_STEP188_DIAGNOSIS.md` for an example analysis. The circuit breaker in `gsm8k_grpo_cloud.py` will automatically stop training if task reward is zero for 10 consecutive steps.
 
 ### Training Too Slow
 

@@ -12,13 +12,6 @@ This directory contains scripts and configurations for running AReaL GRPO traini
 
 **Quick Start**: See `RUNPOD_QUICK_START.md` or `RUNPOD_COMPLETE_GUIDE.md`
 
-## Supported Platforms
-
-- **RunPod** (https://runpod.io) ⭐ **Recommended - Most Economical**
-- **Lambda AI** (https://lambdalabs.com) - Easiest setup
-- **Vast.ai** (https://vast.ai) - Cheapest but more setup
-- **Any platform with Docker + GPU support**
-
 ## Quick Start (RunPod)
 
 ### 1. Create RunPod Account
@@ -39,39 +32,50 @@ This directory contains scripts and configurations for running AReaL GRPO traini
 bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
 ```
 
-**💡 Important**: Set your WandB API key as an environment variable in RunPod (see `RUNPOD_WANDB_API_KEY.md` for details)
+**💡 Important**: Set your WandB API key as an environment variable in RunPod (see `RUNPOD_COMPLETE_GUIDE.md` for details)
 
 ## Files
 
-### RunPod-Specific (Recommended)
-- `RUNPOD_QUICK_START.md` - ⭐ **Start here for RunPod**
-- `RUNPOD_COMPLETE_GUIDE.md` - Complete RunPod guide
-- `runpod_deploy.sh` - RunPod deployment helper script
-- `runpod_docker_run.sh` - RunPod-optimized Docker run script
-- `runpod_template.json` - RunPod template configuration
+### Main Training Script
+- `run_training_cloud.sh` - **Main training script** - Use this to start training
+  - Supports: `fast`, `1hour`, `3hour`, `full`, `h200` configs
+  - Auto-detects GPU type (A40, H200, etc.) and uses appropriate config
+  - Usage: `bash examples/cloud_gsm8k/run_training_cloud.sh [config_name]`
 
-### General Cloud
-- `CLOUD_DEPLOYMENT.md` - Comprehensive cloud deployment guide
-- `QUICK_START_CLOUD.md` - General quick start
-- `DOCKER_COMMANDS.md` - Copy-paste Docker commands
-- `PLATFORM_COMPARISON.md` - Platform comparison
+### RunPod Documentation
+- `RUNPOD_QUICK_START.md` - ⭐ **Start here for RunPod** - Quick setup guide
+- `RUNPOD_COMPLETE_GUIDE.md` - Complete RunPod guide with troubleshooting
+- `runpod_template.json` - RunPod template configuration (optional)
 
-### Platform-Specific
-- `lambda_ai_setup.md` - Lambda AI instructions
-- `runpod_setup.md` - RunPod instructions (detailed)
-- `vast_ai_setup.md` - Vast.ai instructions
-
-### Scripts
-- `docker_run_cloud.sh` - Docker run script for cloud platforms
-- `run_training_cloud.sh` - Training script with config selection
-- `test_trained_model_cloud.py` - Evaluation script
-
-### Configurations
-- `gsm8k_grpo_cloud.yaml` - Full training (cloud-optimized)
+### Training Configurations
+- `gsm8k_grpo_cloud.yaml` - Full training (cloud-optimized, for H200/full runs)
 - `gsm8k_grpo_1hour.yaml` - 1-hour training (RTX 4090/A100)
 - `gsm8k_grpo_1hour_a40.yaml` - 1-hour training (A40 GPU optimized) ⭐
 - `gsm8k_grpo_3hour.yaml` - 3-hour training
+- `gsm8k_grpo_3hour_a40.yaml` - 3-hour training (A40 GPU optimized)
 - `gsm8k_grpo_fast.yaml` - Fast training (20-30 min)
+
+### Training Scripts
+- `gsm8k_grpo_cloud.py` - Main training script (used by `run_training_cloud.sh`)
+
+### Recovery and Checkpoint Management
+- `list_checkpoints.py` - List available checkpoints
+- `setup_recovery.py` - Set up recovery from a checkpoint
+- `resume_training.py` - Interactive recovery guide
+- `CHECKPOINT_AND_RECOVERY_GUIDE.md` - Detailed recovery documentation
+- `RECOVERY_QUICK_START.md` - Quick recovery reference
+- `CIRCUIT_BREAKER_AND_RECOVERY_SUMMARY.md` - Circuit breaker implementation summary
+
+### GPU-Specific Documentation
+- `H200_SETUP.md` - H200 GPU setup and configuration
+- `H200_STEP188_DIAGNOSIS.md` - Analysis of H200 training crash at step 188
+- `A40_GPU_FIX.md` - A40 GPU memory optimization guide
+- `A40_3HOUR_SUMMARY.md` - A40 3-hour training summary
+- `1HOUR_VS_3HOUR_COMPARISON.md` - Comparison of 1-hour vs 3-hour configs
+
+### Other Documentation
+- `CHECKPOINT_SAVING_FIX.md` - Checkpoint saving configuration fixes
+- `test_trained_model_cloud.py` - Model evaluation script
 
 ## Cost Comparison
 
@@ -79,45 +83,41 @@ For 3-hour training:
 - **RunPod RTX 4090 Spot**: ~$0.27 ⭐ **Best Value**
 - **RunPod RTX 4090**: ~$0.87
 - **RunPod A40**: ~$1.20-1.50 (if RTX 4090 unavailable)
-- **Lambda AI A100**: ~$3.30
-- **Vast.ai RTX 4090**: ~$0.60-1.20
+- **RunPod H200**: ~$4.50-6.00 (for full dataset training)
 
-**Note**: A40 GPU requires memory-optimized config. The training script auto-detects A40 and uses `gsm8k_grpo_1hour_a40.yaml` automatically.
+**Note**: A40 GPU requires memory-optimized config. The training script auto-detects A40 and uses `gsm8k_grpo_1hour_a40.yaml` or `gsm8k_grpo_3hour_a40.yaml` automatically.
 
-## Key Differences from Local Setup
+## Key Features
 
-1. **No local volume mounts**: Code is cloned inside container
-2. **Persistent storage**: Use RunPod network volumes for checkpoints
-3. **Network**: Uses `--network host` for SGLang server
-4. **Environment**: WandB API key passed via environment variable
-5. **Spot instances**: Enable for 50-70% cost savings
+1. **Automatic GPU Detection**: Script detects GPU type and uses appropriate config
+2. **Circuit Breaker**: Training stops automatically if task reward is zero for 10 consecutive steps
+3. **Checkpoint Recovery**: Easy recovery from checkpoints using provided scripts
+4. **Network Volumes**: Persistent storage for checkpoints across pod restarts
+5. **Spot Instances**: Enable for 50-70% cost savings
 
 ## Important: Using Your Forked Branch
 
 **This setup uses your forked repository**: `nexthybrid/AReaL` branch `DL4Math`
 
-- ✅ **Docker Image**: Still uses `ghcr.io/inclusionai/areal-runtime:v0.3.4` (original image is fine - see `DOCKER_IMAGE_EXPLANATION.md`)
+- ✅ **Docker Image**: Uses `ghcr.io/inclusionai/areal-runtime:v0.3.4` (provides runtime environment)
 - ✅ **Code**: Clones from `https://github.com/nexthybrid/AReaL` branch `DL4Math`
 - ✅ **Your custom scripts**: Uses your modified `examples/cloud_gsm8k/` scripts
 
 **Why the original Docker image works**: The image only provides the runtime environment (CUDA, PyTorch, dependencies). Your actual code gets cloned from GitHub, so you can use your forked branch without building a new image.
 
-See `DOCKER_IMAGE_EXPLANATION.md` for detailed explanation.
-
 ## Troubleshooting
 
 - **Pip installation fails**: See `RUNPOD_COMPLETE_GUIDE.md` - "Pip Installation Fails" section
 - **CUDA Out of Memory on A40**: See `A40_GPU_FIX.md` ⚠️ or `RUNPOD_COMPLETE_GUIDE.md` - "CUDA Out of Memory" section
-- **Container restart loop**: See `CONTAINER_RESTART_LOOP_FIX.md` ⚠️ (container restarts every ~17 seconds)
-- **Checkpoints not saving**: See `CHECKPOINT_SAVING_FIX.md` ⚠️ (checkpoints saved to wrong location)
-- **Training crashes around step 50-60**: See `CRASH_DIAGNOSIS.md` ⚠️ or `RUNPOD_COMPLETE_GUIDE.md` - "Training Crashes" section
-- **Model persistence**: See `RUNPOD_COMPLETE_GUIDE.md` - "Resuming Training" section
+- **Checkpoints not saving**: See `CHECKPOINT_SAVING_FIX.md` ⚠️
+- **Training crashes**: See `RUNPOD_COMPLETE_GUIDE.md` - "Training Crashes" section
+- **Task reward drops to zero**: See `H200_STEP188_DIAGNOSIS.md` and `CIRCUIT_BREAKER_AND_RECOVERY_SUMMARY.md`
+- **Resuming training**: See `CHECKPOINT_AND_RECOVERY_GUIDE.md` or `RECOVERY_QUICK_START.md`
 
 ## Next Steps
 
-1. **For RunPod**: See `RUNPOD_QUICK_START.md` ⭐
-2. **For A40 GPU issues**: See `A40_GPU_FIX.md` ⚠️
-3. **For Docker image explanation**: See `DOCKER_IMAGE_EXPLANATION.md`
-4. **For other platforms**: See `CLOUD_DEPLOYMENT.md`
-5. **For comparison**: See `PLATFORM_COMPARISON.md`
-
+1. **For RunPod Setup**: See `RUNPOD_QUICK_START.md` ⭐
+2. **For Complete Guide**: See `RUNPOD_COMPLETE_GUIDE.md`
+3. **For A40 GPU Issues**: See `A40_GPU_FIX.md` ⚠️
+4. **For H200 Setup**: See `H200_SETUP.md`
+5. **For Recovery**: See `RECOVERY_QUICK_START.md`
