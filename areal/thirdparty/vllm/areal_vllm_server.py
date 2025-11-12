@@ -192,8 +192,8 @@ def abort_all_reqs(self):
         # No requests to abort
         success = scheduler.reset_prefix_cache()
         if not success:
-            logger.error(
-                f"prefix cache must be reset to prevent kv cache pollution! {success}"
+            raise RuntimeError(
+                f"Prefix cache must be reset to prevent kv cache pollution! Reset: {success}"
             )
         return
 
@@ -220,8 +220,8 @@ def abort_all_reqs(self):
 
     success = scheduler.reset_prefix_cache()
     if not success:
-        logger.error(
-            f"prefix cache must be reset to prevent kv cache pollution! {success}"
+        raise RuntimeError(
+            f"Prefix cache must be reset to prevent kv cache pollution! Reset: {success}"
         )
 
 
