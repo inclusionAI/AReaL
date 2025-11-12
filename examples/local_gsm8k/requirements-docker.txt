@@ -1,8 +1,0 @@
-# Additional Python dependencies for Docker environment
-# Most dependencies are already in AReaL base image
-
-# Only add if you need additional packages
-# Example:
-# pandas
-# matplotlib
-

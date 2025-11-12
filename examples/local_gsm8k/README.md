@@ -4,11 +4,29 @@ Complete training setup for finetuning LLMs on GSM8K dataset locally on Mac M2.
 
 ## Quick Start
 
+### Option 1: Using the training script (Recommended)
+
 ```bash
 # 1. Activate virtual environment
 source venv/bin/activate
 
-# 2. Run training (2-hour budget)
+# 2. Run training with defaults (2-hour budget, 1500 samples)
+bash examples/local_gsm8k/train.sh
+
+# Or customize via environment variables:
+MAX_SAMPLES=1000 BATCH_SIZE=4 bash examples/local_gsm8k/train.sh
+
+# Or pass arguments directly:
+bash examples/local_gsm8k/train.sh --max-samples 1000 --batch-size 4 --no-wandb
+```
+
+### Option 2: Using Python directly
+
+```bash
+# 1. Activate virtual environment
+source venv/bin/activate
+
+# 2. Run training
 python examples/local_gsm8k/train_hf_trainer.py \
     --model Qwen/Qwen2.5-0.5B-Instruct \
     --max-samples 1500 \
@@ -19,19 +37,16 @@ python examples/local_gsm8k/train_hf_trainer.py \
     --max-length 128 \
     --max-time 7200 \
     --output-dir ./outputs/gsm8k-2hour
-
-# 3. Test trained model
-python examples/local_gsm8k/test_model.py --model ./outputs/gsm8k-2hour
 ```
 
 ## Files
 
+- **`train.sh`** - Simple bash script to run training (recommended)
 - **`train_hf_trainer.py`** - Main training script (HuggingFace Trainer)
-- **`test_model.py`** - Model testing and evaluation
-- **`START_HERE.md`** - Quick start guide
-- **`QUICKSTART.md`** - Step-by-step instructions
-- **`NAN_FIX_EXPLAINED.md`** - Technical details on NaN loss fix
+- **`test_model.py`** - Test and compare model performance (base vs trained)
 - **`HF_TRAINER_SUCCESS.md`** - Why HuggingFace Trainer works
+- **`load_wandb_key.py`** - Utility to load W&B API key from local file
+- **`requirements.txt`** - Python dependencies
 
 ## What Was Fixed
 
@@ -61,13 +76,39 @@ python examples/local_gsm8k/test_model.py --model ./outputs/gsm8k-2hour
 
 ## Monitor Training
 
+Training progress is logged to console and optionally to W&B if enabled.
+
+## Output
+
+Trained models are saved to the specified `--output-dir`:
+- Model weights and tokenizer
+- Training checkpoints (if `--save-steps` is set)
+- Training logs
+
+## Testing Trained Models
+
+After training, test your model:
+
 ```bash
-tail -f /tmp/training_2hour.log
+# Test a single model (quick test with 20 samples)
+python examples/local_gsm8k/test_model.py --model ./outputs/gsm8k-training --max-samples 20
+
+# Test on FULL GSM8K test set (all 1319 samples)
+python examples/local_gsm8k/test_model.py --model ./outputs/gsm8k-training --all
+
+# Or use -1 to test all samples
+python examples/local_gsm8k/test_model.py --model ./outputs/gsm8k-training --max-samples -1
+
+# Compare base model vs trained model (full test set)
+python examples/local_gsm8k/test_model.py \
+    --compare \
+    --base-model Qwen/Qwen2.5-0.5B-Instruct \
+    --trained-model ./outputs/gsm8k-training \
+    --all
 ```
 
-## Test Results
-
-After training completes, run:
-```bash
-python examples/local_gsm8k/test_model.py --model ./outputs/gsm8k-2hour --max-samples 20
-```
+The test script will:
+- Evaluate on GSM8K test set (full 1319 samples with `--all` or `--max-samples -1`)
+- Extract and compare numerical answers using multiple methods
+- Save detailed logs to `examples/local_gsm8k/logs/`
+- Save comparison results to `model_comparison.json` (when using `--compare`)
