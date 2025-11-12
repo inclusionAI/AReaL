@@ -29,9 +29,9 @@ from vllm.v1.request import RequestStatus
 logger = init_logger("areal_vllm_server")
 logger.setLevel(logging.INFO)
 
-# Global event to control generation pause/resume
-_generation_pause_event = asyncio.Event()
-_generation_pause_event.set()  # Initially not paused
+# Global event to control generation resume/pause
+_generation_run_event = asyncio.Event()
+_generation_run_event.set()  # Initially not paused
 
 
 class UpdateWeightsRequest(OpenAIBaseModel):
@@ -141,7 +141,7 @@ async def pause_generation(raw_request: Request):
     logger.info("API server starts pause_generation and aborts all requests")
     llm = raw_request.app.state.engine_client
     # Abort all running and waiting requests
-    _generation_pause_event.clear()
+    _generation_run_event.clear()
     await llm.engine_core.call_utility_async("abort_all_reqs")
     return to_json_response(True, "Generation paused and all requests aborted")
 
@@ -149,14 +149,14 @@ async def pause_generation(raw_request: Request):
 @router.post("/areal_continue_generation")
 async def continue_generation(raw_request: Request):
     logger.info("API server starts continue_generation")
-    _generation_pause_event.set()
+    _generation_run_event.set()
     return to_json_response(True, "Generation continued")
 
 
 async def _wait_if_paused():
     """Wait if generation is paused."""
-    if not _generation_pause_event.is_set():
-        await _generation_pause_event.wait()
+    if not _generation_run_event.is_set():
+        await _generation_run_event.wait()
 
 
 @router.post(
