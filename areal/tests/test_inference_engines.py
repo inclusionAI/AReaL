@@ -92,6 +92,7 @@ def inference_engine(request):
     temp_config = InferenceEngineConfig(
         experiment_name=expr_name,
         trial_name=trial_name,
+        setup_timeout=360,
     )
     server_manager = engine_class(temp_config)
 
@@ -133,6 +134,7 @@ def test_rollout(inference_engine, n_samples):
         max_concurrent_rollouts=2,
         consumer_batch_size=2,
         enable_rollout_tracing=True,
+        setup_timeout=360,
     )
 
     engine = inference_engine["engine_class"](config)
@@ -176,6 +178,7 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         consumer_batch_size=bs,
         max_head_offpolicyness=ofp,
         enable_rollout_tracing=True,
+        setup_timeout=360,
     )
 
     engine = inference_engine["engine_class"](config)
