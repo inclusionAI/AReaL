@@ -68,6 +68,7 @@ def inference_engine(request):
         model=MODEL_PATH,
         gpu_memory_utilization=0.3,
         max_model_len=128,
+        enforce_eager=True,
     )
     vllm_args = vLLMConfig.build_args(
         vllm_config=vllm_config,
