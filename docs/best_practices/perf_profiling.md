@@ -9,8 +9,11 @@ making it easy to correlate computation, communication, and I/O across multiple 
 
 - Flexible tracing APIs: decorators (`@trace_perf`, `@trace_session`), context managers
   (`trace_scope`, `atrace_session_phase`), and markers (`instant`)
-- **Per-session lifecycle tracking** (submission → queue → execution → consumption) with
-  derived metrics (queue wait, execution time, phase breakdown)
+- **Per-session lifecycle tracking** (task registration → session creation → generation
+  → reward → finalization) with derived metrics (total time, generation time, tool call
+  time, reward calculation time)
+- **Task-session hierarchy** for tracking dataset-level tasks and their sample-level
+  sessions
 
 ## Why profile your training?
 
@@ -19,13 +22,13 @@ Common bottlenecks in distributed RL training:
 - **Train**: Training step duration, checkpoint save/load, weight updates
 - **Rollout**: Generation latency, long-tail sessions, batching efficiency
 - **Coordination**: Queue saturation, weight staleness, phase imbalance (generate vs
-  reward)
+  toolcall vs reward)
 
 `perf_tracer` provides function-level and **per-session** tracing to answer:
 
 - Where is my training loop spending time?
 - Are rollout sessions queued, rejected, or accepted?
-- How long does each phase (generate, reward, execution) take?
+- How long does each phase (generate, toolcall, reward) take?
 
 ## Quick start
 
@@ -162,40 +165,74 @@ from areal.utils.perf_tracer import trace_perf, trace_session
 class RLVRWorkflow(RolloutWorkflow):
     @trace_perf("rlvr_workflow.arun_episode", category="compute")
     async def arun_episode(self, engine: InferenceEngine, data: dict[str, Any]):
-        # WorkflowExecutor automatically sets session_id before calling this method
-        session_id = perf_tracer.get_session_id()
+        # WorkflowExecutor automatically sets task_id before calling this method
+        # Each sample will register its own session_id
 
-        # Generate responses
-        async with perf_tracer.atrace_session_phase(session_id, "generate"):
-            resps = await asyncio.gather(
-                *[engine.agenerate(req) for _ in range(n_samples)]
-            )
+        # Generate responses and collect rewards for n_samples
+        sample_results = await asyncio.gather(
+            *[
+                self._collect_samples(engine, req, prompt_str, data)
+                for _ in range(n_samples)
+            ]
+        )
+        if sample_results:
+            resps, rewards, completions_strs = map(list, zip(*sample_results))
+        else:
+            resps, rewards, completions_strs = [], [], []
 
-        # Compute rewards (decorated method below)
-        rewards, completions = await self._compute_rewards(resps, prompt_str, data)
-        ...
+        # Build result tensors
+        results = self._build_result_tensors(resps, rewards)
+        return concat_padded_tensors(results)
+
+    async def _collect_samples(
+        self,
+        engine: InferenceEngine,
+        req: ModelRequest,
+        prompt_str: str,
+        task_data: dict[str, Any],
+    ) -> tuple[ModelResponse, float, str]:
+        """Generate one sample and compute its reward.
+
+        Registers a new session for this sample. SessionTracer automatically
+        tracks generate and reward phases via @trace_session decorators.
+        """
+        # Get task_id from context and register a new session for this sample
+        task_id = perf_tracer.get_task_id()
+        session_id = perf_tracer.register_session(task_id)
+        perf_tracer.set_session_id(session_id)
+
+        # Generate (automatically traced by engine)
+        resp = await engine.agenerate(req)
+
+        # Compute reward (traced by @trace_session decorator below)
+        reward, completion_str = await self._compute_rewards(resp, prompt_str, task_data)
+
+        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+
+        return resp, reward, completion_str
 
     @trace_session("reward")
-    async def _compute_rewards(self, resps, prompt_str, task_data):
-        # Reward calculation logic
-        # The decorator automatically traces this as the "reward" phase
-        rewards = []
-        for resp in resps:
-            completion = self.tokenizer.decode(resp.output_tokens)
-            reward = await self.async_reward_fn(prompt_str, completion, ...)
-            rewards.append(reward)
-        return rewards, completions
+    async def _compute_rewards(self, resp, prompt_str, task_data):
+        """Compute rewards with automatic phase tracing."""
+        completion_str = self.tokenizer.decode(resp.output_tokens)
+        reward = await self.async_reward_fn(
+            prompt_str, completion_str,
+            resp.input_tokens, resp.output_tokens,
+            **task_data
+        )
+        return reward, completion_str
 ```
 
 **How it works**:
 
-1. `WorkflowExecutor` calls `perf_tracer.set_session_id()` before invoking
-   `arun_episode`
-1. `get_session_id()` retrieves the session ID from the async context variable
+1. `WorkflowExecutor` calls `perf_tracer.set_task_id()` before invoking `arun_episode`
+1. `arun_episode` spawns multiple `_collect_samples` calls (one per sample)
+1. Each `_collect_samples` registers its own `session_id` and sets it in the context
+1. `get_task_id()` and `get_session_id()` retrieve IDs from async context variables
 1. Child async functions inherit this context automatically
 1. `@trace_session("reward")` reads the session ID and logs phase start/end events
 1. Session traces appear in `session_tracer/sessions-r{rank}.jsonl` with computed
-   metrics like `reward_calc_s`, `generate_s`
+   metrics like `reward_s`, `generate_s`
 
 ### Pattern 4: Manual phase scopes with `atrace_session_phase`
 
@@ -249,46 +286,38 @@ perf_tracer.instant(
 **Use case**: Track session lifecycle at orchestration level (submission, execution,
 consumption).
 
-**API**: `perf_tracer.trace_session_event(session_id, event_name, **payload)`
+**API**:
+`perf_tracer.trace_session_event(method, session_id=None, task_id=None, **payload)`
 
 - Manually record lifecycle events for session tracking
 - Used by `WorkflowExecutor` to track full session lifecycle
-- Events: `mark_enqueued`, `mark_execution_start`, `mark_execution_end`, `mark_consumed`
+- Events: `mark_finalized`, and phase events via `@trace_session` decorator
+- Parameters: Use `session_id=` to target a specific session, or `task_id=` to target
+  all sessions in a task
 
 **Example** (from `areal/core/workflow_executor.py`):
 
 ```python
 from areal.utils.perf_tracer import trace_session_event
 
-# Mark execution start
-trace_session_event(session_id, "mark_execution_start")
-
 # Run workflow
 traj = await workflow.arun_episode(engine, data)
 
-# Mark execution end with status and context
+# Mark execution end with status
 if should_accept:
     trace_session_event(
-        session_id,
-        "mark_execution_end",
+        "mark_finalized",
+        session_id=session_id,
         status="accepted",
-        rollout_stats=manager.get_stats()
     )
 else:
     trace_session_event(
-        session_id,
-        "mark_execution_end",
+        "mark_finalized",
+        session_id=session_id,
         status="rejected",
-        rejection_reason="stale_weight",
-        rollout_stats=manager.get_stats()
+        reason="stale_weight",
     )
-
-# Later, mark consumption
-trace_session_event(session_id, "mark_consumed")
 ```
-
-This enables per-session metrics like `queue_wait_s`, `execution_s`, `total_s` in
-session traces.
 
 ## Session lifecycle tracking
 
@@ -316,42 +345,66 @@ code structure and automation needs:
   consumption) or when you need custom event names beyond standard phases
 
 All three APIs write to the same `session_tracer/sessions-r{rank}.jsonl` output and
-contribute to derived metrics like `generate_s`, `reward_calc_s`, `execution_s`.
+contribute to derived metrics like `generate_s`, `reward_s`, `total_s`.
+
+### Understanding Task-Session Hierarchy
+
+AReaL's session tracer uses a two-level hierarchy to track rollout execution:
+
+- **Task** (dataset-level): Represents one data point from your dataset. Registered once
+  per `arun_episode` call.
+- **Session** (sample-level): Represents one generated sample. When `n_samples > 1`, one
+  task spawns multiple sessions.
+
+**Example**: If your config sets `n_samples=4`, each dataset item creates:
+
+- 1 task (registered by `WorkflowExecutor`)
+- 4 sessions (registered in `_collect_samples`, one per generation)
+
+This hierarchy enables:
+
+- Tracking per-sample metrics (generation time, reward)
+- Aggregating statistics per dataset item (acceptance rate across samples)
+- Debugging which specific samples within a task failed or were rejected
+
+**API usage**:
+
+```python
+# In WorkflowExecutor (orchestration layer)
+task_id = perf_tracer.register_task()
+perf_tracer.set_task_id(task_id)
+
+# In workflow (per-sample layer)
+task_id = perf_tracer.get_task_id()
+session_id = perf_tracer.register_session(task_id)
+perf_tracer.set_session_id(session_id)
+
+# Mark events for all sessions in a task
+perf_tracer.trace_session_event(
+    "mark_finalized",
+    task_id=task_id,
+    status="accepted",
+)
+
+# Or mark a specific session
+perf_tracer.trace_session_event(
+    "mark_finalized",
+    session_id=session_id,
+    status="accepted",
+)
+```
 
 ### What gets tracked
 
 Each session record includes:
 
-- **Lifecycle timestamps**: `submit_ts`, `enqueue_ts`, `wait_return_ts`
+- **Task/Session hierarchy**: `task_id` (dataset-level), `session_id` (sample-level)
+- **Lifecycle timestamps**: `submit_ts`, `finalized_ts`
 - **Status**: `pending`, `accepted`, `rejected`, `failed`, `dropped`
-- **Phases**: Multiple executions of `generate`, `reward`, `execution` with start/end
+- **Phases**: Multiple executions of `generate`, `reward`, `toolcall` with start/end
   times
-- **Derived metrics**: `queue_wait_s`, `runner_wait_s`, `execution_s`, `generate_s`,
-  `reward_calc_s`, `total_s`
-- **Context**: `rejection_reason`, `rollout_stats` (snapshot of queue state)
-
-### API usage
-
-The `WorkflowExecutor` automatically instruments session lifecycle events. For custom
-workflows, use:
-
-```python
-tracer = perf_tracer.get_session_tracer()
-
-# Register a new session
-session_id = tracer.register_submission()
-
-# Mark lifecycle events
-perf_tracer.trace_session_event(session_id, "mark_enqueued")
-perf_tracer.trace_session_event(session_id, "mark_execution_start")
-perf_tracer.trace_session_event(
-    session_id,
-    "mark_execution_end",
-    status="accepted",
-    rollout_stats=manager.get_stats()
-)
-perf_tracer.trace_session_event(session_id, "mark_consumed")
-```
+- **Derived metrics**: `total_s`, `generate_s`, `reward_s`, `toolcall_s`
+- **Context**: `reason` (optional, for rejected/failed sessions)
 
 ### Output format
 
@@ -360,29 +413,35 @@ JSON object:
 
 ```json
 {
-    "session_id": 0,
+    "task_id": 23,
+    "session_id": 93,
     "rank": 0,
     "status": "accepted",
-    "submit_ts": 8738314.227833074,
-    "enqueue_ts": 8738314.228516107,
-    "wait_return_ts": 8738318.774206188,
-    "rollout_stats": {
-        "accepted": 8,
-        "enqueued": 192,
-        "rejected": 0,
-        "running": 56
-    },
-    "queue_wait_s": 0.0006830338388681412,
-    "runner_wait_s": 0.20169099420309067,
-    "execution_s": 3.5818509366363287,
-    "post_wait_s": 0.7621481493115425,
-    "total_s": 4.54637311398983,
-    "generate_s": 3.315287623554468,
-    "reward_calc_s": 0.168320894241333,
+    "submit_ts": 7939251.674969524,
+    "finalized_ts": 7939254.632833603,
+    "total_s": 2.957864078693092,
+    "generate_s": 2.65427936706692,
+    "reward_s": 0.133724981918931,
+    "toolcall_s": 0.156789012345678,
     "phases": {
-        "execution": [{"start_ts": 8738314.430207102, "end_ts": 8738318.012058038}],
-        "generate": [{"start_ts": 8738314.44885158, "end_ts": 8738317.764139203}],
-        "reward": [{"start_ts": 8738317.764251094, "end_ts": 8738317.9342864}]
+        "generate": [
+            {
+                "start_ts": 7939251.674977085,
+                "end_ts": 7939254.329256452
+            }
+        ],
+        "reward": [
+            {
+                "start_ts": 7939254.32926108,
+                "end_ts": 7939254.462986062
+            }
+        ],
+        "toolcall": [
+            {
+                "start_ts": 7939254.463123456,
+                "end_ts": 7939254.619912468
+            }
+        ]
     }
 }
 ```
@@ -461,51 +520,22 @@ perf_tracer.save(force=True)
 
 ### Workflow-level instrumentation
 
-The `RLVRWorkflow` and `VisionRLVRWorkflow` classes demonstrate session-phase tracing:
+The `RLVRWorkflow` and `VisionRLVRWorkflow` classes demonstrate the complete three-layer
+session tracing hierarchy. See Pattern 3 above for the detailed implementation, which
+shows:
 
-**`areal/workflow/rlvr.py`**:
+1. **Orchestration layer** (`WorkflowExecutor`): Registers tasks and sets `task_id`
+1. **Coordination layer** (`arun_episode`): Spawns multiple samples via
+   `_collect_samples`
+1. **Execution layer** (`_collect_samples`): Registers sessions, traces generation and
+   reward phases
 
-```python
-class RLVRWorkflow(RolloutWorkflow):
-    @trace_perf("rlvr_workflow.arun_episode", category="compute")
-    async def arun_episode(self, engine: InferenceEngine, data: dict[str, Any]):
-        # session_id is automatically set by WorkflowExecutor
-        session_id = perf_tracer.get_session_id()
+This layered approach ensures that:
 
-        # Trace generation phase
-        async with perf_tracer.atrace_session_phase(session_id, "generate"):
-            resps = await asyncio.gather(
-                *[engine.agenerate(req) for _ in range(n_samples)]
-            )
-
-        # Trace reward phase (via decorator)
-        rewards, completions = await self._compute_rewards(resps, prompt_str, data)
-
-        # Build result tensors
-        results = self._build_result_tensors(resps, rewards)
-        return concat_padded_tensors(results)
-
-    @trace_session("reward")
-    async def _compute_rewards(self, resps, prompt_str, task_data):
-        """Compute rewards with automatic phase tracing."""
-        rewards = []
-        for resp in resps:
-            completion = self.tokenizer.decode(resp.output_tokens)
-            reward = await self.async_reward_fn(
-                prompt_str, completion,
-                resp.input_tokens, resp.output_tokens,
-                **task_data
-            )
-            rewards.append(reward)
-        return rewards, completions
-```
-
-This setup creates:
-
-- **Perf traces**: Duration spans for `arun_episode`, nested `generate` and `reward`
-  phases
-- **Session traces**: Per-session records with `generate_s`, `reward_calc_s` computed
-  from phase timestamps
+- Each dataset item gets a unique `task_id`
+- Each generated sample (when `n_samples > 1`) gets its own `session_id`
+- Phase timing (generate, reward) is tracked per-session
+- Metrics can be aggregated both per-session and per-task
 
 ### Engine-level instrumentation
 
@@ -574,9 +604,9 @@ A: Ensure `perf_tracer.save(force=True)` runs before exit. Check that
 
 **Q: Session traces show all `status: "pending"`**
 
-A: Lifecycle events (`mark_execution_end`, `mark_consumed`) aren't being recorded.
-Verify `WorkflowExecutor` is calling `trace_session_event()` or your custom workflow
-implements the full lifecycle.
+A: Lifecycle events (`mark_finalized`) aren't being recorded. Verify `WorkflowExecutor`
+is calling `trace_session_event()` or your custom workflow implements the full
+lifecycle.
 
 **Q: Perfetto can't open my trace**
 
@@ -586,6 +616,17 @@ a JSON array:
 ```bash
 python -m areal.tools.perf_trace_converter traces.jsonl trace.json
 ```
+
+**Q: Some sessions show `null` for phase `end_ts`**
+
+A: This occurs when `engine.agenerate()` throws an exception that propagates to
+`arun_episode`. The orchestrator then calls
+`trace_session_event("mark_finalized", task_id=task_id, ...)`, which finalizes **all
+sessions** under that task—including ones whose phases were interrupted mid-execution,
+leaving `end_ts: null`.
+
+**Solution**: Remote inference engines must **not throw exceptions** from `agenerate()`.
+Handle errors internally and return error responses instead.
 
 ## See also
 
