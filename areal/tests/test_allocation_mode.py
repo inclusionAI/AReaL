@@ -14,7 +14,6 @@ TEST_CASES = [
         "id": "train_only_simple",
         "input": "d2p2t1",
         "num_allocs": 1,
-        "gen_dp": 2,
         "train_dp": 2,
         "train_backend": "megatron",
     },
