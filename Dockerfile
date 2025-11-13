@@ -83,5 +83,6 @@ RUN apt-get --purge remove -y --allow-change-held-packages libcudnn9* \
 COPY . /AReaL
 
 # Install AReaL from local source
+# Avoid overwriting flash-attn by only installing "dev" and "docs" extras
 RUN cd /AReaL \
     && uv pip install -e ".[dev,docs]" --system

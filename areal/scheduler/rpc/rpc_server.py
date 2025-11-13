@@ -7,7 +7,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import AnyStr
 
 import cloudpickle
-from tensordict import TensorDict
 
 from areal.api.controller_api import DistributedBatch
 from areal.controller.batch import DistributedBatchMemory
@@ -33,8 +32,6 @@ def process_input_to_distributed_batch(*args, **kwargs):
 def process_output_to_distributed_batch(result):
     if isinstance(result, dict):
         return DistributedBatchMemory.from_dict(result)
-    elif isinstance(result, TensorDict):
-        return DistributedBatchMemory.from_dict(result.to_dict())
     elif isinstance(result, (list, tuple)):
         return DistributedBatchMemory.from_list(list(result))
     else:
@@ -67,9 +64,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
                 HTTPStatus.REQUEST_TIMEOUT
             )  # 408 means read request timeout
             self.end_headers()
-            self.wfile.write(
-                f"Exception: {e}\n{traceback.format_exc()}".encode("utf-8")
-            )
+            self.wfile.write(f"Exception: {e}\n{traceback.format_exc()}".encode())
             logger.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
             return
 
@@ -106,9 +101,7 @@ class EngineRPCServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
             self.end_headers()
-            self.wfile.write(
-                f"Exception: {e}\n{traceback.format_exc()}".encode("utf-8")
-            )
+            self.wfile.write(f"Exception: {e}\n{traceback.format_exc()}".encode())
             logger.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
 
 

@@ -244,9 +244,9 @@ jobs:
         run: |
           python areal/tools/validate_docker_installation.py
 
-      - name: Install python packages for testing
+      - name: Install python packages for testing (legacy support)
         run: |
-          pip install pytest-asyncio openai-agents==0.3.3
+          pip install pytest-asyncio openai-agents
 
       - name: Run unit tests
         env:
