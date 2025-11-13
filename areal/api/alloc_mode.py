@@ -1195,7 +1195,12 @@ class _LLMParallelParser:
                         raise InvalidAllocationModeError(msg)
                 raise InvalidAllocationModeError(str(e))
 
-            raise ValueError(f"Parsing error: {e}")
+            err_hint = """
+Hints:
+1. The parsing logic requires colons instead of dots to separate backends from dimensions, e.g., use "sglang:d4+fsdp:d4" instead of "sglang.d4+fsdp.d4".
+2. Check https://inclusionai.github.io/AReaL/tutorial/megatron.html for allowed syntax and examples with complex MoE models.
+"""
+            raise ValueError(f"Parsing error: {e}\n{err_hint}")
 
     def _convert_to_allocation_mode(self, result):
         """Convert parsed result to AllocationMode object.
