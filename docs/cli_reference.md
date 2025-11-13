@@ -565,7 +565,6 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 | `block_size`                   | integer         | `16`                                                                | -           |
 | `swap_space`                   | integer         | `4`                                                                 | -           |
 | `cpu_offload_gb`               | float           | `0`                                                                 | -           |
-| `max_seq_len_to_capture`       | integer         | `32768`                                                             | -           |
 | `disable_sliding_window`       | boolean         | `True`                                                              | -           |
 | `max_model_len`                | integer \| None | `32768`                                                             | -           |
 | `enable_chunked_prefill`       | boolean         | `False`                                                             | -           |
