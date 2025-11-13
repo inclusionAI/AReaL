@@ -312,7 +312,6 @@ class TestFSDPEngineWorkflowResolution:
         params = list(rollout_batch_sig.parameters.keys())
         assert "workflow" in params
         assert "workflow_kwargs" in params
-        assert "should_accept_fn" in params
         assert "workflow_builder" not in params  # Should be removed
 
         # Check prepare_batch signature
