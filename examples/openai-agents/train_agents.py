@@ -28,7 +28,7 @@ class AgentRLConfig(GRPOConfig):
         default="math",
         metadata={
             "help": "Type of agent workflow to use.",
-            "choices": ["math", "multi_agent_math"],
+            "choices": ["math", "multi_agent_math", "multi_agent_terminal"],
         },
     )
     n_trajs: int = field(
@@ -114,6 +114,19 @@ def main(args):
         from multi_agent_math_workflow import MultiAgentRLVRAgentWorkflow
 
         workflow = MultiAgentRLVRAgentWorkflow(
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
+            n_trajs=config.n_trajs,
+            max_tokens=config.max_tokens_per_trajectory,
+            max_turns=config.max_turns,
+            dump_dir=os.path.join(
+                StatsLogger.get_log_path(config.stats_logger), "generated"
+            ),
+        )
+    elif config.agent_type == "multi_agent_terminal":
+        from agent_terminal_workflow import TerminalAgentWorkflow
+
+        workflow = TerminalAgentWorkflow(
             gconfig=config.gconfig,
             tokenizer=tokenizer,
             n_trajs=config.n_trajs,

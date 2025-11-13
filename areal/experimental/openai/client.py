@@ -15,7 +15,6 @@ from openai.resources.responses.responses import AsyncResponses as BaseAsyncResp
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionMessage,
-    ChatCompletionToolMessageParam,
     ChatCompletionToolParam,
 )
 from openai.types.chat.chat_completion import Choice
@@ -287,22 +286,11 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         if is_omitted(input):
             raise ValueError("input is required for Responses.create")
 
-        def _convert_tool_output_format(
-            item: dict,
-        ) -> ChatCompletionToolMessageParam | dict:
+        def _convert_tool_output_format(item: dict) -> dict:
             """Convert custom tool output format to standard chat template format.
 
-            Converts openai.types.responses.response_input_item_param.FunctionCallOutput
-            to openai.types.chat.ChatCompletionToolMessageParam.
-
-            Args:
-                item: Input dict, could be FunctionCallOutput from openai-agents SDK
-                      with format: {'call_id': str, 'output': str, 'type': 'function_call_output'}
-
-            Returns:
-                ChatCompletionToolMessageParam (TypedDict) with format:
-                {'role': 'tool', 'content': str, 'tool_call_id': str}
-                or the original dict if conversion is not needed.
+            Converts from: {'call_id': ..., 'output': ..., 'type': 'function_call_output'}
+            To: {'role': 'tool', 'content': ..., 'tool_call_id': ...}
             """
             if (
                 isinstance(item, dict)

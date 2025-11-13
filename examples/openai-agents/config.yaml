@@ -19,7 +19,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang.d4p1t1+d4p1t1
+allocation_mode: sglang.d4p1t1+d1p1t1c4
 
 rollout:
   experiment_name: ${experiment_name}
