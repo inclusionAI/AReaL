@@ -14,7 +14,7 @@ cluster:
     type: ray
     ray_actor_name: ray_kv_store
 
-allocation_mode: sglang.d8+d8
+allocation_mode: sglang:d8+d8
 
 rollout:
   experiment_name: ${experiment_name}
@@ -52,7 +52,6 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  backend: fsdp
   group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
@@ -83,7 +82,6 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
-  backend: fsdp
 
 # SGLang
 sglang:

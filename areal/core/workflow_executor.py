@@ -216,13 +216,13 @@ class _RolloutTaskInput:
     data: dict[str, Any]
     workflow: RolloutWorkflow
     should_accept_fn: Callable[[dict[str, Any]], bool] | None = None
-    session_id: int | None = None
+    task_id: int | None = None
 
 
 @dataclass
 class _RolloutResult:
     trajectory: dict[str, Any]
-    session_id: int | None = None
+    task_id: int | None = None
 
 
 class WorkflowExecutor:
@@ -481,12 +481,6 @@ class WorkflowExecutor:
             f"Expected callable or string module path."
         )
 
-    def _trace(self, request_id: int | None, method: str, **kwargs) -> None:
-        tracer = self._request_tracer
-        if tracer is None or request_id is None:
-            return
-        getattr(tracer, method)(request_id, **kwargs)
-
     def _rollout_stats(self) -> str:
         stats = self.staleness_manager.get_stats()
         return (
@@ -518,20 +512,18 @@ class WorkflowExecutor:
 
         async def _execute_workflow() -> _RolloutResult | None:
             """Execute workflow.arun_episode and apply AReaL-specific logic."""
-            session_id = pending_task.session_id
+            task_id = pending_task.task_id
 
-            # Set session_id in ContextVar before entering arun_episode
-            # This makes session_id available throughout the async context
-            perf_tracer.set_session_id(session_id)
+            # Set task_id in ContextVar before entering arun_episode
+            perf_tracer.set_task_id(task_id)
 
             manager = self.staleness_manager
             traj: dict[str, Any] | None = None
             should_accept_fn = pending_task.should_accept_fn
             should_accept: bool | None = None
-            rejection_reason: str | None = None
+            reason: str | None = None
 
             try:
-                trace_session_event(session_id, "mark_execution_start")
                 traj = await pending_task.workflow.arun_episode(
                     self.inference_engine, pending_task.data
                 )
@@ -564,7 +556,7 @@ class WorkflowExecutor:
 
                 if traj is None:
                     should_accept_traj = False
-                    rejection_reason = "workflow_returned_none"
+                    reason = "returned_none"
                 else:
                     if should_accept_fn is None:
                         should_accept = True
@@ -572,34 +564,28 @@ class WorkflowExecutor:
                         should_accept = bool(should_accept_fn(traj))
                     should_accept_traj = bool(should_accept)
                     if not should_accept_traj and should_accept_fn is not None:
-                        rejection_reason = "should_accept_false"
+                        reason = "rejected"
 
                 if should_accept_traj:
                     manager.on_rollout_accepted()
-                    stats = manager.get_stats()
                     trace_session_event(
-                        session_id,
-                        "mark_execution_end",
+                        "mark_finalized",
+                        task_id=task_id,
                         status="accepted",
-                        rollout_stats=stats,
                     )
                     if self.config.enable_rollout_tracing:
                         self.logger.info(
                             f"Finish and accept rollout. {self._rollout_stats()}",
                         )
-                    return _RolloutResult(
-                        session_id=session_id,
-                        trajectory=traj,
-                    )
+                    assert traj is not None
+                    return _RolloutResult(task_id=task_id, trajectory=traj)
 
                 manager.on_rollout_rejected()
-                stats = manager.get_stats()
                 trace_session_event(
-                    session_id,
-                    "mark_execution_end",
+                    "mark_finalized",
+                    task_id=task_id,
                     status="rejected",
-                    rejection_reason=rejection_reason,
-                    rollout_stats=stats,
+                    reason=reason,
                 )
                 if self.config.enable_rollout_tracing:
                     self.logger.info(
@@ -609,13 +595,11 @@ class WorkflowExecutor:
 
             except Exception as exc:  # pragma: no cover - workflow execution errors
                 manager.on_rollout_rejected()
-                stats = manager.get_stats()
                 trace_session_event(
-                    session_id,
-                    "mark_execution_end",
+                    "mark_finalized",
+                    task_id=task_id,
                     status="failed",
-                    rejection_reason="workflow_exception",
-                    rollout_stats=stats,
+                    reason="workflow_exception",
                 )
                 if self.logger is not None:
                     self.logger.error(
@@ -641,16 +625,13 @@ class WorkflowExecutor:
         resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
 
-        session_id = None
-        tracer = perf_tracer.get_session_tracer()
-        if tracer is not None:
-            session_id = tracer.register_submission()
+        task_id = perf_tracer.register_task()
         self._pending_inputs.append(
             _RolloutTaskInput(
                 data=data,
                 workflow=resolved_workflow,
                 should_accept_fn=resolved_should_accept_fn,
-                session_id=session_id,
+                task_id=task_id,
             )
         )
 
@@ -666,20 +647,15 @@ class WorkflowExecutor:
         pending_task = self._pending_inputs.pop(0)
         # Create the async workflow execution function and submit to runner
         workflow_fn = self._create_workflow_task(pending_task)
-        session_id = pending_task.session_id
+        task_id = pending_task.task_id
         try:
             self.runner.submit(workflow_fn)
-            trace_session_event(
-                session_id,
-                "mark_enqueued",
-            )
         except TaskQueueFullError:
-            stats = manager.get_stats()
             trace_session_event(
-                session_id,
-                "mark_dropped",
-                rejection_reason="input_queue_full",
-                rollout_stats=stats,
+                "mark_finalized",
+                task_id=task_id,
+                status="dropped",
+                reason="queue_full",
             )
             # Convert RuntimeError from AsyncTaskRunner to queue.Full for
             # backward compatibility
@@ -775,7 +751,6 @@ class WorkflowExecutor:
         # Concatenate into batch tensor format
         trajectories: list[dict[str, Any]] = []
         for result in results:
-            trace_session_event(result.session_id, "mark_consumed")
             trajectories.append(result.trajectory)
 
         return concat_padded_tensors(trajectories)

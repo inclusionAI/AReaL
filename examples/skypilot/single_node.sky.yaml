@@ -26,6 +26,6 @@ run: |
     trial_name=trial0 \
     cluster.n_nodes=1 \
     cluster.n_gpus_per_node=$SKYPILOT_NUM_GPUS_PER_NODE \
-    allocation_mode=sglang.d1+d1 \
+    allocation_mode=sglang:d1+d1 \
     train_dataset.batch_size=4 \
     actor.mb_spec.max_tokens_per_mb=4096

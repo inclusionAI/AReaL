@@ -145,6 +145,7 @@ dev = [
     "mdformat-gfm",
     "mdformat-tables",
     "mdformat-frontmatter",
+    "plotly",
 ]
 
 docs = [

@@ -310,8 +310,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         type=str,
         nargs="?",
         help=(
-            "Optional output path for the Chrome Trace JSON file "
-            "(defaults to ./traces.json; pass '-' for stdout)"
+            "Optional output path for the Chrome Trace JSON file. "
+            "If not specified, the output location is inferred from input: "
+            "for a directory, outputs to <dir>/traces.json; "
+            "for a file, outputs to same dir with .json extension; "
+            "for a glob, outputs to common parent dir/traces.json. "
+            "Pass '-' to write to stdout."
         ),
     )
     parser.add_argument(
@@ -323,11 +327,65 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _infer_output_path(input_path: str) -> Path:
+    """Infer output path based on input path when output is not specified.
+
+    Rules:
+    - If input is a directory: output to <dir>/traces.json
+    - If input is a file: output to same dir with .json extension
+    - If input is a glob pattern: output to common parent dir/traces.json
+    """
+    input_as_path = Path(input_path)
+
+    # Case 1: Input is an existing directory
+    if input_as_path.is_dir():
+        return input_as_path / "traces.json"
+
+    # Case 2: Input is an existing file
+    if input_as_path.is_file():
+        # Replace .jsonl extension with .json, or just add .json
+        if input_as_path.suffix.lower() == ".jsonl":
+            return input_as_path.with_suffix(".json")
+        else:
+            return input_as_path.parent / f"{input_as_path.stem}.json"
+
+    # Case 3: Input might be a glob pattern or non-existent path
+    # Try to resolve it and find common parent
+    resolved = _resolve_trace_files(input_as_path)
+    if resolved:
+        # Find common parent directory of all matched files
+        if len(resolved) == 1:
+            # Single file matched - same as Case 2
+            matched_file = resolved[0]
+            if matched_file.suffix.lower() == ".jsonl":
+                return matched_file.with_suffix(".json")
+            else:
+                return matched_file.parent / f"{matched_file.stem}.json"
+        else:
+            # Multiple files - find common parent
+            try:
+                common_parent = Path(os.path.commonpath([p.parent for p in resolved]))
+                return common_parent / "traces.json"
+            except ValueError:
+                # No common path (e.g., files on different drives on Windows)
+                return Path.cwd() / "traces.json"
+
+    # Fallback: treat as a potential directory or use parent
+    if "*" in input_path or "?" in input_path:
+        # It's a glob pattern - extract the base directory
+        base = input_path.split("*")[0].split("?")[0]
+        base_path = Path(base).parent if base else Path.cwd()
+        return base_path / "traces.json"
+
+    # Default fallback to current directory
+    return Path.cwd() / "traces.json"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     emit_stdout = args.output == "-"
     if args.output is None:
-        destination: str | os.PathLike[str] | None = Path.cwd() / "traces.json"
+        destination: str | os.PathLike[str] | None = _infer_output_path(args.input)
     elif emit_stdout:
         destination = None
     else:

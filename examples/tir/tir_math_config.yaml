@@ -1,6 +1,6 @@
 experiment_name: tir-math-reasoning
 trial_name: tir-math-reasoning
-allocation_mode: sglang.d4p1t1+d4p1t1
+allocation_mode: sglang:d4p1t1+d4p1t1
 cluster:
   fileroot: /tmp/areal/experiments
   n_nodes: 1
@@ -49,7 +49,6 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  backend: fsdp
   group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
@@ -80,7 +79,6 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
-  backend: fsdp
 
 # SGLang configuration
 sglang:

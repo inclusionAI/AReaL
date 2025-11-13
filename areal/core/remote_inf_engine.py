@@ -258,7 +258,7 @@ class RemoteInfEngine:
             if self.check_health(base_url):
                 return
             time.sleep(1)
-        raise RuntimeError("server launch failed")
+        raise TimeoutError("server launch failed")
 
     def check_health(self, base_url):
         """Check if server is healthy."""
@@ -801,29 +801,36 @@ class RemoteInfEngine:
         server_args["port"] = find_free_ports(1)[0]
         process = self.backend.launch_server(server_args)
         address = f"{server_args['host']}:{server_args['port']}"
-        self._wait_for_server(address)
-
         server_info = LocalInfServerInfo(
             host=server_args["host"],
             port=server_args["port"],
             process=process,
         )
-        self.local_server_processes.append(server_info)
-        return server_info
+        try:
+            self._wait_for_server(address)
+            self.local_server_processes.append(server_info)
+            return server_info
+        except TimeoutError:
+            self._shutdown_one_server(server_info)
+            raise
+
+    def _shutdown_one_server(self, server_info: LocalInfServerInfo):
+        if server_info.process.poll() is not None:
+            return
+        server_info.process.terminate()
+        try:
+            server_info.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.logger.warning(
+                f"Server process {server_info.process.pid} did not terminate gracefully. Killing it."
+            )
+            server_info.process.kill()
+            server_info.process.wait()
 
     def teardown_server(self):
         """Teardown all locally launched servers."""
         for server_info in self.local_server_processes:
-            if server_info.process.poll() is None:
-                server_info.process.terminate()
-                try:
-                    server_info.process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self.logger.warning(
-                        f"Server process {server_info.process.pid} did not terminate gracefully. Killing it."
-                    )
-                    server_info.process.kill()
-                    server_info.process.wait()
+            self._shutdown_one_server(server_info)
         self.local_server_processes.clear()
 
 
