@@ -216,9 +216,12 @@ class MultiAgentRLVRAgentWorkflow(RolloutWorkflow):
         )
 
     async def arun_episode(self, engine, data):
-        clients = [
+        clients: list[ArealOpenAI] = [
             ArealOpenAI(
-                engine=engine, tokenizer=self.tokenizer, tool_call_parser="qwen25"
+                engine=engine,
+                tokenizer=self.tokenizer,
+                tool_call_parser="qwen25",
+                chat_template_type="concat",
             )
             for _ in range(self.n_trajs)
         ]
@@ -239,6 +242,7 @@ class MultiAgentRLVRAgentWorkflow(RolloutWorkflow):
         interactions_with_reward = {}
         for client in clients:
             client.apply_reward_discount(turn_discount=0.9)
-            interactions = client.export_interactions(style="individual")
+            interactions = client.export_interactions(style="concat")
             interactions_with_reward.update(interactions)
+
         return interactions_with_reward

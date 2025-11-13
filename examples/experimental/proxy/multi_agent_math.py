@@ -25,7 +25,7 @@ class MultiAgentMathAgent:
         self,
         max_tokens_per_turn: int = 1024,
         max_turns: int = 8,
-        max_total_tokens: int = 32768,
+        max_total_tokens: int = 8192,
     ):
         self.max_tokens_per_turn = max_tokens_per_turn
         self.max_turns = max_turns
@@ -140,7 +140,7 @@ class MultiAgentMathAgent:
             model_settings=ModelSettings(
                 temperature=1.0,
                 top_p=1.0,
-                max_tokens=self.max_total_tokens,
+                extra_args={"max_completion_tokens": self.max_tokens_per_turn},
             ),
         )
 
