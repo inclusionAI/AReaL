@@ -23,6 +23,7 @@ parts:
     # - file: tutorial/troubleshooting
   - caption: Best Practices
     chapters:
+    - file: best_practices/algo_perf
     - file: best_practices/debugging
     - file: best_practices/handling_oom
     - file: best_practices/perf_profiling
