@@ -497,10 +497,7 @@ class AllocationMode:
         """Backward compatible: returns parallel strategy for single inference allocation."""
         inf_allocs = self._get_inference_allocations()
         if len(inf_allocs) == 0:
-            # Check for training-only with no explicit backend
-            if len(self.allocations) == 1:
-                return self.allocations[0].parallel
-            raise AttributeError("No inference allocation found")
+            return None
         if len(inf_allocs) > 1:
             raise AttributeError(
                 f"Ambiguous 'gen' property: found {len(inf_allocs)} inference allocations. "
@@ -552,13 +549,7 @@ class AllocationMode:
         """Backward compatible: returns instance size for single inference allocation."""
         inf_allocs = self._get_inference_allocations()
         if len(inf_allocs) == 0:
-            # Fallback to first allocation
-            if len(self.allocations) > 0:
-                return (
-                    self.allocations[0].parallel.tp_size
-                    * self.allocations[0].parallel.pp_size
-                )
-            raise AttributeError("No allocations found")
+            raise AttributeError("No inference allocations found")
         if len(inf_allocs) > 1:
             raise AttributeError(
                 f"Ambiguous 'gen_instance_size' property: found {len(inf_allocs)} inference allocations. "
@@ -820,11 +811,7 @@ class _ParallelStrategyTransformer(Transformer):
         dim_start_idx = 1
 
         # Check if name is provided
-        if (
-            len(items) > 1
-            and isinstance(items[1], str)
-            and items[1] not in ["d", "t", "p"]
-        ):
+        if len(items) > 1 and isinstance(items[1], str):
             name = str(items[1])
             dim_start_idx = 2
 

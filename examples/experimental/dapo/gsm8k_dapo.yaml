@@ -14,7 +14,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang:d4+fsdp.d4
+allocation_mode: sglang:d4+fsdp:d4
 
 rollout:
   experiment_name: ${experiment_name}
