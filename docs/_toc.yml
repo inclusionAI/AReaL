@@ -19,10 +19,11 @@ parts:
     - file: tutorial/eval
     - file: tutorial/megatron
     - file: cli_reference
-    - file: tutorial/quickstart_legacy
+    # - file: tutorial/quickstart_legacy
     # - file: tutorial/troubleshooting
   - caption: Best Practices
     chapters:
+    - file: best_practices/algo_perf
     - file: best_practices/debugging
     - file: best_practices/handling_oom
     - file: best_practices/perf_profiling
@@ -43,21 +44,21 @@ parts:
     - file: algorithms/dapo
     - file: algorithms/dr.GRPO
     - file: algorithms/litePPO
-  - caption: Customization (Legacy)
-    chapters:
-    - file: legacy/customization/dataset
-    - file: legacy/customization/agent
-    - file: legacy/customization/algorithm
-  - caption: Code Walkthrough (Legacy)
-    chapters:
-    - file: developer/overview
-    - file: developer/trainer
-      sections:
-        - file: developer/trainer/master_worker
-        - file: developer/trainer/model_worker
-        - file: developer/trainer/algo_interface
-        - file: developer/trainer/allocation_parallel
-    - file: developer/rollout
-      sections:
-        - file: developer/rollout/gserver
-        - file: developer/rollout/rollout_worker
+  # - caption: Customization (Legacy)
+  #   chapters:
+  #   - file: legacy/customization/dataset
+  #   - file: legacy/customization/agent
+  #   - file: legacy/customization/algorithm
+  # - caption: Code Walkthrough (Legacy)
+  #   chapters:
+  #   - file: developer/overview
+  #   - file: developer/trainer
+  #     sections:
+  #       - file: developer/trainer/master_worker
+  #       - file: developer/trainer/model_worker
+  #       - file: developer/trainer/algo_interface
+  #       - file: developer/trainer/allocation_parallel
+  #   - file: developer/rollout
+  #     sections:
+  #       - file: developer/rollout/gserver
+  #       - file: developer/rollout/rollout_worker

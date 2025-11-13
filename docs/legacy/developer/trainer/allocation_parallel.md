@@ -3,7 +3,7 @@
 ## GPU Allocation
 
 GPU allocation is controlled by the `allocation_mode` CLI parameter. The most common
-pattern looks like `"sglang.d2t2p1+d1t4p1"`, which means:
+pattern looks like `"sglang:d2t2p1+d1t4p1"`, which means:
 
 - The first 4 GPUs are allocated to SGLang for inference with:
   - 2-way tensor parallelism

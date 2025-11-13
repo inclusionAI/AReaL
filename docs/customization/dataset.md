@@ -1,8 +1,8 @@
 # Dataset
 
-**AReaL-lite** directly integrates with the `Dataset` class from the HuggingFace
-`datasets` package. This gives you full flexibility to load, process, and filter your
-data before training.
+**AReaL** directly integrates with the `Dataset` class from the HuggingFace `datasets`
+package. This gives you full flexibility to load, process, and filter your data before
+training.
 
 The required columns in your dataset depend on the specific implementation of the
 `RolloutWorkflow` (for online reinforcement learning) or the training engines (for
@@ -79,12 +79,12 @@ def main(args):
     # Run training loop
     ...
     for global_step in range(max_steps):
-        batch = rollout.rollout_batch(data, workflow=workflow)
+        batch = rollout.prepare_batch(dataloader, workflow=workflow)
         ...
 ```
 
 Note that the `collate_fn` here is an identity function, meaning it simply returns the
-list of individual data items as a batch. In `rollout_batch`, the data is then
+list of individual data items as a batch. In `prepare_batch`, the data is then
 dispatched to multiple concurrent executions of `workflow.arun_episode`, where each
 dispatched data corresponds to a single episode.
 

@@ -171,7 +171,7 @@ Once you have prepared your evaluation script, launch the evaluation experiment 
 the following command:
 
 ```bash
-python3 -m areal.launcher.${local|slurm|ray} my_script.py --config my-config.yaml allocation_mode=sglang.d4p1t2+eval
+python3 -m areal.launcher.${local|slurm|ray} my_script.py --config my-config.yaml allocation_mode=sglang:d4p1t2+eval
 ```
 
 ### Key Differences from Training
