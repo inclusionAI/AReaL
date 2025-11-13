@@ -47,15 +47,17 @@ class MockInferenceEngine(InferenceEngine):
         data: dict[str, Any],
         workflow,
         workflow_kwargs=None,
-        should_accept=None,
+        should_accept_fn=None,
     ):
         """Mock submit that uses WorkflowExecutor logic"""
         # Simulate the resolution logic from the real implementation
         resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
-        resolved_should_accept = self._resolve_should_accept(should_accept)
+        resolved_should_accept = self._resolve_should_accept(should_accept_fn)
 
         return self.workflow_executor.submit(
-            data=data, workflow=resolved_workflow, should_accept=resolved_should_accept
+            data=data,
+            workflow=resolved_workflow,
+            should_accept_fn=resolved_should_accept,
         )
 
     def rollout_batch(
@@ -63,14 +65,12 @@ class MockInferenceEngine(InferenceEngine):
         data: list[dict[str, Any]],
         workflow,
         workflow_kwargs=None,
-        should_accept=None,
     ):
         """Mock rollout_batch"""
         resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
-        resolved_should_accept = self._resolve_should_accept(should_accept)
 
         return self.workflow_executor.rollout_batch(
-            data=data, workflow=resolved_workflow, should_accept=resolved_should_accept
+            data=data, workflow=resolved_workflow
         )
 
     def prepare_batch(
@@ -78,16 +78,16 @@ class MockInferenceEngine(InferenceEngine):
         dataloader: StatefulDataLoader,
         workflow,
         workflow_kwargs=None,
-        should_accept=None,
+        should_accept_fn=None,
     ):
         """Mock prepare_batch"""
         resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
-        resolved_should_accept = self._resolve_should_accept(should_accept)
+        resolved_should_accept = self._resolve_should_accept(should_accept_fn)
 
         return self.workflow_executor.prepare_batch(
             dataloader=dataloader,
             workflow=resolved_workflow,
-            should_accept=resolved_should_accept,
+            should_accept_fn=resolved_should_accept,
         )
 
     def _resolve_workflow(self, workflow, workflow_kwargs):
@@ -109,18 +109,18 @@ class MockInferenceEngine(InferenceEngine):
         else:
             raise TypeError(f"Invalid workflow type: {type(workflow)}")
 
-    def _resolve_should_accept(self, should_accept):
-        """Simplified should_accept resolution for testing"""
-        if should_accept is None or callable(should_accept):
-            return should_accept
-        elif isinstance(should_accept, str):
+    def _resolve_should_accept(self, should_accept_fn):
+        """Simplified should_accept_fn resolution for testing"""
+        if should_accept_fn is None or callable(should_accept_fn):
+            return should_accept_fn
+        elif isinstance(should_accept_fn, str):
             # Mock the import
-            if "mock_filter" in should_accept:
+            if "mock_filter" in should_accept_fn:
                 return lambda x: True
             else:
-                raise ValueError(f"Unknown filter path: {should_accept}")
+                raise ValueError(f"Unknown filter path: {should_accept_fn}")
         else:
-            raise TypeError(f"Invalid should_accept type: {type(should_accept)}")
+            raise TypeError(f"Invalid should_accept_fn type: {type(should_accept_fn)}")
 
 
 def mock_trajectory_filter(trajectory: dict[str, Any]) -> bool:
@@ -188,34 +188,36 @@ class TestEngineAPIWorkflowResolution:
         assert workflow.batch_size == 32
 
     def test_submit_with_should_accept_callable(self, mock_engine):
-        """Test submit with should_accept callable"""
+        """Test submit with should_accept_fn callable"""
         workflow_instance = MockRolloutWorkflow()
         data = {"test": "data"}
 
         mock_engine.submit(
-            data=data, workflow=workflow_instance, should_accept=mock_trajectory_filter
+            data=data,
+            workflow=workflow_instance,
+            should_accept_fn=mock_trajectory_filter,
         )
 
         # Verify the filter was passed through
         mock_engine.workflow_executor.submit.assert_called_once()
         call_args = mock_engine.workflow_executor.submit.call_args
-        assert call_args[1]["should_accept"] is mock_trajectory_filter
+        assert call_args[1]["should_accept_fn"] is mock_trajectory_filter
 
     def test_submit_with_should_accept_string(self, mock_engine):
-        """Test submit with should_accept string path"""
+        """Test submit with should_accept_fn string path"""
         workflow_instance = MockRolloutWorkflow()
         filter_path = "test.mock_filter"
         data = {"test": "data"}
 
         mock_engine.submit(
-            data=data, workflow=workflow_instance, should_accept=filter_path
+            data=data, workflow=workflow_instance, should_accept_fn=filter_path
         )
 
         # Verify the filter was resolved and passed through
         mock_engine.workflow_executor.submit.assert_called_once()
         call_args = mock_engine.workflow_executor.submit.call_args
-        should_accept = call_args[1]["should_accept"]
-        assert callable(should_accept)
+        should_accept_fn = call_args[1]["should_accept_fn"]
+        assert callable(should_accept_fn)
 
     def test_rollout_batch_with_workflow_types(self, mock_engine):
         """Test rollout_batch with different workflow types"""
@@ -275,10 +277,12 @@ class TestEngineAPIWorkflowResolution:
         with pytest.raises(TypeError, match="Invalid workflow type"):
             mock_engine.submit(data=data, workflow=123)
 
-        # Test invalid should_accept type
+        # Test invalid should_accept_fn type
         workflow_instance = MockRolloutWorkflow()
-        with pytest.raises(TypeError, match="Invalid should_accept type"):
-            mock_engine.submit(data=data, workflow=workflow_instance, should_accept=123)
+        with pytest.raises(TypeError, match="Invalid should_accept_fn type"):
+            mock_engine.submit(
+                data=data, workflow=workflow_instance, should_accept_fn=123
+            )
 
     def test_error_handling_in_rollout_batch(self, mock_engine):
         """Test error handling in rollout_batch method"""
@@ -342,7 +346,6 @@ class TestFSDPEngineWorkflowResolution:
             data=data,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
-            should_accept_fn=mock_trajectory_filter,
         )
 
         # Verify parameters were passed correctly
@@ -351,7 +354,6 @@ class TestFSDPEngineWorkflowResolution:
             granularity=1,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
-            should_accept_fn=mock_trajectory_filter,
         )
         assert result == {"result": "fsdp_batch"}
 

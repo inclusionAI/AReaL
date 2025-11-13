@@ -30,7 +30,6 @@ from areal.experimental.openai.proxy import (
 )
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import cycle_dataloader
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.dynamic_import import import_from_string
@@ -297,7 +296,6 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -309,20 +307,12 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            if config.async_training:
-                batch = actor.prepare_batch(
-                    train_dataloader,
-                    granularity=1,  # for multi-turn rollouts, granularity must be 1
-                    workflow=workflow,
-                    should_accept_fn=lambda sample: True,
-                )
-            else:
-                batch = actor.rollout_batch(
-                    next(data_generator),
-                    granularity=1,  # for multi-turn rollouts, granularity must be 1
-                    workflow=workflow,
-                    should_accept_fn=lambda sample: True,
-                )
+            batch = actor.prepare_batch(
+                train_dataloader,
+                granularity=1,  # for multi-turn rollouts, granularity must be 1
+                workflow=workflow,
+                should_accept_fn=lambda sample: True,
+            )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):

@@ -4,7 +4,6 @@ trial_name: trial0
 seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
-async_training: true
 
 n_trajs: 2
 max_tokens_per_trajectory: 8192

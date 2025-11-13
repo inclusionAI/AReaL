@@ -13,7 +13,6 @@ total_train_epochs: 10
 total_train_steps: null
 tokenizer_path: ${actor.path}
 allocation_mode: sglang:d4p1t1+megatron:d2p2t1
-async_training: true
 
 rollout:
   experiment_name: ${experiment_name}

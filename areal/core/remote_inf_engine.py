@@ -692,9 +692,11 @@ class RemoteInfEngine:
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
+
+        This method does not support asynchronous rollout and should be used for offline
+        data collection or debugging, not in production experiments.
 
         Parameters
         ----------
@@ -704,8 +706,6 @@ class RemoteInfEngine:
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
-        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
-            A function or module path for trajectory filtering
 
         Returns
         -------
@@ -717,7 +717,6 @@ class RemoteInfEngine:
             data=data,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
-            should_accept_fn=should_accept_fn,
         )
 
     def prepare_batch(

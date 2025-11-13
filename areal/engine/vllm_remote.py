@@ -244,12 +244,13 @@ class RemotevLLMEngine(InferenceEngine):
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
-        """Submit a batch of requests and wait for results."""
-        return self._engine.rollout_batch(
-            data, workflow, workflow_kwargs, should_accept_fn
-        )
+        """Submit a batch of requests and wait for results.
+
+        This method does not support asynchronous rollout and should be used for offline
+        data collection or debugging, not in production experiments.
+        """
+        return self._engine.rollout_batch(data, workflow, workflow_kwargs)
 
     def prepare_batch(
         self,
