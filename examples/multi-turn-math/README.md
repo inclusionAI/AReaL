@@ -2,7 +2,7 @@
 
 Files in this folder presents an example that train a multi-turn GSM8K math agent from
 Qwen/Qwen2-1.5B-Instruct, using `ArealOpenAI` APIs and its `individual` mode to organize
-training data and discount reward. Note that `sglang.disable_radix_cache` is set to true
+training data and discount reward. Note that `sglang:disable_radix_cache` is set to true
 to stablize training.
 
 # To run the example

@@ -715,7 +715,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
                 example_file,
                 "--config",
                 config_name,
-                "allocation_mode=sglang.d1",
+                "allocation_mode=sglang:d1",
                 f"cluster.fileroot={str(experiments_path)}",
                 f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
                 f"experiment_name={llm_judge_exp_name}",

@@ -33,7 +33,6 @@ model:
     eps: 1e-5
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
-  backend: megatron
 
 train_dataset:
   batch_size: 128

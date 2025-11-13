@@ -34,7 +34,7 @@ def _create_base_cluster_config(fileroot="/tmp/areal_test"):
 def create_grpo_config(
     experiment_name="test_experiment",
     trial_name="test_trial",
-    allocation_mode="sglang.d4p1t1+d4p1t1",
+    allocation_mode="sglang:d4p1t1+d4p1t1",
     weight_update_mode="disk",
     fileroot="/tmp/areal_test",
 ):
@@ -52,7 +52,7 @@ def create_grpo_config(
 def create_ppo_config(
     experiment_name="test_experiment",
     trial_name="test_trial",
-    allocation_mode="vllm.d4p1t2+d8p1t1",
+    allocation_mode="vllm:d4p1t2+d8p1t1",
     weight_update_mode="disk",
     fileroot="/tmp/areal_test",
 ):
@@ -182,7 +182,7 @@ class TestGetModelUpdateMeta:
         config = create_grpo_config(
             experiment_name="boba_grpo_vllm_16_gpus",
             trial_name="trial_0",
-            allocation_mode="vllm.d4p1t2+d8p1t1",
+            allocation_mode="vllm:d4p1t2+d8p1t1",
             fileroot="/tmp/areal",
         )
 

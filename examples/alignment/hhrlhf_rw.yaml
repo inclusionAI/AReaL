@@ -36,7 +36,6 @@ model:
     eps: 1e-8
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
-  backend: fsdp
 
 train_dataset:
   batch_size: 256

@@ -17,7 +17,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang.d4p1t1+d4p1t1
+allocation_mode: sglang:d4p1t1+d4p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -55,7 +55,6 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  backend: fsdp
   group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
@@ -83,7 +82,6 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
-  backend: fsdp
 
 # SGLang
 sglang:
