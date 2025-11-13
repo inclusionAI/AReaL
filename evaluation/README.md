@@ -9,24 +9,6 @@ The evaluation code is located in the `evaluation` folder of the repository. Fol
 the previous tutorial, trained checkpoints will be saved under
 `${fileroot}/checkpoints/${USER}/${experiment_name}/${trial_name}/`.
 
-## Setup Evaluation Environment
-
-> **Note**: Evaluation requires updates to certain Python libraries, so avoid using the
-> training container or virtual environment for this task.
-
-From the repository directory, create a new conda environment:
-
-```bash
-conda create -n areal-eval python=3.12
-conda activate areal-eval
-```
-
-Install dependencies:
-
-```bash
-bash examples/env/scripts/setup-eval-pip-deps.sh
-```
-
 ## Run Evaluation
 
 Specify an `output_path` to save the test results. If not specified, the results will be

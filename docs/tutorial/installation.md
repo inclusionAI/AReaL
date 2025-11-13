@@ -50,7 +50,7 @@ docker run -it --name areal-node1 \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
-pip install -e .
+pip install -e . --no-deps
 ```
 
 ### Option 2: Custom Environment Installation
@@ -85,7 +85,7 @@ use docker installation instead.
 We provide a script to validate AReaL installation. Simply run:
 
 ```bash
-python3 examples/env/validate_installation.py
+python3 areal/tools/validate_installation.py
 ```
 
 After installation validation passed, you are good to go!

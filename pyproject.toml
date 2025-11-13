@@ -1,5 +1,5 @@
 [build-system]
-requires = [ "setuptools<80,>=77.0.3", "build>=1.2.1"]
+requires = [ "setuptools", "build>=1.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -44,35 +44,31 @@ dependencies = [
     "torch==2.8.0",
     "torchaudio",
     "torchvision",
-
+    "torchdata",
     "huggingface_hub",
     "datasets",
-    "accelerate",
-    "transformers==4.56.1",
+    "transformers==4.57.1",
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
-    "flashinfer-python==0.3.1",
-    "sglang[all]==0.5.2",
-    "flash-attn==2.8.3",
-    "vllm==0.10.2",
+    "sglang==0.5.5.post1",
+    "vllm==0.11.0",
     "peft",
     "qwen_agent",
+    "openai-agents",
 
-    # Scientific computing
-    "scipy",
+    # Visualization
     "pandas",
     "matplotlib",
     "seaborn",
-    "h5py",
 
     # Utilities and data processing
     "setproctitle",
     "nltk",
     "sentencepiece",
     "einops",
+    "orjson",
     "tqdm",
     "rich",
-    "orjson>=3.10.16",
     "pydantic",
     "PyYAML",
     "omegaconf==2.4.0.dev2",
@@ -80,47 +76,43 @@ dependencies = [
     "packaging",
     "lark",
     "tabulate",
-    "gymnasium>=1.1.1",
-    "torchdata",
-    "autoflake==2.3.1",
-    "tensordict",
     "pybase64",
     "msgspec",
     "latex2sympy2",
-    "openai==1.99.6",
     "dotenv",
     "json5",
-
-    # Monitoring and logging
-    "wandb",
-    "tensorboardx",
-    "colorama",
-    "colorlog",
     "psutil",
-    "pynvml",
     "nvidia-ml-py",
-    "swanboard==0.1.9b1",
-    "swanlab[dashboard]==0.6.12",
-
-    # Performance and compression
     "ninja",
     "numba",
     "blosc",
     "pybind11>=2.10.0",
-
-    # Networking and async
     "networkx==3.3",
     "aiofiles",
     "aiohttp>=3.11.10",
     "httpx>=0.28.1",
     "pyzmq",
     "paramiko",
-    "etcd3",
+    "func_timeout",
+    "regex",
+    "python_dateutil",
+    "word2number",
+    "pebble",
+    "timeout-decorator",
+    "prettytable",
+    "h5py",
+
+    # Monitoring and logging
+    "wandb",
+    "tensorboardx",
+    "colorama",
+    "colorlog",
+    "swanboard==0.1.9b1",
+    "swanlab[dashboard]==0.6.12",
 
     # Distributed computing
     "ray[default]",
     "redis",
-    "deepspeed>=0.17.2",
 
     # Web frameworks
     "fastapi>=0.115.12",
@@ -131,30 +123,24 @@ dependencies = [
     # Build and packaging tools
     "build>=1.2.1",
     "wheel>=0.43.0",
-    "setuptools<80,>=77.0.3",
     "cookiecutter>2.1.1",
-
-    # System utilities
     "distro-info>=1.0",
     "python-debian>=0.1.49",
-    "func_timeout",
-    "regex",
-    "python_dateutil",
-    "word2number",
-    "Pebble",
-    "timeout-decorator",
-    "prettytable",
-    "sh"
 ]
 
 [project.optional-dependencies]
+cuda = [
+    "flash-attn==2.8.3",
+]
+
 dev = [
     "pytest",
     "pytest-asyncio",
     "ipython",
+    "autoflake==2.3.1",
     "ruff==0.14.1",
     "clang-format==19.1.7",
-    "sh~=2.2",
+    "sh",
     "mdformat==0.7.17",
     "mdformat-gfm",
     "mdformat-tables",
@@ -168,6 +154,7 @@ docs = [
 ]
 
 all = [
+    "areal[cuda]",
     "areal[dev]",
     "areal[docs]",
 ]
@@ -187,9 +174,8 @@ include = ["areal*"]
 exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*"]
 
 [tool.uv]
+exclude-dependencies = ["flash-attn"]
 override-dependencies=[
-    "openai==1.99.6",
-    "xgrammar==0.1.24",
     "outlines-core==0.1.26",
 ]
 
