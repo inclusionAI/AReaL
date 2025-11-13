@@ -348,14 +348,19 @@ def test_session_tracer_configuration(tmp_path):
     session_tracer = tracer.session_tracer
     assert session_tracer is not None
 
-    session_id = session_tracer.register_submission()
-    session_tracer.record_event(session_id, SessionTraceEvent.EXECUTION_START)
+    task_id = session_tracer.register_task()
+    session_id = session_tracer.register_session(task_id)
     session_tracer.record_event(
         session_id,
-        SessionTraceEvent.EXECUTION_END,
-        status="accepted",
+        SessionTraceEvent.GENERATE_START,
     )
-    session_tracer.record_event(session_id, SessionTraceEvent.CONSUMED)
+    session_tracer.record_event(
+        session_id,
+        SessionTraceEvent.GENERATE_END,
+    )
+    session_tracer.record_event(
+        session_id, SessionTraceEvent.FINALIZED, status="accepted"
+    )
     tracer.save(force=True)
 
     session_path = _expected_session_trace_path(config, rank=0)
@@ -441,8 +446,9 @@ async def test_trace_session_phase(tmp_path):
         tracer = perf_tracer.get_session_tracer()
         assert tracer is not None
 
-        # Register a session
-        session_id = tracer.register_submission()
+        # Register a task and session
+        task_id = tracer.register_task()
+        session_id = tracer.register_session(task_id)
 
         # Use context manager for generate phase
         async with perf_tracer.atrace_session_phase(session_id, "generate"):
@@ -452,11 +458,8 @@ async def test_trace_session_phase(tmp_path):
         async with perf_tracer.atrace_session_phase(session_id, "reward"):
             await asyncio.sleep(0.01)  # Simulate work
 
-        # Mark as completed
-        perf_tracer.trace_session_event(
-            session_id, "mark_execution_end", status="accepted"
-        )
-        perf_tracer.trace_session_event(session_id, "mark_consumed")
+        # Mark as completed using SessionTracer API
+        tracer.record_event(session_id, SessionTraceEvent.FINALIZED, status="accepted")
 
         # Force flush
         tracer.flush(force=True)
@@ -498,8 +501,8 @@ async def test_trace_session_phase(tmp_path):
         # Verify computed times
         assert "generate_s" in record
         assert record["generate_s"] > 0
-        assert "reward_calc_s" in record
-        assert record["reward_calc_s"] > 0
+        assert "reward_s" in record
+        assert record["reward_s"] > 0
 
     finally:
         perf_tracer.reset()
@@ -520,7 +523,8 @@ async def test_trace_session_phase_with_exception(tmp_path):
         tracer = perf_tracer.get_session_tracer()
         assert tracer is not None
 
-        session_id = tracer.register_submission()
+        task_id = tracer.register_task()
+        session_id = tracer.register_session(task_id)
 
         # Even if exception occurs, end event should be recorded
         with pytest.raises(ValueError):
@@ -528,9 +532,7 @@ async def test_trace_session_phase_with_exception(tmp_path):
                 raise ValueError("Simulated error")
 
         # Complete the session
-        perf_tracer.trace_session_event(
-            session_id, "mark_execution_end", status="failed"
-        )
+        tracer.record_event(session_id, SessionTraceEvent.FINALIZED, status="failed")
         tracer.flush(force=True)
 
         # Read the trace

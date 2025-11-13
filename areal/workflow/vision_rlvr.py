@@ -46,56 +46,71 @@ class VisionRLVRWorkflow(RLVRWorkflow):
     @trace_session("reward")
     async def _compute_rewards(
         self,
-        resps: list[ModelResponse],
+        resp: ModelResponse,
         prompt_str: str,
         task_data: dict[str, Any],
-    ) -> tuple[list[float], list[str]]:
-        """Compute rewards for all responses and decode completion strings.
+    ) -> tuple[float, str]:
+        """Decode completion and compute reward.
 
-        This method iterates through all model responses, decodes the output tokens
-        into strings, and computes rewards for each completion. Each reward is logged
-        to the stats tracker for monitoring.
-
-        Parameters
-        ----------
-        resps : list[ModelResponse]
-            List of ModelResponse objects from the inference engine.
-        prompt_str : str
-            The decoded prompt string for context.
-        task_data : dict[str, Any]
-            Original task data containing additional context (e.g., ground truth answer).
+        Traces reward phase execution for SessionTracer. Decodes output tokens
+        to string, calls async reward function with keyword arguments, and logs
+        metric to stats tracker.
 
         Returns
         -------
-        tuple[list[float], list[str]]
-            A tuple containing:
-            - rewards: List of computed reward values for each response.
-            - completions_strs: List of decoded completion strings corresponding to each response.
+        tuple[float, str]
+            Reward value and decoded completion string.
         """
-        rewards = []
-        completions_strs = []
 
-        for resp in resps:
-            completions_str = self.tokenizer.decode(resp.output_tokens)
-            completions_strs.append(completions_str)
+        completions_str = self.tokenizer.decode(resp.output_tokens)
+        reward = await self.async_reward_fn(
+            prompt=prompt_str,
+            completions=completions_str,
+            prompt_ids=resp.input_tokens,
+            completion_ids=resp.output_tokens,
+            **task_data,
+        )
 
-            reward = await self.async_reward_fn(
-                prompt=prompt_str,
-                completions=completions_str,
-                prompt_ids=resp.input_tokens,
-                completion_ids=resp.output_tokens,
-                **task_data,
-            )
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
-            rewards.append(reward)
+        return reward, completions_str
 
-        return rewards, completions_strs
+    async def _collect_samples(
+        self,
+        engine: InferenceEngine,
+        req: ModelRequest,
+        prompt_str: str,
+        task_data: dict[str, Any],
+    ) -> tuple[ModelResponse, float, str]:
+        """Generate one sample and compute its reward.
+
+        Registers a new session for this sample, calls engine.agenerate,
+        computes reward, and logs metrics. SessionTracer automatically
+        tracks generate and reward phases via @trace_session decorators.
+
+        Returns
+        -------
+        tuple[ModelResponse, float, str]
+            Model response, reward value, and completion string.
+        """
+        task_id = perf_tracer.get_task_id()
+        if task_id is not None:
+            session_id = perf_tracer.register_session(task_id)
+            perf_tracer.set_session_id(session_id)
+
+        async with atrace_session_phase("generate"):
+            resp = await engine.agenerate(req)
+
+        reward, completions_str = await self._compute_rewards(
+            resp, prompt_str, task_data
+        )
+
+        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+
+        return resp, reward, completions_str
 
     @trace_perf("rlvr_workflow.arun_episode", category="compute")
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, torch.Tensor]:
-        session_id = perf_tracer.get_session_id()
         processor_callable = cast(Callable[..., dict[str, Any]], self.processor)
         processed_input = processor_callable(
             images=data["images"],
@@ -118,18 +133,21 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             processor=self.processor,
         )
 
-        # Generate responses
-        async with atrace_session_phase(session_id, "generate"):
-            resps = await asyncio.gather(
-                *[engine.agenerate(req) for _ in range(n_samples)]
-            )
-
         version = engine.get_version()
         prompt_str = self.tokenizer.decode(input_ids)
         prompt_strs = [prompt_str] * n_samples
 
-        # Compute rewards
-        rewards, completions_strs = await self._compute_rewards(resps, prompt_str, data)
+        # Generate responses and collect rewards
+        sample_results = await asyncio.gather(
+            *[
+                self._collect_samples(engine, req, prompt_str, data)
+                for _ in range(n_samples)
+            ]
+        )
+        if sample_results:
+            resps, rewards, completions_strs = map(list, zip(*sample_results))
+        else:
+            resps, rewards, completions_strs = [], [], []
 
         # Build result tensors
         results = []

@@ -131,7 +131,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             )
 
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
-        max_new_tokens = 512
+        max_new_tokens = None
         if not is_omitted(max_tokens):
             max_new_tokens = max_tokens - len(prompt_token_ids)
             if max_new_tokens <= 0:
@@ -139,7 +139,16 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                     "max_tokens must be greater than the number of prompt tokens"
                 )
         if not is_omitted(max_completion_tokens):
-            max_new_tokens = min(max_new_tokens, max_completion_tokens)
+            if max_new_tokens is None:
+                max_new_tokens = max_completion_tokens
+            else:
+                max_new_tokens = min(max_new_tokens, max_completion_tokens)
+        if max_new_tokens is None:
+            max_new_tokens = 512  # Default value
+            logger.warning(
+                "Neither max_tokens nor max_completion_tokens is set; "
+                "defaulting max_new_tokens to 512."
+            )
 
         top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
         stop_tokens = None if is_omitted(stop) else stop
@@ -385,9 +394,12 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         # Map sampling params
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
         top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
-        max_new_tokens = 512
+        max_new_tokens = None
         if not is_omitted(max_output_tokens):
             max_new_tokens = max_output_tokens
+        if max_new_tokens is None:
+            max_new_tokens = 512  # Default value
+            logger.warning("max_output_tokens not specified, defaulting to 512.")
 
         stop = kwargs.get("stop", None)
         frequency_penalty = kwargs.get("frequency_penalty", 0.0)
