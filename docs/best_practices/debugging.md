@@ -21,12 +21,12 @@ logic, enabling repeated testing without server restarts.
 ### 1. Launch the Standalone SGLang Server
 
 Start your SGLang server with an inference-only `allocation_mode` such as
-`sglang.d4p1t1` (omit the content after "+" in a real allocation mode):
+`sglang:d4p1t1` (omit the content after "+" in a real allocation mode):
 
 ```bash
 nohup python -m areal.launcher.local examples/math/gsm8k_grpo.py \
     --config examples/math/gsm8k_grpo.yaml \
-    allocation_mode=sglang.d4p1t1 > llm_server.log 2>&1 &
+    allocation_mode=sglang:d4p1t1 > llm_server.log 2>&1 &
 ```
 
 **Note:** For debugging purposes, only the `allocation_mode` and `sglang` configurations

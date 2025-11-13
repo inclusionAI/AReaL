@@ -295,12 +295,9 @@ class RLVRWorkflow(RolloutWorkflow):
 
             # Build training sample with all required fields
             res = dict(
-                input_ids=torch.tensor(seq).unsqueeze(0),
-                loss_mask=torch.tensor(loss_mask).unsqueeze(0),
-                logprobs=torch.tensor(logprobs).unsqueeze(0),
-                versions=torch.tensor(versions).unsqueeze(0),
-                attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
-                rewards=torch.tensor([float(reward)]),
+                input_ids=...,
+                rewards=...,
+                ... # other required fields for training
             )
             results.append(res)
 
