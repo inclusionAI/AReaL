@@ -100,7 +100,7 @@ infrastructure, allowing system developers to focus on deep profiling and optimi
 
 This layer leverages backend capabilities to implement specific reinforcement learning
 pipelines. Algorithm and agentic workflow implementations are backend-agnostic thanks to
-the composition patter:
+the composition pattern:
 
 - **`engine/ppo/actor.py`**: PPO/GRPO algorithm leveraging `TrainEngine`
 - **`engine/ppo/critic.py`**: PPO critic implementation
