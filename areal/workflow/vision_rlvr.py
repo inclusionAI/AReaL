@@ -92,8 +92,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             Model response, reward value, and completion string.
         """
         task_id = perf_tracer.get_task_id()
-        session_id = None
-        if task_id is not None:
+        if task_id is None:
+            session_id = None
+        else:
             session_id = perf_tracer.register_session(task_id)
             perf_tracer.set_session_id(session_id)
 
