@@ -117,11 +117,13 @@ class RLVRWorkflow(RolloutWorkflow):
             Model response, reward value, and completion string.
         """
         task_id = perf_tracer.get_task_id()
-        if task_id is not None:
+        if task_id is None:
+            session_id = None
+        else:
             session_id = perf_tracer.register_session(task_id)
             perf_tracer.set_session_id(session_id)
 
-        async with atrace_session_phase("generate"):
+        async with atrace_session_phase(session_id, "generate"):
             resp = await engine.agenerate(req)
 
         reward, completions_str = await self._compute_rewards(
