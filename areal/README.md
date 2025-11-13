@@ -110,7 +110,7 @@ the composition pattern:
   responses per prompt
 
 New algorithms and application-level agents should be implemented at this layer. If you
-are familar with Rust or Go, the algorithm implementations in AReaL are actually
+are familiar with Rust or Go, the algorithm implementations in AReaL are actually
 [traits](https://doc.rust-lang.org/book/ch10-02-traits.html) or
 [interfaces](https://go.dev/tour/methods/9). We essentially attach the
 algorithm-specific functionalities to a specific training backend, which is considered
