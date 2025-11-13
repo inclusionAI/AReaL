@@ -6,7 +6,6 @@ extended for different validation scenarios (standard installation, Docker, etc.
 """
 
 import importlib
-import re
 import sys
 from importlib.metadata import version as get_version
 from pathlib import Path
@@ -20,6 +19,7 @@ except ImportError:
         print("Error: tomllib/tomli not available. Install tomli: pip install tomli")
         sys.exit(1)
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
@@ -95,26 +95,39 @@ class BaseInstallationValidator:
             raw_deps = data.get("project", {}).get("dependencies", [])
 
             for dep in raw_deps:
-                # Parse dependency string: "package==version" or "package>=version" etc.
-                # Handle various formats: package, package==version, package>=version, package[extras]
-                match = re.match(
-                    r"^([a-zA-Z0-9_-]+)(\[.+\])?(([<>=!]+)([0-9.]+[a-z0-9.]*))?",
-                    dep.strip(),
-                )
-                if match:
-                    pkg_name = match.group(1)
-                    extras = match.group(2) or ""
-                    operator = match.group(4) or ""
-                    version = match.group(5) or ""
+                # Parse dependency string using packaging.requirements
+                # Handles: package, package==version, package>=version, package[extras], etc.
+                try:
+                    req = Requirement(dep.strip())
+
+                    # Convert extras set to string format "[extra1,extra2]"
+                    extras_str = ""
+                    if req.extras:
+                        extras_str = f"[{','.join(sorted(req.extras))}]"
+
+                    # Extract operator and version for backward compatibility
+                    # If single specifier, extract operator/version; otherwise empty
+                    operator = ""
+                    version = ""
+                    spec_str = str(req.specifier)
+
+                    if req.specifier and len(req.specifier) == 1:
+                        spec = list(req.specifier)[0]
+                        operator = spec.operator
+                        version = spec.version
 
                     # Store package info
-                    self.dependencies[pkg_name] = {
+                    self.dependencies[req.name] = {
                         "raw": dep,
-                        "extras": extras,
+                        "extras": extras_str,
                         "operator": operator,
                         "version": version,
-                        "spec": f"{operator}{version}" if operator else "",
+                        "spec": spec_str,
                     }
+
+                except InvalidRequirement as e:
+                    print(f"Warning: Failed to parse dependency '{dep}': {e}")
+                    continue
 
             print(f"Parsed {len(self.dependencies)} dependencies from pyproject.toml")
 
@@ -129,24 +142,47 @@ class BaseInstallationValidator:
         self, pkg_name: str, version_spec: str = "", required: bool = True
     ):
         """Add a package that's not in pyproject.toml for validation."""
-        operator = ""
-        version = ""
+        # Construct requirement string and parse using packaging.requirements
+        req_string = f"{pkg_name}{version_spec}"
 
-        if version_spec:
-            # Parse version spec like "==2.8.1" or ">=1.0.0"
-            match = re.match(r"^([<>=!]+)?([0-9.]+[a-z0-9.]*)$", version_spec.strip())
-            if match:
-                operator = match.group(1) or "=="
-                version = match.group(2)
+        try:
+            req = Requirement(req_string)
 
-        self.additional_packages[pkg_name] = {
-            "raw": f"{pkg_name}{version_spec}",
-            "extras": "",
-            "operator": operator,
-            "version": version,
-            "spec": f"{operator}{version}" if operator else "",
-            "required": required,
-        }
+            # Convert extras set to string format "[extra1,extra2]"
+            extras_str = ""
+            if req.extras:
+                extras_str = f"[{','.join(sorted(req.extras))}]"
+
+            # Extract operator and version for backward compatibility
+            operator = ""
+            version = ""
+            spec_str = str(req.specifier)
+
+            if req.specifier and len(req.specifier) == 1:
+                spec = list(req.specifier)[0]
+                operator = spec.operator
+                version = spec.version
+
+            self.additional_packages[pkg_name] = {
+                "raw": req_string,
+                "extras": extras_str,
+                "operator": operator,
+                "version": version,
+                "spec": spec_str,
+                "required": required,
+            }
+
+        except InvalidRequirement as e:
+            print(f"Warning: Failed to parse additional package '{req_string}': {e}")
+            # Fallback to storing as-is for backward compatibility
+            self.additional_packages[pkg_name] = {
+                "raw": req_string,
+                "extras": "",
+                "operator": "",
+                "version": "",
+                "spec": version_spec,
+                "required": required,
+            }
 
     def normalize_package_name(self, pkg_name: str) -> str:
         """Normalize package name (handle dash/underscore differences)."""
