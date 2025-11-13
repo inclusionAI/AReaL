@@ -1,20 +1,17 @@
-"""
-Allocation mode parsing and management for distributed training and inference.
-
-This module provides comprehensive support for parsing allocation mode expressions
-that specify resource allocation strategies for distributed ML workloads, including
-both training and inference configurations with various parallelism strategies.
-"""
-
 import enum
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 from lark import Lark, Transformer
 
+from areal.utils import logging
+
+logger = logging.getLogger(__name__)
+
 
 class AllocationType(enum.Enum):
-    """Type of resource allocation strategy."""
+    """Backward Compatible: Type of resource allocation strategy."""
 
     COLOCATE = 0  # Shared resources between training and inference (including SFT/training-only)
     DECOUPLED_TRAIN = 1  # Separate resources for training and inference
@@ -28,6 +25,22 @@ class AllocationValidationError(Exception):
 
 class InvalidAllocationModeError(Exception):
     """Legacy exception for backward compatibility with existing code."""
+
+
+@dataclass
+class SchedulingStrategy:
+    """Resource scheduling type for allocation components.
+
+    Parameters
+    ----------
+    type : str
+        "separation" for independent resources, "colocation" for shared resources
+    target : str, optional
+        For colocation, name of anchor component to colocate with, by default None
+    """
+
+    type: str  # "separation" or "colocation"
+    target: str | None = None
 
 
 @dataclass
@@ -248,92 +261,334 @@ class MegatronParallelStrategy(ParallelStrategy):
 
 
 @dataclass
+class ModelAllocation:
+    """Single model allocation with backend, name, parallel strategy, and scheduling.
+
+    Parameters
+    ----------
+    backend : str
+        Backend type ("sglang", "vllm", "fsdp", "megatron")
+    name : str, optional
+        Component name for referencing via allocation_mode[name]
+    parallel : ParallelStrategy
+        Parallelization strategy (tp, pp, dp, cp, ep sizes)
+    scheduling_strategy : SchedulingStrategy
+        Resource scheduling (separation or colocation)
+
+    Examples
+    --------
+    >>> ModelAllocation("sglang", "rollout", ParallelStrategy(dp=2), SchedulingStrategy("separation"))
+    """
+
+    backend: Literal["fsdp", "megatron", "vllm", "sglang", "cpu"]
+    name: str | None
+    parallel: ParallelStrategy | None
+    scheduling_strategy: SchedulingStrategy
+    _backend_explicit: bool = field(default=True, repr=False)
+
+    def __post_init__(self):
+        # Auto-select backend only when needed for specific parallelism
+        if self.backend is None:
+            # Only auto-select megatron for complex parallelism that requires it
+            if (
+                self.parallel.pipeline_parallel_size > 1
+                or self.parallel.expert_parallel_size > 1
+            ):
+                logger.info(
+                    "Auto-selecting megatron backend for pipeline/expert parallelism."
+                )
+                self.backend = "megatron"
+            else:
+                logger.info("Auto-selecting fsdp training backend.")
+                self.backend = "fsdp"
+
+        if self.backend == "fsdp":
+            if (
+                self.parallel.pipeline_parallel_size > 1
+                or self.parallel.expert_parallel_size > 1
+            ):
+                raise AllocationValidationError(
+                    f"FSDP backend only supports data/tensor/context parallelism. "
+                    f"Got strategy: {self.parallel}"
+                )
+
+    @property
+    def world_size(self):
+        if self.scheduling_strategy.type == "colocation":
+            return 0
+        return self.parallel.world_size
+
+    def __str__(self):
+        dims = []
+        if self.parallel.data_parallel_size != 1:
+            dims.append(f"d{self.parallel.data_parallel_size}")
+        if self.parallel.pipeline_parallel_size != 1:
+            dims.append(f"p{self.parallel.pipeline_parallel_size}")
+        if self.parallel.tensor_parallel_size != 1:
+            dims.append(f"t{self.parallel.tensor_parallel_size}")
+        if self.parallel.context_parallel_size != 1:
+            dims.append(f"c{self.parallel.context_parallel_size}")
+        if self.parallel.expert_parallel_size != 1:
+            dims.append(f"e{self.parallel.expert_parallel_size}")
+
+        if not dims:  # Show at least data parallel if all dimensions are 1
+            dims.append(f"d{self.parallel.data_parallel_size}")
+
+        result = "".join(dims)
+        if self._backend_explicit:
+            if self.name:
+                result = f"{self.backend}({self.name}):{result}"
+            else:
+                result = f"{self.backend}:{result}"
+        elif self.name:
+            result = f"({self.name}):{result}"
+        return result
+
+
+@dataclass
 class AllocationMode:
     """Resource allocation configuration for distributed ML workloads.
 
-    This class encapsulates the complete resource allocation strategy for distributed
-    training and inference, including parallelization strategies, backend selection,
-    and resource partitioning between different workload types.
+    Manages allocation of GPUs across multiple models/components with support for
+    named components, colocation, and flexible parallelization strategies.
 
-    The allocation mode supports various deployment patterns:
-    - COLOCATE: Training and inference share the same resources (including SFT/training-only)
-    - DECOUPLED_TRAIN: Separate dedicated resources for training and inference
-    - LLM_SERVER_ONLY: Inference-only deployment
-    - DECOUPLED_EVAL: Inference with separate evaluation processes
+    Parameters
+    ----------
+    allocations : list[ModelAllocation]
+        List of ModelAllocation objects, each representing a component
 
-    Args:
-        type_: Type of allocation strategy (AllocationType enum)
-        gen: Parallelization strategy for inference/generation (optional)
-        train: Parallelization strategy for training (optional)
-        gen_backend: Backend used for inference ("sglang", "vllm", etc.) (optional)
+    Notes
+    -----
+    Access patterns:
+        - allocation_mode[name]: Get allocation by name
+        - allocation_mode.allocations: Get all allocations
+        - allocation_mode.gen: Backward-compatible (single inference only)
+        - allocation_mode.train: Backward-compatible (single training only)
 
-    Example:
-        # Simple colocated allocation for SFT
-        mode = AllocationMode.from_str("d4t2p1")
+    Examples
+    --------
+    Training-only (backward compatible):
 
-        # Disaggregated allocation with different backends
-        mode = AllocationMode.from_str("sglang:d4t2+fsdp:d8")
+    >>> mode = AllocationMode.from_str("d4t2p1")
 
-        # Inference-only allocation
-        mode = AllocationMode.from_str("vllm:d2t4")
+    Two named components:
+
+    >>> mode = AllocationMode.from_str("sglang[rollout]:d2+fsdp[actor]:d4")
+    >>> rollout = mode["rollout"]
+
+    Three components (names required):
+
+    >>> mode = AllocationMode.from_str("sglang[r]:d2+fsdp[a]:d4+fsdp[c]:d4")
+
+    Colocation (actor and critic share 4 GPUs):
+
+    >>> mode = AllocationMode.from_str("sglang[r]:d2+fsdp[a]:d4|fsdp[c]:d4")
     """
 
-    type_: AllocationType
-    gen: ParallelStrategy = field(default_factory=ParallelStrategy)
-    train: ParallelStrategy | None = None
-    gen_backend: str | None = None
-    train_backend: str | None = None
-
-    @property
-    def gen_instance_size(self) -> int:
-        """Number of devices per inference instance (excluding data parallelism)."""
-        return self.gen.tp_size * self.gen.pp_size
+    allocations: list[ModelAllocation] = field(default_factory=list)
 
     @classmethod
     def from_str(cls, allocation_mode: str):
         """Parse allocation mode string into AllocationMode object.
 
-        This method uses grammar-based parsing with Lark for modern
-        allocation mode syntax with comprehensive validation rules.
+        Parameters
+        ----------
+        allocation_mode : str
+            String representation of allocation mode
 
-        Examples:
-        - "sglang:d4t2" - Inference-only with SGLang backend
-        - "sglang:d4t2+fsdp:d8" - Disaggregated with different backends
-        - "vllm:d2t4|megatron:d2t4p2" - Colocated allocation
-        - "sglang:d4t2+eval" - Inference with evaluation processes
-        - "d2p2t1" - Simple parallelism for offline training (e.g., SFT)
+        Returns
+        -------
+        AllocationMode
+            Parsed allocation configuration
 
-        Args:
-            allocation_mode: String representation of allocation mode
+        Raises
+        ------
+        AllocationValidationError
+            When validation fails (duplicate names, missing names, etc.)
+        ValueError
+            When parsing fails
 
-        Returns:
-            AllocationMode: Parsed allocation configuration
+        Notes
+        -----
+        Syntax:
+            - backend(name):dims - Named component
+            - component+component - Disaggregation (separate GPUs)
+            - component|component - Colocation (shared GPUs, names required)
+            - Operator precedence: | binds tighter than +
 
-        Raises:
-            AllocationValidationError: When validation rules are violated
-            ValueError: When parsing fails
+        Examples
+        --------
+        Training-only (backward compatible):
+
+        >>> AllocationMode.from_str("d2p2t1")
+
+        Two components, no names:
+
+        >>> AllocationMode.from_str("sglang:d4t2+fsdp:d8")
+
+        Two named components:
+
+        >>> AllocationMode.from_str("sglang[rollout]:d2+fsdp[actor]:d4")
+
+        Three+ components (names required):
+
+        >>> AllocationMode.from_str("sglang[r]:d2+fsdp[a]:d4+fsdp[c]:d4")
+
+        Colocation (r separated, a|c share GPUs):
+
+        >>> AllocationMode.from_str("sglang[r]:d2+fsdp[a]:d4|fsdp[c]:d4")
         """
         parser = _LLMParallelParser()
         result = parser.parse(allocation_mode)
         return parser._convert_to_allocation_mode(result)
 
+    def __getitem__(self, name: str) -> ModelAllocation:
+        """Get allocation by name."""
+        for alloc in self.allocations:
+            if alloc.name == name:
+                return alloc
+        raise KeyError(f"No allocation found with name: {name}")
 
-# Grammar-based parser implementation using Lark
+    @property
+    def world_size(self):
+        return sum(alloc.world_size for alloc in self.allocations)
+
+    def _get_inference_allocations(self) -> list[ModelAllocation]:
+        """Get all inference allocations (sglang, vllm backends)."""
+        return [a for a in self.allocations if a.backend in ("sglang", "vllm")]
+
+    def _get_training_allocations(self) -> list[ModelAllocation]:
+        """Get all training allocations (fsdp, megatron backends)."""
+        return [a for a in self.allocations if a.backend in ("fsdp", "megatron")]
+
+    ########### Legacy Attributes for Backward Compatiblity ###########
+    @property
+    def type_(self) -> AllocationType:
+        """Backward compatible: Check if any allocation uses eval backend (cpu or eval)."""
+        if len(self.allocations) not in [1, 2]:
+            raise AttributeError(
+                "Can only infer allocation type from 1 or 2 allocations."
+            )
+
+        if len(self.allocations) == 1:
+            if self.allocations[0].backend in ("sglang", "vllm"):
+                return AllocationType.LLM_SERVER_ONLY
+            return AllocationType.COLOCATE
+
+        for alloc in self.allocations:
+            if alloc.backend == "cpu":
+                return AllocationType.DECOUPLED_EVAL
+
+        inf_alloc = self._get_inference_allocations()
+        train_alloc = self._get_training_allocations()
+        if not (len(inf_alloc) == 1 and len(train_alloc) == 1):
+            raise AttributeError(
+                "Ambiguous allocation type: expected one inference and one training allocation."
+            )
+        if (
+            inf_alloc[0].scheduling_strategy.type == "separation"
+            and train_alloc[0].scheduling_strategy.type == "separation"
+        ):
+            return AllocationType.DECOUPLED_TRAIN
+        return AllocationType.COLOCATE
+
+    @property
+    def gen(self) -> ParallelStrategy:
+        """Backward compatible: returns parallel strategy for single inference allocation."""
+        inf_allocs = self._get_inference_allocations()
+        if len(inf_allocs) == 0:
+            # Check for training-only with no explicit backend
+            if len(self.allocations) == 1:
+                return self.allocations[0].parallel
+            raise AttributeError("No inference allocation found")
+        if len(inf_allocs) > 1:
+            raise AttributeError(
+                f"Ambiguous 'gen' property: found {len(inf_allocs)} inference allocations. "
+                f"Use allocation_mode[name] or allocation_mode.allocations instead."
+            )
+        return inf_allocs[0].parallel
+
+    @property
+    def train(self) -> ParallelStrategy | None:
+        """Backward compatible: returns parallel strategy for single training allocation."""
+        train_allocs = self._get_training_allocations()
+        if len(train_allocs) == 0:
+            return None
+        if len(train_allocs) > 1:
+            raise AttributeError(
+                f"Ambiguous 'train' property: found {len(train_allocs)} training allocations. "
+                f"Use allocation_mode[name] or allocation_mode.allocations instead."
+            )
+        return train_allocs[0].parallel
+
+    @property
+    def gen_backend(self) -> str | None:
+        """Backward compatible: returns backend for single inference allocation."""
+        inf_allocs = self._get_inference_allocations()
+        if len(inf_allocs) == 0:
+            return None
+        if len(inf_allocs) > 1:
+            raise AttributeError(
+                f"Ambiguous 'gen_backend' property: found {len(inf_allocs)} inference allocations. "
+                f"Use allocation_mode[name].backend or allocation_mode.allocations instead."
+            )
+        return inf_allocs[0].backend
+
+    @property
+    def train_backend(self) -> str | None:
+        """Backward compatible: returns backend for single training allocation."""
+        train_allocs = self._get_training_allocations()
+        if len(train_allocs) == 0:
+            return None
+        if len(train_allocs) > 1:
+            raise AttributeError(
+                f"Ambiguous 'train_backend' property: found {len(train_allocs)} training allocations. "
+                f"Use allocation_mode[name].backend or allocation_mode.allocations instead."
+            )
+        return train_allocs[0].backend
+
+    @property
+    def gen_instance_size(self) -> int:
+        """Backward compatible: returns instance size for single inference allocation."""
+        inf_allocs = self._get_inference_allocations()
+        if len(inf_allocs) == 0:
+            # Fallback to first allocation
+            if len(self.allocations) > 0:
+                return (
+                    self.allocations[0].parallel.tp_size
+                    * self.allocations[0].parallel.pp_size
+                )
+            raise AttributeError("No allocations found")
+        if len(inf_allocs) > 1:
+            raise AttributeError(
+                f"Ambiguous 'gen_instance_size' property: found {len(inf_allocs)} inference allocations. "
+                f"Use allocation_mode[name].parallel.tp_size * pp_size instead."
+            )
+        return inf_allocs[0].parallel.tp_size * inf_allocs[0].parallel.pp_size
+
+
+# Grammar-based parser using Lark
+# Operator precedence: | (colocation) binds tighter than + (disaggregation)
+# Example: "a+b|c" parses as "a+(b|c)", not "(a+b)|c"
 ALLOCATION_GRAMMAR = """
     start: expression
 
-    expression: disaggregate_expr | colocate_expr | inf_para | eval_expr
-        | train_para
+    expression: disaggregate_chain | component | eval_expr
 
-    disaggregate_expr: inf_para "+" train_para
-    colocate_expr: inf_para "|" train_para
+    disaggregate_chain: component ("+" component)+
+    component: colocate_expr | single_allocation
+    single_allocation: inf_para | train_para
+    colocate_expr: single_allocation ("|" single_allocation)+
     eval_expr: inf_para "+" EVAL
 
-    inf_para: modern_inf_para | legacy_inf_para
-    modern_inf_para: INFER_BACKEND ":" inf_dim+
-    legacy_inf_para: INFER_BACKEND "." inf_dim+
-    train_para: (TRAIN_BACKEND ":")? common_dim+
-        | (TRAIN_BACKEND ":")? hybrid_moe_syntax
+    inf_para: modern_inf_para
+    modern_inf_para: INFER_BACKEND ("[" NAME "]")? ":" inf_dim+
+    train_para: train_backend_with_name | train_backend_hybrid | train_backend_only | train_name_only | train_dims_only | hybrid_moe_syntax
+    train_backend_with_name: TRAIN_BACKEND "[" NAME "]" ":" common_dim+
+    train_backend_hybrid: TRAIN_BACKEND ":" hybrid_moe_syntax
+    train_backend_only: TRAIN_BACKEND ":" common_dim+
+    train_name_only: "[" NAME "]" ":" common_dim+
+    train_dims_only: common_dim+
 
     hybrid_moe_syntax: "("? attn_section "|" ffn_section ")"?
     attn_section: "attn" ":" attn_dim+
@@ -381,7 +636,7 @@ class ParallelDimension:
 
 @dataclass
 class InferenceParallelism:
-    """Inference parallelism configuration with backend and validation.
+    """Backward Compatible: Inference parallelism configuration with backend and validation.
 
     Represents the parallelization strategy for inference workloads,
     including the specific backend (SGLang, vLLM) and associated
@@ -405,63 +660,6 @@ class InferenceParallelism:
 
 
 @dataclass
-class TrainingParallelism:
-    """Training parallelism configuration with automatic backend selection.
-
-    Represents the parallelization strategy for training workloads,
-    with automatic backend selection based on parallelism requirements
-    and comprehensive validation rules.
-    """
-
-    backend: str | None = None
-    strategy: ParallelStrategy = field(default_factory=lambda: ParallelStrategy())
-
-    def __post_init__(self):
-        # Auto-select backend only when needed for specific parallelism
-        if self.backend is None:
-            # Only auto-select megatron for complex parallelism that requires it
-            if (
-                self.strategy.pipeline_parallel_size > 1
-                or self.strategy.expert_parallel_size > 1
-            ):
-                self.backend = "megatron"
-            else:
-                self.backend = "fsdp"
-
-        # TODO: enable the following backend selection logic
-        # if self.backend == "fsdp":
-        #     if (
-        #         or self.strategy.pipeline_parallel_size > 1
-        #         or self.strategy.expert_parallel_size > 1
-        #     ):
-        #         raise AllocationValidationError(
-        #             f"Currently FSDP backend only supports data parallelism. "
-        #             f"Got strategy: {self.strategy}"
-        #         )
-
-    def __str__(self):
-        dims = []
-        if self.strategy.data_parallel_size != 1:
-            dims.append(f"d{self.strategy.data_parallel_size}")
-        if self.strategy.pipeline_parallel_size != 1:
-            dims.append(f"p{self.strategy.pipeline_parallel_size}")
-        if self.strategy.tensor_parallel_size != 1:
-            dims.append(f"t{self.strategy.tensor_parallel_size}")
-        if self.strategy.context_parallel_size != 1:
-            dims.append(f"c{self.strategy.context_parallel_size}")
-        if self.strategy.expert_parallel_size != 1:
-            dims.append(f"e{self.strategy.expert_parallel_size}")
-
-        if not dims:  # Show at least data parallel if all dimensions are 1
-            dims.append(f"d{self.strategy.data_parallel_size}")
-
-        result = "".join(dims)
-        if self.backend:
-            result = f"{self.backend}:{result}"
-        return result
-
-
-@dataclass
 class EvalType:
     """Evaluation expression type (cpu or eval)."""
 
@@ -471,70 +669,9 @@ class EvalType:
         return self.eval_type
 
 
-# Allocation expression types for grammar-based parsing
 @dataclass
-class AllocationExpression:
-    """Base class for allocation expressions."""
-
-
-@dataclass
-class InferenceOnlyExpression(AllocationExpression):
-    """Inference-only allocation expression."""
-
-    inference: InferenceParallelism
-
-    def __str__(self):
-        return str(self.inference)
-
-
-@dataclass
-class TrainingOnlyExpression(AllocationExpression):
-    """Training-only allocation expression."""
-
-    training: TrainingParallelism
-
-    def __str__(self):
-        return str(self.training)
-
-
-@dataclass
-class DisaggregatedExpression(AllocationExpression):
-    """Disaggregated allocation expression (inference + training)."""
-
-    inference: InferenceParallelism
-    training: TrainingParallelism
-
-    def __str__(self):
-        return f"{self.inference}+{self.training}"
-
-
-@dataclass
-class ColocatedExpression(AllocationExpression):
-    """Colocated allocation expression (inference | training)."""
-
-    inference: InferenceParallelism
-    training: TrainingParallelism
-
-    def __post_init__(self):
-        """Validate colocated expression."""
-        # World sizes must match for colocated expressions
-        w1 = self.inference.strategy.world_size
-        w2 = self.training.strategy.world_size
-
-        if w1 != w2:
-            raise AllocationValidationError(
-                f"World sizes must match for colocated expressions. "
-                f"Inference world size: {w1}, "
-                f"Training world size: {w1}"
-            )
-
-    def __str__(self):
-        return f"{self.inference}|{self.training}"
-
-
-@dataclass
-class EvalAllocationExpression(AllocationExpression):
-    """Evaluation allocation expression (inference + eval)."""
+class EvalAllocationExpression:
+    """Backward Compatible: Evaluation allocation expression (inference + eval)."""
 
     inference: InferenceParallelism
     eval_type: EvalType
@@ -544,12 +681,36 @@ class EvalAllocationExpression(AllocationExpression):
 
 
 class _ParallelStrategyTransformer(Transformer):
-    """Lark transformer to convert parse tree to Python objects.
+    """Lark transformer to convert parse tree to lists of ModelAllocation objects."""
 
-    This transformer walks the parse tree generated by Lark and converts
-    it into the appropriate Python data structures, applying validation
-    rules during the transformation process.
-    """
+    def __init__(self):
+        super().__init__()
+        self.seen_names = set()
+
+    def _validate_name(self, name: str | None):
+        """Validate and track component names for uniqueness."""
+        if name is not None:
+            if name in self.seen_names:
+                raise AllocationValidationError(f"Duplicate component name: {name}")
+            self.seen_names.add(name)
+
+    def _build_model_allocation(
+        self,
+        backend: str,
+        name: str | None,
+        strategy: ParallelStrategy,
+        scheduling: SchedulingStrategy,
+        backend_explicit: bool = True,
+    ) -> ModelAllocation:
+        """Build ModelAllocation with validation."""
+        self._validate_name(name)
+        return ModelAllocation(
+            backend=backend,
+            name=name,
+            parallel=strategy,
+            scheduling_strategy=scheduling,
+            _backend_explicit=backend_explicit,
+        )
 
     def start(self, items):
         return items[0]
@@ -557,30 +718,119 @@ class _ParallelStrategyTransformer(Transformer):
     def expression(self, items):
         return items[0]
 
-    def disaggregate_expr(self, items):
-        inf_para = items[0]
-        train_para = items[1]
-        return DisaggregatedExpression(inference=inf_para, training=train_para)
+    def disaggregate_chain(self, items):
+        """Handle multi-component disaggregation: comp1 + comp2 + comp3..."""
+        all_allocations = []
+        for item in items:
+            if isinstance(item, list):
+                all_allocations.extend(item)
+            else:
+                all_allocations.append(item)
+
+        # Validate: 3+ components must all have names
+        if len(all_allocations) >= 3:
+            unnamed = [a for a in all_allocations if a.name is None]
+            if unnamed:
+                raise AllocationValidationError(
+                    f"When using 3+ components, all must have names. "
+                    f"Found {len(unnamed)} unnamed components."
+                )
+
+        # Validate: multiple anonymous training components must have names
+        # Training backends are those that are not inference backends
+        inference_backends = {"sglang", "vllm"}
+        anonymous_training = [
+            a
+            for a in all_allocations
+            if not a._backend_explicit and a.backend not in inference_backends
+        ]
+
+        if len(anonymous_training) > 1:
+            unnamed_anonymous = [a for a in anonymous_training if a.name is None]
+            if unnamed_anonymous:
+                raise AllocationValidationError(
+                    f"When using multiple anonymous training components, all must have names. "
+                    f"Found {len(unnamed_anonymous)} unnamed anonymous training components."
+                )
+
+        return all_allocations
+
+    def component(self, items):
+        return items[0]
+
+    def single_allocation(self, items):
+        return items[0]
 
     def colocate_expr(self, items):
-        inf_para = items[0]
-        train_para = items[1]
-        return ColocatedExpression(inference=inf_para, training=train_para)
+        """Handle colocation: comp1 | comp2 | comp3..."""
+        allocations = []
+        anchor_name = None
+
+        for i, item in enumerate(items):
+            if isinstance(item, list):
+                # This shouldn't happen in practice
+                allocations.extend(item)
+            else:
+                alloc = item
+                if i == 0:
+                    # First component is the anchor
+                    anchor_name = alloc.name
+                    alloc.scheduling_strategy = SchedulingStrategy(
+                        type="separation", target=None
+                    )
+                else:
+                    # Rest colocate with anchor
+                    if alloc.name is None:
+                        raise AllocationValidationError(
+                            "Components in colocation group must have names"
+                        )
+                    alloc.scheduling_strategy = SchedulingStrategy(
+                        type="colocation", target=anchor_name
+                    )
+
+                    # Validate world sizes match
+                    if alloc.parallel.world_size != allocations[0].parallel.world_size:
+                        raise AllocationValidationError(
+                            f"Colocated components must have matching world sizes. "
+                            f"'{anchor_name}' has {allocations[0].parallel.world_size}, "
+                            f"'{alloc.name}' has {alloc.parallel.world_size}."
+                        )
+                allocations.append(alloc)
+
+        return allocations
 
     def eval_expr(self, items):
-        inf_para = items[0]
+        """Handle inference + eval expression."""
+        # For backward compatibility, keep EvalAllocationExpression
+        alloc = items[0]
         eval_type = items[1]
-        return EvalAllocationExpression(inference=inf_para, eval_type=eval_type)
+        return EvalAllocationExpression(
+            inference=InferenceParallelism(
+                backend=alloc.backend, strategy=alloc.parallel
+            ),
+            eval_type=eval_type,
+        )
 
     def inf_para(self, items):
-        # This method receives either a modern_inf_para or legacy_inf_para result
         return items[0]
 
     def modern_inf_para(self, items):
         backend = str(items[0])
-        dimensions = items[1:]
+        name = None
+        dim_start_idx = 1
 
-        # Build ParallelStrategy from dimensions
+        # Check if name is provided
+        if (
+            len(items) > 1
+            and isinstance(items[1], str)
+            and items[1] not in ["d", "t", "p"]
+        ):
+            name = str(items[1])
+            dim_start_idx = 2
+
+        dimensions = items[dim_start_idx:]
+
+        # Build ParallelStrategy
         strategy_kwargs = {}
         for dim in dimensions:
             if dim.type_ == "d":
@@ -591,65 +841,36 @@ class _ParallelStrategyTransformer(Transformer):
                 strategy_kwargs["pipeline_parallel_size"] = dim.size
 
         strategy = ParallelStrategy(**strategy_kwargs)
-
-        # Modern syntax - strict validation (no pipeline parallelism for inference)
-        inference_parallelism = InferenceParallelism(backend=backend, strategy=strategy)
-        return inference_parallelism
-
-    def legacy_inf_para(self, items):
-        backend = str(items[0])
-        dimensions = items[1:]
-
-        # Build ParallelStrategy from dimensions
-        strategy_kwargs = {}
-        for dim in dimensions:
-            if dim.type_ == "d":
-                strategy_kwargs["data_parallel_size"] = dim.size
-            elif dim.type_ == "t":
-                strategy_kwargs["tensor_parallel_size"] = dim.size
-            elif dim.type_ == "p":
-                strategy_kwargs["pipeline_parallel_size"] = dim.size
-
-        strategy = ParallelStrategy(**strategy_kwargs)
-
-        # Legacy syntax - permissive validation (allow pipeline parallelism for backward compatibility)
-        inference_parallelism = InferenceParallelism(backend=backend, strategy=strategy)
-        return inference_parallelism
+        return self._build_model_allocation(
+            backend, name, strategy, SchedulingStrategy(type="separation", target=None)
+        )
 
     def train_para(self, items):
-        backend = None
-        dimensions = []
+        """Pass through result from one of the train_* alternatives."""
+        result = items[0]
 
-        i = 0
-        # Check if first item is a backend specification
-        if (
-            len(items) > 0
-            and isinstance(items[0], str)
-            and items[0] in ["fsdp", "megatron"]
-        ):
-            backend = str(items[0])
-            i = 1
+        # If result is a ParallelStrategy (from hybrid_moe_syntax), wrap it in ModelAllocation
+        if isinstance(result, ParallelStrategy):
+            # Auto-select backend for hybrid MoE (always megatron)
+            backend = "megatron"
+            return self._build_model_allocation(
+                backend,
+                None,
+                result,
+                SchedulingStrategy(type="separation", target=None),
+                backend_explicit=False,
+            )
 
-        # Get remaining items
-        remaining_items = items[i:]
+        return result
 
-        # Check if this is a pre-processed result from hybrid_moe_syntax
-        if len(remaining_items) == 1 and isinstance(
-            remaining_items[0], TrainingParallelism
-        ):
-            # This came from hybrid_moe_syntax, but we need to set the backend
-            result = remaining_items[0]
-            if backend is not None:
-                # Create a new TrainingParallelism with the correct backend
-                result = TrainingParallelism(backend=backend, strategy=result.strategy)
-            return result
+    def train_backend_with_name(self, items):
+        """Handle: TRAIN_BACKEND ( NAME ) : common_dim+"""
+        backend = str(items[0])
+        name = str(items[1])
+        dims = items[2:]
 
-        # Regular dimension handling
-        dimensions = remaining_items
-
-        # Build ParallelStrategy from dimensions
         strategy_kwargs = {}
-        for dim in dimensions:
+        for dim in dims:
             if dim.type_ == "d":
                 strategy_kwargs["data_parallel_size"] = dim.size
             elif dim.type_ == "t":
@@ -662,7 +883,126 @@ class _ParallelStrategyTransformer(Transformer):
                 strategy_kwargs["expert_parallel_size"] = dim.size
 
         strategy = ParallelStrategy(**strategy_kwargs)
-        return TrainingParallelism(backend=backend, strategy=strategy)
+        return self._build_model_allocation(
+            backend,
+            name,
+            strategy,
+            SchedulingStrategy(type="separation", target=None),
+            backend_explicit=True,
+        )
+
+    def train_backend_hybrid(self, items):
+        """Handle: TRAIN_BACKEND : hybrid_moe_syntax"""
+        backend = str(items[0])
+        strategy = items[1]  # ParallelStrategy from hybrid_moe_syntax
+
+        return self._build_model_allocation(
+            backend,
+            None,
+            strategy,
+            SchedulingStrategy(type="separation", target=None),
+            backend_explicit=True,
+        )
+
+    def train_backend_only(self, items):
+        """Handle: TRAIN_BACKEND : common_dim+"""
+        backend = str(items[0])
+        dims = items[1:]
+
+        strategy_kwargs = {}
+        for dim in dims:
+            if dim.type_ == "d":
+                strategy_kwargs["data_parallel_size"] = dim.size
+            elif dim.type_ == "t":
+                strategy_kwargs["tensor_parallel_size"] = dim.size
+            elif dim.type_ == "p":
+                strategy_kwargs["pipeline_parallel_size"] = dim.size
+            elif dim.type_ == "c":
+                strategy_kwargs["context_parallel_size"] = dim.size
+            elif dim.type_ == "e":
+                strategy_kwargs["expert_parallel_size"] = dim.size
+
+        strategy = ParallelStrategy(**strategy_kwargs)
+        return self._build_model_allocation(
+            backend,
+            None,
+            strategy,
+            SchedulingStrategy(type="separation", target=None),
+            backend_explicit=True,
+        )
+
+    def train_name_only(self, items):
+        """Handle: ( NAME ) : common_dim+"""
+        name = str(items[0])
+        dims = items[1:]
+
+        strategy_kwargs = {}
+        for dim in dims:
+            if dim.type_ == "d":
+                strategy_kwargs["data_parallel_size"] = dim.size
+            elif dim.type_ == "t":
+                strategy_kwargs["tensor_parallel_size"] = dim.size
+            elif dim.type_ == "p":
+                strategy_kwargs["pipeline_parallel_size"] = dim.size
+            elif dim.type_ == "c":
+                strategy_kwargs["context_parallel_size"] = dim.size
+            elif dim.type_ == "e":
+                strategy_kwargs["expert_parallel_size"] = dim.size
+
+        strategy = ParallelStrategy(**strategy_kwargs)
+
+        # Auto-select backend
+        if (
+            strategy_kwargs.get("pipeline_parallel_size", 1) > 1
+            or strategy_kwargs.get("expert_parallel_size", 1) > 1
+        ):
+            backend = "megatron"
+        else:
+            backend = "fsdp"
+
+        return self._build_model_allocation(
+            backend,
+            name,
+            strategy,
+            SchedulingStrategy(type="separation", target=None),
+            backend_explicit=False,
+        )
+
+    def train_dims_only(self, items):
+        """Handle: common_dim+"""
+        dims = items
+
+        strategy_kwargs = {}
+        for dim in dims:
+            if dim.type_ == "d":
+                strategy_kwargs["data_parallel_size"] = dim.size
+            elif dim.type_ == "t":
+                strategy_kwargs["tensor_parallel_size"] = dim.size
+            elif dim.type_ == "p":
+                strategy_kwargs["pipeline_parallel_size"] = dim.size
+            elif dim.type_ == "c":
+                strategy_kwargs["context_parallel_size"] = dim.size
+            elif dim.type_ == "e":
+                strategy_kwargs["expert_parallel_size"] = dim.size
+
+        strategy = ParallelStrategy(**strategy_kwargs)
+
+        # Auto-select backend
+        if (
+            strategy_kwargs.get("pipeline_parallel_size", 1) > 1
+            or strategy_kwargs.get("expert_parallel_size", 1) > 1
+        ):
+            backend = "megatron"
+        else:
+            backend = "fsdp"
+
+        return self._build_model_allocation(
+            backend,
+            None,
+            strategy,
+            SchedulingStrategy(type="separation", target=None),
+            backend_explicit=False,
+        )
 
     def common_dim(self, items):
         dim_type = str(items[0])
@@ -776,7 +1116,7 @@ class _ParallelStrategyTransformer(Transformer):
         )
 
         strategy = ParallelStrategy(**final_strategy_kwargs)
-        return TrainingParallelism(strategy=strategy, backend="megatron")
+        return strategy  # Return ParallelStrategy, will be wrapped by train_para
 
     def hybrid_moe_syntax(self, items):
         # items should be [attn_section_result, ffn_section_result]
@@ -819,6 +1159,9 @@ class _ParallelStrategyTransformer(Transformer):
     def NUMBER(self, token):
         return int(token)
 
+    def NAME(self, token):
+        return str(token)
+
 
 class _LLMParallelParser:
     """Internal LLM parallel strategy parser using Lark grammar.
@@ -833,18 +1176,6 @@ class _LLMParallelParser:
         self.parser = Lark(ALLOCATION_GRAMMAR, parser="earley", ambiguity="explicit")
 
     def parse(self, expression: str):
-        """Parse allocation mode expression using grammar-based parsing.
-
-        Args:
-            expression: Allocation mode string to parse
-
-        Returns:
-            AllocationExpression: Parsed expression object
-
-        Raises:
-            AllocationValidationError: When validation rules are violated
-            ValueError: When parsing fails
-        """
         try:
             tree = self.parser.parse(expression)
             transformer = _ParallelStrategyTransformer()
@@ -880,10 +1211,10 @@ class _LLMParallelParser:
             raise ValueError(f"Parsing error: {e}")
 
     def _convert_to_allocation_mode(self, result):
-        """Convert parsed expression to AllocationMode object.
+        """Convert parsed result to AllocationMode object.
 
         Args:
-            result: Parsed AllocationExpression object
+            result: Parsed result (list of ModelAllocation or special expressions)
 
         Returns:
             AllocationMode: Converted allocation mode configuration
@@ -891,61 +1222,26 @@ class _LLMParallelParser:
         Raises:
             ValueError: When expression type is not recognized
         """
-        if isinstance(result, InferenceOnlyExpression):
-            return AllocationMode(
-                type_=AllocationType.LLM_SERVER_ONLY,
-                gen=result.inference.strategy,
-                train=None,
-                gen_backend=result.inference.backend,
-                train_backend=None,
-            )
-        elif isinstance(result, TrainingOnlyExpression):
-            return AllocationMode(
-                type_=AllocationType.COLOCATE,
-                gen=result.training.strategy,
-                train=result.training.strategy,
-                gen_backend=None,
-                train_backend=result.training.backend,
-            )
-        elif isinstance(result, DisaggregatedExpression):
-            return AllocationMode(
-                type_=AllocationType.DECOUPLED_TRAIN,
-                gen=result.inference.strategy,
-                train=result.training.strategy,
-                gen_backend=result.inference.backend,
-                train_backend=result.training.backend,
-            )
-        elif isinstance(result, ColocatedExpression):
-            return AllocationMode(
-                type_=AllocationType.COLOCATE,
-                gen=result.inference.strategy,
-                train=result.training.strategy,
-                gen_backend=result.inference.backend,
-                train_backend=result.training.backend,
-            )
+        if isinstance(result, list):
+            # Main case: list of ModelAllocation objects
+            return AllocationMode(allocations=result)
+        elif isinstance(result, ModelAllocation):
+            # Single allocation
+            return AllocationMode(allocations=[result])
         elif isinstance(result, EvalAllocationExpression):
-            return AllocationMode(
-                type_=AllocationType.DECOUPLED_EVAL,
-                gen=result.inference.strategy,
-                train=None,
-                gen_backend=result.inference.backend,
-                train_backend=None,
+            # Special case for eval expressions (backward compatibility)
+            inf_alloc = ModelAllocation(
+                backend=result.inference.backend,
+                name=None,
+                parallel=result.inference.strategy,
+                scheduling_strategy=SchedulingStrategy(type="separation", target=None),
             )
-        elif isinstance(result, InferenceParallelism):
-            return AllocationMode(
-                type_=AllocationType.LLM_SERVER_ONLY,
-                gen=result.strategy,
-                train=None,
-                gen_backend=result.backend,
-                train_backend=None,
+            eval_alloc = ModelAllocation(
+                backend="cpu",
+                name=None,
+                parallel=None,
+                scheduling_strategy=SchedulingStrategy(type="separation", target=None),
             )
-        elif isinstance(result, TrainingParallelism):
-            return AllocationMode(
-                type_=AllocationType.COLOCATE,
-                gen=result.strategy,
-                train=result.strategy,
-                gen_backend=None,
-                train_backend=result.backend,
-            )
+            return AllocationMode(allocations=[inf_alloc, eval_alloc])
         else:
-            raise ValueError(f"Unknown allocation expression type: {type(result)}")
+            raise ValueError(f"Unknown result type: {type(result)}")

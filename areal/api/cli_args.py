@@ -422,9 +422,6 @@ class TrainEngineConfig:
     )
 
     weight_update_mode: str = field(default="disk")
-    backend: str = field(
-        default="", metadata={"help": "Training backend (refer to documentation)"}
-    )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
 

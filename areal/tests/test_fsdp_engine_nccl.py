@@ -89,7 +89,7 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
 
         # Get WeightUpdateMeta
         meta = WeightUpdateMeta.from_fsdp_xccl(
-            AllocationMode.from_str("sglang.d1p1t1+d1p1t1"),
+            AllocationMode.from_str("sglang:d1p1t1+d1p1t1"),
             nccl_group_name=GROUP_NAME,
         )
 
