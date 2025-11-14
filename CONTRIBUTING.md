@@ -9,6 +9,7 @@ helping with code reviews. This guide will help you get started.
 - [Quick Start](#quick-start)
 - [Ways to Contribute](#ways-to-contribute)
 - [Tips for Using AI-Assisted Coding](#tips-for-using-ai-assisted-coding)
+- [CI/CD](#cicd)
 
 ## Quick Start
 
@@ -91,31 +92,6 @@ helping with code reviews. This guide will help you get started.
    jb build docs
    ```
 
-   **NOTE on CI/CD**: We have updated our CI/CD workflow so that tests for PRs could run
-   on ephemeral GCP compute engines with 2 A100 GPUs (40GB memory). If you have
-   implemented a new feature, you are highly recommended to write your own tests and add
-   them to our pytest workflow. Please put your tests in files under
-   `areal/tests/test_*.py` and mark the tests with our pre-defined pytest markers:
-
-   - `slow`: Tests that are expected to cost more than 30 seconds. They will not run in
-     the CI/CD workflow unless marked with `ci`.
-   - `ci`: Tests that should run in CI/CD workflow. (Only needed to be marked on `slow`
-     tests)
-   - `gpu`: Tests that use a single GPU.
-   - `multi_gpu`: Tests that use more than one GPU.
-
-   The tests that run in our CI/CD are selected by `pytest -m "not slow or ci"`.
-   Moreover, since our CI machine only has two GPUs, please mark skip to tests that uses
-   more than 2 GPUs otherwise it will fail in our CI/CD workflow. For example:
-
-   ```python
-   import pytest
-
-   @pytest.mark.skip(reason="This test requires 4 GPUs")
-   def test_some_multi_gpu_functionality():
-       ...
-   ```
-
 1. **Submit a Pull Request**
 
 ## Ways to Contribute
@@ -184,6 +160,109 @@ When opening a PR:
 - You can use the plan mode of coding agents to generate a plan for refactoring or new
   features. Submit it as a draft PR before making any actual code changes and discuss
   with the core developers.
+
+## CI/CD
+
+### Format Check
+
+The format check runs automatically whenever a PR is opened. Your PR will pass the
+format check as long as you have properly run the formatting tools using `pre-commit`.
+
+**Important Note on Formatting Tools:**
+
+We are gradually transitioning our Python formatting tool from `black` to `ruff`.
+Currently, the CI format check still uses `black` for Python file formatting, while
+`pre-commit` uses `ruff`. Please note that `ruff check` will fail on files in `areal/`
+and `examples/` because these directories have not been fully re-formatted yet.
+
+`black` and `ruff` have known conflicts when handling long assertions. To pass the CI
+format check, you should manually convert long assertions to `if`-`raise` statements.
+See [this issue](https://github.com/inclusionAI/AReaL/issues/503) for detailed
+information.
+
+### Tests
+
+Tests for PRs are triggered when the PR is manually tagged with `safe-to-test`. The test
+suite runs on ephemeral GCP compute engines with 2 A100 GPUs (40GB memory).
+
+> **IMPORTANT:** To re-run tests, **DO NOT** click the "Re-run workflow" button on
+> GitHub. Instead, remove the `safe-to-test` tag and then add it back.
+
+**Writing Tests for New Features:**
+
+If you have implemented a new feature, we highly recommend writing tests and adding them
+to our pytest workflow. Place your test files under `areal/tests/test_*.py` and mark
+them with our pre-defined pytest markers:
+
+- `slow`: Tests that take more than 30 seconds to run. These will not run in the CI/CD
+  workflow unless also marked with `ci`.
+- `ci`: Tests that should run in the CI/CD workflow (only needed for `slow` tests).
+- `gpu`: Tests that use a single GPU.
+- `multi_gpu`: Tests that use more than one GPU.
+
+Our CI/CD runs tests selected by `pytest -m "not slow or ci"`. Since our CI machines
+only have two GPUs, please skip tests that require more than 2 GPUs to prevent CI
+failures. For example:
+
+```python
+import pytest
+from areal.platforms import current_platform
+
+# ordinary tests are supposed to run fast, and will run in CI
+def test_fast_operation():
+    ...
+
+# slow operations that will NOT run in CI
+@pytest.mark.slow
+def test_slow_operation():
+    ...
+
+# slow operations BUT must be tested in CI
+@pytest.mark.slow
+@pytest.mark.ci
+def test_slow_operation():
+    ...
+
+# skip tests for more than 2 GPUs
+@pytest.mark.skipif(current_platform.device_count() < 4, reason="This test requires 4 GPUs")
+def test_some_multi_gpu_functionality():
+    ...
+```
+
+### Image Building
+
+> **NOTE:** The image building CI workflow is experimental and subject to change.
+
+The image building CI runs on the `build-docker-image` branch. Only project members with
+write permissions can push to this branch and open a PR.
+
+**Triggering the Workflow:**
+
+The workflow is triggered when:
+
+1. A PR from `build-docker-image` to `main` is opened **AND**
+1. The PR is tagged with `new-image`
+
+The workflow will wake up a pinned CPU GCP compute engine instance with 64 vCPUs and 512
+GB memory, run the build job with the code and Dockerfile from the current commit, and
+push the image as `ghcr.io/inclusionai/areal-runtime:dev`. Building the image from
+scratch takes approximately 1-2 hours.
+
+**Testing with the New Image:**
+
+After successfully building the image:
+
+1. Remove the `new-image` tag
+1. Add the `safe-to-test` tag to trigger CI tests using the same procedure described
+   above
+
+Note that our test suite detects the branch name that triggers the workflow. When the
+branch name is `build-docker-image`, it will pull the dev image instead of the stable
+image for testing.
+
+**Important:** If you add the `safe-to-test` tag without removing `new-image` first,
+both image building and testing workflows will run simultaneously, which is usually
+undesired.
 
 ______________________________________________________________________
 

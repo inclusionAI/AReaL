@@ -6,7 +6,6 @@ import uuid
 from typing import Any
 
 import torch
-from tensordict import TensorDict
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.cli_args import (
@@ -89,7 +88,7 @@ class TIRWorkflow(RolloutWorkflow):
 
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
-    ) -> TensorDict:
+    ) -> dict[str, Any]:
         """Run a complete TIR inference episode.
         :param engine: The inference engine.
         :param data: The input data.
@@ -255,7 +254,7 @@ class TIRWorkflow(RolloutWorkflow):
             ),
             rewards=torch.tensor([float(reward)]),
         )
-        return TensorDict(res, batch_size=[1])
+        return res
 
     async def _generate_response(
         self,

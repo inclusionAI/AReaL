@@ -632,7 +632,6 @@ class vLLMConfig:
     block_size: int = 16
     swap_space: int = 4
     cpu_offload_gb: float = 0
-    max_seq_len_to_capture: int = 32768
     disable_sliding_window: bool = True
     # NOTE: Defaults max_model_len to 32k because a larger value
     # will enable chunked prefill in vLLM, which will cause

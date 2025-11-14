@@ -1,3 +1,13 @@
+# Git directory (no need to copy git history into image)
+.git/
+.gitignore
+.github/
+
+# Documentation (not needed in runtime image)
+docs/
+README.md
+CONTRIBUTING.md
+
 # Legacy codes
 .legacy/
 .data/

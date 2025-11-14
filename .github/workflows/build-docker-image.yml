@@ -1,0 +1,201 @@
+name: Build and Test Docker Image
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: build-docker-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  VALIDATOR_LABELS: gcp-docker-validator
+  RUNNER_VERSION: '2.317.0'
+  IMAGE_NAME: ghcr.io/inclusionai/areal-runtime
+  IMAGE_TAG: dev
+
+jobs:
+  start-builder:
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'build-docker-image' &&
+       contains(github.event.pull_request.labels.*.name, 'new-image')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref_name == 'build-docker-image')
+    name: Start areal-docker-builder instance
+    runs-on: ubuntu-latest
+    env:
+      INSTANCE_NAME: areal-docker-builder
+      INSTANCE_ZONE: us-central1-f
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Start builder instance if stopped
+        run: |
+          set -euo pipefail
+
+          # Check instance status
+          status=$(gcloud compute instances describe "$INSTANCE_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$INSTANCE_ZONE" \
+            --format="get(status)" || echo "NOT_FOUND")
+
+          if [ "$status" = "NOT_FOUND" ]; then
+            echo "Error: Instance $INSTANCE_NAME not found in zone $INSTANCE_ZONE" >&2
+            exit 1
+          fi
+
+          if [ "$status" = "RUNNING" ]; then
+            echo "Instance $INSTANCE_NAME is already running."
+          elif [ "$status" = "TERMINATED" ] || [ "$status" = "SUSPENDED" ]; then
+            echo "Instance $INSTANCE_NAME is $status. Starting it..."
+            gcloud compute instances start "$INSTANCE_NAME" \
+              --project "$GCP_PROJECT_ID" \
+              --zone "$INSTANCE_ZONE"
+            echo "Instance started successfully."
+          else
+            echo "Instance $INSTANCE_NAME has unexpected status: $status" >&2
+            exit 1
+          fi
+
+      - name: Wait for builder runner to be online
+        uses: actions/github-script@v7
+        env:
+          INSTANCE_NAME: areal-docker-builder
+          GH_PAT: ${{ secrets.GH_PAT }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const instanceName = process.env.INSTANCE_NAME;
+            const maxAttempts = 120;
+            const delayMs = 10000;
+
+            const pat = process.env.GH_PAT;
+            if (!pat) {
+              core.setFailed('GH_PAT secret is not configured.');
+              return;
+            }
+
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+              const response = await github.rest.actions.listSelfHostedRunnersForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+                request: {
+                  headers: {
+                    authorization: `token ${pat}`,
+                  },
+                },
+              });
+
+              const found = response.data.runners.find((runner) => runner.name === instanceName);
+              if (found && found.status === 'online') {
+                core.info(`Builder runner ${instanceName} is online.`);
+                return;
+              }
+
+              core.info(`Builder runner ${instanceName} not ready yet (attempt ${attempt}/${maxAttempts}).`);
+              await wait(delayMs);
+            }
+
+            throw new Error(`Timed out waiting for builder runner ${instanceName} to come online.`);
+
+  build-and-push-image:
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.head_ref == 'build-docker-image' &&
+       contains(github.event.pull_request.labels.*.name, 'new-image')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref_name == 'build-docker-image')
+    needs:
+      - start-builder
+    name: Build and push Docker image
+    runs-on: [self-hosted, areal-docker-builder]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: inclusionai
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+      - name: Image details
+        run: |
+          echo "✅ Docker image built and pushed successfully!"
+          echo "Image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.head_ref || github.ref_name }}"
+
+  stop-builder:
+    name: Stop areal-docker-builder instance
+    needs:
+      - build-and-push-image
+      - start-builder
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      INSTANCE_NAME: areal-docker-builder
+      INSTANCE_ZONE: us-central1-f
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Stop builder instance
+        run: |
+          # Check if instance is running
+          status=$(gcloud compute instances describe "$INSTANCE_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$INSTANCE_ZONE" \
+            --format="get(status)" 2>/dev/null || echo "NOT_FOUND")
+
+          if [ "$status" = "NOT_FOUND" ]; then
+            echo "Warning: Instance $INSTANCE_NAME not found in zone $INSTANCE_ZONE"
+            exit 0
+          fi
+
+          if [ "$status" = "RUNNING" ]; then
+            echo "Stopping instance $INSTANCE_NAME..."
+            gcloud compute instances stop "$INSTANCE_NAME" \
+              --project "$GCP_PROJECT_ID" \
+              --zone "$INSTANCE_ZONE"
+            echo "Instance stopped successfully."
+          else
+            echo "Instance $INSTANCE_NAME is already in status: $status"
+          fi
