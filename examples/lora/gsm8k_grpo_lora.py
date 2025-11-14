@@ -16,7 +16,6 @@ from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
     concat_padded_tensors,
-    cycle_dataloader,
     get_batch_size,
     tensor_container_to,
 )
@@ -168,7 +167,6 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -186,18 +184,11 @@ def main(args):
             # due to some concurrency issues. Use a single rank for rollout
             # as a temporary workaround.
             if dist.get_rank() == 0:
-                if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept_fn=lambda sample: True,
-                    )
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept_fn=lambda sample: True,
-                    )
+                batch = rollout.prepare_batch(
+                    train_dataloader,
+                    workflow=workflow,
+                    should_accept_fn=lambda sample: True,
+                )
                 batch = tensor_container_to(batch, actor.device)
             batch = bcast_and_split_from_rank0(
                 batch, granularity=config.actor.group_size

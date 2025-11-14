@@ -761,9 +761,11 @@ class WorkflowExecutor:
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
+
+        This method does not support asynchronous rollout and should be used for offline
+        data collection or debugging, not in production experiments.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.rollout_batch` for
         detailed documentation.
@@ -778,7 +780,6 @@ class WorkflowExecutor:
                 data=item,
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
-                should_accept_fn=should_accept_fn,
             )
         return self.wait(count=len(data))
 

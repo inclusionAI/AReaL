@@ -540,9 +540,11 @@ class InferenceEngine(abc.ABC):
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests to the inference engine and wait for the results.
+
+        This method does not support asynchronous rollout and should be used for offline
+        data collection or debugging, not in production experiments.
 
         See `workflow_api.py` for concrete implementation.
 
@@ -561,8 +563,6 @@ class InferenceEngine(abc.ABC):
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
             By default None.
-        should_accept_fn : Callable, optional
-            A function to decide whether to accept a trajectory, by default None
 
         Returns
         -------

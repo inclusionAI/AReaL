@@ -1,4 +1,3 @@
-import itertools
 import os
 import sys
 from copy import deepcopy
@@ -162,7 +161,6 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = itertools.cycle(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -174,20 +172,12 @@ def main(args):
         )
 
         with stats_tracker.record_timing("rollout"):
-            if config.async_training:
-                batch = actor.prepare_batch(
-                    train_dataloader,
-                    granularity=actor.config.group_size,
-                    workflow=workflow,
-                    should_accept_fn=lambda sample: True,
-                )
-            else:
-                batch = actor.rollout_batch(
-                    next(data_generator),
-                    granularity=actor.config.group_size,
-                    workflow=workflow,
-                    should_accept_fn=lambda sample: True,
-                )
+            batch = actor.prepare_batch(
+                train_dataloader,
+                granularity=actor.config.group_size,
+                workflow=workflow,
+                should_accept_fn=lambda sample: True,
+            )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):

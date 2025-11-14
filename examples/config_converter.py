@@ -158,10 +158,6 @@ class OpenRLHFConverter(Converter):
         "vllm_gpu_memory_utilization": ArgSpec(
             "sglang.mem_fraction_static", float, "Not equivalent to SGLang"
         ),
-        # Async training
-        "async_train": ArgSpec(
-            "async_training", bool
-        ),  # TODO: convert areal offpolicyness > 0
         # Checkpoints
         "eval_steps": ArgSpec("", int, CVRT_WARNING),
         "save_steps": ArgSpec("", int, FEAT_WARNING),

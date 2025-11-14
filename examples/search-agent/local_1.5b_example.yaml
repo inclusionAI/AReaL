@@ -5,7 +5,6 @@ seed: 1
 total_train_epochs: 10
 total_train_steps: null
 tokenizer_path: ${actor.path}
-async_training: true
 
 cluster:
   n_nodes: 1
