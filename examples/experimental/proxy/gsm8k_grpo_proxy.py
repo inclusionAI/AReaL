@@ -122,7 +122,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
         completions = await self.proxy_server.get_completions(
-            session_ids=session_ids, style=self.export_style
+            session_ids=session_ids, style=self.export_style, discount=0.9
         )
 
         if self.dump_dir is not None:

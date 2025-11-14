@@ -139,7 +139,6 @@ class MultiAgentMathAgent:
             tracing_disabled=True,
             model_settings=ModelSettings(
                 temperature=1.0,
-                top_p=1.0,
                 extra_args={"max_completion_tokens": self.max_tokens_per_turn},
             ),
         )
