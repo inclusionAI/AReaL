@@ -5,8 +5,11 @@ from copy import deepcopy
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from recipe.AEnt.actor import FSDPAEntPPOActor
+from recipe.AEnt.aent_args import AEntGRPOConfig
+
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GRPOConfig, load_expr_config
+from areal.api.cli_args import load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
@@ -15,7 +18,6 @@ from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
-    cycle_dataloader,
     tensor_container_to,
 )
 from areal.utils.device import log_gpu_stats
@@ -25,8 +27,6 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
-from recipe.AEnt.actor import FSDPAEntPPOActor
-from recipe.AEnt.aent_args import AEntGRPOConfig
 
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
