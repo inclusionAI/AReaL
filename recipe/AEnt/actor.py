@@ -1,10 +1,12 @@
 import functools
-from typing import Dict, List, Any
+from typing import Any
 
 import torch
 
+from recipe.AEnt.aent_args import AEntPPOActorConfig
+from recipe.AEnt.functional import gather_logprobs_clamped_entropy
 
-from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
+from areal.api.cli_args import MicroBatchSpec
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.ppo.actor import PPOActor
@@ -12,17 +14,12 @@ from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import (
     dynamic_sampling,
-    gather_logprobs,
     gather_logprobs_entropy,
     ppo_actor_loss_fn,
-    reward_overlong_penalty,
 )
-from recipe.AEnt.aent_args import AEntPPOActorConfig
-from recipe.AEnt.functional import gather_logprobs_clamped_entropy
 
 
 class AEntPPOActor(PPOActor):
-
     def __init__(self, config: AEntPPOActorConfig, engine: TrainEngine):
         super().__init__(config, engine)
         self.entropy_coeff = config.aent.entropy_coeff
@@ -39,7 +36,7 @@ class AEntPPOActor(PPOActor):
     @stats_tracker.scope_func_wrapper("aent_ppo_actor")
     def aent_ppo_update(
         self, data: dict[str, Any], global_step: int
-    ) -> List[Dict[str, float]]:
+    ) -> list[dict[str, float]]:
         with stats_tracker.scope("dynamic_sampling"):
             if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
                 data, sampling_stat = dynamic_sampling(data, self.group_size)
@@ -156,7 +153,6 @@ class AEntPPOActor(PPOActor):
 
 
 class FSDPAEntPPOActor(FSDPEngine):
-
     def __init__(self, config: AEntPPOActorConfig):
         super().__init__(config)
         self.actor = AEntPPOActor(config, self)
@@ -169,14 +165,14 @@ class FSDPAEntPPOActor(FSDPEngine):
     def compute_advantages(self, *args, **kwargs) -> None:
         self.actor.compute_advantages(*args, **kwargs)
 
-    def aent_ppo_update(self, *args, **kwargs) -> List[Dict[str, float]]:
+    def aent_ppo_update(self, *args, **kwargs) -> list[dict[str, float]]:
         return self.actor.aent_ppo_update(*args, **kwargs)
 
 
 # AEnt regularized grpo loss
 def aent_grpo_loss_fn(
     logits: torch.Tensor,
-    input_data: Dict,
+    input_data: dict,
     temperature: float,
     eps_clip: float,
     entropy_coeff: float,
