@@ -8,6 +8,7 @@ from areal.utils import logging
 from areal.utils.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
+    get_ulysses_sequence_parallel_rank,
     get_ulysses_sequence_parallel_world_size,
     slice_input_tensor,
 )
@@ -72,6 +73,8 @@ def patch_vlm_for_ulysses_input_slicing(model_class: type):
     def _create_ulysses_wrapped_decoder_forward(original_forward):
         def ulysses_wrapped_decoder_forward(self, *args, **kwargs):
             inputs_embeds = kwargs.get("inputs_embeds")
+            visual_pos_masks = kwargs.get("visual_pos_masks")
+            deepstack_visual_embeds = kwargs.get("deepstack_visual_embeds")
             call_kwargs = kwargs.copy()
 
             current_ulysses_sp_size = get_ulysses_sequence_parallel_world_size()
@@ -85,6 +88,47 @@ def patch_vlm_for_ulysses_input_slicing(model_class: type):
                 call_kwargs["inputs_embeds"] = slice_input_tensor(
                     inputs_embeds, dim=1, padding=False
                 )
+                # Slice visual_pos_masks and deepstack_visual_embeds for Qwen3-VL models (adapted from verl)
+                if visual_pos_masks is not None:
+                    original_visual_mask = visual_pos_masks
+                    sliced_visual_mask = slice_input_tensor(
+                        visual_pos_masks, dim=1, padding=False
+                    )
+                    call_kwargs["visual_pos_masks"] = sliced_visual_mask
+
+                    if deepstack_visual_embeds is not None:
+                        sliced_embeds = []
+
+                        num_visual_before = original_visual_mask.sum().item()
+                        num_visual_in_shard = sliced_visual_mask.sum().item()
+
+                        if num_visual_in_shard > 0 and num_visual_before > 0:
+                            # Calculate which visual embeddings belong to this shard
+                            # We need to find the offset of visual tokens in this shard
+
+                            rank = get_ulysses_sequence_parallel_rank()
+                            seq_len = original_visual_mask.shape[1]
+                            local_seq_len = seq_len // current_ulysses_sp_size
+                            start_idx = rank * local_seq_len
+                            end_idx = start_idx + local_seq_len
+
+                            # Get total visual tokens before and up to the end of the shard's sequence slice
+                            # This correctly handles batches by summing across all samples
+                            visual_start = (
+                                original_visual_mask[:, :start_idx].sum().item()
+                                if start_idx > 0
+                                else 0
+                            )
+                            visual_end = original_visual_mask[:, :end_idx].sum().item()
+
+                            # Slice each tensor in deepstack_visual_embeds
+                            for embed in deepstack_visual_embeds:
+                                sliced_embeds.append(embed[visual_start:visual_end])
+                        else:
+                            # No visual tokens in this shard, create empty tensors to maintain gradient flow
+                            for embed in deepstack_visual_embeds:
+                                sliced_embeds.append(embed[:0])
+                        call_kwargs["deepstack_visual_embeds"] = sliced_embeds
                 self._needs_initial_slice = False
             try:
                 return original_forward(self, *args, **call_kwargs)
@@ -115,17 +159,19 @@ def apply_monkey_patch(
             model.config.text_config.num_key_value_heads,
         )
 
-    assert (
-        num_attention_heads % ulysses_sp_size == 0
-    ), f"num_attention_heads {num_attention_heads} must be divisible by ulysses_sp_size {ulysses_sp_size}"
-    assert (
-        num_key_value_heads % ulysses_sp_size == 0
-        or ulysses_sp_size % num_key_value_heads == 0
-    ), (
-        f"num_key_value_heads {num_key_value_heads} must be divisible by ulysses_sp_size "
-        f"{ulysses_sp_size}or vise versa. Upon ulysses_sp_size % num_key_value_heads == 0,"
-        f"kv heads are repeated to ensure correctness."
-    )
+    if num_attention_heads % ulysses_sp_size != 0:
+        raise ValueError(
+            f"num_attention_heads {num_attention_heads} must be divisible by ulysses_sp_size {ulysses_sp_size}"
+        )
+    if (
+        num_key_value_heads % ulysses_sp_size != 0
+        and ulysses_sp_size % num_key_value_heads != 0
+    ):
+        raise ValueError(
+            f"num_key_value_heads {num_key_value_heads} must be divisible by ulysses_sp_size "
+            f"{ulysses_sp_size} or vice versa. Upon ulysses_sp_size % num_key_value_heads == 0,"
+            "kv heads are repeated to ensure correctness."
+        )
 
     vl_model_mappings = {
         "qwen2_5_vl": {
@@ -140,6 +186,13 @@ def apply_monkey_patch(
             "attn_class": "Qwen2VLAttention",
             "model_class": "Qwen2VLTextModel",
             "patch_module": "areal.models.transformers.qwen2_vl",
+            "patch_attn_func": "ulysses_flash_attn_forward",
+        },
+        "qwen3_vl": {
+            "module": "transformers.models.qwen3_vl.modeling_qwen3_vl",
+            "attn_class": "Qwen3VLTextAttention",
+            "model_class": "Qwen3VLTextModel",
+            "patch_module": "areal.models.transformers.qwen3_vl",
             "patch_attn_func": "ulysses_flash_attn_forward",
         },
     }
