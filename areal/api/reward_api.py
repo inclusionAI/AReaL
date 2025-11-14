@@ -17,7 +17,6 @@ def _get_device_count_safely() -> int:
     """
     Safely get device count without initializing CUDA context.
     """
-    # For NVIDIA GPUs
     gpu_types = ["nvidia", "davinci"]
     try:
         if os.path.exists("/dev"):
