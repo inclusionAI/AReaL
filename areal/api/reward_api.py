@@ -28,9 +28,9 @@ def _get_device_count_safely() -> int:
                 ]
                 if devices:
                     return len(devices)
-    except (OSError, ValueError):
+    except (OSError, ValueError) as e:
         # /dev doesn't exist or can't read (e.g., Windows, macOS)
-        pass
+        logger.debug(f"Could not read device list from /dev, using fallback: {e}")
 
     # Fallback: assume 8 devices for cautious max_workers calculation
     return 8
