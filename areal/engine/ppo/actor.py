@@ -72,14 +72,13 @@ class PPOActor:
     def compute_logp(
         self,
         data: dict[str, Any],
-        temperature: float | None = None,
     ) -> torch.Tensor:
         def calc_logprobs(logits, input_data):
             labels = input_data.get(
                 "rolled_input_ids",
                 torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
             )
-            logprobs = gather_logprobs(logits, labels, temperature or 1.0)
+            logprobs = gather_logprobs(logits, labels, self.temperature)
             return logprobs
 
         self.engine.eval()
