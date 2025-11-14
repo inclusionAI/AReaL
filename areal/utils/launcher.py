@@ -156,9 +156,7 @@ def validate_config_for_distributed_launcher(config):
                 "Pipeline generation in vLLM is not supported for now."
             )
         if allocation_mode.gen.tp_size > config.cluster.n_gpus_per_node:
-            raise ValueError(
-                "Currently only support vLLM TP size less <= #GPUs per node."
-            )
+            raise ValueError("Currently only support vLLM TP size <= #GPUs per node.")
 
 
 def apply_sglang_patch():
