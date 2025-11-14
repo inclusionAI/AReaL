@@ -383,11 +383,11 @@ def _apply_step_assignments(
     df["step_id"] = pd.NA
 
     # Prepare timepoints as a sorted, finite numpy array
-    tp = np.array(list(step_timepoints), dtype=float)
+    tp = np.array(step_timepoints, dtype=float)
     if tp.size == 0 or not np.isfinite(tp).all():
         df["step_id"] = pd.NA
         return pd.Series(dtype="int64")
-    tp_sorted = np.sort(tp)
+    tp_sorted = np.unique(tp)
 
     # Build bins such that intervals are (-inf, t1], (t1, t2], ..., (t_{n-1}, t_n]
     bins = np.concatenate(([-np.inf], tp_sorted))
