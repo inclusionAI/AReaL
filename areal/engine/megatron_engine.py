@@ -755,15 +755,18 @@ class MegatronEngine(TrainEngine):
         granularity: int = 1,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
+        """Submit a batch of requests and wait for results.
+
+        This method does not support asynchronous rollout and should be used for offline
+        data collection or debugging, not in production experiments.
+        """
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
             data,
             granularity=granularity,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
-            should_accept_fn=should_accept_fn,
         )
 
     def prepare_batch(

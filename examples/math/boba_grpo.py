@@ -11,9 +11,6 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
-from areal.utils.data import (
-    cycle_dataloader,
-)
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
@@ -174,7 +171,6 @@ def main(args):
     steps_per_epoch = train_dataset_len
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         if stop_step and global_step >= stop_step:
             logger.info("Training stopped at step %d", global_step)
@@ -197,20 +193,12 @@ def main(args):
                 args={"global_step": global_step},
             ),
         ):
-            if config.async_training:
-                batch = actor.prepare_batch(
-                    train_dataloader,
-                    granularity=actor.config.group_size,
-                    workflow=workflow,
-                    should_accept_fn=lambda sample: True,
-                )
-            else:
-                batch = actor.rollout_batch(
-                    next(data_generator),
-                    granularity=actor.config.group_size,
-                    workflow=workflow,
-                    should_accept_fn=lambda sample: True,
-                )
+            batch = actor.prepare_batch(
+                train_dataloader,
+                granularity=actor.config.group_size,
+                workflow=workflow,
+                should_accept_fn=lambda sample: True,
+            )
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with (

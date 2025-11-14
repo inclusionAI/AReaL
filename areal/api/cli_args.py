@@ -558,7 +558,7 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Enable dynamic sampling (within DAPO). If enabled, groups with the same reward will be masked out. "
             "Note that enabling this option will lead to variable batch sizes. If you want to use a constant batch size with dynamic filtering, "
-            "you should use the `should_accept_fn` parameter in `rollout_batch` and `prepare_batch`."
+            "you should use the `should_accept_fn` parameter in `prepare_batch`."
         },
     )
 
@@ -1358,12 +1358,6 @@ class RWConfig(BaseExperimentConfig):
 class GRPOConfig(BaseExperimentConfig):
     """Configuration for Group Relative Policy Optimization (GRPO) reinforcement learning experiments."""
 
-    async_training: bool = field(
-        default=True,
-        metadata={
-            "help": "Enable asynchronous training between rollout and policy update."
-        },
-    )
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )

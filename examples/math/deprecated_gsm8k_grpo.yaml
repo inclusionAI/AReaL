@@ -7,7 +7,6 @@ trial_name: trial0
 seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
-async_training: true
 
 cluster:
   n_nodes: 1
