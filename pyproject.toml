@@ -119,6 +119,7 @@ dependencies = [
     "uvicorn>=0.34.2",
     "uvloop>=0.21.0",
     "flask",
+    "flask_jsonrpc @ git+https://github.com/cenobites/flask-jsonrpc.git@d59c63f89898aec3ebc25ae86b817cea752a3ee0",
 
     # Build and packaging tools
     "build>=1.2.1",
