@@ -9,6 +9,7 @@ from glob import glob
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.colors import qualitative
@@ -281,7 +282,8 @@ def _determine_step_timepoints(
         print(
             f"Filtered out {rejected_count} rejected session(s) "
             f"({accepted_sessions} accepted, {rejected_count} rejected)"
-        )  # Calculate number of ranks
+        )
+    # Calculate number of ranks
     ranks = sorted(valid_df["rank"].unique())
     num_ranks = len(ranks)
 
@@ -380,35 +382,27 @@ def _apply_step_assignments(
     # Initialize all as NA
     df["step_id"] = pd.NA
 
-    # Assign each session to a step based on its finalized_ts_offset
-    assignments: dict[int, int] = {}
-
-    for idx, offset in valid_offsets.items():
-        offset_val = float(offset)
-        # Find the first step timepoint >= this offset
-        step_id = None
-        for step_idx, timepoint in enumerate(step_timepoints):
-            if offset_val <= timepoint:
-                step_id = step_idx
-                break
-
-        # If no timepoint found, this session is beyond all steps (shouldn't happen with proper logic)
-        if step_id is not None:
-            assignments[idx] = step_id
-
-    if not assignments:
+    # Prepare timepoints as a sorted, finite numpy array
+    tp = np.array(list(step_timepoints), dtype=float)
+    if tp.size == 0 or not np.isfinite(tp).all():
         df["step_id"] = pd.NA
         return pd.Series(dtype="int64")
+    tp_sorted = np.sort(tp)
 
-    assignment_series = pd.Series(assignments, dtype="Int64")
-    df.loc[assignment_series.index, "step_id"] = assignment_series.values
-    df["step_id"] = df["step_id"].astype("Int64")
+    # Build bins such that intervals are (-inf, t1], (t1, t2], ..., (t_{n-1}, t_n]
+    bins = np.concatenate(([-np.inf], tp_sorted))
+    labels = list(range(len(tp_sorted)))
 
-    # Count sessions per step
-    total_steps = len(step_timepoints)
+    # Use pd.cut to assign each finalized offset to the first step with timepoint >= offset.
+    # Values beyond the last timepoint (offset > last timepoint) will be NaN (unassigned), matching previous logic.
+    step_series = pd.cut(offsets, bins=bins, labels=labels, right=True)
+    df["step_id"] = step_series.astype("Int64")
+
+    # Count sessions per step (0..N-1)
     counts_series = (
-        assignment_series.value_counts()
-        .reindex(range(total_steps), fill_value=0)
+        df["step_id"]
+        .value_counts()
+        .reindex(range(len(tp_sorted)), fill_value=0)
         .sort_index()
         .astype("int64")
     )
@@ -1230,7 +1224,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Optional HTML output path (defaults to a path derived from input)",
     )
     parser.add_argument(
-        "-b",
+        "-B",
         "--consumer-batch-size",
         type=int,
         required=True,
