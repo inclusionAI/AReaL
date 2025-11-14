@@ -55,12 +55,12 @@ strategy for optimal reproducibility. When resources are limited, try decreasing
 When reproducing the Qwen3 8B coding model, the original configuration is:
 
 - `n_nodes=24`
-- `allocation_mode=sglang.d80m2p1+d4m2p4`
+- `allocation_mode=sglang:d80m2p1+d4m2p4`
 
 If only 6 nodes are available, you can adjust the configuration to:
 
 - `n_nodes=6`
-- `allocation_mode=sglang.d20m2p1+d1m2p4`
+- `allocation_mode=sglang:d20m2p1+d1m2p4`
 
 If you encounter out-of-memory (OOM) errors, please refer to the
 [troubleshooting section](../tutorial/troubleshooting.md) or raise an issue on GitHub.

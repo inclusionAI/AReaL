@@ -1,31 +1,29 @@
+import datetime
 import json
 import os
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
 
 import json5
 from qwen_agent.agents.fncall_agent import FnCallAgent
 from qwen_agent.llm.schema import Message
-from qwen_agent.settings import MAX_LLM_CALL_PER_RUN
 from transformers import PreTrainedTokenizer
 
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import logging
 
 try:
-    from .prompt import *
-    from .tool_search import *
-    from .tool_visit import *
+    from .prompt import SYSTEM_PROMPT
+    from .tool_search import Search
+    from .tool_visit import Visit
 except ImportError:  # Fallback when executed directly (no package parent known)
     module_dir = Path(__file__).parent
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))
-    from prompt import *
-    from tool_search import *
-    from tool_visit import *
+    from prompt import SYSTEM_PROMPT
+    from tool_search import Search
+    from tool_visit import Visit
 
 
 logger = logging.getLogger("Tongyi-DeepResearch react agent")
@@ -34,8 +32,6 @@ OBS_START = "<tool_response>"
 OBS_END = "\n</tool_response>"
 
 MAX_LLM_CALL_PER_RUN = int(os.getenv("MAX_LLM_CALL_PER_RUN", 100))
-
-import datetime
 
 
 def today_date():
@@ -52,7 +48,7 @@ def parse_judge_result(raw_response):
         try:
             mbe = parse_fn(raw_response.split("```json")[-1].split("```")[0].strip())
             break
-        except:
+        except Exception:
             logger.warning(f"Error parsing judge result with {parse_fn}.")
     if mbe is None and '"judgement": "incorrect"' in raw_response:
         mbe = dict(judgement="incorrect")
@@ -94,7 +90,7 @@ class MultiTurnReactAgent(FnCallAgent):
         return len(prompt_token_ids)
 
     async def call_server(
-        self, client: ArealOpenAI, messages: List[Dict], max_attempts: int = 100
+        self, client: ArealOpenAI, messages: list[dict], max_attempts: int = 100
     ) -> str:
         attempts = 0
         while attempts < max_attempts:
@@ -119,7 +115,7 @@ class MultiTurnReactAgent(FnCallAgent):
 
     async def run_agent(
         self, data, client: ArealOpenAI, save_path: str | None = None
-    ) -> List[List[Message]]:
+    ) -> list[list[Message]]:
         start_time = time.time()
         data["qid"]
         question = data["question"]
@@ -275,7 +271,7 @@ class MultiTurnReactAgent(FnCallAgent):
 
     async def calc_reward_with_llm_judge(
         self,
-        result: Dict[str, str],
+        result: dict[str, str],
     ):
         # Compute reward with LLM-as-Judge
         # judge_client = ArealOpenAI(engine=rollout_engine, tokenizer=tokenizer)
@@ -320,10 +316,10 @@ class MultiTurnReactAgent(FnCallAgent):
 
     async def make_trajectory(
         self,
-        data: Dict[str, str],
+        data: dict[str, str],
         client: ArealOpenAI,
         save_path: str | None = None,
-    ) -> Dict:
+    ) -> dict:
         result = await self.run_agent(data, client, save_path=save_path)
         reward = await self.calc_reward_with_llm_judge(result)
         completions = result["completions"]

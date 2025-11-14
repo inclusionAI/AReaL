@@ -1,8 +1,8 @@
 import functools
-from typing import Dict, List
+from typing import Dict, List, Any
 
 import torch
-from tensordict import TensorDict
+
 
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
@@ -38,7 +38,7 @@ class AEntPPOActor(PPOActor):
 
     @stats_tracker.scope_func_wrapper("aent_ppo_actor")
     def aent_ppo_update(
-        self, data: TensorDict, global_step: int
+        self, data: dict[str, Any], global_step: int
     ) -> List[Dict[str, float]]:
         with stats_tracker.scope("dynamic_sampling"):
             if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:

@@ -162,7 +162,6 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
         epoch = global_step // steps_per_epoch
         step = global_step % steps_per_epoch
@@ -176,18 +175,11 @@ def main(args):
         with stats_tracker.record_timing("rollout"):
             batch = None
             if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept_fn=lambda sample: True,
-                    )
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept_fn=lambda sample: True,
-                    )
+                batch = rollout.prepare_batch(
+                    train_dataloader,
+                    workflow=workflow,
+                    should_accept_fn=lambda sample: True,
+                )
                 batch = tensor_container_to(batch, actor.device)
             batch = broadcast_tensor_container(
                 batch,

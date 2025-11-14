@@ -151,7 +151,6 @@ class DistRolloutCoordinator:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         granularity: int = 1,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Generate rollout batch with distributed coordination (synchronous).
 
@@ -176,8 +175,6 @@ class DistRolloutCoordinator:
             Workflow defining rollout logic
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
-        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
-            Filter function for accepting samples
 
         Returns
         -------
@@ -196,7 +193,6 @@ class DistRolloutCoordinator:
                 data,
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
-                should_accept_fn=should_accept_fn,
             )
             batch = tensor_container_to(batch, current_platform.current_device())
 

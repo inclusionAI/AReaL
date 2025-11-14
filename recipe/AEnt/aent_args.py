@@ -57,12 +57,6 @@ class AEntPPOActorConfig(PPOActorConfig):
 # GRPO Config + AEnt regularization config
 @dataclass
 class AEntGRPOConfig(BaseExperimentConfig):
-    async_training: bool = field(
-        default=True,
-        metadata={
-            "help": "Enable asynchronous training between rollout and policy update."
-        },
-    )
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )

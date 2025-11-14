@@ -20,7 +20,6 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
 from areal.utils import logging, seeding, stats_tracker
-from areal.utils.data import cycle_dataloader
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
@@ -148,7 +147,6 @@ class GRPOTrainer:
         steps_per_epoch = len(self.train_dataloader)
         max_steps = total_epochs * steps_per_epoch
 
-        data_generator = cycle_dataloader(self.train_dataloader)
         for global_step in range(start_step, max_steps):
             epoch = global_step // steps_per_epoch
             step = global_step % steps_per_epoch
@@ -160,20 +158,12 @@ class GRPOTrainer:
             )
 
             with stats_tracker.record_timing("rollout"):
-                if config.async_training:
-                    batch = self.actor.prepare_batch(
-                        self.train_dataloader,
-                        granularity=self.actor.config.group_size,
-                        workflow=workflow,
-                        should_accept_fn=lambda sample: True,
-                    )
-                else:
-                    batch = self.actor.rollout_batch(
-                        next(data_generator),
-                        granularity=self.actor.config.group_size,
-                        workflow=workflow,
-                        should_accept_fn=lambda sample: True,
-                    )
+                batch = self.actor.prepare_batch(
+                    self.train_dataloader,
+                    granularity=self.actor.config.group_size,
+                    workflow=workflow,
+                    should_accept_fn=lambda sample: True,
+                )
 
             if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
                 with stats_tracker.record_timing("recompute_logp"):

@@ -1,17 +1,23 @@
 # Rollout and Agentic RL
 
-This guide shows you how to create custom rollout behaviors for RL training by building
-a multi-turn math agent with **AReaL-lite**. This agent keeps trying to solve math
-problems until it finds the correct answer.
+This guide demonstrates how to create custom rollout behaviors for RL training by
+building a multi-turn math agent that keeps attempting to solve math problems until it
+finds the correct answer.
+
+Throughout this example, we use the low-level `agenerate` API to directly manipulate
+tokens, which introduces some verbose data management code (converting lists to tensors,
+tokenization, and detokenization). We also introduce a set of high-level APIs like
+OpenAI clients and the OpenAI Agents SDK. See the corresponding
+[agentic RL tutorial](../tutorial/agentic_rl.md).
 
 You can find the complete implementation in `areal/workflow/multi_turn.py`.
 
 ## Step 1: Define Your Workflow
 
-AReaL-lite gives you flexibility in how you design your agents to run **an episode**.
-**An episode** defines how your agent rollouts a complete training sample from an input
+AReaL gives you flexibility in how you design your agents to run **an episode**. **An
+episode** defines how your agent rollouts a complete training sample from an input
 prompt, using tools, reward functions, and (multi-turn) generation. Instead of rigid
-`Agent` classes that might constrain your agent's capabilities, AReaL-lite captures all
+`Agent` classes that might constrain your agent's capabilities, AReaL captures all
 rollout behavior in a `RolloutWorkflow` class. This approach allows you to customize
 your agent's behavior however you need.
 
@@ -221,7 +227,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 ```
 
 > **Important**: The returned `dict` must follow HuggingFace's padded data format, where
-> each tensor has shape `[batch_size, sequence_length, *]`. This allows AReaL-lite to
+> each tensor has shape `[batch_size, sequence_length, *]`. This allows AReaL to
 > automatically batch multiple trajectories for training. Since this example returns a
 > single trajectory, we use `unsqueeze(0)` to create a batch of size 1.
 
@@ -233,7 +239,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
 ## Step 2: Training with Your Custom Workflow
 
 Using your custom workflow is straightforward—just create it in your training script and
-pass it to the `rollout_batch` or `prepare_batch` method:
+pass it to the `prepare_batch` method:
 
 ```python
 def main(args):
@@ -249,14 +255,10 @@ def main(args):
     )
 
     # Run training—no other changes needed!
-    data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(max_steps):
         with stats_tracker.record_timing("rollout"):
             # the `should_accept_fn` parameter is used for dynamic filtering
-            if config.async_training:
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow, should_accept_fn=lambda sample: True)
-            else:
-                batch = rollout.rollout_batch(next(data_generator), workflow=workflow, should_accept_fn=lambda sample: True)
+            batch = rollout.prepare_batch(train_dataloader, workflow=workflow, should_accept_fn=lambda sample: True)
         # ... continue with training loop ...
 ```
 

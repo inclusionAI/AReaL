@@ -106,6 +106,7 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 | **Qwen2/3**                | ✅       | ✅           | -                                                        |
 | **Qwen3-MoE**              | ✅       | ✅           | -                                                        |
 | **Qwen2.5-VL**             | ❌       | ✅           | Vision-language model                                    |
+| **Qwen3-VL**               | ❌       | ✅           | Vision-language model                                    |
 | **Gemma 3**                | ❌       | ✅           | Vision-language model                                    |
 | **Other Hugging Face LLM** | ❌       | ✅           | Compatibility depending on the version of `transformers` |
 

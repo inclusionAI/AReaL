@@ -1,7 +1,8 @@
 import gc
 import os
 import time
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -36,8 +37,9 @@ from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokeni
 from areal.utils.model import (
     disable_dropout_in_model,
     is_gemma3_model,
-    is_qwen2_vl_model,
     is_qwen3_moe_model,
+    is_qwen3_vl_model,
+    is_qwen_vl_model,
     is_valid_vision_model,
 )
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
@@ -254,12 +256,12 @@ class BaseHFEngine(TrainEngine):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
 
-    def prepare_mb_list(self, input_: Dict[str, Any]) -> MicroBatchList:
+    def prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
         input_ = input_.copy()
 
-        if is_qwen2_vl_model(self.model_config.model_type):
-            # Create the special t,h,w position IDs for qwen 2.5 VL
+        if is_qwen_vl_model(self.model_config.model_type):
+            # Create the special t,h,w position IDs for qwen 2.5/3 VL
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
             image_grid_thw = None
@@ -304,7 +306,7 @@ class BaseHFEngine(TrainEngine):
         # NOTE: We unsqueeze here because huggingface transformer models requires
         # packed input to be of shape [1, total_seqlen].
         mb_list = unsqueeze_mb_list(mb_list)
-        if is_qwen2_vl_model(self.model_config.model_type):
+        if is_qwen_vl_model(self.model_config.model_type):
             assert mb_list.padded_mbs is not None
             for mb in mb_list.padded_mbs:
                 # [1, total_seqlen, 3] -> [3, 1, total_seqlen]
@@ -332,7 +334,9 @@ class BaseHFEngine(TrainEngine):
             ]
             mb["use_cache"] = False
             padded_mb["use_cache"] = False
-            if is_qwen3_moe_model(self.model_config.model_type):
+            if is_qwen3_moe_model(self.model_config.model_type) or is_qwen3_vl_model(
+                self.model_config.model_type
+            ):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
             else:
@@ -376,7 +380,7 @@ class BaseHFEngine(TrainEngine):
 
     def get_model_name_parameters(self):
         name_params_iterator = self.model.named_parameters()
-        if self.is_vision_model and is_qwen2_vl_model(self.model_config.model_type):
+        if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
             # Qwen2_5_VLForConditionalGeneration has a different naming convention in SGLang
             def name_remapping_generator():
                 for name, value in name_params_iterator:
@@ -407,10 +411,10 @@ class BaseHFEngine(TrainEngine):
 
     def train_batch(
         self,
-        input_: Dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
-    ) -> Dict[str, float]:
+        input_: dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    ) -> dict[str, float]:
         """Train on a batch using gradient accumulation."""
         assert self.optimizer is not None
         assert self.optimizer_config is not None
@@ -474,9 +478,9 @@ class BaseHFEngine(TrainEngine):
     @torch.no_grad()
     def eval_batch(
         self,
-        input_: Dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[Dict[str, Any]], torch.Tensor],
+        input_: dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
         mb_list = self.prepare_mb_list(input_)
@@ -512,10 +516,10 @@ class BaseHFEngine(TrainEngine):
     @torch.no_grad()
     def forward(
         self,
-        input_: Dict[str, Any],
-        output_seqlens: List[int] | None = None,
-        post_hook: Callable[[torch.Tensor, Dict[str, Any]], Any] | None = None,
-        aggregate_fn: Callable[[List[Any]], Any] = torch.cat,
+        input_: dict[str, Any],
+        output_seqlens: list[int] | None = None,
+        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
+        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]

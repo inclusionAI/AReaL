@@ -34,7 +34,7 @@ def validate_equation(equation_str, available_numbers):
 
         # Each number should be used exactly once
         return numbers_in_eq == available_numbers
-    except:
+    except Exception:
         return False
 
 
@@ -72,20 +72,20 @@ def compute_score(
     do_print = random.randint(1, 64) == 1
 
     if do_print:
-        print(f"--------------------------------")
+        print("--------------------------------")
         print(f"Target: {target} | Numbers: {numbers}")
         print(f"Extracted equation: {equation}")
         print(f"Solution string: {solution_str}")
 
     if equation is None:
         if do_print:
-            print(f"No equation found")
+            print("No equation found")
         return 0
 
     # Validate equation uses correct numbers
     if not validate_equation(equation, numbers):
         if do_print:
-            print(f"Invalid equation")
+            print("Invalid equation")
         return format_score
 
     # Evaluate equation
@@ -93,7 +93,7 @@ def compute_score(
         result = evaluate_equation(equation)
         if result is None:
             if do_print:
-                print(f"Could not evaluate equation")
+                print("Could not evaluate equation")
             return format_score
 
         if abs(result - target) < 1e-5:  # Account for floating point precision
@@ -104,7 +104,7 @@ def compute_score(
             if do_print:
                 print(f"Wrong result: equation = {result}, target = {target}")
             return format_score
-    except:
+    except Exception:
         if do_print:
-            print(f"Error evaluating equation")
+            print("Error evaluating equation")
         return format_score

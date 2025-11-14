@@ -68,6 +68,7 @@ def inference_engine(request):
         model=MODEL_PATH,
         gpu_memory_utilization=0.2,
         max_model_len=128,
+        enforce_eager=True,  # reduce launch overhead
     )
     vllm_args = vLLMConfig.build_args(
         vllm_config=vllm_config,
@@ -91,6 +92,7 @@ def inference_engine(request):
     temp_config = InferenceEngineConfig(
         experiment_name=expr_name,
         trial_name=trial_name,
+        setup_timeout=360,
     )
     server_manager = engine_class(temp_config)
 
@@ -132,6 +134,7 @@ def test_rollout(inference_engine, n_samples):
         max_concurrent_rollouts=2,
         consumer_batch_size=2,
         enable_rollout_tracing=True,
+        setup_timeout=360,
     )
 
     engine = inference_engine["engine_class"](config)
@@ -175,6 +178,7 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         consumer_batch_size=bs,
         max_head_offpolicyness=ofp,
         enable_rollout_tracing=True,
+        setup_timeout=360,
     )
 
     engine = inference_engine["engine_class"](config)

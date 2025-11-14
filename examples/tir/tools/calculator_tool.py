@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, Tuple
+from typing import Any
 
 from areal.utils import logging
 
@@ -31,7 +31,7 @@ class CalculatorTool(BaseTool):
             start_markers=["<calculator>"], end_markers=["</calculator>"]
         )
 
-    def parse_parameters(self, text: str) -> Dict[str, Any]:
+    def parse_parameters(self, text: str) -> dict[str, Any]:
         """Extract mathematical expression from <calculator> tags"""
         pattern = r"<calculator>(.*?)</calculator>"
         match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
@@ -44,7 +44,7 @@ class CalculatorTool(BaseTool):
             logger.warning("No <calculator> tag found")
             return {"expression": ""}
 
-    def execute(self, parameters: Dict[str, Any]) -> Tuple[str, ToolCallStatus]:
+    def execute(self, parameters: dict[str, Any]) -> tuple[str, ToolCallStatus]:
         """Execute mathematical calculation"""
         expression = parameters.get("expression", "")
         if not expression:

@@ -48,7 +48,7 @@ python3 -m areal.launcher.local examples/math/gsm8k_grpo.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
-    allocation_mode=sglang.d2p1t1+d2p1t1 \
+    allocation_mode=sglang:d2p1t1+d2p1t1 \
     cluster.n_nodes=1 \
     cluster.n_gpus_per_node=4 \
     gconfig.max_new_tokens=2048 \
@@ -75,7 +75,7 @@ python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
-    allocation_mode=sglang.d12p1t1+d4p1t1 \
+    allocation_mode=sglang:d12p1t1+d4p1t1 \
     cluster.n_nodes=4 \
     cluster.n_gpus_per_node=4 \
 
@@ -84,7 +84,7 @@ python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
-    allocation_mode=sglang.d96p1t1+d32p1t1 \
+    allocation_mode=sglang:d96p1t1+d32p1t1 \
     cluster.n_nodes=16 \
     cluster.n_gpus_per_node=8 \
 ```

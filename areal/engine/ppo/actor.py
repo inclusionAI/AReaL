@@ -20,6 +20,7 @@ from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
+from areal.utils.perf_tracer import trace_perf
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ class PPOActor:
         self,
         data: dict[str, Any],
         temperature: float | None = None,
-    ) -> torch.Tensor | None:
+    ) -> torch.Tensor:
         def calc_logprobs(logits, input_data):
             labels = input_data.get(
                 "rolled_input_ids",
@@ -87,6 +88,7 @@ class PPOActor:
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 
+    @trace_perf("ppo_actor.compute_advantages", category="compute")
     def compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
@@ -183,9 +185,13 @@ class PPOActor:
 
         return data
 
-    def ppo_update(self, data: dict[str, Any]) -> list[dict[str, float]]:
-        if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
-            data, sampling_stat = dynamic_sampling(data, self.group_size)
+    @trace_perf("ppo_actor.ppo_update", category="compute")
+    @stats_tracker.scope_func_wrapper("ppo_actor")
+    def ppo_update(self, data: dict[str, Any]) -> None:
+        with stats_tracker.scope("dynamic_sampling"):
+            if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
+                data, sampling_stat = dynamic_sampling(data, self.group_size)
+                stats_tracker.scalar(**sampling_stat)
 
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
@@ -305,7 +311,7 @@ class FSDPPPOActor(FSDPEngine):
         self.actor = PPOActor(config, self)
 
     @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+    def compute_logp(self, *args, **kwargs) -> torch.Tensor:
         return self.actor.compute_logp(*args, **kwargs)
 
     @torch.no_grad()
@@ -322,7 +328,7 @@ class MegatronPPOActor(MegatronEngine):
         self.actor = PPOActor(config, self)
 
     @torch.no_grad()
-    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+    def compute_logp(self, *args, **kwargs) -> torch.Tensor:
         return self.actor.compute_logp(*args, **kwargs)
 
     @torch.no_grad()

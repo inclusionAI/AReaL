@@ -25,7 +25,7 @@ resources:
   cpus: 8+
   memory: 32GB+
   disk_size: 256GB
-  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.4.0
+  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.4.1
 
 num_nodes: 1
 
@@ -43,7 +43,7 @@ run: |
     trial_name=trial0 \
     cluster.n_nodes=1 \
     cluster.n_gpus_per_node=$SKYPILOT_NUM_GPUS_PER_NODE \
-    allocation_mode=sglang.d1+d1 \
+    allocation_mode=sglang:d1+d1 \
     train_dataset.batch_size=4 \
     actor.mb_spec.max_tokens_per_mb=4096
 ```
@@ -76,7 +76,7 @@ Specify the resources and image used to run the experiment.
 ```yaml
 resources:
   accelerators: A100:8
-  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.4.0
+  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.4.1
   memory: 256+
   cpus: 32+
 
@@ -136,7 +136,7 @@ run: |
             trial_name=trial0 \
             cluster.n_nodes=$SKYPILOT_NUM_NODES \
             cluster.n_gpus_per_node=$SKYPILOT_NUM_GPUS_PER_NODE \
-            allocation_mode=sglang.d8+d8
+            allocation_mode=sglang:d8+d8
   else
     sleep 10
     echo "Starting Ray worker node..."

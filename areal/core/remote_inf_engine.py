@@ -35,6 +35,7 @@ from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
 from areal.utils.network import find_free_ports, gethostip
+from areal.utils.perf_tracer import trace_perf
 
 from .workflow_executor import WorkflowExecutor
 
@@ -257,7 +258,7 @@ class RemoteInfEngine:
             if self.check_health(base_url):
                 return
             time.sleep(1)
-        raise RuntimeError("server launch failed")
+        raise TimeoutError("server launch failed")
 
     def check_health(self, base_url):
         """Check if server is healthy."""
@@ -691,9 +692,11 @@ class RemoteInfEngine:
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
+
+        This method does not support asynchronous rollout and should be used for offline
+        data collection or debugging, not in production experiments.
 
         Parameters
         ----------
@@ -703,8 +706,6 @@ class RemoteInfEngine:
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
-        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
-            A function or module path for trajectory filtering
 
         Returns
         -------
@@ -716,7 +717,6 @@ class RemoteInfEngine:
             data=data,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
-            should_accept_fn=should_accept_fn,
         )
 
     def prepare_batch(
@@ -752,6 +752,7 @@ class RemoteInfEngine:
             should_accept_fn=should_accept_fn,
         )
 
+    @trace_perf("remote_inf_engine.pause_generation", category="misc")
     def pause_generation(self):
         """Pause request submission for async rollout."""
         try:
@@ -769,6 +770,7 @@ class RemoteInfEngine:
         # The following line waits until all requests are indeed dropped.
         time.sleep(self.config.pause_grace_period)
 
+    @trace_perf("remote_inf_engine.continue_generation", category="misc")
     def continue_generation(self):
         """Resume request submission for async rollout."""
         try:
@@ -798,29 +800,36 @@ class RemoteInfEngine:
         server_args["port"] = find_free_ports(1)[0]
         process = self.backend.launch_server(server_args)
         address = f"{server_args['host']}:{server_args['port']}"
-        self._wait_for_server(address)
-
         server_info = LocalInfServerInfo(
             host=server_args["host"],
             port=server_args["port"],
             process=process,
         )
-        self.local_server_processes.append(server_info)
-        return server_info
+        try:
+            self._wait_for_server(address)
+            self.local_server_processes.append(server_info)
+            return server_info
+        except TimeoutError:
+            self._shutdown_one_server(server_info)
+            raise
+
+    def _shutdown_one_server(self, server_info: LocalInfServerInfo):
+        if server_info.process.poll() is not None:
+            return
+        server_info.process.terminate()
+        try:
+            server_info.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.logger.warning(
+                f"Server process {server_info.process.pid} did not terminate gracefully. Killing it."
+            )
+            server_info.process.kill()
+            server_info.process.wait()
 
     def teardown_server(self):
         """Teardown all locally launched servers."""
         for server_info in self.local_server_processes:
-            if server_info.process.poll() is None:
-                server_info.process.terminate()
-                try:
-                    server_info.process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self.logger.warning(
-                        f"Server process {server_info.process.pid} did not terminate gracefully. Killing it."
-                    )
-                    server_info.process.kill()
-                    server_info.process.wait()
+            self._shutdown_one_server(server_info)
         self.local_server_processes.clear()
 
 
