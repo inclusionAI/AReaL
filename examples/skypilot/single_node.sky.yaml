@@ -8,7 +8,7 @@ resources:
   cpus: 8+
   memory: 32GB+
   disk_size: 256GB
-  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.4.0
+  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.4.1
 
 num_nodes: 1
 
