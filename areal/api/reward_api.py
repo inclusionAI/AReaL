@@ -59,7 +59,9 @@ class AsyncRewardWrapper:
         if max_workers is None:
             cpu_count = os.cpu_count() or 1
             device_count = max(current_platform.device_count(), 1)
-            max_workers = max(cpu_count // device_count // 2, 1)
+            # Heuristic for max_workers: distribute CPU cores across devices,
+            # then halve to be conservative, ensuring at least one worker.
+            max_workers = max((cpu_count // device_count) // 2, 1)
         self.max_workers = max_workers
         self.max_retries = max_retries
         self._executor_key = max_workers
