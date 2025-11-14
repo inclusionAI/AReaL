@@ -1,4 +1,5 @@
 import asyncio
+import os
 import threading
 import traceback
 import weakref
@@ -7,6 +8,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 
+from areal.platforms import current_platform
 from areal.utils import logging
 
 logger = logging.getLogger("Reward API")
@@ -54,6 +56,10 @@ class AsyncRewardWrapper:
     ):
         self.reward_fn = reward_fn
         self.timeout_seconds = timeout_seconds
+        if max_workers is None:
+            cpu_count = os.cpu_count() or 1
+            device_count = max(current_platform.device_count(), 1)
+            max_workers = max(cpu_count // device_count // 2, 1)
         self.max_workers = max_workers
         self.max_retries = max_retries
         self._executor_key = max_workers
