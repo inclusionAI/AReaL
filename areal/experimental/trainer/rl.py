@@ -58,7 +58,7 @@ class GRPOTrainer:
         self.parallel_strategy = self.allocation_mode.train
         assert self.parallel_strategy is not None
 
-        self.inference_backend = self.allocation_mode.inference_backend
+        self.inference_backend = self.allocation_mode.gen_backend
         if self.inference_backend not in ["sglang", "vllm"]:
             raise ValueError(
                 f"Invalid inference generation backend: {self.inference_backend}, expected sglang or vllm"
