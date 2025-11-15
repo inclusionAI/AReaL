@@ -2,11 +2,9 @@ import traceback
 import uuid
 from typing import Any
 
-from openai.types.chat.chat_completion_message_function_tool_call import (
-    ChatCompletionMessageFunctionToolCall,
-    Function,
-)
-from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
+from openai.types.chat import ChatCompletionMessageToolCall
+from openai.types.chat.chat_completion_message_tool_call import Function
+from openai.types.responses import ResponseFunctionToolCall
 
 from areal.utils import logging
 
@@ -21,7 +19,7 @@ def process_tool_calls(
     finish_reason: str,
     use_responses: bool = False,
 ) -> tuple[
-    list[ChatCompletionMessageFunctionToolCall | ResponseFunctionToolCall] | None,
+    list[ChatCompletionMessageToolCall | ResponseFunctionToolCall] | None,
     str,
     str,
 ]:
@@ -69,7 +67,7 @@ def process_tool_calls(
                 ]
             else:
                 tool_calls = [
-                    ChatCompletionMessageFunctionToolCall(
+                    ChatCompletionMessageToolCall(
                         type="function",
                         id=f"call_{uuid.uuid4().hex[:24]}",
                         function=Function(
