@@ -82,7 +82,8 @@ class VLLMWorkerExtension:
         group_name: str,
     ):
         if getattr(self, "weight_update_group", None) is not None:
-            return True, "Success"
+            # If the group is there, make the current group None and create a new one for scaling
+            self.weight_update_group = None
         try:
             self.weight_update_group = init_custom_process_group(
                 backend=backend,

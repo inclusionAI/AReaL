@@ -29,6 +29,10 @@ from areal.utils.launcher import TRITON_CACHE_PATH
 class VLLMBackend:
     """vLLM-specific backend implementation for remote inference."""
 
+    def __init__(self):
+        self.scaling_count = 0
+        self.create_group_count = 0
+
     def build_generation_request(
         self, req: ModelRequest, with_lora: bool
     ) -> HttpRequest:
@@ -106,7 +110,8 @@ class VLLMBackend:
                         "names": [pspec.name for pspec in param_specs],
                         "dtypes": [pspec.dtype for pspec in param_specs],
                         "shapes": [pspec.shape for pspec in param_specs],
-                        "group_name": meta.nccl_group_name,
+                        "group_name": meta.nccl_group_name
+                        + str(self.create_group_count),
                     },
                 ),
                 HttpRequest(
@@ -128,9 +133,9 @@ class VLLMBackend:
             "master_address": meta.nccl_master_address,
             "master_port": str(meta.nccl_master_port),
             "rank_offset": rank_offset,
-            "world_size": meta.alloc_mode.gen.world_size + 1,
+            "world_size": meta.alloc_mode.gen.world_size + 1 + self.scaling_count,
             "backend": current_platform.communication_backend,
-            "group_name": meta.nccl_group_name,
+            "group_name": meta.nccl_group_name + str(self.create_group_count),
         }
         return HttpRequest(endpoint="/areal_init_weights_update_group", payload=payload)
 
