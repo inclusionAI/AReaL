@@ -300,6 +300,10 @@ class RemoteInfEngine:
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
             self.logger.info("Get server addresses from the `addr` argument.")
+        elif os.getenv("AREAL_LLM_SERVER_ADDRS"):
+            # When addr is not provided, fallback to reading addrs from env var
+            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
+            self.logger.info("Get server addresses from environment variable.")
         else:
             if (
                 self.config.experiment_name is not None
@@ -315,10 +319,7 @@ class RemoteInfEngine:
                 except (TimeoutError, RuntimeError):
                     # RuntimeError happens when name_resolve is not properly configured.
                     pass
-        if not self.addresses and os.getenv("AREAL_LLM_SERVER_ADDRS"):
-            # When addr is not provided, fallback to reading addrs from env var
-            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
-            self.logger.info("Get server addresses from environment variable.")
+
         if not self.addresses:
             raise RuntimeError(
                 "No configured inference servers. "

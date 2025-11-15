@@ -547,7 +547,7 @@ class MockPPOTrainer:
             ) as f:
                 for line in f.readlines():
                     entry = json.loads(line)
-                    if not entry.startswith("train."):
+                    if not entry["name"].startswith("train."):
                         continue
                     self._replay_entries.append(entry)
         except FileNotFoundError as e:
@@ -579,14 +579,6 @@ class MockPPOTrainer:
             rank=dp_rank,
             world_size=self.allocation_mode.train.dp_size,
         )
-        self.valid_dataloader = None
-        if self.config.valid_dataset is not None and valid_dataset is not None:
-            self.valid_dataloader = self._create_dataloader(
-                valid_dataset,
-                dataset_config=self.config.valid_dataset,
-                rank=dp_rank,
-                world_size=self.allocation_mode.train.dp_size,
-            )
 
         # Initialize inference
         self.rollout = self._init_rollout(config.rollout, is_eval=False)
@@ -611,7 +603,6 @@ class MockPPOTrainer:
                 logger.info(f"Rank {self.rank} is running `prepare_batch`...")
                 self.rollout.prepare_batch(
                     self.train_dataloader,
-                    granularity=self.config.actor.group_size,
                     workflow=workflow,
                     should_accept_fn=dynamic_filter_fn,
                 )
@@ -625,11 +616,23 @@ class MockPPOTrainer:
                 and self._replay_entries[0]["name"] != "train.rollout"
             ):
                 entry = self._replay_entries.pop(0)
+                if "update_weight" in entry["name"]:
+                    self.rollout.pause()
+                    if self.rank == 0:
+                        logger.info("before updating weights, pause generation")
+                        self.rollout.pause_generation()
                 logger.info(
                     f"[Rank {self.rank}] Replaying entry name {entry['name']}, will sleep for {entry['dur'] / 1e6} seconds..."
                 )
                 # dur is in microseconds
                 time.sleep(entry["dur"] / 1e6)
+                if "update_weight" in entry["name"]:
+                    if self.rank == 0:
+                        logger.info("after updating weights, continue generation")
+                        self.rollout.continue_generation()
+                    self.rollout.set_version(global_step + 1)
+                if "log_stats" in entry["name"]:
+                    self.rollout.resume()
 
     def close(self):
         self.rollout.destroy()
@@ -664,7 +667,7 @@ class MockPPOTrainer:
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             engine.config.max_head_offpolicyness = int(1e12)
-        engine.initialize(train_data_parallel_size=self.parallel_strategy.dp_size)
+        engine.initialize(train_data_parallel_size=self.allocation_mode.train.dp_size)
         return engine
 
     def __enter__(self):
