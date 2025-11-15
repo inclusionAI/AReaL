@@ -1,123 +1,156 @@
+from __future__ import annotations
+
+import functools
+import json
 import os
+import time
+from collections.abc import Callable
 from copy import deepcopy
+from typing import Any
 
 import torch.distributed as dist
 from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
-from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
-    GRPOConfig,
+    DatasetConfig,
     InferenceEngineConfig,
     PPOActorConfig,
+    PPOConfig,
+    PPOCriticConfig,
 )
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
+from areal.engine.megatron_engine import MegatronEngine
 from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor
+from areal.engine.ppo.critic import FSDPPPOCritic, MegatronPPOCritic
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
-from areal.utils import logging, seeding, stats_tracker
+from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
-from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer
+from areal.utils.perf_tracer import Category, _default_trace_path
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
-logger = logging.getLogger("GRPOTrainer")
+logger = logging.getLogger("PPOTrainer")
 
 
-class GRPOTrainer:
+class PPOTrainer:
     def __init__(
         self,
-        config: GRPOConfig,
+        config: PPOConfig,
         train_dataset: Dataset,
         valid_dataset: Dataset | None = None,
-        tokenizer: PreTrainedTokenizerFast | None = None,
     ):
-        self.config = config
         rank = int(os.getenv("RANK", "0"))
+        # Configure performance tracer
+        if config.perf_tracer is not None:
+            perf_tracer.configure(config.perf_tracer, rank=rank)
 
-        self.tokenizer = tokenizer
-        if self.tokenizer is None:
-            self.tokenizer = load_hf_tokenizer(config.tokenizer_path)
-
+        self.config = config
+        self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
+            config.tokenizer_path
+        )
         # update the gconfig stop token ids (also updates self.config)
         if self.tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
             config.gconfig.stop_token_ids.append(self.tokenizer.pad_token_id)
         if self.tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
             config.gconfig.stop_token_ids.append(self.tokenizer.eos_token_id)
 
+        # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
+
+        # Parse allocation mode.
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
 
-        self.parallel_strategy = self.allocation_mode.train
-        assert self.parallel_strategy is not None
-
-        self.inference_gen_backend = self.allocation_mode.gen_backend
-        if self.inference_gen_backend not in ["sglang", "vllm"]:
-            raise ValueError(
-                f"Invalid inference generation backend: {self.inference_gen_backend}, expected sglang or vllm"
-            )
-
-        if self.config.actor.backend not in ["fsdp", "megatron"]:
-            raise ValueError(
-                f"Invalid backend: {self.config.actor.backend}, expected fsdp or megatron"
-            )
-        self.is_megatron_backend = self.config.actor.backend == "megatron"
-        # Create actor
-        self.actor = self._create_train_engine(config.actor)
+        # Create models: actor, critic, etc.
+        self.actor = self._create_actor(config.actor)
+        self.critic = None
+        if config.critic is not None:
+            self.critic = self._create_critic(config.critic)
+        self.ref = None
+        if config.actor.kl_ctl > 0 and config.ref is not None:
+            self.ref = self._create_actor(config.ref, init_proc_group=False)
 
         # Create dataloaders
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
-        self.train_dataloader = self._create_dataloader(train_dataset, split="train")
-        self.valid_dataloader = self._create_dataloader(valid_dataset, split="test")
+        self.train_dataloader = self._create_dataloader(
+            train_dataset,
+            dataset_config=self.config.train_dataset,
+            rank=self.actor.data_parallel_rank,
+            world_size=self.actor.data_parallel_world_size,
+        )
+        self.valid_dataloader = None
+        if self.config.valid_dataset is not None and valid_dataset is not None:
+            self.valid_dataloader = self._create_dataloader(
+                valid_dataset,
+                dataset_config=self.config.valid_dataset,
+                rank=self.actor.data_parallel_rank,
+                world_size=self.actor.data_parallel_world_size,
+            )
 
-        self.ft_spec = FinetuneSpec(
+        # Initialize inference
+        self.rollout = self._init_rollout(config.rollout, is_eval=False)
+        self.eval_rollout = self._init_rollout(config.rollout, is_eval=True)
+
+        ft_spec = FinetuneSpec(
             total_train_epochs=config.total_train_epochs,
             dataset_size=len(self.train_dataloader) * config.train_dataset.batch_size,
             train_batch_size=config.train_dataset.batch_size,
         )
 
-        # Initialize inference engine
-        self.rollout = self._init_inference_engine(config.rollout, is_eval=False)
-        self.eval_rollout = self._init_inference_engine(config.rollout, is_eval=True)
-
-        # Initialize train engine
-        engine_init_kwargs = {"addr": None, "ft_spec": self.ft_spec}
-        if self.is_megatron_backend:
-            engine_init_kwargs["parallel_strategy"] = self.parallel_strategy
-            engine_init_kwargs["seed"] = config.seed
+        # Initialize models
+        self.parallel_strategy = self.allocation_mode.train
+        assert self.parallel_strategy is not None
+        engine_init_kwargs = {
+            "addr": None,
+            "ft_spec": ft_spec,
+            "parallel_strategy": self.parallel_strategy,
+            "seed": config.seed,
+        }
         self.actor.initialize(**engine_init_kwargs)
-
-        # Prepare weight update meta and connect to inference engine
-        if self.is_megatron_backend:
-            self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
-                self.allocation_mode,
-                nccl_group_name=self.actor.weight_update_group_name,
-            )
-        else:
-            self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
-                self.allocation_mode
-            )
-        self.actor.connect_engine(self.rollout, self.weight_update_meta)
-
-        self.ref = None
-        if config.actor.kl_ctl > 0 and config.ref is not None:
-            self.ref = self._create_train_engine(config.ref)
+        if self.critic is not None:
+            self.critic.initialize(**engine_init_kwargs)
+        if self.ref is not None:
             self.ref.initialize(**engine_init_kwargs)
 
-        # Prepare save, stats logger, evaluator, and recover handler
-        self.saver = Saver(config.saver, self.ft_spec)
-        self.stats_logger = StatsLogger(config, self.ft_spec)
-        self.evaluator = Evaluator(config.evaluator, self.ft_spec)
+        # Prepare weight update meta and connect to inference engine
+        if self.config.actor.weight_update_mode == "disk":
+            self.weight_update_meta = WeightUpdateMeta.from_disk(
+                experiment_name=config.experiment_name,
+                trial_name=config.trial_name,
+                file_root=config.cluster.fileroot,
+                name="default",
+                use_lora=config.actor.use_lora,
+                clear_checkpoint_after_load=True,
+            )
+        else:
+            # NCCL weight update
+            if isinstance(self.actor, MegatronEngine):
+                self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
+                    self.allocation_mode,
+                    nccl_group_name=self.actor.weight_update_group_name,
+                )
+            else:
+                self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
+                    self.allocation_mode
+                )
+        self.actor.connect_engine(self.rollout, self.weight_update_meta)
 
-        self.recover_handler = RecoverHandler(config.recover, self.ft_spec)
+        # Set up evaluation
+        self.evaluator = Evaluator(config.evaluator, ft_spec)
+
+        # Set up saving and checkpointing
+        self.saver = Saver(config.saver, ft_spec)
+        self.recover_handler = RecoverHandler(config.recover, ft_spec)
         self.recover_info = self.recover_handler.load(
             self.actor,
             self.saver,
@@ -128,14 +161,15 @@ class GRPOTrainer:
             weight_update_meta=self.weight_update_meta,
         )
 
-    def train(self, workflow: RolloutWorkflow, eval_workflow: RolloutWorkflow):
-        """
-        Train the model using GRPO algorithm, with custom rollout workflow.
+        # Set up statistics logging (wandb, tensoboard, etc.)
+        self.stats_logger = StatsLogger(config, ft_spec)
 
-        Args:
-            workflow: Rollout workflow for training.
-            eval_workflow: Rollout workflow for evaluation.
-        """
+    def train(
+        self,
+        workflow: RolloutWorkflow,
+        eval_workflow: RolloutWorkflow,
+        dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+    ):
         config = self.config
         start_step = (
             self.recover_info.last_step_info.next().global_step
@@ -150,112 +184,168 @@ class GRPOTrainer:
         for global_step in range(start_step, max_steps):
             epoch = global_step // steps_per_epoch
             step = global_step % steps_per_epoch
-            step_info = StepInfo(
-                global_step=global_step,
-                epoch=epoch,
-                epoch_step=step,
-                steps_per_epoch=steps_per_epoch,
-            )
 
-            with stats_tracker.record_timing("rollout"):
+            with (
+                stats_tracker.record_timing("rollout"),
+                perf_tracer.trace_scope(
+                    "train.rollout",
+                    category=Category.COMPUTE,
+                    args={
+                        "global_step": global_step,
+                        "epoch_step": step,
+                    },
+                ),
+            ):
                 batch = self.actor.prepare_batch(
                     self.train_dataloader,
-                    granularity=self.actor.config.group_size,
+                    granularity=self.config.actor.group_size,
                     workflow=workflow,
-                    should_accept_fn=lambda sample: True,
+                    should_accept_fn=dynamic_filter_fn,
                 )
 
+            if self.critic is not None:
+                with (
+                    stats_tracker.record_timing("critic_values"),
+                    perf_tracer.trace_scope(
+                        "train.compute_values",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    values = self.critic.compute_values(batch)
+                    batch["values"] = values
+                    log_gpu_stats("critic values")
+
             if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
-                with stats_tracker.record_timing("recompute_logp"):
+                with (
+                    stats_tracker.record_timing("recompute_logp"),
+                    perf_tracer.trace_scope(
+                        "train.recompute_logp",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
                     logp = self.actor.compute_logp(batch)
                     batch["prox_logp"] = logp
                     log_gpu_stats("recompute logp")
 
             if self.ref is not None:
-                with stats_tracker.record_timing("ref_logp"):
+                with (
+                    stats_tracker.record_timing("ref_logp"),
+                    perf_tracer.trace_scope(
+                        "train.ref_logp",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
                     batch["ref_logp"] = self.ref.compute_logp(batch)
                     log_gpu_stats("ref logp")
 
-            with stats_tracker.record_timing("compute_advantage"):
+            with (
+                stats_tracker.record_timing("compute_advantage"),
+                perf_tracer.trace_scope(
+                    "train.compute_advantage",
+                    category=Category.COMPUTE,
+                    args={"global_step": global_step},
+                ),
+            ):
                 self.actor.compute_advantages(batch)
                 log_gpu_stats("compute advantages")
 
-            with stats_tracker.record_timing("train_step"):
+            with (
+                stats_tracker.record_timing("train_step"),
+                perf_tracer.trace_scope(
+                    "train.ppo_update",
+                    category=Category.COMPUTE,
+                    args={"global_step": global_step},
+                ),
+            ):
                 self.actor.ppo_update(batch)
                 self.actor.step_lr_scheduler()
                 log_gpu_stats("ppo update")
 
+            if self.critic is not None:
+                with (
+                    stats_tracker.record_timing("critic_train_step"),
+                    perf_tracer.trace_scope(
+                        "train.critic_ppo_update",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    self.critic.ppo_update(batch)
+                    self.critic.step_lr_scheduler()
+                    log_gpu_stats("ppo critic update")
+
             # pause inference for updating weights, save, and evaluation
             self.rollout.pause()
 
-            with stats_tracker.record_timing("update_weights"):
+            with (
+                stats_tracker.record_timing("update_weights"),
+                perf_tracer.trace_scope(
+                    "train.update_weights",
+                    category=Category.COMM,
+                    args={"global_step": global_step},
+                ),
+            ):
                 self.actor.update_weights(self.weight_update_meta)
 
                 self.actor.set_version(global_step + 1)
+                if self.critic is not None:
+                    self.critic.set_version(global_step + 1)
                 self.rollout.set_version(global_step + 1)
                 self.eval_rollout.set_version(global_step + 1)
 
-            with stats_tracker.record_timing("save"):
-                self.saver.save(
-                    self.actor, epoch, step, global_step, tokenizer=self.tokenizer
+            with (
+                stats_tracker.record_timing("save"),
+                perf_tracer.trace_scope(
+                    "train.save",
+                    category=Category.IO,
+                    args={"global_step": global_step},
+                ),
+            ):
+                self._save_hf(epoch=epoch, epoch_step=step, global_step=global_step)
+
+            with (
+                stats_tracker.record_timing("checkpoint_for_recover"),
+                perf_tracer.trace_scope(
+                    "train.checkpoint",
+                    category=Category.IO,
+                    args={"global_step": global_step},
+                ),
+            ):
+                self._save_recover_checkpoint(
+                    epoch=epoch, epoch_step=step, global_step=global_step
                 )
 
-            with stats_tracker.record_timing("checkpoint_for_recover"):
-                self.recover_handler.dump(
-                    self.actor,
-                    step_info,
-                    self.saver,
-                    self.evaluator,
-                    self.stats_logger,
-                    self.train_dataloader,
-                    tokenizer=self.tokenizer,
+            with (
+                stats_tracker.record_timing("eval"),
+                perf_tracer.trace_scope(
+                    "train.eval",
+                    category=Category.COMPUTE,
+                    args={"global_step": global_step},
+                ),
+            ):
+                self._evaluate(
+                    eval_workflow=eval_workflow,
+                    epoch=epoch,
+                    epoch_step=step,
+                    global_step=global_step,
                 )
 
-            dist.barrier(device_ids=[self.actor.device.index])
-            current_platform.synchronize()
-
-            with stats_tracker.record_timing("eval"):
-
-                def evaluate_fn():
-                    if self.valid_dataloader is None:
-                        # skip evaluation if no validation dataset is provided
-                        if self.actor.is_data_parallel_head():
-                            logger.info(
-                                "No validation dataset found, skipping evaluation"
-                            )
-                        return
-
-                    if self.actor.is_data_parallel_head():
-                        cnt = 0
-                        for data in self.valid_dataloader:
-                            for item in data:
-                                self.eval_rollout.submit(item, eval_workflow)
-                                cnt += 1
-                        self.eval_rollout.wait(cnt, timeout=None)
-                    dist.barrier(device_ids=[self.actor.device.index])
-                    current_platform.synchronize()
-
-                self.evaluator.evaluate(
-                    evaluate_fn,
-                    epoch,
-                    step,
-                    global_step,
+            with perf_tracer.trace_scope(
+                "train.log_stats",
+                category=Category.INSTR,
+                args={"global_step": global_step},
+            ):
+                self._export_and_commit_stats(
+                    epoch=epoch, epoch_step=step, global_step=global_step
                 )
-
-            dist.barrier(device_ids=[self.actor.device.index])
-            current_platform.synchronize()
-
-            # Upload statistics to the logger (e.g., wandb)
-            stats = stats_tracker.export_all(
-                reduce_group=self.actor.data_parallel_group
-            )
-            self.stats_logger.commit(epoch, step, global_step, stats)
-
-            dist.barrier(device_ids=[self.actor.device.index])
-            current_platform.synchronize()
 
             # Resume rollout
             self.rollout.resume()
+
+            perf_tracer.save(step=global_step)
 
     def close(self):
         self.stats_logger.close()
@@ -263,31 +353,26 @@ class GRPOTrainer:
         self.rollout.destroy()
         if self.ref is not None:
             self.ref.destroy()
+        if self.critic is not None:
+            self.critic.destroy()
         self.actor.destroy()
+        perf_tracer.save(force=True)
 
     def _create_dataloader(
-        self, dataset: Dataset | None, split: str = "train"
-    ) -> StatefulDataLoader | None:
-        if getattr(self, "actor", None) is None:
-            raise ValueError("Train engine is not created")
-
-        if dataset is None:
-            return None
-
-        dataset_config = (
-            self.config.train_dataset if split == "train" else self.config.valid_dataset
-        )
+        self,
+        dataset: Dataset,
+        dataset_config: DatasetConfig,
+        rank: int,
+        world_size: int,
+    ) -> StatefulDataLoader:
         return create_dataloader(
             dataset,
-            rank=self.actor.data_parallel_rank,
-            world_size=self.actor.data_parallel_world_size,
+            rank=rank,
+            world_size=world_size,
             dataset_config=dataset_config,
         )
 
-    def _create_train_engine(
-        self, actor_config: PPOActorConfig
-    ) -> FSDPPPOActor | MegatronPPOActor:
-        # Initialize train engine
+    def _create_actor(self, actor_config: PPOActorConfig, init_proc_group: bool = True):
         if actor_config.backend == "fsdp":
             actor = FSDPPPOActor(config=actor_config)
         elif actor_config.backend == "megatron":
@@ -296,16 +381,28 @@ class GRPOTrainer:
             raise ValueError(
                 f"Invalid backend: {actor_config.backend}, expected fsdp or megatron"
             )
-        actor.create_process_group(parallel_strategy=self.parallel_strategy)
+        if init_proc_group:
+            actor.create_process_group(parallel_strategy=self.parallel_strategy)
         return actor
 
-    def _init_inference_engine(
+    def _create_critic(self, critic_config: PPOCriticConfig):
+        if critic_config.backend == "fsdp":
+            critic = FSDPPPOCritic(config=critic_config)
+        elif critic_config.backend == "megatron":
+            critic = MegatronPPOCritic(config=critic_config)
+        else:
+            raise ValueError(
+                f"Invalid backend: {critic_config.backend}, expected fsdp or megatron"
+            )
+        return critic
+
+    def _init_rollout(
         self, rollout_config: InferenceEngineConfig, is_eval: bool = False
     ) -> InferenceEngine:
         # Initialize inference engine
-        if self.inference_gen_backend == "sglang":
+        if self.allocation_mode.gen_backend == "sglang":
             engine = RemoteSGLangEngine(deepcopy(rollout_config))
-        elif self.inference_gen_backend == "vllm":
+        elif self.allocation_mode.gen_backend == "vllm":
             engine = RemotevLLMEngine(deepcopy(rollout_config))
         else:
             raise ValueError(
@@ -315,12 +412,257 @@ class GRPOTrainer:
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             engine.config.max_head_offpolicyness = int(1e12)
-        kwargs = (
-            {}
-            if is_eval
-            else {"train_data_parallel_size": self.parallel_strategy.dp_size}
+        engine.initialize(train_data_parallel_size=self.parallel_strategy.dp_size)
+        return engine
+
+    def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
+        # Save as HF models for evaluation
+        self.saver.save(
+            self.actor,
+            epoch,
+            epoch_step,
+            global_step,
+            tokenizer=self.tokenizer,
+            processor=self.processor,
         )
-        engine.initialize(**kwargs)
+        if self.critic is not None:
+            self.saver.save(
+                self.critic,
+                epoch,
+                epoch_step,
+                global_step,
+                tokenizer=self.tokenizer,
+                processor=self.processor,
+                name="critic",
+            )
+        dist.barrier(device_ids=[self.actor.device.index])
+        current_platform.synchronize()
+
+    def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
+        # Save recoverable checkpoints
+        to_save = dict(default=self.actor)
+        if self.critic is not None:
+            to_save["critic"] = self.critic
+        step_info = StepInfo(
+            global_step=global_step,
+            epoch=epoch,
+            epoch_step=epoch_step,
+            steps_per_epoch=len(self.train_dataloader),
+        )
+        self.recover_handler.dump(
+            to_save,
+            step_info,
+            self.saver,
+            self.evaluator,
+            self.stats_logger,
+            self.train_dataloader,
+            tokenizer=self.tokenizer,
+            processor=self.processor,
+        )
+
+        dist.barrier(device_ids=[self.actor.device.index])
+        current_platform.synchronize()
+
+    def _evaluate_fn(self, eval_workflow: RolloutWorkflow):
+        if self.actor.is_data_parallel_head():
+            cnt = 0
+            for data in self.valid_dataloader:
+                for item in data:
+                    self.eval_rollout.submit(item, eval_workflow)
+                    cnt += 1
+            self.eval_rollout.wait(cnt, timeout=None)
+        dist.barrier(device_ids=[self.actor.device.index])
+        current_platform.synchronize()
+
+    def _evaluate(
+        self,
+        eval_workflow: RolloutWorkflow,
+        epoch: int,
+        epoch_step: int,
+        global_step: int,
+    ):
+        if self.valid_dataloader is None:
+            return
+        self.evaluator.evaluate(
+            functools.partial(self._evaluate_fn, eval_workflow=eval_workflow),
+            epoch,
+            epoch_step,
+            global_step,
+        )
+        dist.barrier(device_ids=[self.actor.device.index])
+        current_platform.synchronize()
+
+    def _export_and_commit_stats(self, epoch: int, epoch_step: int, global_step: int):
+        # Upload statistics to the logger (e.g., wandb)
+        stats = stats_tracker.export_all(reduce_group=self.actor.data_parallel_group)
+        self.stats_logger.commit(epoch, epoch_step, global_step, stats)
+
+        dist.barrier(device_ids=[self.actor.device.index])
+        current_platform.synchronize()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        if exc_type is not None:
+            raise exc_value
+
+
+class MockPPOTrainer:
+    def __init__(
+        self,
+        config: PPOConfig,
+        train_dataset: Dataset,
+        valid_dataset: Dataset | None = None,
+    ):
+        if config.perf_tracer is not None:
+            logger.warning("Ignoring training when using the mock PPO trainer.")
+
+        dist.init_process_group(backend="gloo")
+
+        self.config = config
+        self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
+            config.tokenizer_path
+        )
+        # update the gconfig stop token ids (also updates self.config)
+        if self.tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
+            config.gconfig.stop_token_ids.append(self.tokenizer.pad_token_id)
+        if self.tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
+            config.gconfig.stop_token_ids.append(self.tokenizer.eos_token_id)
+
+        # Set seed.
+        rank = self.rank = int(os.getenv("RANK", "0"))
+        seeding.set_random_seed(config.seed, key=f"trainer{rank}")
+
+        # Load replay entries from a previous trial
+        self._replay_entries = []
+        try:
+            with open(
+                _default_trace_path(
+                    self.config.perf_tracer, rank=rank, subdir="perf_tracer"
+                )
+            ) as f:
+                for line in f.readlines():
+                    entry = json.loads(line)
+                    if not entry.startswith("train."):
+                        continue
+                    self._replay_entries.append(entry)
+        except FileNotFoundError as e:
+            logger.critical(
+                "A replay run with MockPPOTrainer requires a previous trial with perf_tracer enabled."
+            )
+            raise e
+
+        # Parse allocation mode.
+        self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
+
+        # Create dataloaders
+        self.train_dataset = train_dataset
+        self.valid_dataset = valid_dataset
+
+        # HACK: quick way to find dp rank without initializing process group
+        ps = self.allocation_mode.train
+        tp_rank = rank % ps.tp_size
+        pp_dp_cp_rank = rank // ps.tp_size
+        cp_rank = pp_dp_cp_rank % ps.cp_size
+        pp_dp_rank = pp_dp_cp_rank // ps.cp_size
+        dp_rank = pp_dp_rank % ps.dp_size
+        pp_rank = pp_dp_rank // ps.dp_size
+        self.is_dp_head = (cp_rank == 0) and (tp_rank == 0) and (pp_rank == 0)
+
+        self.train_dataloader = self._create_dataloader(
+            train_dataset,
+            dataset_config=self.config.train_dataset,
+            rank=dp_rank,
+            world_size=self.allocation_mode.train.dp_size,
+        )
+        self.valid_dataloader = None
+        if self.config.valid_dataset is not None and valid_dataset is not None:
+            self.valid_dataloader = self._create_dataloader(
+                valid_dataset,
+                dataset_config=self.config.valid_dataset,
+                rank=dp_rank,
+                world_size=self.allocation_mode.train.dp_size,
+            )
+
+        # Initialize inference
+        self.rollout = self._init_rollout(config.rollout, is_eval=False)
+
+    def train(
+        self,
+        workflow: RolloutWorkflow,
+        eval_workflow: RolloutWorkflow,
+        dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+    ):
+        config = self.config
+        start_step = 0
+
+        total_epochs = config.total_train_epochs
+        steps_per_epoch = len(self.train_dataloader)
+        max_steps = total_epochs * steps_per_epoch
+
+        for global_step in range(start_step, max_steps):
+            logger.info(f"Replaying step {global_step}/{max_steps}...")
+
+            if self.is_dp_head:
+                logger.info(f"Rank {self.rank} is running `prepare_batch`...")
+                self.rollout.prepare_batch(
+                    self.train_dataloader,
+                    granularity=self.config.actor.group_size,
+                    workflow=workflow,
+                    should_accept_fn=dynamic_filter_fn,
+                )
+
+            dist.barrier()
+            entry = self._replay_entries.pop(0)
+            assert entry["name"] == "train.rollout"
+
+            while (
+                len(self._replay_entries) > 0
+                and self._replay_entries[0]["name"] != "train.rollout"
+            ):
+                entry = self._replay_entries.pop(0)
+                logger.info(
+                    f"[Rank {self.rank}] Replaying entry name {entry['name']}, will sleep for {entry['dur'] / 1e6} seconds..."
+                )
+                # dur is in microseconds
+                time.sleep(entry["dur"] / 1e6)
+
+    def close(self):
+        self.rollout.destroy()
+
+    def _create_dataloader(
+        self,
+        dataset: Dataset,
+        dataset_config: DatasetConfig,
+        rank: int,
+        world_size: int,
+    ) -> StatefulDataLoader:
+        return create_dataloader(
+            dataset,
+            rank=rank,
+            world_size=world_size,
+            dataset_config=dataset_config,
+        )
+
+    def _init_rollout(
+        self, rollout_config: InferenceEngineConfig, is_eval: bool = False
+    ) -> InferenceEngine:
+        # Initialize inference engine
+        if self.allocation_mode.gen_backend == "sglang":
+            engine = RemoteSGLangEngine(deepcopy(rollout_config))
+        elif self.allocation_mode.gen_backend == "vllm":
+            engine = RemotevLLMEngine(deepcopy(rollout_config))
+        else:
+            raise ValueError(
+                f"Invalid backend: {self.allocation_mode.gen_backend}, expected sglang or vllm"
+            )
+
+        if is_eval:
+            # NOTE: eval does not have any offpolicyness control
+            engine.config.max_head_offpolicyness = int(1e12)
+        engine.initialize(train_data_parallel_size=self.parallel_strategy.dp_size)
         return engine
 
     def __enter__(self):
@@ -330,3 +672,25 @@ class GRPOTrainer:
         self.close()
         if exc_type is not None:
             raise exc_value
+
+
+class DAPOTrainer(PPOTrainer):
+    def train(
+        self,
+        workflow: RolloutWorkflow,
+        eval_workflow: RolloutWorkflow,
+        dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+    ):
+        if self.config.actor.eps_clip_higher:
+            logger.warning(
+                "DAPO does not uses a higher uppper clip. Uses symmetric clip."
+            )
+        if (
+            not self.config.actor.overlong_reward_penalty
+            or self.config.actor.overlong_tokens is None
+            or self.config.actor.overlong_penalty_factor is None
+        ):
+            logger.warning("DAPO does not enable over-long reward penalty")
+        if dynamic_filter_fn is None:
+            raise ValueError("DAPO enforces dynamic filtering but none is provided")
+        super().train(workflow, eval_workflow, dynamic_filter_fn)

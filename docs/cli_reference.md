@@ -112,8 +112,7 @@ Base configuration class for all experiment types with common settings.
 
 ## GRPO Configuration
 
-Configuration for Group Relative Policy Optimization (GRPO) reinforcement learning
-experiments.
+A dummy place holder of GRPO config for backward compatibility.
 
 | Parameter            | Type                                                              | Default      | Description                                                                                                                |
 | -------------------- | ----------------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
@@ -140,7 +139,8 @@ experiments.
 | `gconfig`            | [`GenerationHyperparameters`](section-generation-hyperparameters) | **Required** | -                                                                                                                          |
 | `rollout`            | [`InferenceEngineConfig`](section-inference-engine)               | **Required** | -                                                                                                                          |
 | `actor`              | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                          |
-| `ref`                | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                          |
+| `ref`                | [`PPOActorConfig`](section-ppo-actor) \| None                     | `None`       | -                                                                                                                          |
+| `critic`             | [`PPOCriticConfig`](section-ppo-critic) \| None                   | `None`       | -                                                                                                                          |
 
 (section-ppo)=
 
@@ -173,8 +173,8 @@ Configuration for Proximal Policy Optimization (PPO) reinforcement learning expe
 | `gconfig`            | [`GenerationHyperparameters`](section-generation-hyperparameters) | **Required** | -                                                                                                                          |
 | `rollout`            | [`InferenceEngineConfig`](section-inference-engine)               | **Required** | -                                                                                                                          |
 | `actor`              | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                          |
-| `ref`                | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                          |
-| `critic`             | [`PPOCriticConfig`](section-ppo-critic)                           | **Required** | -                                                                                                                          |
+| `ref`                | [`PPOActorConfig`](section-ppo-actor) \| None                     | `None`       | -                                                                                                                          |
+| `critic`             | [`PPOCriticConfig`](section-ppo-critic) \| None                   | `None`       | -                                                                                                                          |
 
 (section-rw)=
 
