@@ -7,7 +7,6 @@ import os
 import threading
 import time
 import uuid
-from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass, field
 
@@ -27,6 +26,7 @@ from tenacity import (
 
 from openai.types.chat.chat_completion import ChatCompletion
 
+from areal.experimental.openai.cache import CompletionCache
 from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
@@ -70,7 +70,7 @@ class SessionData:
         self,
         id: str,
         completed: bool = False,
-        completions: OrderedDict[str, InteractionWithTokenLogpReward] | None = None,
+        completions: CompletionCache | None = None,
         final_reward: float | None = None,
         start_time: float | None = None,
         end_time: float | None = None,
@@ -78,7 +78,7 @@ class SessionData:
     ):
         self.id = id
         self.completed = completed
-        self.completions = completions or OrderedDict()
+        self.completions = completions or CompletionCache()
         self.final_reward = final_reward
         self.start_time = start_time or time.time()
         self.end_time = end_time
@@ -87,119 +87,11 @@ class SessionData:
     def export_completions(
         self, discount: float, style: str
     ) -> dict[str, InteractionWithTokenLogpReward]:
-        # copied from client code, to be moved to InteractionWithTokenLogpReward
         if len(self.completions) == 0:
             return {}
-
-        # print(f"session {self.id}, length of completions: {len(self.completions)}")
-        comp_time_sequence = list(
-            reversed([comp for _, comp in self.completions.items()])
-        )
-        current_reward = self.final_reward
-        # Check if the last-created completion has a reward set
-        if comp_time_sequence:
-            for i, comp in enumerate(comp_time_sequence):
-                if i == 0:
-                    if comp.reward is not None and current_reward is not None:
-                        logger.warning(
-                            "Both final reward and the most recent completion have a reward set. "
-                            "Only the final reward will be used."
-                        )
-                    elif comp.reward is None and current_reward is None:
-                        logger.warning(
-                            "The most recent completion does not have a reward set. "
-                            "All completions will have None reward."
-                        )
-                    current_reward = current_reward or comp.reward or 0.0
-                else:
-                    delta_reward = comp.reward or 0.0
-                    current_reward = current_reward * discount + delta_reward
-
-                comp.reward = current_reward
-
-        completions = self.completions
-
-        if style == "concat":
-            raise NotImplementedError("Concat style is not implemented yet")
-            # for comp in completions.values():
-            #     if comp.chat_template_type != "concat":
-            #         raise ValueError(
-            #             "Cannot export completions in 'concat' style when "
-            #             'comp.chat_template_type != "concat" for any completion. '
-            #             "This is because when applying chat template using some tokenizers, "
-            #             "there might be some tokens added or removed (e.g. think tokens), "
-            #             "making it impossible to construct the conversation tree. "
-            #             "Please use 'individual' style instead."
-            #         )
-
-            # def _is_prefix(a: list[dict], b: list[dict]) -> bool:
-            #     # True if a is a strict prefix of b
-            #     if len(a) >= len(b):
-            #         return False
-            #     for i in range(len(a)):
-            #         if a[i] != b[i]:
-            #             return False
-            #     return True
-
-            # # Precompute normalized messages
-            # meta = {}
-            # for cid, comp in completions.items():
-            #     meta[cid] = {
-            #         "norm_msgs": comp.messages or [],
-            #         "obj": comp,
-            #     }
-
-            # # 1) Construct parent-child relationships using longest prefix rule
-            # # Sort potential children by (message length asc, created asc) so parents are available
-            # ordered = sorted(
-            #     meta.items(),
-            #     key=lambda kv: (
-            #         len(kv[1]["norm_msgs"]),
-            #         kv[1]["obj"].completion.created,
-            #     ),
-            # )
-
-            # # Reset parents before rebuilding
-            # for _, info in ordered:
-            #     info["obj"].parent = None
-
-            # for child_id, child_info in ordered:
-            #     child_msgs = child_info["norm_msgs"]
-            #     best_parent = None
-            #     best_len = -1
-            #     for parent_id, parent_info in ordered:
-            #         if parent_id == child_id:
-            #             continue
-            #         parent_msgs = parent_info["norm_msgs"]
-            #         if _is_prefix(parent_msgs, child_msgs):
-            #             plen = len(parent_msgs)
-            #             # choose the longest prefix
-            #             if plen > best_len:
-            #                 best_parent = parent_info["obj"]
-            #                 best_len = plen
-            #     child_info["obj"].parent = best_parent
-
-            # # Build children mapping to find leaf nodes.
-            # children_map: dict[str, list[InteractionWithTokenLogpReward]] = defaultdict(
-            #     list
-            # )
-            # for _, info in meta.items():
-            #     obj: InteractionWithTokenLogpReward = info["obj"]
-            #     if obj.parent is not None:
-            #         children_map[obj.parent.completion.id].append(obj)
-
-            # # Return only leaf nodes (nodes without children)
-            # parents_with_children = set(children_map.keys())
-            # leaf_only: dict[str, InteractionWithTokenLogpReward] = {}
-            # for cid, info in meta.items():
-            #     obj = info["obj"]
-            #     if obj.completion.id not in parents_with_children:
-            #         leaf_only[cid] = obj
-            # return leaf_only
-        elif style == "individual":
-            return dict(**completions)
-        else:
-            raise ValueError(f"Invalid export completions style {style}")
+        self.completions.set_final_reward(self.final_reward or 0.0)
+        self.completions.apply_reward_discount(turn_discount=discount)
+        return self.completions.export_interactions(style=style)
 
 
 @dataclass
@@ -241,7 +133,7 @@ def build_app(
         session_cache[session_id] = SessionData(
             id=session_id,
             completed=False,
-            completions=OrderedDict(),
+            completions=CompletionCache(),
             final_reward=None,
             start_time=time.time(),
             end_time=None,
@@ -277,7 +169,7 @@ def build_app(
             raise HTTPException(
                 status_code=400, detail=f"Completion {completion_id} not found"
             )
-        state.session_cache[session_id].completions[completion_id].reward = reward
+        state.session_cache[session_id].completions.set_reward(completion_id, reward)
         return {"message": "success"}
 
     @app.post(
@@ -533,18 +425,3 @@ class ProxySession:
 
         os.environ["OPENAI_BASE_URL"] = self.ori_openai_base_url
         os.environ["OPENAI_API_KEY"] = self.ori_openai_api_key
-
-
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("--port", type=int, default=8000)
-#     args = parser.parse_args()
-
-#     server = ProxyServer(args.port)
-#     server.start(wait_until_ready=True)
-
-#     async def run_client():
-#         async with ProxyClient(f"{server.public_addr}/v1") as client:
-#             await client.set_reward(1.0)
-
-#     asyncio.run(run_client())
