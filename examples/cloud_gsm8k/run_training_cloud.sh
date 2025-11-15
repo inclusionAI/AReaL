@@ -34,11 +34,13 @@ if [ -z "$WANDB_API_KEY" ]; then
     echo "Set it with: export WANDB_API_KEY=your-api-key"
 fi
 
-# Verify AReaL is installed
+# Verify AReaL is installed (only install if not already installed)
 echo "Checking AReaL installation..."
 if ! python3 -c "import areal" 2>/dev/null; then
     echo "AReaL not found. Installing..."
     pip install -e .
+else
+    echo "AReaL already installed. Skipping installation."
 fi
 
 # Verify GPU
