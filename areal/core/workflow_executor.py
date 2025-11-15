@@ -875,13 +875,14 @@ class WorkflowExecutor:
         if self.config.enable_rollout_tracing:
             self.logger.info("Rollout results are ready!")
 
+        # Drain all available requests and sort them by time of creation
+        # This prioritizes data submitted earlier.
         results: list[TimedResult[_RolloutResult]] = []
         while True:
             try:
                 results.append(self._pending_results.popleft())
             except IndexError:
                 break
-
         # Sort results be create time
         results.sort(key=lambda x: x.create_time)
         results, pending = results[:count], results[count:]
