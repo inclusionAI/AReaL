@@ -148,6 +148,8 @@ class FSDPEngine(BaseHFEngine):
         self,
         addr: str | None,
         ft_spec: FinetuneSpec | None,
+        *args,
+        **kwargs,
     ):
         # Initialize distributed enviroments and load model.
         assert addr is None, "FSDPEngine does not support remote initialization."

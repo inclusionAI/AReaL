@@ -148,9 +148,14 @@ class PPOTrainer:
         # Set up evaluation
         self.evaluator = Evaluator(config.evaluator, ft_spec)
 
-        # Set up saving and checkpointing
+        # Set up save as HF model
         self.saver = Saver(config.saver, ft_spec)
         self.recover_handler = RecoverHandler(config.recover, ft_spec)
+
+        # Set up statistics logging (wandb, tensoboard, etc.)
+        self.stats_logger = StatsLogger(config, ft_spec)
+
+        # Set up checkpointing for recover
         self.recover_info = self.recover_handler.load(
             self.actor,
             self.saver,
@@ -160,9 +165,6 @@ class PPOTrainer:
             inference_engine=self.rollout,
             weight_update_meta=self.weight_update_meta,
         )
-
-        # Set up statistics logging (wandb, tensoboard, etc.)
-        self.stats_logger = StatsLogger(config, ft_spec)
 
     def train(
         self,
@@ -373,26 +375,26 @@ class PPOTrainer:
         )
 
     def _create_actor(self, actor_config: PPOActorConfig, init_proc_group: bool = True):
-        if actor_config.backend == "fsdp":
+        if self.allocation_mode.train_backend == "fsdp":
             actor = FSDPPPOActor(config=actor_config)
-        elif actor_config.backend == "megatron":
+        elif self.allocation_mode.train_backend == "megatron":
             actor = MegatronPPOActor(config=actor_config)
         else:
             raise ValueError(
-                f"Invalid backend: {actor_config.backend}, expected fsdp or megatron"
+                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
         if init_proc_group:
-            actor.create_process_group(parallel_strategy=self.parallel_strategy)
+            actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
     def _create_critic(self, critic_config: PPOCriticConfig):
-        if critic_config.backend == "fsdp":
+        if self.allocation_mode.train_backend == "fsdp":
             critic = FSDPPPOCritic(config=critic_config)
-        elif critic_config.backend == "megatron":
+        elif self.allocation_mode.train_backend == "megatron":
             critic = MegatronPPOCritic(config=critic_config)
         else:
             raise ValueError(
-                f"Invalid backend: {critic_config.backend}, expected fsdp or megatron"
+                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
         return critic
 
@@ -412,7 +414,7 @@ class PPOTrainer:
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             engine.config.max_head_offpolicyness = int(1e12)
-        engine.initialize(train_data_parallel_size=self.parallel_strategy.dp_size)
+        engine.initialize(train_data_parallel_size=self.allocation_mode.train.dp_size)
         return engine
 
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
