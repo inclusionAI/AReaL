@@ -10,7 +10,6 @@ that processes tasks from an input queue and places results in an output queue.
 
 import asyncio
 import queue
-import random
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -24,7 +23,7 @@ T = TypeVar("T")
 
 # Polling configuration
 DEFAULT_POLL_WAIT_TIME = 0.05  # 50ms
-DEFAULT_POLL_SLEEP_TIME = 0.5  # 1 second
+DEFAULT_POLL_SLEEP_TIME = 0.5  # 500ms
 
 
 class TaskQueueFullError(RuntimeError):
@@ -32,10 +31,18 @@ class TaskQueueFullError(RuntimeError):
 
 
 @dataclass
-class _TimedResult(Generic[T]):
-    """Internal wrapper for results with creation timestamp."""
+class TimedResult(Generic[T]):
+    """Wrapper for task results with creation timestamp.
 
-    create_time: int  # nanoseconds from time.monotonic_ns()
+    Attributes
+    ----------
+    create_time : int
+        Task creation time in nanoseconds from time.monotonic_ns().
+    data : T
+        The actual result data from the completed task.
+    """
+
+    create_time: int
     data: T
 
 
@@ -72,13 +79,13 @@ class AsyncTaskRunner(Generic[T]):
     ----------
     max_queue_size : int
         Maximum size for input and output queues. Tasks submitted when
-        the input queue is full will raise RuntimeError.
+        the input queue is full will raise TaskQueueFullError.
     poll_wait_time : float, optional
         Time in seconds to wait for task completion during each poll
         cycle. Default is 0.05 (50ms).
     poll_sleep_time : float, optional
         Time in seconds to sleep between poll cycles.
-        Default is 1.0 second.
+        Default is 0.5 seconds.
     enable_tracing : bool, optional
         Enable detailed logging of task submission and completion.
         Default is False.
@@ -163,7 +170,7 @@ class AsyncTaskRunner(Generic[T]):
             Default is 0.05.
         poll_sleep_time : float, optional
             Time in seconds to sleep between poll cycles.
-            Default is 1.0.
+            Default is 0.5.
         enable_tracing : bool, optional
             Enable detailed logging. Default is False.
         """
@@ -180,12 +187,9 @@ class AsyncTaskRunner(Generic[T]):
         self.input_queue: queue.Queue[_TaskInput[T]] = queue.Queue(
             maxsize=max_queue_size
         )
-        self.output_queue: queue.Queue[_TimedResult[T]] = queue.Queue(
+        self.output_queue: queue.Queue[TimedResult[T]] = queue.Queue(
             maxsize=max_queue_size
         )
-
-        # Cache for results to support wait() with arbitrary counts
-        self.result_cache: list[_TimedResult[T]] = []
 
         # Thread exception handling
         self._thread_exception_lock = threading.Lock()
@@ -335,7 +339,7 @@ class AsyncTaskRunner(Generic[T]):
                     try:
                         # Place result in output queue
                         self.output_queue.put_nowait(
-                            _TimedResult(create_time=task_obj.create_time, data=result)
+                            TimedResult(create_time=task_obj.create_time, data=result)
                         )
                         if self.enable_tracing and self.logger:
                             self.logger.info(
@@ -355,6 +359,7 @@ class AsyncTaskRunner(Generic[T]):
                         raise TaskQueueFullError(
                             "Output queue full. Please increase max_queue_size."
                         )
+                # Sleep to avoid busy-waiting
                 await asyncio.sleep(self.poll_sleep_time)
         finally:
             # Cancel all remaining tasks on shutdown
@@ -390,9 +395,10 @@ class AsyncTaskRunner(Generic[T]):
 
         Raises
         ------
+        TaskQueueFullError
+            If the input queue is full.
         RuntimeError
-            If the input queue is full or if the background thread
-            has died.
+            If the background thread has died.
 
         Examples
         --------
@@ -417,12 +423,13 @@ class AsyncTaskRunner(Generic[T]):
                 "wait for tasks to complete."
             )
 
-    def wait(self, count: int, timeout: float | None = None) -> list[T]:
+    def wait(
+        self, count: int, timeout: float | None = None, with_timing: bool = False
+    ) -> list[TimedResult[T]] | list[T]:
         """Wait for a specified number of task results.
 
         This method blocks until at least `count` results are available
-        or the timeout expires. Results are returned in random order
-        (shuffled).
+        or the timeout expires.
 
         Parameters
         ----------
@@ -431,11 +438,15 @@ class AsyncTaskRunner(Generic[T]):
         timeout : float | None, optional
             Maximum time in seconds to wait. If None, waits indefinitely
             (up to 7 days). Default is None.
+        with_timing : bool, optional
+            If True, return TimedResult objects with creation timestamps.
+            If False, return only the data values. Default is False.
 
         Returns
         -------
-        List[T]
-            List of task results, shuffled randomly.
+        list[TimedResult[T]] | list[T]
+            If with_timing=True, returns list of TimedResult objects.
+            If with_timing=False, returns list of result data.
 
         Raises
         ------
@@ -460,16 +471,7 @@ class AsyncTaskRunner(Generic[T]):
             # Check thread health
             self._check_thread_health()
 
-            # Drain all available results from output queue
-            while True:
-                try:
-                    timed_result = self.output_queue.get_nowait()
-                    self.result_cache.append(timed_result)
-                except queue.Empty:
-                    break
-
-            # Check if we have enough results
-            if len(self.result_cache) >= count:
+            if self.get_output_queue_size() >= count:
                 break
 
             # Sleep briefly to avoid busy waiting
@@ -480,23 +482,16 @@ class AsyncTaskRunner(Generic[T]):
             self._check_thread_health()
             raise RuntimeError("AsyncTaskRunner is exiting, cannot wait for results.")
 
-        accepted = len(self.result_cache)
+        accepted = self.get_output_queue_size()
         if accepted < count:
             raise TimeoutError(
                 f"Timed out waiting for {count} results, only received {accepted}."
             )
 
-        # Sort by creation time for deterministic ordering
-        self.result_cache.sort(key=lambda x: x.create_time)
-
-        # Extract the requested number of results
-        results_to_return = self.result_cache[:count]
-        self.result_cache = self.result_cache[count:]
-
-        # Shuffle for randomness (helps with data diversity in ML)
-        random.shuffle(results_to_return)
-
-        # Extract just the data (remove timing metadata)
+        # Extract the requested number of results, sorted by return time
+        results_to_return = [self.output_queue.get() for _ in range(count)]
+        if with_timing:
+            return results_to_return
         return [r.data for r in results_to_return]
 
     def submit_batch(
