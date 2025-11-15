@@ -2,10 +2,10 @@
 
 ## Step 1: Run a real experiment with perf_tracer
 
-Any experiment ***with `perf_tracer` enabled*** could be fine. The experiment can be
+Any experiment ***with `perf_tracer` enabled*** will work. The experiment can be either
 local or distributed.
 
-We suggest using the `PPOTrainer` in your training script.
+We recommend using the `PPOTrainer` in your training script.
 
 ```bash
 python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
@@ -17,7 +17,7 @@ python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
 
 ## Step 2: Launch the inference servers for replay
 
-Use the same command above but with a ***inference-only allocation mode***:
+Use the same command above but with an ***inference-only allocation mode***:
 
 ```bash
 python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
@@ -27,11 +27,9 @@ python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
     trial_name=trial0
 ```
 
-Note that we recommend use the same experiment and trial name.
-
 ## (Optional) Step 3: Connect all server addresses to the proxy
 
-The log of inference servers will prompt the server addresses, e.g.,
+The log of inference servers will display the server addresses, e.g.,
 
 ```
 20251115-21:32:39.544 SGLangServer Wrapper INFO: SGLang server launched at: http://33.180.160.150:20908
@@ -46,7 +44,7 @@ You can then launch the HTTP proxy with the following server addresses.
 
 ## Step 4: Run the replay job
 
-In your training script, replace `PPOTrainer` with `MockPPOTrainer`. Launch the job
+In your training script, replace `PPOTrainer` with `MockPPOTrainer`, then launch the job
 with:
 
 ```bash
@@ -58,13 +56,13 @@ torchrun --nproc-per-node ${train_world_size} \
     trial_name=trial0 total_train_epochs=1
 ```
 
-Note that:
+Important notes:
 
-- No matter which launcher you used to run the real job, you should directly use
-  `torchrun` to launch replay processes.
-- You should replace the training script with the one that uses `MockPPOTrainer`.
-- `${train_world_size}` is the number of GPUs you used for training in your real job
-- You must use the same configuration as the real job, importantly, `experiment_name`
-  and `trial_name`.
-- If you launch a proxy, you should overwrite the server address with an additional
-  environment variable `AREAL_LLM_SERVER_ADDRS=${proxy_ip}:${proxy_port}`
+- Regardless of which launcher you used for the real job, you must use `torchrun` to
+  launch replay processes locally.
+- `${train_world_size}` should be set to the number of GPUs you used for training in
+  your real job.
+- You must use the same configuration as the real job, especially `experiment_name` and
+  `trial_name`.
+- If you launch a proxy, you should override the server address with an additional
+  environment variable: `AREAL_LLM_SERVER_ADDRS=${proxy_ip}:${proxy_port}`
