@@ -231,8 +231,12 @@ class _RolloutResult:
     task_id: int | None = None
 
 
-# Polling interval for background threads (seconds)
-_POLL_INTERVAL = 0.5
+# Polling interval for background threads
+_POLL_INTERVAL_SECONDS = 0.5
+# Batch size for fetching from the async task runner
+_MAX_FETCH_BATCH_SIZE = 100
+# Timeout for shutting down threads
+_SHUTDOWN_TIMEOUT_SECONDS = 2.0
 
 
 class WorkflowExecutor:
@@ -353,7 +357,7 @@ class WorkflowExecutor:
 
                 # Wait for resume if paused
                 if self.runner.paused.is_set():
-                    time.sleep(_POLL_INTERVAL)
+                    time.sleep(_POLL_INTERVAL_SECONDS)
                     continue
 
                 # Get capacity from staleness manager
@@ -361,8 +365,7 @@ class WorkflowExecutor:
                 capacity = self.staleness_manager.get_capacity(version)
 
                 if capacity <= 0:
-                    # Update metrics
-                    time.sleep(_POLL_INTERVAL)
+                    time.sleep(_POLL_INTERVAL_SECONDS)
                     continue
 
                 # Try to submit up to 'capacity' tasks
@@ -386,7 +389,7 @@ class WorkflowExecutor:
                         break
 
                 # Small sleep to avoid busy-waiting (latency-optimized)
-                time.sleep(_POLL_INTERVAL)
+                time.sleep(_POLL_INTERVAL_SECONDS)
 
             except Exception as e:
                 self.logger.error("Producer thread failed", exc_info=True)
@@ -414,12 +417,12 @@ class WorkflowExecutor:
                 output_queue_size = self.runner.get_output_queue_size()
 
                 if output_queue_size == 0:
-                    time.sleep(_POLL_INTERVAL)
+                    time.sleep(_POLL_INTERVAL_SECONDS)
                     continue
 
                 # Collect all available results at once (batch for efficiency)
                 # Limit batch size to avoid blocking too long
-                count = min(output_queue_size, 100)
+                count = min(output_queue_size, _MAX_FETCH_BATCH_SIZE)
 
                 try:
                     # Use short timeout for responsiveness (latency-optimized)
@@ -437,7 +440,7 @@ class WorkflowExecutor:
                     pass
 
                 # Small sleep to avoid busy-waiting (latency-optimized)
-                time.sleep(_POLL_INTERVAL)
+                time.sleep(_POLL_INTERVAL_SECONDS)
 
             except Exception as e:
                 self.logger.error("Consumer thread failed", exc_info=True)
@@ -516,9 +519,8 @@ class WorkflowExecutor:
         self._shutdown_event.set()
 
         # Wait for producer thread to finish (with timeout)
-        shutdown_timeout = 5.0
         if self._commit_thread and self._commit_thread.is_alive():
-            self._commit_thread.join(timeout=shutdown_timeout)
+            self._commit_thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
             if self._commit_thread.is_alive():
                 self.logger.warning(
                     "Producer thread did not exit cleanly within timeout"
@@ -526,7 +528,7 @@ class WorkflowExecutor:
 
         # Wait for consumer thread to finish (with timeout)
         if self._fetch_thread and self._fetch_thread.is_alive():
-            self._fetch_thread.join(timeout=shutdown_timeout)
+            self._fetch_thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
             if self._fetch_thread.is_alive():
                 self.logger.warning(
                     "Consumer thread did not exit cleanly within timeout"
@@ -860,7 +862,7 @@ class WorkflowExecutor:
 
             elapsed = time.perf_counter() - start_time
             remaining = timeout - elapsed
-            time.sleep(min(_POLL_INTERVAL, remaining))
+            time.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
 
         if len(self._pending_results) < count:
             if raise_timeout:
