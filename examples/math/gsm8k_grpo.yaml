@@ -136,6 +136,14 @@ evaluator:
   freq_steps: null
   freq_secs: null
 
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: true
+  session_tracer:
+    enabled: true
+
 stats_logger:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
