@@ -65,10 +65,15 @@ case "$CONFIG_NAME" in
         ;;
     1hour)
         # Auto-detect GPU and use appropriate config
-        if nvidia-smi --query-gpu=name --format=csv,noheader | grep -qi "A40"; then
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader)
+        if echo "$GPU_NAME" | grep -qi "A40"; then
             CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_1hour_a40.yaml"
             echo "Using 1-HOUR training configuration (~1-2 hours) - A40 OPTIMIZED"
             echo "Note: A40 GPU detected, using memory-optimized config"
+        elif echo "$GPU_NAME" | grep -qi "RTX 5090\|5090"; then
+            CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_1hour_rtx5090.yaml"
+            echo "Using 1-HOUR training configuration (~1-2 hours) - RTX 5090 OPTIMIZED"
+            echo "Note: RTX 5090 GPU detected, using memory-optimized config"
         else
             CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml"
             echo "Using 1-HOUR training configuration (~1-2 hours)"
@@ -79,10 +84,17 @@ case "$CONFIG_NAME" in
         ;;
     3hour)
         # Auto-detect GPU and use appropriate config
-        if nvidia-smi --query-gpu=name --format=csv,noheader | grep -qi "A40"; then
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader)
+        if echo "$GPU_NAME" | grep -qi "A40"; then
             CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_3hour_a40.yaml"
             echo "Using 3-HOUR training configuration (~4-4.5 hours) - A40 OPTIMIZED"
             echo "Note: A40 GPU detected, using memory-optimized config"
+        elif echo "$GPU_NAME" | grep -qi "RTX 5090\|5090"; then
+            # RTX 5090 optimized 3hour config (create if needed, for now use 1hour optimized)
+            CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_1hour_rtx5090.yaml"
+            echo "Using 3-HOUR training configuration (~3-4 hours) - RTX 5090 OPTIMIZED"
+            echo "Note: RTX 5090 GPU detected, using memory-optimized config"
+            echo "Warning: Using 1hour RTX 5090 config for 3hour training (may need separate config)"
         else
             CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_3hour.yaml"
             echo "Using 3-HOUR training configuration (~3-4 hours)"

@@ -1,0 +1,1200 @@
+2025-11-15T23:11:51.072014260Z ==========
+2025-11-15T23:11:51.072015542Z == CUDA ==
+2025-11-15T23:11:51.072016093Z ==========
+2025-11-15T23:11:51.080092595Z CUDA Version 12.9.1
+2025-11-15T23:11:51.080094078Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-15T23:11:51.080095651Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-15T23:11:51.080096402Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-15T23:11:51.080096923Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-15T23:11:51.080098075Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-15T23:11:51.152503419Z Writing to /root/.config/pip/pip.conf
+2025-11-15T23:11:51.233152798Z Writing to /root/.config/pip/pip.conf
+2025-11-15T23:11:51.244869597Z Cloning into 'AReaL'...
+2025-11-15T23:11:53.011940634Z Checking AReaL installation...
+2025-11-15T23:11:53.064047975Z AReaL already installed. Skipping installation.
+2025-11-15T23:11:53.064063043Z Checking GPU...
+2025-11-15T23:11:53.086989320Z NVIDIA GeForce RTX 5090, 32607 MiB
+2025-11-15T23:11:53.086999720Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-15T23:11:53.109688083Z Using 1-HOUR training configuration (~1-2 hours)
+2025-11-15T23:11:53.109694826Z Note: Uses limited dataset (500 samples) from docker_gsm8k script
+2025-11-15T23:11:53.110335383Z ==========================================
+2025-11-15T23:11:53.110336836Z Starting GRPO Training (Cloud)
+2025-11-15T23:11:53.110337828Z ==========================================
+2025-11-15T23:11:53.110338790Z Config: 1hour
+2025-11-15T23:11:53.110339551Z Config file: examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml
+2025-11-15T23:11:53.110340373Z Training script: examples/docker_gsm8k/gsm8k_grpo_1hour.py
+2025-11-15T23:11:53.110340843Z Experiment: gsm8k-grpo-cloud-1hour
+2025-11-15T23:11:53.110341374Z Trial: trial_20251115_231153
+2025-11-15T23:11:53.110343589Z WandB API key: e1adc5be02...
+2025-11-15T23:11:53.110344120Z ==========================================
+2025-11-15T23:11:53.520169565Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:11:53.520199681Z   import pynvml  # type: ignore[import]
+2025-11-15T23:11:55.570400326Z [37m20251115-23:11:55.570 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:11:55.570422176Z [37m20251115-23:11:55.570 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:11:55.570580112Z [37m20251115-23:11:55.570 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-cloud-1hour/trial_20251115_231153[0m
+2025-11-15T23:11:55.628676461Z [37m20251115-23:11:55.628 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-cloud-1hour, trial_name=trial_20251115_231153, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-15T23:11:55.633220497Z [37m20251115-23:11:55.633 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/docker_gsm8k/gsm8k_grpo_1hour.py --config examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml experiment_name=gsm8k-grpo-cloud-1hour trial_name=trial_20251115_231153 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231153/llm_server.log[0m
+2025-11-15T23:11:56.024990773Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:11:56.025029005Z   import pynvml  # type: ignore[import]
+2025-11-15T23:11:56.764771562Z [37m20251115-23:11:56.764 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:11:56.765054732Z [37m20251115-23:11:56.764 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:11:56.827182619Z [37m20251115-23:11:56.826 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.18.0.2 --port 15123 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:17697 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashinfer --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-15T23:11:57.352387772Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:11:57.352417067Z   import pynvml  # type: ignore[import]
+2025-11-15T23:12:00.585667639Z INFO 11-15 23:12:00 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:12:01.268501138Z All deep_gemm operations loaded successfully!
+2025-11-15T23:12:01.448988605Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-15T23:12:01.834396193Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:12:01.834422543Z   import pynvml  # type: ignore[import]
+2025-11-15T23:12:01.834424767Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:12:01.834426159Z   import pynvml  # type: ignore[import]
+2025-11-15T23:12:05.010107939Z INFO 11-15 23:12:05 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:12:05.018739809Z INFO 11-15 23:12:05 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:12:05.639428077Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-15T23:12:05.982189145Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:12:05.987987447Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:12:05.988280374Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:12:05.988523168Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:12:06.021412285Z [2025-11-15 23:12:06] MOE_RUNNER_BACKEND is not initialized, using triton backend
+2025-11-15T23:12:06.289067649Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:12:06.289099248Z   warnings.warn(
+2025-11-15T23:12:06.289101442Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:12:06.289103015Z   warnings.warn(
+2025-11-15T23:12:09.568668558Z All deep_gemm operations loaded successfully!
+2025-11-15T23:12:09.568947038Z Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
+2025-11-15T23:12:09.664183502Z Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00, 10.48it/s]
+2025-11-15T23:12:31.092123343Z   0%|          | 0/4 [00:00<?, ?it/s]Capturing batches (bs=8 avail_mem=5.41 GB):   0%|          | 0/4 [00:00<?, ?it/s]Capturing batches (bs=8 avail_mem=5.41 GB):  25%|██▌       | 1/4 [00:20<01:02, 20.92s/it]Capturing batches (bs=4 avail_mem=5.37 GB):  25%|██▌       | 1/4 [00:20<01:02, 20.92s/it]Capturing batches (bs=2 avail_mem=5.34 GB):  25%|██▌       | 1/4 [00:20<01:02, 20.92s/it]Capturing batches (bs=1 avail_mem=5.34 GB):  25%|██▌       | 1/4 [00:20<01:02, 20.92s/it]Capturing batches (bs=1 avail_mem=5.34 GB): 100%|██████████| 4/4 [00:20<00:00,  5.24s/it]
+2025-11-15T23:12:36.863468657Z [37m20251115-23:12:36.863 SGLangServer Wrapper INFO: SGLang server launched at: http://172.18.0.2:15123[0m
+2025-11-15T23:12:37.638638838Z [37m20251115-23:12:37.638 Launcher Utils INFO: Found 1 rollout servers: 172.18.0.2:15123[0m
+2025-11-15T23:12:37.638658485Z [37m20251115-23:12:37.638 Local Scheduler INFO: LLM inference server launched at: AREAL_LLM_SERVER_ADDRS=172.18.0.2:15123[0m
+2025-11-15T23:12:37.640198645Z [37m20251115-23:12:37.640 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL AREAL_LLM_SERVER_ADDRS=172.18.0.2:15123 AREAL_RECOVER_RUN=0 NCCL_CUMEM_ENABLE=0 NCCL_NVLS_ENABLE=0 CUDA_VISIBLE_DEVICES=0 stdbuf -oL torchrun --nnodes 1 --nproc-per-node 1 --master-addr localhost --master-port 20476 examples/docker_gsm8k/gsm8k_grpo_1hour.py --config examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml experiment_name=gsm8k-grpo-cloud-1hour trial_name=trial_20251115_231153 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231153/trainer.log[0m
+2025-11-15T23:12:37.640386055Z [37m20251115-23:12:37.640 Local Scheduler INFO: Waiting for 2 local running processes, pids: 159 964[0m
+2025-11-15T23:12:37.926048700Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:12:37.926073917Z   import pynvml  # type: ignore[import]
+2025-11-15T23:12:38.570750349Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:12:38.570782719Z   import pynvml  # type: ignore[import]
+2025-11-15T23:12:42.823409310Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:12:42.823451839Z   warnings.warn(
+2025-11-15T23:12:42.823649709Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:12:42.823658786Z   warnings.warn(
+2025-11-15T23:12:45.162468825Z [37m20251115-23:12:45.162 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:12:45.162795536Z [37m20251115-23:12:45.162 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:12:45.385279198Z [37m20251115-23:12:45.385 [FSDP Engine Rank 0] INFO: Initializing device mesh with parallel dims (dp=1, sp=1, tp=1, ep=1, etp=1, world_size=1).[0m
+2025-11-15T23:12:45.386355641Z [37m20251115-23:12:45.386 [FSDP Engine Rank 0] INFO: Data parallel head 0 and rank 0[0m
+2025-11-15T23:12:49.408898469Z Generating train split:   0%|          | 0/7473 [00:00<?, ? examples/s]Generating train split: 100%|██████████| 7473/7473 [00:00<00:00, 725187.03 examples/s]
+2025-11-15T23:12:49.410808380Z Generating test split:   0%|          | 0/1319 [00:00<?, ? examples/s]Generating test split: 100%|██████████| 1319/1319 [00:00<00:00, 745490.77 examples/s]
+2025-11-15T23:12:49.783573620Z Map:   0%|          | 0/7473 [00:00<?, ? examples/s]Map:  12%|█▏        | 926/7473 [00:00<00:02, 3018.96 examples/s]Map: 100%|██████████| 7473/7473 [00:00<00:00, 20179.71 examples/s]
+2025-11-15T23:12:50.299921011Z Filter:   0%|          | 0/7473 [00:00<?, ? examples/s]Filter:  27%|██▋       | 2000/7473 [00:00<00:00, 14863.46 examples/s]Filter:  54%|█████▎    | 4000/7473 [00:00<00:00, 15660.62 examples/s]Filter:  80%|████████  | 6000/7473 [00:00<00:00, 15888.34 examples/s]Filter: 100%|██████████| 7473/7473 [00:00<00:00, 15785.72 examples/s]
+2025-11-15T23:12:51.427828232Z Map:   0%|          | 0/1319 [00:00<?, ? examples/s]Map: 100%|██████████| 1319/1319 [00:00<00:00, 80716.18 examples/s]
+2025-11-15T23:12:51.551043161Z Filter:   0%|          | 0/1319 [00:00<?, ? examples/s]Filter: 100%|██████████| 1319/1319 [00:00<00:00, 15075.54 examples/s]
+2025-11-15T23:12:51.551278621Z [1-HOUR MODE] Limiting dataset from 7473 to 500 samples
+2025-11-15T23:12:51.552611143Z [37m20251115-23:12:51.552 Launcher Utils INFO: Found 1 rollout servers: 172.18.0.2:15123[0m
+2025-11-15T23:12:51.552786010Z [37m20251115-23:12:51.552 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
+2025-11-15T23:12:51.552789246Z [37m20251115-23:12:51.552 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
+2025-11-15T23:12:52.553560798Z [37m20251115-23:12:52.553 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
+2025-11-15T23:12:52.554713843Z [37m20251115-23:12:52.554 Launcher Utils INFO: Found 1 rollout servers: 172.18.0.2:15123[0m
+2025-11-15T23:12:52.555058979Z [37m20251115-23:12:52.554 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
+2025-11-15T23:12:52.555066663Z [37m20251115-23:12:52.554 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
+2025-11-15T23:12:53.556115203Z [37m20251115-23:12:53.555 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
+2025-11-15T23:12:54.390596895Z [37m20251115-23:12:54.390 [FSDP Engine Rank 0] INFO: Model creation and loading time: 0.7695610132068396[0m
+2025-11-15T23:12:54.423087125Z [37m20251115-23:12:54.422 [FSDP Engine Rank 0] INFO: Applying FSDP2 with N-D parallelism for 0.03 seconds[0m
+2025-11-15T23:12:54.423454462Z [37m20251115-23:12:54.423 [FSDP Engine Rank 0] INFO: Create optimizer time: 0.0003361869603395462[0m
+2025-11-15T23:12:54.987100643Z wandb: Currently logged in as: tong-zhao (tong-zhao-georgia-institute-of-technology) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+2025-11-15T23:12:54.988836909Z wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+2025-11-15T23:12:55.715971101Z wandb: setting up run gsm8k-grpo-cloud-1hour_trial_20251115_231153_train
+2025-11-15T23:12:56.254258346Z wandb: Tracking run with wandb version 0.22.2
+2025-11-15T23:12:56.254999852Z wandb: Run data is saved locally in /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231153/wandb/run-20251115_231254-gsm8k-grpo-cloud-1hour_trial_20251115_231153_train
+2025-11-15T23:12:56.255006334Z wandb: Run `wandb offline` to turn off syncing.
+2025-11-15T23:12:56.255184177Z wandb: Syncing run trial_20251115_231153
+2025-11-15T23:12:56.255186661Z wandb: ⭐️ View project at https://wandb.ai/tong-zhao-georgia-institute-of-technology/gsm8k-grpo-local
+2025-11-15T23:12:56.255188284Z wandb: 🚀 View run at https://wandb.ai/tong-zhao-georgia-institute-of-technology/gsm8k-grpo-local/runs/gsm8k-grpo-cloud-1hour_trial_20251115_231153_train
+2025-11-15T23:12:56.385843465Z wandb: Detected [openai] in use.
+2025-11-15T23:12:56.386006349Z wandb: Use W&B Weave for improved LLM call tracing. Install Weave with `pip install weave` then add `import weave` to the top of your script.
+2025-11-15T23:12:56.386013673Z wandb: For more information, check out the docs at: https://weave-docs.wandb.ai/
+2025-11-15T23:12:56.389017971Z swanlab: SwanLab run disabled, the data will not be saved or uploaded.
+2025-11-15T23:12:56.591591635Z ================================================================================
+2025-11-15T23:12:56.592047587Z [1-HOUR TRAINING MODE]
+2025-11-15T23:12:56.592060762Z   Dataset size: 500 samples
+2025-11-15T23:12:56.592062084Z   Batch size: 8
+2025-11-15T23:12:56.592063447Z   Steps per epoch: 63
+2025-11-15T23:12:56.592315188Z   Total epochs: 2
+2025-11-15T23:12:56.592316941Z   Total steps: 126
+2025-11-15T23:12:56.592317512Z   Estimated time: ~126 minutes (~2.1 hours) at ~1 step/min
+2025-11-15T23:12:56.592318304Z ================================================================================
+2025-11-15T23:12:58.548007279Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-15T23:12:58.548023399Z   string = string.replace("\%", "")
+2025-11-15T23:12:58.548024742Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-15T23:12:58.548025433Z   string = string.replace("\%", "")
+2025-11-15T23:12:58.548377020Z /workspace/AReaL/areal/reward/math_parser.py:400: SyntaxWarning: invalid escape sequence '\d'
+2025-11-15T23:12:58.548382510Z   pattern = "-?\d*\.?\d+"
+2025-11-15T23:12:58.548384364Z /workspace/AReaL/areal/reward/math_parser.py:400: SyntaxWarning: invalid escape sequence '\d'
+2025-11-15T23:12:58.548385797Z   pattern = "-?\d*\.?\d+"
+2025-11-15T23:12:59.829441276Z [37m20251115-23:12:59.829 [FSDP Engine Rank 0] INFO: Microbatch #tokens (rank 0): [5035, 4882, 1196], padded to: [5120, 5120, 1280], padding lengths: [85, 238, 84][0m
+2025-11-15T23:13:00.873781523Z Traceback (most recent call last):
+2025-11-15T23:13:00.874174568Z   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 296, in <module>
+2025-11-15T23:13:00.874176782Z     main(sys.argv[1:])
+2025-11-15T23:13:00.874456605Z   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 204, in main
+2025-11-15T23:13:00.874461354Z     logp = actor.compute_logp(batch)
+2025-11-15T23:13:00.874462887Z            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.874463498Z   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:00.874464390Z     return func(*args, **kwargs)
+2025-11-15T23:13:00.874465622Z            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.874466353Z   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 285, in compute_logp
+2025-11-15T23:13:00.874467486Z     return self.actor.compute_logp(*args, **kwargs)
+2025-11-15T23:13:00.874468327Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.874756075Z   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:00.874759221Z     return func(*args, **kwargs)
+2025-11-15T23:13:00.874760043Z            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.874760804Z   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 66, in compute_logp
+2025-11-15T23:13:00.874761686Z     return self.engine.forward(
+2025-11-15T23:13:00.874762457Z            ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.874763229Z   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:00.874764070Z     return func(*args, **kwargs)
+2025-11-15T23:13:00.874764802Z            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.874765633Z   File "/workspace/AReaL/areal/engine/fsdp_engine.py", line 760, in forward
+2025-11-15T23:13:00.874766405Z     outputs = self.model(**inputs)
+2025-11-15T23:13:00.874767206Z               ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.874767998Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:13:00.874768819Z     return self._call_impl(*args, **kwargs)
+2025-11-15T23:13:00.874769600Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.874770773Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1879, in _call_impl
+2025-11-15T23:13:00.874771755Z     return inner()
+2025-11-15T23:13:00.874772616Z            ^^^^^^^
+2025-11-15T23:13:00.874773418Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1827, in inner
+2025-11-15T23:13:00.874774129Z     result = forward_call(*args, **kwargs)
+2025-11-15T23:13:00.874774910Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.875370574Z   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/generic.py", line 940, in wrapper
+2025-11-15T23:13:00.875374481Z     output = func(self, *args, **kwargs)
+2025-11-15T23:13:00.875375283Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.875375844Z   File "/usr/local/lib/python3.12/dist-packages/transformers/models/qwen2/modeling_qwen2.py", line 463, in forward
+2025-11-15T23:13:00.875376956Z     logits = self.lm_head(hidden_states[:, slice_indices, :])
+2025-11-15T23:13:00.875377527Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.875378178Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:13:00.875378749Z     return self._call_impl(*args, **kwargs)
+2025-11-15T23:13:00.875379250Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.875379721Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+2025-11-15T23:13:00.875380262Z     return forward_call(*args, **kwargs)
+2025-11-15T23:13:00.875380723Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.875381204Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py", line 125, in forward
+2025-11-15T23:13:00.875381725Z     return F.linear(input, self.weight, self.bias)
+2025-11-15T23:13:00.875382316Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.875383639Z torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.45 GiB. GPU 0 has a total capacity of 31.36 GiB of which 601.94 MiB is free. Process 371 has 26.30 GiB memory in use. Including non-PyTorch memory, this process has 4.46 GiB memory in use. Of the allocated memory 2.67 GiB is allocated by PyTorch, and 41.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+2025-11-15T23:13:00.876179136Z [rank0]: Traceback (most recent call last):
+2025-11-15T23:13:00.876184596Z [rank0]:   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 296, in <module>
+2025-11-15T23:13:00.876185588Z [rank0]:     main(sys.argv[1:])
+2025-11-15T23:13:00.876186430Z [rank0]:   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 204, in main
+2025-11-15T23:13:00.876187261Z [rank0]:     logp = actor.compute_logp(batch)
+2025-11-15T23:13:00.876188123Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876188844Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:00.876189726Z [rank0]:     return func(*args, **kwargs)
+2025-11-15T23:13:00.876190457Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876191259Z [rank0]:   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 285, in compute_logp
+2025-11-15T23:13:00.876192231Z [rank0]:     return self.actor.compute_logp(*args, **kwargs)
+2025-11-15T23:13:00.876192962Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876193683Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:00.876194665Z [rank0]:     return func(*args, **kwargs)
+2025-11-15T23:13:00.876195226Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876195817Z [rank0]:   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 66, in compute_logp
+2025-11-15T23:13:00.876196378Z [rank0]:     return self.engine.forward(
+2025-11-15T23:13:00.876196879Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876197390Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:00.876197931Z [rank0]:     return func(*args, **kwargs)
+2025-11-15T23:13:00.876198392Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876198893Z [rank0]:   File "/workspace/AReaL/areal/engine/fsdp_engine.py", line 760, in forward
+2025-11-15T23:13:00.876199805Z [rank0]:     outputs = self.model(**inputs)
+2025-11-15T23:13:00.876200256Z [rank0]:               ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876200716Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:13:00.876201237Z [rank0]:     return self._call_impl(*args, **kwargs)
+2025-11-15T23:13:00.876201758Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876202279Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1879, in _call_impl
+2025-11-15T23:13:00.876203922Z [rank0]:     return inner()
+2025-11-15T23:13:00.876204433Z [rank0]:            ^^^^^^^
+2025-11-15T23:13:00.876204914Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1827, in inner
+2025-11-15T23:13:00.876205906Z [rank0]:     result = forward_call(*args, **kwargs)
+2025-11-15T23:13:00.876206447Z [rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876206978Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/generic.py", line 940, in wrapper
+2025-11-15T23:13:00.876207519Z [rank0]:     output = func(self, *args, **kwargs)
+2025-11-15T23:13:00.876208090Z [rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876208621Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/transformers/models/qwen2/modeling_qwen2.py", line 463, in forward
+2025-11-15T23:13:00.876209132Z [rank0]:     logits = self.lm_head(hidden_states[:, slice_indices, :])
+2025-11-15T23:13:00.876209703Z [rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876210224Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:13:00.876213591Z [rank0]:     return self._call_impl(*args, **kwargs)
+2025-11-15T23:13:00.876214112Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876214582Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+2025-11-15T23:13:00.876215113Z [rank0]:     return forward_call(*args, **kwargs)
+2025-11-15T23:13:00.876217358Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876218129Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py", line 125, in forward
+2025-11-15T23:13:00.876218900Z [rank0]:     return F.linear(input, self.weight, self.bias)
+2025-11-15T23:13:00.876219562Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:00.876220423Z [rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.45 GiB. GPU 0 has a total capacity of 31.36 GiB of which 601.94 MiB is free. Process 371 has 26.30 GiB memory in use. Including non-PyTorch memory, this process has 4.46 GiB memory in use. Of the allocated memory 2.67 GiB is allocated by PyTorch, and 41.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+2025-11-15T23:13:02.327656723Z [1;34mwandb[0m:
+2025-11-15T23:13:02.327678113Z [1;34mwandb[0m: 🚀 View run [33mtrial_20251115_231153[0m at: [34m[0m
+2025-11-15T23:13:02.327902021Z [1;34mwandb[0m: Find logs at: [1;35m../outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231153/wandb/run-20251115_231254-gsm8k-grpo-cloud-1hour_trial_20251115_231153_train/logs[0m
+2025-11-15T23:13:03.687284708Z [rank0]:[W1115 23:13:03.838416758 ProcessGroupNCCL.cpp:1538] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2025-11-15T23:13:04.604547063Z E1115 23:13:04.603000 965 torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: 1) local_rank: 0 (pid: 999) of binary: /usr/bin/python3
+2025-11-15T23:13:04.604791821Z Traceback (most recent call last):
+2025-11-15T23:13:04.604806659Z   File "/usr/local/bin/torchrun", line 7, in <module>
+2025-11-15T23:13:04.605085901Z     sys.exit(main())
+2025-11-15T23:13:04.605090249Z              ^^^^^^
+2025-11-15T23:13:04.605091561Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+2025-11-15T23:13:04.605093064Z     return f(*args, **kwargs)
+2025-11-15T23:13:04.605094787Z            ^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:04.605095879Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 901, in main
+2025-11-15T23:13:04.605099226Z     run(args)
+2025-11-15T23:13:04.605100628Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 892, in run
+2025-11-15T23:13:04.605335427Z     elastic_launch(
+2025-11-15T23:13:04.605336249Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 143, in __call__
+2025-11-15T23:13:04.605337461Z     return launch_agent(self._config, self._entrypoint, list(args))
+2025-11-15T23:13:04.605338553Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:04.605339335Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 277, in launch_agent
+2025-11-15T23:13:04.605340006Z     raise ChildFailedError(
+2025-11-15T23:13:04.605341018Z torch.distributed.elastic.multiprocessing.errors.ChildFailedError:
+2025-11-15T23:13:04.605341809Z ============================================================
+2025-11-15T23:13:04.605342320Z examples/docker_gsm8k/gsm8k_grpo_1hour.py FAILED
+2025-11-15T23:13:04.605342831Z ------------------------------------------------------------
+2025-11-15T23:13:04.605343372Z Failures:
+2025-11-15T23:13:04.605353651Z   <NO_OTHER_FAILURES>
+2025-11-15T23:13:04.605354313Z ------------------------------------------------------------
+2025-11-15T23:13:04.605354834Z Root Cause (first observed failure):
+2025-11-15T23:13:04.605355385Z [0]:
+2025-11-15T23:13:04.605356126Z   time      : 2025-11-15_23:13:04
+2025-11-15T23:13:04.605356677Z   host      : e733e532c795
+2025-11-15T23:13:04.605357188Z   rank      : 0 (local_rank: 0)
+2025-11-15T23:13:04.605357659Z   exitcode  : 1 (pid: 999)
+2025-11-15T23:13:04.605358140Z   error_file: <N/A>
+2025-11-15T23:13:04.605358631Z   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+2025-11-15T23:13:04.605359282Z ============================================================
+2025-11-15T23:13:05.644093196Z [37m20251115-23:13:05.643 Local Scheduler INFO: Stopping local process with signal SIGTERM, pid: [159][0m
+2025-11-15T23:13:05.664597094Z Killed
+2025-11-15T23:13:05.665861629Z [37m20251115-23:13:05.665 Local Scheduler INFO: Stopping local process with signal SIGTERM, pid: [964][0m
+2025-11-15T23:13:05.666101898Z Traceback (most recent call last):
+2025-11-15T23:13:05.666108210Z   File "<frozen runpy>", line 198, in _run_module_as_main
+2025-11-15T23:13:05.666109402Z   File "<frozen runpy>", line 88, in _run_code
+2025-11-15T23:13:05.666110805Z   File "/workspace/AReaL/areal/launcher/local.py", line 405, in <module>
+2025-11-15T23:13:05.666177039Z     main()
+2025-11-15T23:13:05.666203278Z   File "/workspace/AReaL/areal/launcher/local.py", line 260, in main
+2025-11-15T23:13:05.666222624Z     local_main(config, run_id=0)
+2025-11-15T23:13:05.666235769Z   File "/workspace/AReaL/areal/launcher/local.py", line 399, in local_main
+2025-11-15T23:13:05.666260214Z     raise e
+2025-11-15T23:13:05.666264623Z   File "/workspace/AReaL/areal/launcher/local.py", line 375, in local_main
+2025-11-15T23:13:05.666287435Z     launcher.wait(
+2025-11-15T23:13:05.666288878Z   File "/workspace/AReaL/areal/launcher/local.py", line 235, in wait
+2025-11-15T23:13:05.666302754Z     raise JobException(
+2025-11-15T23:13:05.666307232Z areal.utils.launcher.JobException: Job gsm8k-grpo-cloud-1hour_trial_20251115_231153:trainer JobState.COMPLETED at node local
+2025-11-15T23:13:05.889831279Z [37m20251115-23:13:05.889 Local Scheduler INFO: Waiting for 0 local running processes, pids: [0m
+2025-11-15T23:13:08.844251892Z ==========
+2025-11-15T23:13:08.844253285Z == CUDA ==
+2025-11-15T23:13:08.844275597Z ==========
+2025-11-15T23:13:08.845599462Z CUDA Version 12.9.1
+2025-11-15T23:13:08.846227296Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-15T23:13:08.846604792Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-15T23:13:08.846606225Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-15T23:13:08.846607547Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-15T23:13:08.846608900Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-15T23:13:08.926845226Z Writing to /root/.config/pip/pip.conf
+2025-11-15T23:13:09.014157524Z Writing to /root/.config/pip/pip.conf
+2025-11-15T23:13:09.408248659Z Branch 'feature/clean_up_cloud_gsm8k_folder' set up to track remote branch 'feature/clean_up_cloud_gsm8k_folder' from 'origin'.
+2025-11-15T23:13:09.408280007Z Your branch is up to date with 'origin/feature/clean_up_cloud_gsm8k_folder'.
+2025-11-15T23:13:09.438656666Z Checking AReaL installation...
+2025-11-15T23:13:09.466930373Z AReaL already installed. Skipping installation.
+2025-11-15T23:13:09.466933438Z Checking GPU...
+2025-11-15T23:13:09.481421318Z NVIDIA GeForce RTX 5090, 32607 MiB
+2025-11-15T23:13:09.481437408Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-15T23:13:09.495430963Z Using 1-HOUR training configuration (~1-2 hours)
+2025-11-15T23:13:09.495434881Z Note: Uses limited dataset (500 samples) from docker_gsm8k script
+2025-11-15T23:13:09.496060631Z ==========================================
+2025-11-15T23:13:09.496061853Z Starting GRPO Training (Cloud)
+2025-11-15T23:13:09.496062574Z ==========================================
+2025-11-15T23:13:09.496063195Z Config: 1hour
+2025-11-15T23:13:09.496064328Z Config file: examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml
+2025-11-15T23:13:09.496065179Z Training script: examples/docker_gsm8k/gsm8k_grpo_1hour.py
+2025-11-15T23:13:09.496065680Z Experiment: gsm8k-grpo-cloud-1hour
+2025-11-15T23:13:09.496066191Z Trial: trial_20251115_231309
+2025-11-15T23:13:09.496087200Z WandB API key: e1adc5be02...
+2025-11-15T23:13:09.496096488Z ==========================================
+2025-11-15T23:13:09.881680747Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:13:09.881708398Z   import pynvml  # type: ignore[import]
+2025-11-15T23:13:11.944827838Z [37m20251115-23:13:11.944 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:13:11.944856732Z [37m20251115-23:13:11.944 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:13:11.945012544Z [37m20251115-23:13:11.944 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-cloud-1hour/trial_20251115_231309[0m
+2025-11-15T23:13:12.003615480Z [37m20251115-23:13:12.003 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-cloud-1hour, trial_name=trial_20251115_231309, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-15T23:13:12.008293336Z [37m20251115-23:13:12.008 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/docker_gsm8k/gsm8k_grpo_1hour.py --config examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml experiment_name=gsm8k-grpo-cloud-1hour trial_name=trial_20251115_231309 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231309/llm_server.log[0m
+2025-11-15T23:13:12.382004966Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:13:12.382028400Z   import pynvml  # type: ignore[import]
+2025-11-15T23:13:13.154985913Z [37m20251115-23:13:13.154 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:13:13.155349854Z [37m20251115-23:13:13.154 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:13:13.220021627Z [37m20251115-23:13:13.219 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.18.0.2 --port 12149 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:36345 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashinfer --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-15T23:13:13.781965365Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:13:13.781995431Z   import pynvml  # type: ignore[import]
+2025-11-15T23:13:16.913305965Z INFO 11-15 23:13:16 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:13:17.435805559Z All deep_gemm operations loaded successfully!
+2025-11-15T23:13:17.593467868Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-15T23:13:18.031130744Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:13:18.031158155Z   import pynvml  # type: ignore[import]
+2025-11-15T23:13:18.031374169Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:13:18.031376944Z   import pynvml  # type: ignore[import]
+2025-11-15T23:13:21.382990372Z INFO 11-15 23:13:21 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:13:21.416173929Z INFO 11-15 23:13:21 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:13:22.080433879Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-15T23:13:22.429229200Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:13:22.431079379Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:13:22.431393015Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:13:22.431644796Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:13:22.450371161Z [2025-11-15 23:13:22] MOE_RUNNER_BACKEND is not initialized, using triton backend
+2025-11-15T23:13:22.683854641Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:13:22.683881000Z   warnings.warn(
+2025-11-15T23:13:22.684184497Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:13:22.684191881Z   warnings.warn(
+2025-11-15T23:13:23.849752197Z All deep_gemm operations loaded successfully!
+2025-11-15T23:13:23.850074409Z Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
+2025-11-15T23:13:23.940540554Z Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00, 11.03it/s]
+2025-11-15T23:13:24.706195733Z   0%|          | 0/4 [00:00<?, ?it/s]Capturing batches (bs=8 avail_mem=5.41 GB):   0%|          | 0/4 [00:00<?, ?it/s]Capturing batches (bs=8 avail_mem=5.41 GB):  25%|██▌       | 1/4 [00:00<00:00,  3.36it/s]Capturing batches (bs=4 avail_mem=5.37 GB):  25%|██▌       | 1/4 [00:00<00:00,  3.36it/s]Capturing batches (bs=2 avail_mem=5.34 GB):  25%|██▌       | 1/4 [00:00<00:00,  3.36it/s]Capturing batches (bs=1 avail_mem=5.34 GB):  25%|██▌       | 1/4 [00:00<00:00,  3.36it/s]Capturing batches (bs=1 avail_mem=5.34 GB): 100%|██████████| 4/4 [00:00<00:00, 11.79it/s]
+2025-11-15T23:13:30.234797884Z [37m20251115-23:13:30.234 SGLangServer Wrapper INFO: SGLang server launched at: http://172.18.0.2:12149[0m
+2025-11-15T23:13:31.010940363Z [37m20251115-23:13:31.010 Launcher Utils INFO: Found 1 rollout servers: 172.18.0.2:12149[0m
+2025-11-15T23:13:31.011034158Z [37m20251115-23:13:31.010 Local Scheduler INFO: LLM inference server launched at: AREAL_LLM_SERVER_ADDRS=172.18.0.2:12149[0m
+2025-11-15T23:13:31.012657834Z [37m20251115-23:13:31.012 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL AREAL_LLM_SERVER_ADDRS=172.18.0.2:12149 AREAL_RECOVER_RUN=0 NCCL_CUMEM_ENABLE=0 NCCL_NVLS_ENABLE=0 CUDA_VISIBLE_DEVICES=0 stdbuf -oL torchrun --nnodes 1 --nproc-per-node 1 --master-addr localhost --master-port 40123 examples/docker_gsm8k/gsm8k_grpo_1hour.py --config examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml experiment_name=gsm8k-grpo-cloud-1hour trial_name=trial_20251115_231309 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231309/trainer.log[0m
+2025-11-15T23:13:31.012879298Z [37m20251115-23:13:31.012 Local Scheduler INFO: Waiting for 2 local running processes, pids: 142 537[0m
+2025-11-15T23:13:31.300537614Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:13:31.300564936Z   import pynvml  # type: ignore[import]
+2025-11-15T23:13:31.991602173Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:13:31.991629935Z   import pynvml  # type: ignore[import]
+2025-11-15T23:13:35.901859789Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:13:35.901891949Z   warnings.warn(
+2025-11-15T23:13:35.903790019Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:13:35.903801219Z   warnings.warn(
+2025-11-15T23:13:38.169572500Z [37m20251115-23:13:38.169 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:13:38.169803461Z [37m20251115-23:13:38.169 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:13:38.386219398Z [37m20251115-23:13:38.386 [FSDP Engine Rank 0] INFO: Initializing device mesh with parallel dims (dp=1, sp=1, tp=1, ep=1, etp=1, world_size=1).[0m
+2025-11-15T23:13:38.387227683Z [37m20251115-23:13:38.387 [FSDP Engine Rank 0] INFO: Data parallel head 0 and rank 0[0m
+2025-11-15T23:13:41.202826606Z [1-HOUR MODE] Limiting dataset from 7473 to 500 samples
+2025-11-15T23:13:41.204860118Z [37m20251115-23:13:41.204 Launcher Utils INFO: Found 1 rollout servers: 172.18.0.2:12149[0m
+2025-11-15T23:13:41.204872742Z [37m20251115-23:13:41.204 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
+2025-11-15T23:13:41.204874986Z [37m20251115-23:13:41.204 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
+2025-11-15T23:13:42.206394697Z [37m20251115-23:13:42.206 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
+2025-11-15T23:13:42.207877840Z [37m20251115-23:13:42.207 Launcher Utils INFO: Found 1 rollout servers: 172.18.0.2:12149[0m
+2025-11-15T23:13:42.208114383Z [37m20251115-23:13:42.207 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
+2025-11-15T23:13:42.208117348Z [37m20251115-23:13:42.207 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
+2025-11-15T23:13:43.210893809Z [37m20251115-23:13:43.210 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
+2025-11-15T23:13:44.493259147Z [37m20251115-23:13:44.493 [FSDP Engine Rank 0] INFO: Model creation and loading time: 1.185958756133914[0m
+2025-11-15T23:13:44.527545096Z [37m20251115-23:13:44.527 [FSDP Engine Rank 0] INFO: Applying FSDP2 with N-D parallelism for 0.03 seconds[0m
+2025-11-15T23:13:44.527901252Z [37m20251115-23:13:44.527 [FSDP Engine Rank 0] INFO: Create optimizer time: 0.00035846978425979614[0m
+2025-11-15T23:13:45.056289627Z wandb: Currently logged in as: tong-zhao (tong-zhao-georgia-institute-of-technology) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+2025-11-15T23:13:45.057918212Z wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+2025-11-15T23:13:45.879118480Z wandb: setting up run gsm8k-grpo-cloud-1hour_trial_20251115_231309_train
+2025-11-15T23:13:46.237243235Z wandb: Tracking run with wandb version 0.22.2
+2025-11-15T23:13:46.238557502Z wandb: Run data is saved locally in /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231309/wandb/run-20251115_231345-gsm8k-grpo-cloud-1hour_trial_20251115_231309_train
+2025-11-15T23:13:46.238572040Z wandb: Run `wandb offline` to turn off syncing.
+2025-11-15T23:13:46.238914430Z wandb: Syncing run trial_20251115_231309
+2025-11-15T23:13:46.238916724Z wandb: ⭐️ View project at https://wandb.ai/tong-zhao-georgia-institute-of-technology/gsm8k-grpo-local
+2025-11-15T23:13:46.238918057Z wandb: 🚀 View run at https://wandb.ai/tong-zhao-georgia-institute-of-technology/gsm8k-grpo-local/runs/gsm8k-grpo-cloud-1hour_trial_20251115_231309_train
+2025-11-15T23:13:46.338251762Z wandb: Detected [openai] in use.
+2025-11-15T23:13:46.338467565Z wandb: Use W&B Weave for improved LLM call tracing. Install Weave with `pip install weave` then add `import weave` to the top of your script.
+2025-11-15T23:13:46.338472745Z wandb: For more information, check out the docs at: https://weave-docs.wandb.ai/
+2025-11-15T23:13:46.340839470Z swanlab: SwanLab run disabled, the data will not be saved or uploaded.
+2025-11-15T23:13:46.533710001Z ================================================================================
+2025-11-15T23:13:46.533990065Z [1-HOUR TRAINING MODE]
+2025-11-15T23:13:46.534233620Z   Dataset size: 500 samples
+2025-11-15T23:13:46.534236476Z   Batch size: 8
+2025-11-15T23:13:46.534512271Z   Steps per epoch: 63
+2025-11-15T23:13:46.534514526Z   Total epochs: 2
+2025-11-15T23:13:46.534515167Z   Total steps: 126
+2025-11-15T23:13:46.534515748Z   Estimated time: ~126 minutes (~2.1 hours) at ~1 step/min
+2025-11-15T23:13:46.534516569Z ================================================================================
+2025-11-15T23:13:49.303192065Z [37m20251115-23:13:49.302 [FSDP Engine Rank 0] INFO: Microbatch #tokens (rank 0): [4946, 5016, 2178], padded to: [5120, 5120, 2304], padding lengths: [174, 104, 126][0m
+2025-11-15T23:13:49.852060023Z Traceback (most recent call last):
+2025-11-15T23:13:49.852480860Z   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 296, in <module>
+2025-11-15T23:13:49.852486771Z     main(sys.argv[1:])
+2025-11-15T23:13:49.852835032Z   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 204, in main
+2025-11-15T23:13:49.852853467Z     logp = actor.compute_logp(batch)
+2025-11-15T23:13:49.852856893Z            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.852857604Z   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:49.852858817Z     return func(*args, **kwargs)
+2025-11-15T23:13:49.852859778Z            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.852860269Z   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 285, in compute_logp
+2025-11-15T23:13:49.852861261Z     return self.actor.compute_logp(*args, **kwargs)
+2025-11-15T23:13:49.852861942Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853042330Z   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:49.853046467Z     return func(*args, **kwargs)
+2025-11-15T23:13:49.853047640Z            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853048581Z   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 66, in compute_logp
+2025-11-15T23:13:49.853049172Z     return self.engine.forward(
+2025-11-15T23:13:49.853049693Z            ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853050184Z   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:49.853050856Z     return func(*args, **kwargs)
+2025-11-15T23:13:49.853051397Z            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853160521Z   File "/workspace/AReaL/areal/engine/fsdp_engine.py", line 760, in forward
+2025-11-15T23:13:49.853165420Z     outputs = self.model(**inputs)
+2025-11-15T23:13:49.853166622Z               ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853167554Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:13:49.853168405Z     return self._call_impl(*args, **kwargs)
+2025-11-15T23:13:49.853169327Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853416730Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1879, in _call_impl
+2025-11-15T23:13:49.853419415Z     return inner()
+2025-11-15T23:13:49.853420346Z            ^^^^^^^
+2025-11-15T23:13:49.853420948Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1827, in inner
+2025-11-15T23:13:49.853421549Z     result = forward_call(*args, **kwargs)
+2025-11-15T23:13:49.853422090Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853422681Z   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/generic.py", line 940, in wrapper
+2025-11-15T23:13:49.853423172Z     output = func(self, *args, **kwargs)
+2025-11-15T23:13:49.853423693Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853424194Z   File "/usr/local/lib/python3.12/dist-packages/transformers/models/qwen2/modeling_qwen2.py", line 463, in forward
+2025-11-15T23:13:49.853425797Z     logits = self.lm_head(hidden_states[:, slice_indices, :])
+2025-11-15T23:13:49.853426618Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853427420Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:13:49.853428281Z     return self._call_impl(*args, **kwargs)
+2025-11-15T23:13:49.853429093Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853725828Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+2025-11-15T23:13:49.853728122Z     return forward_call(*args, **kwargs)
+2025-11-15T23:13:49.853728883Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853729695Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py", line 125, in forward
+2025-11-15T23:13:49.853744152Z     return F.linear(input, self.weight, self.bias)
+2025-11-15T23:13:49.853744973Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.853746566Z torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.45 GiB. GPU 0 has a total capacity of 31.36 GiB of which 639.94 MiB is free. Process 286 has 26.26 GiB memory in use. Including non-PyTorch memory, this process has 4.46 GiB memory in use. Of the allocated memory 2.67 GiB is allocated by PyTorch, and 41.50 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+2025-11-15T23:13:49.854555299Z [rank0]: Traceback (most recent call last):
+2025-11-15T23:13:49.854558695Z [rank0]:   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 296, in <module>
+2025-11-15T23:13:49.854559777Z [rank0]:     main(sys.argv[1:])
+2025-11-15T23:13:49.854560568Z [rank0]:   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 204, in main
+2025-11-15T23:13:49.854561380Z [rank0]:     logp = actor.compute_logp(batch)
+2025-11-15T23:13:49.854562161Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854562803Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:49.854563404Z [rank0]:     return func(*args, **kwargs)
+2025-11-15T23:13:49.854563895Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854564426Z [rank0]:   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 285, in compute_logp
+2025-11-15T23:13:49.854564997Z [rank0]:     return self.actor.compute_logp(*args, **kwargs)
+2025-11-15T23:13:49.854565498Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854566029Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:49.854566610Z [rank0]:     return func(*args, **kwargs)
+2025-11-15T23:13:49.854567161Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854567702Z [rank0]:   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 66, in compute_logp
+2025-11-15T23:13:49.854568173Z [rank0]:     return self.engine.forward(
+2025-11-15T23:13:49.854568653Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854569144Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:13:49.854569816Z [rank0]:     return func(*args, **kwargs)
+2025-11-15T23:13:49.854570287Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854572080Z [rank0]:   File "/workspace/AReaL/areal/engine/fsdp_engine.py", line 760, in forward
+2025-11-15T23:13:49.854572641Z [rank0]:     outputs = self.model(**inputs)
+2025-11-15T23:13:49.854573102Z [rank0]:               ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854573673Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:13:49.854574144Z [rank0]:     return self._call_impl(*args, **kwargs)
+2025-11-15T23:13:49.854574615Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854575146Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1879, in _call_impl
+2025-11-15T23:13:49.854575637Z [rank0]:     return inner()
+2025-11-15T23:13:49.854576127Z [rank0]:            ^^^^^^^
+2025-11-15T23:13:49.854576618Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1827, in inner
+2025-11-15T23:13:49.854577400Z [rank0]:     result = forward_call(*args, **kwargs)
+2025-11-15T23:13:49.854577901Z [rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854578482Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/generic.py", line 940, in wrapper
+2025-11-15T23:13:49.854579033Z [rank0]:     output = func(self, *args, **kwargs)
+2025-11-15T23:13:49.854579624Z [rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854585245Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/transformers/models/qwen2/modeling_qwen2.py", line 463, in forward
+2025-11-15T23:13:49.854586136Z [rank0]:     logits = self.lm_head(hidden_states[:, slice_indices, :])
+2025-11-15T23:13:49.854586958Z [rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854587669Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:13:49.854588350Z [rank0]:     return self._call_impl(*args, **kwargs)
+2025-11-15T23:13:49.854589032Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854589783Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+2025-11-15T23:13:49.854590544Z [rank0]:     return forward_call(*args, **kwargs)
+2025-11-15T23:13:49.854591306Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854591987Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py", line 125, in forward
+2025-11-15T23:13:49.854592779Z [rank0]:     return F.linear(input, self.weight, self.bias)
+2025-11-15T23:13:49.854593540Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.854594362Z [rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.45 GiB. GPU 0 has a total capacity of 31.36 GiB of which 639.94 MiB is free. Process 286 has 26.26 GiB memory in use. Including non-PyTorch memory, this process has 4.46 GiB memory in use. Of the allocated memory 2.67 GiB is allocated by PyTorch, and 41.50 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+2025-11-15T23:13:49.987420551Z [31m20251115-23:13:49.987 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:49.987738145Z [37m20251115-23:13:49.987 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-15T23:13:49.988082579Z [31m20251115-23:13:49.987 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:49.988085635Z [37m20251115-23:13:49.987 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-15T23:13:49.988470905Z [31m20251115-23:13:49.988 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:49.988475374Z [37m20251115-23:13:49.988 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-15T23:13:49.992364385Z [31m20251115-23:13:49.992 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:49.993172797Z [31m20251115-23:13:49.993 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-15T23:13:49.993915215Z Traceback (most recent call last):
+2025-11-15T23:13:49.995156556Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:49.995157668Z     future = loop.run_in_executor(
+2025-11-15T23:13:49.995158690Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:49.996502312Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:49.997574207Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:49.997576271Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:49.999192723Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:50.014081141Z [31m20251115-23:13:50.013 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 23 failed with exception: cannot schedule new futures after shutdown [0m
+2025-11-15T23:13:50.014082935Z Traceback (most recent call last):
+2025-11-15T23:13:50.014083636Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-15T23:13:50.014084718Z     result = await async_task
+2025-11-15T23:13:50.014085630Z              ^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.014096019Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-15T23:13:50.014096721Z     traj = await task_input.workflow.arun_episode(
+2025-11-15T23:13:50.014097482Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.014098023Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-15T23:13:50.014098544Z     reward = await self.async_reward_fn(
+2025-11-15T23:13:50.014099045Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.014099636Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-15T23:13:50.014100127Z     raise e
+2025-11-15T23:13:50.014101720Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:50.014102221Z     future = loop.run_in_executor(
+2025-11-15T23:13:50.014102722Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.014103203Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:50.014103714Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:50.014104195Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:50.014104685Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:50.027609056Z [31m20251115-23:13:50.027 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.028297604Z [37m20251115-23:13:50.028 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-15T23:13:50.028853773Z [31m20251115-23:13:50.028 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.029519859Z [37m20251115-23:13:50.029 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-15T23:13:50.030300639Z [31m20251115-23:13:50.030 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.030956966Z [37m20251115-23:13:50.030 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-15T23:13:50.031540096Z [31m20251115-23:13:50.031 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.032100715Z [31m20251115-23:13:50.032 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-15T23:13:50.032704333Z Traceback (most recent call last):
+2025-11-15T23:13:50.034003623Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:50.034004965Z     future = loop.run_in_executor(
+2025-11-15T23:13:50.034005837Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.035013391Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:50.036536328Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:50.036537851Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:50.037662083Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:50.367787054Z [31m20251115-23:13:50.367 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.368942394Z [37m20251115-23:13:50.368 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-15T23:13:50.369590276Z [31m20251115-23:13:50.369 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.370239339Z [37m20251115-23:13:50.370 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-15T23:13:50.371176401Z [31m20251115-23:13:50.371 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.371817791Z [37m20251115-23:13:50.371 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-15T23:13:50.372529702Z [31m20251115-23:13:50.372 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.373209593Z [31m20251115-23:13:50.373 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-15T23:13:50.373839521Z Traceback (most recent call last):
+2025-11-15T23:13:50.375320991Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:50.375323906Z     future = loop.run_in_executor(
+2025-11-15T23:13:50.375324538Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.376700040Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:50.377816838Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:50.377818160Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:50.378899733Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:50.515353405Z [31m20251115-23:13:50.514 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 16 failed with exception: cannot schedule new futures after shutdown [0m
+2025-11-15T23:13:50.515370697Z Traceback (most recent call last):
+2025-11-15T23:13:50.515371659Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-15T23:13:50.515372591Z     result = await async_task
+2025-11-15T23:13:50.515373352Z              ^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.515373853Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-15T23:13:50.515374404Z     traj = await task_input.workflow.arun_episode(
+2025-11-15T23:13:50.515375546Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.515376037Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-15T23:13:50.515376678Z     reward = await self.async_reward_fn(
+2025-11-15T23:13:50.515377249Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.515377730Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-15T23:13:50.515378492Z     raise e
+2025-11-15T23:13:50.515379243Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:50.515379784Z     future = loop.run_in_executor(
+2025-11-15T23:13:50.515380315Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.515380806Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:50.515381397Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:50.515381908Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:50.515383561Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:50.516554170Z [31m20251115-23:13:50.516 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 19 failed with exception: cannot schedule new futures after shutdown [0m
+2025-11-15T23:13:50.516555493Z Traceback (most recent call last):
+2025-11-15T23:13:50.516556034Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-15T23:13:50.516556585Z     result = await async_task
+2025-11-15T23:13:50.516557096Z              ^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.516557637Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-15T23:13:50.516558188Z     traj = await task_input.workflow.arun_episode(
+2025-11-15T23:13:50.516558679Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.516559170Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-15T23:13:50.516559701Z     reward = await self.async_reward_fn(
+2025-11-15T23:13:50.516560171Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.516562215Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-15T23:13:50.516562756Z     raise e
+2025-11-15T23:13:50.516563257Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:50.516564079Z     future = loop.run_in_executor(
+2025-11-15T23:13:50.516564550Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.516565081Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:50.516565551Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:50.516566032Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:50.516566493Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:50.593254565Z [31m20251115-23:13:50.593 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.594424222Z [37m20251115-23:13:50.594 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-15T23:13:50.595173603Z [31m20251115-23:13:50.595 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.596059991Z [37m20251115-23:13:50.596 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-15T23:13:50.596597446Z [31m20251115-23:13:50.596 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.597203209Z [37m20251115-23:13:50.597 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-15T23:13:50.597898959Z [31m20251115-23:13:50.597 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.598567369Z [31m20251115-23:13:50.598 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-15T23:13:50.599569473Z Traceback (most recent call last):
+2025-11-15T23:13:50.604065480Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:50.604066912Z     future = loop.run_in_executor(
+2025-11-15T23:13:50.604067594Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.605867118Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:50.606900130Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:50.606901883Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:50.608019202Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:50.609366021Z [31m20251115-23:13:50.609 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.609928051Z [37m20251115-23:13:50.609 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-15T23:13:50.610962456Z [31m20251115-23:13:50.610 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.611588677Z [37m20251115-23:13:50.611 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-15T23:13:50.612228934Z [31m20251115-23:13:50.612 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.612748145Z [37m20251115-23:13:50.612 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-15T23:13:50.613421053Z [31m20251115-23:13:50.613 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.614116633Z [31m20251115-23:13:50.614 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-15T23:13:50.614809339Z Traceback (most recent call last):
+2025-11-15T23:13:50.616200911Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:50.616202514Z     future = loop.run_in_executor(
+2025-11-15T23:13:50.616203535Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.617525788Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:50.618689404Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:50.618690826Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:50.619678363Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:50.621200960Z [31m20251115-23:13:50.621 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.621952806Z [37m20251115-23:13:50.621 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-15T23:13:50.622488487Z [31m20251115-23:13:50.622 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.623298672Z [37m20251115-23:13:50.623 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-15T23:13:50.623938629Z [31m20251115-23:13:50.623 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.624578625Z [37m20251115-23:13:50.624 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-15T23:13:50.625152969Z [31m20251115-23:13:50.625 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:13:50.625838491Z [31m20251115-23:13:50.625 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-15T23:13:50.626408447Z Traceback (most recent call last):
+2025-11-15T23:13:50.627551524Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:50.627552446Z     future = loop.run_in_executor(
+2025-11-15T23:13:50.627553097Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:50.628630441Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:50.629919702Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:50.629920604Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:50.631634398Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:51.042051139Z [31m20251115-23:13:51.041 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 22 failed with exception: cannot schedule new futures after shutdown [0m
+2025-11-15T23:13:51.042079302Z Traceback (most recent call last):
+2025-11-15T23:13:51.042081256Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-15T23:13:51.042082859Z     result = await async_task
+2025-11-15T23:13:51.042084091Z              ^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.042085093Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-15T23:13:51.042086115Z     traj = await task_input.workflow.arun_episode(
+2025-11-15T23:13:51.042087377Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.042088339Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-15T23:13:51.042089641Z     reward = await self.async_reward_fn(
+2025-11-15T23:13:51.042090573Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.042091555Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-15T23:13:51.042092547Z     raise e
+2025-11-15T23:13:51.042093659Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:51.042094651Z     future = loop.run_in_executor(
+2025-11-15T23:13:51.042095643Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.042096634Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:51.042097656Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:51.042098758Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:51.042099780Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:51.043439886Z [31m20251115-23:13:51.043 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 21 failed with exception: cannot schedule new futures after shutdown [0m
+2025-11-15T23:13:51.043446699Z Traceback (most recent call last):
+2025-11-15T23:13:51.043447681Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-15T23:13:51.043448342Z     result = await async_task
+2025-11-15T23:13:51.043448943Z              ^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.043450035Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-15T23:13:51.043450596Z     traj = await task_input.workflow.arun_episode(
+2025-11-15T23:13:51.043451097Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.043451648Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-15T23:13:51.043452139Z     reward = await self.async_reward_fn(
+2025-11-15T23:13:51.043452620Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.043453231Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-15T23:13:51.043453792Z     raise e
+2025-11-15T23:13:51.043454313Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:51.043458811Z     future = loop.run_in_executor(
+2025-11-15T23:13:51.043459392Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.043459913Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:51.043460414Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:51.043460915Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:51.043461617Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:51.044399731Z [31m20251115-23:13:51.044 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 20 failed with exception: cannot schedule new futures after shutdown [0m
+2025-11-15T23:13:51.044407185Z Traceback (most recent call last):
+2025-11-15T23:13:51.044408447Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-15T23:13:51.044409539Z     result = await async_task
+2025-11-15T23:13:51.044410551Z              ^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.044411523Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-15T23:13:51.044412945Z     traj = await task_input.workflow.arun_episode(
+2025-11-15T23:13:51.044414107Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.044415119Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-15T23:13:51.044416101Z     reward = await self.async_reward_fn(
+2025-11-15T23:13:51.044417073Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.044418005Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-15T23:13:51.044418977Z     raise e
+2025-11-15T23:13:51.044419958Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:13:51.044420920Z     future = loop.run_in_executor(
+2025-11-15T23:13:51.044421932Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:51.044422894Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:13:51.044423846Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:13:51.044424797Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:13:51.044425819Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:13:51.136774494Z [1;34mwandb[0m:
+2025-11-15T23:13:51.136786877Z [1;34mwandb[0m: 🚀 View run [33mtrial_20251115_231309[0m at: [34m[0m
+2025-11-15T23:13:51.137062002Z [1;34mwandb[0m: Find logs at: [1;35m../outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231309/wandb/run-20251115_231345-gsm8k-grpo-cloud-1hour_trial_20251115_231309_train/logs[0m
+2025-11-15T23:13:52.236830679Z [rank0]:[W1115 23:13:52.388011371 ProcessGroupNCCL.cpp:1538] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2025-11-15T23:13:53.090329109Z E1115 23:13:53.089000 538 torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: 1) local_rank: 0 (pid: 572) of binary: /usr/bin/python3
+2025-11-15T23:13:53.090814907Z Traceback (most recent call last):
+2025-11-15T23:13:53.090823834Z   File "/usr/local/bin/torchrun", line 7, in <module>
+2025-11-15T23:13:53.090825166Z     sys.exit(main())
+2025-11-15T23:13:53.090826128Z              ^^^^^^
+2025-11-15T23:13:53.090826699Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+2025-11-15T23:13:53.090829835Z     return f(*args, **kwargs)
+2025-11-15T23:13:53.090830767Z            ^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:53.090831278Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 901, in main
+2025-11-15T23:13:53.090832149Z     run(args)
+2025-11-15T23:13:53.090832951Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 892, in run
+2025-11-15T23:13:53.091349146Z     elastic_launch(
+2025-11-15T23:13:53.091350208Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 143, in __call__
+2025-11-15T23:13:53.091356540Z     return launch_agent(self._config, self._entrypoint, list(args))
+2025-11-15T23:13:53.091357742Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:13:53.091359756Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 277, in launch_agent
+2025-11-15T23:13:53.091360377Z     raise ChildFailedError(
+2025-11-15T23:13:53.091361008Z torch.distributed.elastic.multiprocessing.errors.ChildFailedError:
+2025-11-15T23:13:53.091361559Z ============================================================
+2025-11-15T23:13:53.091362160Z examples/docker_gsm8k/gsm8k_grpo_1hour.py FAILED
+2025-11-15T23:13:53.091362681Z ------------------------------------------------------------
+2025-11-15T23:13:53.091363162Z Failures:
+2025-11-15T23:13:53.091363723Z   <NO_OTHER_FAILURES>
+2025-11-15T23:13:53.091364204Z ------------------------------------------------------------
+2025-11-15T23:13:53.091364685Z Root Cause (first observed failure):
+2025-11-15T23:13:53.091365286Z [0]:
+2025-11-15T23:13:53.091365857Z   time      : 2025-11-15_23:13:53
+2025-11-15T23:13:53.091366418Z   host      : e733e532c795
+2025-11-15T23:13:53.091366929Z   rank      : 0 (local_rank: 0)
+2025-11-15T23:13:53.091367420Z   exitcode  : 1 (pid: 572)
+2025-11-15T23:13:53.091367911Z   error_file: <N/A>
+2025-11-15T23:13:53.091368432Z   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+2025-11-15T23:13:53.091369213Z ============================================================
+2025-11-15T23:13:55.016041343Z [37m20251115-23:13:55.015 Local Scheduler INFO: Stopping local process with signal SIGTERM, pid: [142][0m
+2025-11-15T23:13:55.036914813Z Killed
+2025-11-15T23:13:55.037778327Z [37m20251115-23:13:55.037 Local Scheduler INFO: Stopping local process with signal SIGTERM, pid: [537][0m
+2025-11-15T23:13:55.038092885Z Traceback (most recent call last):
+2025-11-15T23:13:55.038101772Z   File "<frozen runpy>", line 198, in _run_module_as_main
+2025-11-15T23:13:55.038104246Z   File "<frozen runpy>", line 88, in _run_code
+2025-11-15T23:13:55.038105208Z   File "/workspace/AReaL/areal/launcher/local.py", line 405, in <module>
+2025-11-15T23:13:55.038164549Z     main()
+2025-11-15T23:13:55.038187542Z   File "/workspace/AReaL/areal/launcher/local.py", line 260, in main
+2025-11-15T23:13:55.038209553Z     local_main(config, run_id=0)
+2025-11-15T23:13:55.038222057Z   File "/workspace/AReaL/areal/launcher/local.py", line 399, in local_main
+2025-11-15T23:13:55.038245621Z     raise e
+2025-11-15T23:13:55.038252023Z   File "/workspace/AReaL/areal/launcher/local.py", line 375, in local_main
+2025-11-15T23:13:55.038274565Z     launcher.wait(
+2025-11-15T23:13:55.038279544Z   File "/workspace/AReaL/areal/launcher/local.py", line 235, in wait
+2025-11-15T23:13:55.038296346Z     raise JobException(
+2025-11-15T23:13:55.038301876Z areal.utils.launcher.JobException: Job gsm8k-grpo-cloud-1hour_trial_20251115_231309:trainer JobState.COMPLETED at node local
+2025-11-15T23:13:55.257479156Z [37m20251115-23:13:55.257 Local Scheduler INFO: Waiting for 0 local running processes, pids: [0m
+2025-11-15T23:14:10.800943173Z ==========
+2025-11-15T23:14:10.800948282Z == CUDA ==
+2025-11-15T23:14:10.800974652Z ==========
+2025-11-15T23:14:10.802268561Z CUDA Version 12.9.1
+2025-11-15T23:14:10.802639875Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-15T23:14:10.802955205Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-15T23:14:10.802956377Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-15T23:14:10.802957118Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-15T23:14:10.802958501Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-15T23:14:10.883296287Z Writing to /root/.config/pip/pip.conf
+2025-11-15T23:14:10.968264932Z Writing to /root/.config/pip/pip.conf
+2025-11-15T23:14:11.338151089Z Branch 'feature/clean_up_cloud_gsm8k_folder' set up to track remote branch 'feature/clean_up_cloud_gsm8k_folder' from 'origin'.
+2025-11-15T23:14:11.338178590Z Your branch is up to date with 'origin/feature/clean_up_cloud_gsm8k_folder'.
+2025-11-15T23:14:11.368457416Z Checking AReaL installation...
+2025-11-15T23:14:11.395776858Z AReaL already installed. Skipping installation.
+2025-11-15T23:14:11.395790343Z Checking GPU...
+2025-11-15T23:14:11.410593001Z NVIDIA GeForce RTX 5090, 32607 MiB
+2025-11-15T23:14:11.410605084Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-15T23:14:11.424939937Z Using 1-HOUR training configuration (~1-2 hours)
+2025-11-15T23:14:11.424944045Z Note: Uses limited dataset (500 samples) from docker_gsm8k script
+2025-11-15T23:14:11.425995090Z ==========================================
+2025-11-15T23:14:11.425997344Z Starting GRPO Training (Cloud)
+2025-11-15T23:14:11.425999859Z ==========================================
+2025-11-15T23:14:11.426000921Z Config: 1hour
+2025-11-15T23:14:11.426002203Z Config file: examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml
+2025-11-15T23:14:11.426003897Z Training script: examples/docker_gsm8k/gsm8k_grpo_1hour.py
+2025-11-15T23:14:11.426004858Z Experiment: gsm8k-grpo-cloud-1hour
+2025-11-15T23:14:11.426005890Z Trial: trial_20251115_231411
+2025-11-15T23:14:11.426027781Z WandB API key: e1adc5be02...
+2025-11-15T23:14:11.426035736Z ==========================================
+2025-11-15T23:14:11.810573879Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:14:11.810605599Z   import pynvml  # type: ignore[import]
+2025-11-15T23:14:13.856208866Z [37m20251115-23:14:13.856 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:14:13.856239874Z [37m20251115-23:14:13.856 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:14:13.856382942Z [37m20251115-23:14:13.856 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-cloud-1hour/trial_20251115_231411[0m
+2025-11-15T23:14:13.915106684Z [37m20251115-23:14:13.915 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-cloud-1hour, trial_name=trial_20251115_231411, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-15T23:14:13.919534854Z [37m20251115-23:14:13.919 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/docker_gsm8k/gsm8k_grpo_1hour.py --config examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml experiment_name=gsm8k-grpo-cloud-1hour trial_name=trial_20251115_231411 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231411/llm_server.log[0m
+2025-11-15T23:14:14.307985172Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:14:14.308011561Z   import pynvml  # type: ignore[import]
+2025-11-15T23:14:15.069054386Z [37m20251115-23:14:15.068 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:14:15.069267345Z [37m20251115-23:14:15.068 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:14:15.136832568Z [37m20251115-23:14:15.136 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.18.0.2 --port 19233 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:45115 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashinfer --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-15T23:14:15.670929889Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:14:15.670961929Z   import pynvml  # type: ignore[import]
+2025-11-15T23:14:19.224103876Z INFO 11-15 23:14:19 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:14:19.738564680Z All deep_gemm operations loaded successfully!
+2025-11-15T23:14:19.916538116Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-15T23:14:20.304611459Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:14:20.304637027Z   import pynvml  # type: ignore[import]
+2025-11-15T23:14:20.305267235Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:14:20.305281362Z   import pynvml  # type: ignore[import]
+2025-11-15T23:14:23.538213228Z INFO 11-15 23:14:23 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:14:23.538236412Z INFO 11-15 23:14:23 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:14:24.188670328Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-15T23:14:24.551182688Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:14:24.553093982Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:14:24.553413449Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:14:24.553681510Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-15T23:14:24.572715340Z [2025-11-15 23:14:24] MOE_RUNNER_BACKEND is not initialized, using triton backend
+2025-11-15T23:14:24.811064097Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:14:24.811085467Z   warnings.warn(
+2025-11-15T23:14:24.811211362Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:14:24.811226310Z   warnings.warn(
+2025-11-15T23:14:25.980294615Z All deep_gemm operations loaded successfully!
+2025-11-15T23:14:25.980930534Z Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
+2025-11-15T23:14:26.073993194Z Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00, 10.69it/s]
+2025-11-15T23:14:26.855416306Z   0%|          | 0/4 [00:00<?, ?it/s]Capturing batches (bs=8 avail_mem=5.41 GB):   0%|          | 0/4 [00:00<?, ?it/s]Capturing batches (bs=8 avail_mem=5.41 GB):  25%|██▌       | 1/4 [00:00<00:00,  3.34it/s]Capturing batches (bs=4 avail_mem=5.37 GB):  25%|██▌       | 1/4 [00:00<00:00,  3.34it/s]Capturing batches (bs=2 avail_mem=5.34 GB):  25%|██▌       | 1/4 [00:00<00:00,  3.34it/s]Capturing batches (bs=1 avail_mem=5.34 GB):  25%|██▌       | 1/4 [00:00<00:00,  3.34it/s]Capturing batches (bs=1 avail_mem=5.34 GB): 100%|██████████| 4/4 [00:00<00:00, 11.67it/s]
+2025-11-15T23:14:32.150547371Z [37m20251115-23:14:32.150 SGLangServer Wrapper INFO: SGLang server launched at: http://172.18.0.2:19233[0m
+2025-11-15T23:14:32.922177823Z [37m20251115-23:14:32.922 Launcher Utils INFO: Found 1 rollout servers: 172.18.0.2:19233[0m
+2025-11-15T23:14:32.922195887Z [37m20251115-23:14:32.922 Local Scheduler INFO: LLM inference server launched at: AREAL_LLM_SERVER_ADDRS=172.18.0.2:19233[0m
+2025-11-15T23:14:32.923834932Z [37m20251115-23:14:32.923 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL AREAL_LLM_SERVER_ADDRS=172.18.0.2:19233 AREAL_RECOVER_RUN=0 NCCL_CUMEM_ENABLE=0 NCCL_NVLS_ENABLE=0 CUDA_VISIBLE_DEVICES=0 stdbuf -oL torchrun --nnodes 1 --nproc-per-node 1 --master-addr localhost --master-port 49063 examples/docker_gsm8k/gsm8k_grpo_1hour.py --config examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml experiment_name=gsm8k-grpo-cloud-1hour trial_name=trial_20251115_231411 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231411/trainer.log[0m
+2025-11-15T23:14:32.924042830Z [37m20251115-23:14:32.923 Local Scheduler INFO: Waiting for 2 local running processes, pids: 142 537[0m
+2025-11-15T23:14:33.217266172Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:14:33.217294745Z   import pynvml  # type: ignore[import]
+2025-11-15T23:14:33.851301487Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:14:33.851329029Z   import pynvml  # type: ignore[import]
+2025-11-15T23:14:37.676173608Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:14:37.676197273Z   warnings.warn(
+2025-11-15T23:14:37.676366649Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-15T23:14:37.676376758Z   warnings.warn(
+2025-11-15T23:14:40.011107940Z [37m20251115-23:14:40.010 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:14:40.011386231Z [37m20251115-23:14:40.011 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:14:40.233441251Z [37m20251115-23:14:40.233 [FSDP Engine Rank 0] INFO: Initializing device mesh with parallel dims (dp=1, sp=1, tp=1, ep=1, etp=1, world_size=1).[0m
+2025-11-15T23:14:40.234457712Z [37m20251115-23:14:40.234 [FSDP Engine Rank 0] INFO: Data parallel head 0 and rank 0[0m
+2025-11-15T23:14:43.657539963Z [1-HOUR MODE] Limiting dataset from 7473 to 500 samples
+2025-11-15T23:14:43.659071787Z [37m20251115-23:14:43.658 Launcher Utils INFO: Found 1 rollout servers: 172.18.0.2:19233[0m
+2025-11-15T23:14:43.659250591Z [37m20251115-23:14:43.659 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
+2025-11-15T23:14:43.659252344Z [37m20251115-23:14:43.659 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
+2025-11-15T23:14:44.661178065Z [37m20251115-23:14:44.660 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
+2025-11-15T23:14:44.662420387Z [37m20251115-23:14:44.662 Launcher Utils INFO: Found 1 rollout servers: 172.18.0.2:19233[0m
+2025-11-15T23:14:44.662654154Z [37m20251115-23:14:44.662 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
+2025-11-15T23:14:44.662656739Z [37m20251115-23:14:44.662 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
+2025-11-15T23:14:45.664001323Z [37m20251115-23:14:45.663 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
+2025-11-15T23:14:46.654406392Z [37m20251115-23:14:46.654 [FSDP Engine Rank 0] INFO: Model creation and loading time: 0.9299638159573078[0m
+2025-11-15T23:14:46.687192706Z [37m20251115-23:14:46.687 [FSDP Engine Rank 0] INFO: Applying FSDP2 with N-D parallelism for 0.03 seconds[0m
+2025-11-15T23:14:46.687540817Z [37m20251115-23:14:46.687 [FSDP Engine Rank 0] INFO: Create optimizer time: 0.00032854266464710236[0m
+2025-11-15T23:14:47.226660518Z wandb: Currently logged in as: tong-zhao (tong-zhao-georgia-institute-of-technology) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+2025-11-15T23:14:47.228424386Z wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+2025-11-15T23:14:48.051726785Z wandb: setting up run gsm8k-grpo-cloud-1hour_trial_20251115_231411_train
+2025-11-15T23:14:48.470683594Z wandb: Tracking run with wandb version 0.22.2
+2025-11-15T23:14:48.472343628Z wandb: Run data is saved locally in /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231411/wandb/run-20251115_231447-gsm8k-grpo-cloud-1hour_trial_20251115_231411_train
+2025-11-15T23:14:48.472352314Z wandb: Run `wandb offline` to turn off syncing.
+2025-11-15T23:14:48.472824758Z wandb: Syncing run trial_20251115_231411
+2025-11-15T23:14:48.472833945Z wandb: ⭐️ View project at https://wandb.ai/tong-zhao-georgia-institute-of-technology/gsm8k-grpo-local
+2025-11-15T23:14:48.472835087Z wandb: 🚀 View run at https://wandb.ai/tong-zhao-georgia-institute-of-technology/gsm8k-grpo-local/runs/gsm8k-grpo-cloud-1hour_trial_20251115_231411_train
+2025-11-15T23:14:48.569320657Z wandb: Detected [openai] in use.
+2025-11-15T23:14:48.569518897Z wandb: Use W&B Weave for improved LLM call tracing. Install Weave with `pip install weave` then add `import weave` to the top of your script.
+2025-11-15T23:14:48.569520821Z wandb: For more information, check out the docs at: https://weave-docs.wandb.ai/
+2025-11-15T23:14:48.571718510Z swanlab: SwanLab run disabled, the data will not be saved or uploaded.
+2025-11-15T23:14:48.761503151Z ================================================================================
+2025-11-15T23:14:48.761805757Z [1-HOUR TRAINING MODE]
+2025-11-15T23:14:48.761808953Z   Dataset size: 500 samples
+2025-11-15T23:14:48.761812169Z   Batch size: 8
+2025-11-15T23:14:48.761813351Z   Steps per epoch: 63
+2025-11-15T23:14:48.761814423Z   Total epochs: 2
+2025-11-15T23:14:48.762042680Z   Total steps: 126
+2025-11-15T23:14:48.762044273Z   Estimated time: ~126 minutes (~2.1 hours) at ~1 step/min
+2025-11-15T23:14:48.762045155Z ================================================================================
+2025-11-15T23:14:51.515669597Z [37m20251115-23:14:51.515 [FSDP Engine Rank 0] INFO: Microbatch #tokens (rank 0): [5088, 4959, 1888], padded to: [5120, 5120, 2048], padding lengths: [32, 161, 160][0m
+2025-11-15T23:14:52.063852344Z Traceback (most recent call last):
+2025-11-15T23:14:52.064214441Z   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 296, in <module>
+2025-11-15T23:14:52.064218910Z     main(sys.argv[1:])
+2025-11-15T23:14:52.064534760Z   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 204, in main
+2025-11-15T23:14:52.064546152Z     logp = actor.compute_logp(batch)
+2025-11-15T23:14:52.064547594Z            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.064548626Z   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:14:52.064549769Z     return func(*args, **kwargs)
+2025-11-15T23:14:52.064550690Z            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.064551622Z   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 285, in compute_logp
+2025-11-15T23:14:52.064552784Z     return self.actor.compute_logp(*args, **kwargs)
+2025-11-15T23:14:52.064554167Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.064555329Z   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:14:52.064556882Z     return func(*args, **kwargs)
+2025-11-15T23:14:52.064557954Z            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.064741928Z   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 66, in compute_logp
+2025-11-15T23:14:52.064751335Z     return self.engine.forward(
+2025-11-15T23:14:52.064752778Z            ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.064753560Z   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:14:52.064754582Z     return func(*args, **kwargs)
+2025-11-15T23:14:52.064755072Z            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.064755664Z   File "/workspace/AReaL/areal/engine/fsdp_engine.py", line 760, in forward
+2025-11-15T23:14:52.064756375Z     outputs = self.model(**inputs)
+2025-11-15T23:14:52.064757407Z               ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.064757968Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:14:52.064758519Z     return self._call_impl(*args, **kwargs)
+2025-11-15T23:14:52.064759180Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.064759731Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1879, in _call_impl
+2025-11-15T23:14:52.064760282Z     return inner()
+2025-11-15T23:14:52.064761224Z            ^^^^^^^
+2025-11-15T23:14:52.064998938Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1827, in inner
+2025-11-15T23:14:52.065000581Z     result = forward_call(*args, **kwargs)
+2025-11-15T23:14:52.065001293Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.065001874Z   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/generic.py", line 940, in wrapper
+2025-11-15T23:14:52.065002425Z     output = func(self, *args, **kwargs)
+2025-11-15T23:14:52.065002936Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.065003507Z   File "/usr/local/lib/python3.12/dist-packages/transformers/models/qwen2/modeling_qwen2.py", line 463, in forward
+2025-11-15T23:14:52.065004198Z     logits = self.lm_head(hidden_states[:, slice_indices, :])
+2025-11-15T23:14:52.065004890Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.065009799Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:14:52.065010801Z     return self._call_impl(*args, **kwargs)
+2025-11-15T23:14:52.065011292Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.065265988Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+2025-11-15T23:14:52.065274614Z     return forward_call(*args, **kwargs)
+2025-11-15T23:14:52.065276087Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.065277179Z   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py", line 125, in forward
+2025-11-15T23:14:52.065278421Z     return F.linear(input, self.weight, self.bias)
+2025-11-15T23:14:52.065279483Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.065280695Z torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.45 GiB. GPU 0 has a total capacity of 31.36 GiB of which 599.94 MiB is free. Process 286 has 26.30 GiB memory in use. Including non-PyTorch memory, this process has 4.46 GiB memory in use. Of the allocated memory 2.67 GiB is allocated by PyTorch, and 41.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+2025-11-15T23:14:52.066337201Z [rank0]: Traceback (most recent call last):
+2025-11-15T23:14:52.066346949Z [rank0]:   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 296, in <module>
+2025-11-15T23:14:52.066348362Z [rank0]:     main(sys.argv[1:])
+2025-11-15T23:14:52.066349303Z [rank0]:   File "/workspace/AReaL/examples/docker_gsm8k/gsm8k_grpo_1hour.py", line 204, in main
+2025-11-15T23:14:52.066350646Z [rank0]:     logp = actor.compute_logp(batch)
+2025-11-15T23:14:52.066351578Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066352670Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:14:52.066353691Z [rank0]:     return func(*args, **kwargs)
+2025-11-15T23:14:52.066354283Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066354844Z [rank0]:   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 285, in compute_logp
+2025-11-15T23:14:52.066355465Z [rank0]:     return self.actor.compute_logp(*args, **kwargs)
+2025-11-15T23:14:52.066356236Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066356847Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:14:52.066357479Z [rank0]:     return func(*args, **kwargs)
+2025-11-15T23:14:52.066358050Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066359282Z [rank0]:   File "/workspace/AReaL/areal/engine/ppo/actor.py", line 66, in compute_logp
+2025-11-15T23:14:52.066360194Z [rank0]:     return self.engine.forward(
+2025-11-15T23:14:52.066361035Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066361787Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+2025-11-15T23:14:52.066362939Z [rank0]:     return func(*args, **kwargs)
+2025-11-15T23:14:52.066363590Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066365323Z [rank0]:   File "/workspace/AReaL/areal/engine/fsdp_engine.py", line 760, in forward
+2025-11-15T23:14:52.066365974Z [rank0]:     outputs = self.model(**inputs)
+2025-11-15T23:14:52.066366535Z [rank0]:               ^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066367006Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:14:52.066367527Z [rank0]:     return self._call_impl(*args, **kwargs)
+2025-11-15T23:14:52.066367988Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066368519Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1879, in _call_impl
+2025-11-15T23:14:52.066374090Z [rank0]:     return inner()
+2025-11-15T23:14:52.066374951Z [rank0]:            ^^^^^^^
+2025-11-15T23:14:52.066375432Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1827, in inner
+2025-11-15T23:14:52.066376234Z [rank0]:     result = forward_call(*args, **kwargs)
+2025-11-15T23:14:52.066376715Z [rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066377256Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/transformers/utils/generic.py", line 940, in wrapper
+2025-11-15T23:14:52.066377807Z [rank0]:     output = func(self, *args, **kwargs)
+2025-11-15T23:14:52.066378267Z [rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066378808Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/transformers/models/qwen2/modeling_qwen2.py", line 463, in forward
+2025-11-15T23:14:52.066379359Z [rank0]:     logits = self.lm_head(hidden_states[:, slice_indices, :])
+2025-11-15T23:14:52.066380211Z [rank0]:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066380732Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+2025-11-15T23:14:52.066381584Z [rank0]:     return self._call_impl(*args, **kwargs)
+2025-11-15T23:14:52.066382044Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066382515Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+2025-11-15T23:14:52.066382996Z [rank0]:     return forward_call(*args, **kwargs)
+2025-11-15T23:14:52.066383477Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066383948Z [rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/linear.py", line 125, in forward
+2025-11-15T23:14:52.066385230Z [rank0]:     return F.linear(input, self.weight, self.bias)
+2025-11-15T23:14:52.066385701Z [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.066386232Z [rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.45 GiB. GPU 0 has a total capacity of 31.36 GiB of which 599.94 MiB is free. Process 286 has 26.30 GiB memory in use. Including non-PyTorch memory, this process has 4.46 GiB memory in use. Of the allocated memory 2.67 GiB is allocated by PyTorch, and 41.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+2025-11-15T23:14:52.444594991Z [31m20251115-23:14:52.444 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.446464015Z [37m20251115-23:14:52.446 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-15T23:14:52.448845178Z [31m20251115-23:14:52.448 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.449665171Z [37m20251115-23:14:52.449 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-15T23:14:52.450364489Z [31m20251115-23:14:52.450 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.451207344Z [37m20251115-23:14:52.451 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-15T23:14:52.451673286Z [31m20251115-23:14:52.451 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.452433036Z [31m20251115-23:14:52.452 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-15T23:14:52.453043377Z Traceback (most recent call last):
+2025-11-15T23:14:52.454851298Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:14:52.454852350Z     future = loop.run_in_executor(
+2025-11-15T23:14:52.454853452Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.456545666Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:14:52.458017628Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:14:52.458019011Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:14:52.459256795Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:14:52.582703166Z [31m20251115-23:14:52.582 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.583791021Z [37m20251115-23:14:52.583 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-15T23:14:52.584522809Z [31m20251115-23:14:52.584 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.585387536Z [37m20251115-23:14:52.585 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-15T23:14:52.586239008Z [31m20251115-23:14:52.586 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.587079129Z [37m20251115-23:14:52.587 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-15T23:14:52.587993969Z [31m20251115-23:14:52.587 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.588719406Z [31m20251115-23:14:52.588 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-15T23:14:52.589606525Z Traceback (most recent call last):
+2025-11-15T23:14:52.591585415Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:14:52.591587308Z     future = loop.run_in_executor(
+2025-11-15T23:14:52.591588500Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.592879194Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:14:52.594295642Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:14:52.594297085Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:14:52.596014296Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:14:52.613961874Z [31m20251115-23:14:52.613 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 20 failed with exception: cannot schedule new futures after shutdown [0m
+2025-11-15T23:14:52.613964199Z Traceback (most recent call last):
+2025-11-15T23:14:52.613965301Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-15T23:14:52.613966373Z     result = await async_task
+2025-11-15T23:14:52.613967665Z              ^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.613968667Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-15T23:14:52.613969699Z     traj = await task_input.workflow.arun_episode(
+2025-11-15T23:14:52.613970941Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.613972023Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-15T23:14:52.613972985Z     reward = await self.async_reward_fn(
+2025-11-15T23:14:52.613973967Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.613974939Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-15T23:14:52.613975951Z     raise e
+2025-11-15T23:14:52.613977223Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:14:52.613978195Z     future = loop.run_in_executor(
+2025-11-15T23:14:52.613979167Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.613980189Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:14:52.613981180Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:14:52.613982182Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:14:52.613983184Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:14:52.615131171Z [31m20251115-23:14:52.614 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 21 failed with exception: cannot schedule new futures after shutdown [0m
+2025-11-15T23:14:52.615136942Z Traceback (most recent call last):
+2025-11-15T23:14:52.615137773Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-15T23:14:52.615145027Z     result = await async_task
+2025-11-15T23:14:52.615145728Z              ^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.615146249Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-15T23:14:52.615146820Z     traj = await task_input.workflow.arun_episode(
+2025-11-15T23:14:52.615147401Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.615147892Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-15T23:14:52.615148413Z     reward = await self.async_reward_fn(
+2025-11-15T23:14:52.615148904Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.615149465Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-15T23:14:52.615149966Z     raise e
+2025-11-15T23:14:52.615150547Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:14:52.615151028Z     future = loop.run_in_executor(
+2025-11-15T23:14:52.615151529Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.615152050Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:14:52.615152551Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:14:52.615153052Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:14:52.615153583Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:14:52.629422643Z [31m20251115-23:14:52.629 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.630903041Z [37m20251115-23:14:52.630 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-15T23:14:52.631596197Z [31m20251115-23:14:52.631 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.632175570Z [37m20251115-23:14:52.632 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-15T23:14:52.632871051Z [31m20251115-23:14:52.632 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.633556743Z [37m20251115-23:14:52.633 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-15T23:14:52.634295935Z [31m20251115-23:14:52.634 Reward API ERROR: Unexpected error in reward computation: cannot schedule new futures after shutdown[0m
+2025-11-15T23:14:52.634971508Z [31m20251115-23:14:52.634 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-15T23:14:52.635941753Z Traceback (most recent call last):
+2025-11-15T23:14:52.637241082Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:14:52.637242344Z     future = loop.run_in_executor(
+2025-11-15T23:14:52.637242905Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:52.638408475Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:14:52.639426979Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:14:52.639428322Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:14:52.640987427Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:14:53.130241659Z [31m20251115-23:14:53.129 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 22 failed with exception: cannot schedule new futures after shutdown [0m
+2025-11-15T23:14:53.130255495Z Traceback (most recent call last):
+2025-11-15T23:14:53.130256737Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-15T23:14:53.130258040Z     result = await async_task
+2025-11-15T23:14:53.130258591Z              ^^^^^^^^^^^^^^^^
+2025-11-15T23:14:53.130259162Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-15T23:14:53.130259823Z     traj = await task_input.workflow.arun_episode(
+2025-11-15T23:14:53.130261576Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:53.130262268Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-15T23:14:53.130262879Z     reward = await self.async_reward_fn(
+2025-11-15T23:14:53.130263410Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:53.130268800Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-15T23:14:53.130269411Z     raise e
+2025-11-15T23:14:53.130269952Z   File "/workspace/AReaL/areal/api/reward_api.py", line 118, in __call__
+2025-11-15T23:14:53.130270453Z     future = loop.run_in_executor(
+2025-11-15T23:14:53.130270964Z              ^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:53.130271505Z   File "uvloop/loop.pyx", line 2747, in uvloop.loop.Loop.run_in_executor
+2025-11-15T23:14:53.130272066Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 807, in submit
+2025-11-15T23:14:53.130272898Z     raise RuntimeError('cannot schedule new futures after shutdown')
+2025-11-15T23:14:53.130273439Z RuntimeError: cannot schedule new futures after shutdown
+2025-11-15T23:14:53.435954664Z [1;34mwandb[0m:
+2025-11-15T23:14:53.435973329Z [1;34mwandb[0m: 🚀 View run [33mtrial_20251115_231411[0m at: [34m[0m
+2025-11-15T23:14:53.435975744Z [1;34mwandb[0m: Find logs at: [1;35m../outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231411/wandb/run-20251115_231447-gsm8k-grpo-cloud-1hour_trial_20251115_231411_train/logs[0m
+2025-11-15T23:14:54.565589295Z [rank0]:[W1115 23:14:54.716742255 ProcessGroupNCCL.cpp:1538] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2025-11-15T23:14:55.490214077Z E1115 23:14:55.489000 538 torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: 1) local_rank: 0 (pid: 572) of binary: /usr/bin/python3
+2025-11-15T23:14:55.490862279Z Traceback (most recent call last):
+2025-11-15T23:14:55.490875654Z   File "/usr/local/bin/torchrun", line 7, in <module>
+2025-11-15T23:14:55.490877889Z     sys.exit(main())
+2025-11-15T23:14:55.490879502Z              ^^^^^^
+2025-11-15T23:14:55.490880804Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
+2025-11-15T23:14:55.490882688Z     return f(*args, **kwargs)
+2025-11-15T23:14:55.490884301Z            ^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:55.490885403Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 901, in main
+2025-11-15T23:14:55.490886775Z     run(args)
+2025-11-15T23:14:55.490888138Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 892, in run
+2025-11-15T23:14:55.490889470Z     elastic_launch(
+2025-11-15T23:14:55.490890502Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 143, in __call__
+2025-11-15T23:14:55.490892025Z     return launch_agent(self._config, self._entrypoint, list(args))
+2025-11-15T23:14:55.490895892Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-15T23:14:55.490896954Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 277, in launch_agent
+2025-11-15T23:14:55.490898277Z     raise ChildFailedError(
+2025-11-15T23:14:55.490899249Z torch.distributed.elastic.multiprocessing.errors.ChildFailedError:
+2025-11-15T23:14:55.490900250Z ============================================================
+2025-11-15T23:14:55.490901272Z examples/docker_gsm8k/gsm8k_grpo_1hour.py FAILED
+2025-11-15T23:14:55.490902254Z ------------------------------------------------------------
+2025-11-15T23:14:55.490903677Z Failures:
+2025-11-15T23:14:55.490904709Z   <NO_OTHER_FAILURES>
+2025-11-15T23:14:55.490905691Z ------------------------------------------------------------
+2025-11-15T23:14:55.490906672Z Root Cause (first observed failure):
+2025-11-15T23:14:55.490907674Z [0]:
+2025-11-15T23:14:55.490908766Z   time      : 2025-11-15_23:14:55
+2025-11-15T23:14:55.490909798Z   host      : e733e532c795
+2025-11-15T23:14:55.490910840Z   rank      : 0 (local_rank: 0)
+2025-11-15T23:14:55.490911872Z   exitcode  : 1 (pid: 572)
+2025-11-15T23:14:55.490912864Z   error_file: <N/A>
+2025-11-15T23:14:55.490913876Z   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+2025-11-15T23:14:55.490914928Z ============================================================
+2025-11-15T23:14:56.926913010Z [37m20251115-23:14:56.926 Local Scheduler INFO: Stopping local process with signal SIGTERM, pid: [142][0m
+2025-11-15T23:14:56.948545549Z Killed
+2025-11-15T23:14:56.950518528Z [37m20251115-23:14:56.950 Local Scheduler INFO: Stopping local process with signal SIGTERM, pid: [537][0m
+2025-11-15T23:14:56.950759699Z Traceback (most recent call last):
+2025-11-15T23:14:56.950769307Z   File "<frozen runpy>", line 198, in _run_module_as_main
+2025-11-15T23:14:56.950770449Z   File "<frozen runpy>", line 88, in _run_code
+2025-11-15T23:14:56.950771100Z   File "/workspace/AReaL/areal/launcher/local.py", line 405, in <module>
+2025-11-15T23:14:56.950837044Z     main()
+2025-11-15T23:14:56.950857382Z   File "/workspace/AReaL/areal/launcher/local.py", line 260, in main
+2025-11-15T23:14:56.950879062Z     local_main(config, run_id=0)
+2025-11-15T23:14:56.950890343Z   File "/workspace/AReaL/areal/launcher/local.py", line 399, in local_main
+2025-11-15T23:14:56.950915080Z     raise e
+2025-11-15T23:14:56.950920680Z   File "/workspace/AReaL/areal/launcher/local.py", line 375, in local_main
+2025-11-15T23:14:56.950941058Z     launcher.wait(
+2025-11-15T23:14:56.950945817Z   File "/workspace/AReaL/areal/launcher/local.py", line 235, in wait
+2025-11-15T23:14:56.950959753Z     raise JobException(
+2025-11-15T23:14:56.950963230Z areal.utils.launcher.JobException: Job gsm8k-grpo-cloud-1hour_trial_20251115_231411:trainer JobState.COMPLETED at node local
+2025-11-15T23:14:57.171032377Z [37m20251115-23:14:57.170 Local Scheduler INFO: Waiting for 0 local running processes, pids: [0m
+2025-11-15T23:15:13.084143739Z ==========
+2025-11-15T23:15:13.084148598Z == CUDA ==
+2025-11-15T23:15:13.084168735Z ==========
+2025-11-15T23:15:13.085589582Z CUDA Version 12.9.1
+2025-11-15T23:15:13.086046647Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-15T23:15:13.086396741Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-15T23:15:13.086397653Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-15T23:15:13.086398344Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-15T23:15:13.086399677Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-15T23:15:13.166723587Z Writing to /root/.config/pip/pip.conf
+2025-11-15T23:15:13.253252780Z Writing to /root/.config/pip/pip.conf
+2025-11-15T23:15:13.616303646Z Branch 'feature/clean_up_cloud_gsm8k_folder' set up to track remote branch 'feature/clean_up_cloud_gsm8k_folder' from 'origin'.
+2025-11-15T23:15:13.616324555Z Your branch is up to date with 'origin/feature/clean_up_cloud_gsm8k_folder'.
+2025-11-15T23:15:13.648609212Z Checking AReaL installation...
+2025-11-15T23:15:13.676728619Z AReaL already installed. Skipping installation.
+2025-11-15T23:15:13.676733398Z Checking GPU...
+2025-11-15T23:15:13.691906379Z NVIDIA GeForce RTX 5090, 32607 MiB
+2025-11-15T23:15:13.691926216Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-15T23:15:13.706312295Z Using 1-HOUR training configuration (~1-2 hours)
+2025-11-15T23:15:13.706323937Z Note: Uses limited dataset (500 samples) from docker_gsm8k script
+2025-11-15T23:15:13.706904452Z ==========================================
+2025-11-15T23:15:13.706907117Z Starting GRPO Training (Cloud)
+2025-11-15T23:15:13.706908560Z ==========================================
+2025-11-15T23:15:13.706909692Z Config: 1hour
+2025-11-15T23:15:13.706911606Z Config file: examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml
+2025-11-15T23:15:13.706912688Z Training script: examples/docker_gsm8k/gsm8k_grpo_1hour.py
+2025-11-15T23:15:13.706913670Z Experiment: gsm8k-grpo-cloud-1hour
+2025-11-15T23:15:13.706914732Z Trial: trial_20251115_231513
+2025-11-15T23:15:13.706918368Z WandB API key: e1adc5be02...
+2025-11-15T23:15:13.706919541Z ==========================================
+2025-11-15T23:15:14.114868377Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:15:14.114900417Z   import pynvml  # type: ignore[import]
+2025-11-15T23:15:16.251802326Z [37m20251115-23:15:16.251 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:15:16.251834406Z [37m20251115-23:15:16.251 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:15:16.251991280Z [37m20251115-23:15:16.251 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-cloud-1hour/trial_20251115_231513[0m
+2025-11-15T23:15:16.310557196Z [37m20251115-23:15:16.310 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-cloud-1hour, trial_name=trial_20251115_231513, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-15T23:15:16.315018138Z [37m20251115-23:15:16.314 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/docker_gsm8k/gsm8k_grpo_1hour.py --config examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml experiment_name=gsm8k-grpo-cloud-1hour trial_name=trial_20251115_231513 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-cloud-1hour/trial_20251115_231513/llm_server.log[0m
+2025-11-15T23:15:16.717771149Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:15:16.717803700Z   import pynvml  # type: ignore[import]
+2025-11-15T23:15:17.487600974Z [37m20251115-23:15:17.487 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-15T23:15:17.487835272Z [37m20251115-23:15:17.487 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-15T23:15:17.557644792Z [37m20251115-23:15:17.557 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.18.0.2 --port 25856 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:46498 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashinfer --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-15T23:15:18.097773650Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-15T23:15:18.097801182Z   import pynvml  # type: ignore[import]
+2025-11-15T23:15:21.655788389Z INFO 11-15 23:15:21 [__init__.py:216] Automatically detected platform cuda.
+2025-11-15T23:15:22.178693923Z All deep_gemm operations loaded successfully!
+2025-11-15T23:15:22.334687180Z `torch_dtype` is deprecated! Use `dtype` instead!
