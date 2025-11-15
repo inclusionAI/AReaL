@@ -429,7 +429,7 @@ class WorkflowExecutor:
 
                     # Filter out None (rejected rollouts) and enqueue accepted
                     for result in results:
-                        if result is not None:
+                        if result.data is not None:
                             self._pending_results.append(result)
 
                 except TimeoutError:
