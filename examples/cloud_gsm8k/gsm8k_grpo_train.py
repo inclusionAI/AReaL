@@ -1,10 +1,22 @@
 """
-Full Dataset GRPO Training Script for Local 4080S GPU
-Processes ALL GSM8K training samples (~7,473 samples) across multiple sessions
-Automatically resumes from checkpoints between sessions
+Consolidated GRPO training script for GSM8K.
+
+This script handles all training configurations (fast, 1hour, 3hour, full)
+by reading settings from the YAML config file and command-line overrides.
+
+Usage:
+    python -m areal.launcher.local examples/cloud_gsm8k/gsm8k_grpo_train.py \
+        --config examples/cloud_gsm8k/gsm8k_grpo_fast.yaml
+
+Config parameters:
+    - max_train_samples: Limit dataset size (None for full dataset)
+    - training_mode: Display name for training mode (e.g., "FAST", "1-HOUR", "3-HOUR", "FULL")
+    - circuit_breaker_enabled: Enable circuit breaker for zero-reward detection (default: True)
+    - circuit_breaker_threshold: Number of consecutive zero rewards before stopping (default: 10)
 """
 import os
 import sys
+import logging
 from copy import deepcopy
 
 import torch.distributed as dist
@@ -17,9 +29,7 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import (
-    cycle_dataloader,
-)
+from areal.utils.data import cycle_dataloader
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
@@ -37,7 +47,49 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
 
 def main(args):
-    config, _ = load_expr_config(args, GRPOConfig)
+    # Extract custom training parameters from YAML before config validation
+    # These parameters are not part of GRPOConfig, so we read them directly from YAML
+    import argparse
+    from omegaconf import OmegaConf
+    from pathlib import Path
+    
+    # Parse args to find config file
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", help="Path to the main configuration file", required=True)
+    # Skip script path if present
+    if args and args[0].endswith(".py"):
+        args = args[1:]
+    parsed_args, _ = parser.parse_known_args(args)
+    
+    # Load YAML directly to extract custom fields
+    config_file = Path(parsed_args.config)
+    if not config_file.is_absolute():
+        # Make it absolute relative to current working directory
+        config_file = Path.cwd() / config_file
+    raw_yaml = OmegaConf.load(config_file)
+    
+    # Extract custom training parameters
+    max_train_samples = raw_yaml.get("max_train_samples", None)
+    if max_train_samples is not None:
+        max_train_samples = int(max_train_samples)
+    training_mode = raw_yaml.get("training_mode", "TRAINING")
+    circuit_breaker_enabled = raw_yaml.get("circuit_breaker_enabled", True)
+    circuit_breaker_threshold = int(raw_yaml.get("circuit_breaker_threshold", 10))
+    
+    # Remove custom fields from config to avoid validation errors
+    # Use OmegaConf/Hydra delete syntax (~key) to remove keys
+    custom_keys = ["max_train_samples", "training_mode", "circuit_breaker_enabled", "circuit_breaker_threshold"]
+    override_args = []
+    for key in custom_keys:
+        if key in raw_yaml:
+            # Use ~ prefix to delete the key in OmegaConf/Hydra
+            override_args.append(f"~{key}")
+    
+    # Add overrides to args to remove custom keys
+    args_with_overrides = args + override_args
+    
+    # Now load config normally - the overrides will remove the custom keys
+    config, _ = load_expr_config(args_with_overrides, GRPOConfig)
     config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
@@ -52,7 +104,7 @@ def main(args):
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
-    # Create dataset and dataloaders - NO LIMIT, USE ALL SAMPLES
+    # Create dataset and dataloaders
     train_dataset = get_custom_dataset(
         split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
@@ -60,15 +112,13 @@ def main(args):
         split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
     )
 
-    print(f"\n{'='*80}")
-    print(f"[FULL DATASET TRAINING]")
-    print(f"  Total training samples: {len(train_dataset)}")
-    print(f"  Batch size: {config.train_dataset.batch_size}")
-    print(f"  Total epochs: {config.total_train_epochs}")
-    print(f"  Steps per epoch: ~{len(train_dataset) // config.train_dataset.batch_size}")
-    print(f"  Total steps: ~{config.total_train_epochs * (len(train_dataset) // config.train_dataset.batch_size)}")
-    print(f"  Recovery mode: {config.recover.mode} (auto-resume enabled)")
-    print(f"{'='*80}\n")
+    # Apply dataset size limit if specified
+    original_size = len(train_dataset)
+    if max_train_samples is not None and len(train_dataset) > max_train_samples:
+        print(f"[{training_mode}] Limiting dataset from {len(train_dataset)} to {max_train_samples} samples")
+        train_dataset = train_dataset.select(range(max_train_samples))
+    elif max_train_samples is None:
+        print(f"[{training_mode}] Using full dataset: {len(train_dataset)} samples")
 
     train_dataloader = create_dataloader(
         train_dataset,
@@ -97,6 +147,8 @@ def main(args):
     eval_rollout.initialize()
 
     # Use disk-based weight updates for single-GPU setups to avoid NCCL duplicate GPU error
+    # NCCL requires separate GPUs for each rank, but single GPU setups share the same GPU
+    # between training and inference processes
     if config.cluster.n_gpus_per_node == 1 and allocation_mode.gen.world_size == 1:
         weight_update_meta = WeightUpdateMeta.from_disk(
             config.experiment_name,
@@ -120,6 +172,8 @@ def main(args):
         config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
     if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
         config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
+    
+    # Always set dump_dir for consistency (harmless if not needed)
     workflow = RLVRWorkflow(
         reward_fn=gsm8k_reward_fn,
         gconfig=config.gconfig,
@@ -129,6 +183,8 @@ def main(args):
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
     )
+
+    # Eval workflow with temperature=0.6 for better evaluation
     eval_workflow = RLVRWorkflow(
         reward_fn=gsm8k_reward_fn,
         gconfig=config.gconfig.new(temperature=0.6),
@@ -155,16 +211,6 @@ def main(args):
         inference_engine=rollout,
         weight_update_meta=weight_update_meta,
     )
-    
-    if recover_info is not None:
-        print(f"\n{'='*80}")
-        print(f"[RESUMING FROM CHECKPOINT]")
-        print(f"  Last step: {recover_info.last_step_info}")
-        print(f"  Resuming from: epoch {recover_info.last_step_info.epoch + 1}, "
-              f"step {recover_info.last_step_info.epoch_step + 1}, "
-              f"global_step {recover_info.last_step_info.global_step + 1}")
-        print(f"{'='*80}\n")
-    
     start_step = (
         recover_info.last_step_info.next().global_step
         if recover_info is not None
@@ -175,8 +221,22 @@ def main(args):
     steps_per_epoch = len(train_dataloader)
     max_steps = total_epochs * steps_per_epoch
 
-    print(f"[TRAINING] Starting from step {start_step} of {max_steps} total steps")
-    print(f"[TRAINING] Progress: {start_step}/{max_steps} ({100*start_step/max_steps:.1f}%)\n")
+    # Print training summary
+    print(f"\n{'='*80}")
+    print(f"[{training_mode} MODE]")
+    print(f"  Dataset size: {len(train_dataset)} samples" + 
+          (f" (limited from {original_size})" if max_train_samples and original_size > max_train_samples else ""))
+    print(f"  Batch size: {config.train_dataset.batch_size}")
+    print(f"  Steps per epoch: {steps_per_epoch}")
+    print(f"  Total epochs: {total_epochs}")
+    print(f"  Total steps: {max_steps}")
+    print(f"  Estimated time: ~{max_steps} minutes (~{max_steps/60:.1f} hours) at ~1 step/min")
+    if circuit_breaker_enabled:
+        print(f"  Circuit breaker: Enabled (threshold: {circuit_breaker_threshold} consecutive zero rewards)")
+    print(f"{'='*80}\n")
+
+    # Circuit breaker: Track consecutive zero rewards
+    zero_reward_streak = 0
 
     data_generator = cycle_dataloader(train_dataloader)
     for global_step in range(start_step, max_steps):
@@ -233,7 +293,6 @@ def main(args):
 
         with stats_tracker.record_timing("update_weights"):
             actor.update_weights(weight_update_meta)
-
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
             eval_rollout.set_version(global_step + 1)
@@ -250,12 +309,14 @@ def main(args):
                 stats_logger,
                 train_dataloader,
                 tokenizer=tokenizer,
+                base_model_path=config.actor.path,
             )
 
         dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
 
         with stats_tracker.record_timing("eval"):
+
             def evaluate_fn():
                 if actor.is_data_parallel_head():
                     cnt = 0
@@ -283,17 +344,71 @@ def main(args):
         )
         stats_logger.commit(epoch, step, global_step, stats)
 
+        # Circuit breaker: Check task reward and stop if zero for too long
+        if circuit_breaker_enabled:
+            task_reward_avg = stats[0].get("grpo_actor/task_reward/avg", None)
+            if task_reward_avg is not None:
+                if task_reward_avg == 0.0:
+                    zero_reward_streak += 1
+                    if zero_reward_streak >= circuit_breaker_threshold:
+                        error_msg = (
+                            f"\n{'='*80}\n"
+                            f"CIRCUIT BREAKER TRIGGERED!\n"
+                            f"{'='*80}\n"
+                            f"Task reward has been zero for {zero_reward_streak} consecutive steps.\n"
+                            f"Current step: {global_step} (Epoch {epoch}, Step {step})\n"
+                            f"Stopping training to prevent model corruption.\n"
+                            f"\nPossible causes:\n"
+                            f"  - SGLang server crashed or disconnected\n"
+                            f"  - Inference server not responding\n"
+                            f"  - Network connectivity issues\n"
+                            f"\nNext steps:\n"
+                            f"  1. Check SGLang server logs for errors\n"
+                            f"  2. Verify SGLang server is running\n"
+                            f"  3. Resume training from checkpoint before step {global_step - zero_reward_streak + 1}\n"
+                            f"  4. Use: python examples/cloud_gsm8k/resume_training.py \\\n"
+                            f"         --experiment-name {config.experiment_name} \\\n"
+                            f"         --trial-name {config.trial_name} \\\n"
+                            f"         --before-step {global_step - zero_reward_streak + 1}\n"
+                            f"{'='*80}\n"
+                        )
+                        if actor.is_data_parallel_head():
+                            print(error_msg)
+                            logging.error(error_msg)
+                        # Save a final checkpoint before stopping
+                        saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
+                        recover_handler.dump(
+                            actor,
+                            step_info,
+                            saver,
+                            evaluator,
+                            stats_logger,
+                            train_dataloader,
+                            tokenizer=tokenizer,
+                        )
+                        # Clean shutdown
+                        stats_logger.close()
+                        eval_rollout.destroy()
+                        rollout.destroy()
+                        if ref is not None:
+                            ref.destroy()
+                        actor.destroy()
+                        sys.exit(1)
+                else:
+                    # Reset streak if reward is non-zero
+                    if zero_reward_streak > 0:
+                        if actor.is_data_parallel_head():
+                            print(f"✅ Task reward recovered: {task_reward_avg:.4f} (was zero for {zero_reward_streak} steps)")
+                    zero_reward_streak = 0
+            elif actor.is_data_parallel_head() and global_step % 10 == 0:
+                # Log warning if task_reward is missing from stats
+                print(f"⚠️  Warning: task_reward/avg not found in stats at step {global_step}")
+
         dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
 
         # Resume rollout
         rollout.resume()
-
-    print(f"\n{'='*80}")
-    print(f"[TRAINING COMPLETE]")
-    print(f"  Completed {max_steps} steps across {total_epochs} epochs")
-    print(f"  All {len(train_dataset)} training samples processed")
-    print(f"{'='*80}\n")
 
     stats_logger.close()
     eval_rollout.destroy()

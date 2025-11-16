@@ -1,8 +1,14 @@
 # Cloud Fast Training Configuration
-# Same as docker_gsm8k version, but with cloud-friendly paths
+# Optimized for quick testing and iteration (20-30 minutes)
 
 experiment_name: gsm8k-grpo-cloud-fast
 trial_name: trial0
+
+# Training configuration
+max_train_samples: 200  # Limit dataset to 200 samples for fast iteration
+training_mode: "FAST"
+circuit_breaker_enabled: true
+circuit_breaker_threshold: 10
 
 seed: 1
 total_train_epochs: 1

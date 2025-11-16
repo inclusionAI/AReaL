@@ -84,23 +84,23 @@ check_full_training_gpu() {
 case "$CONFIG_NAME" in
     fast)
         CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_fast.yaml"
-        TRAIN_SCRIPT="examples/docker_gsm8k/gsm8k_grpo_fast.py"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
         EXPERIMENT_NAME="gsm8k-grpo-cloud-fast"
         echo "Using FAST training configuration (20-30 minutes)"
         ;;
     1hour)
         CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml"
-        TRAIN_SCRIPT="examples/docker_gsm8k/gsm8k_grpo_1hour.py"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
         EXPERIMENT_NAME="gsm8k-grpo-cloud-1hour"
         echo "Using 1-HOUR training configuration (~1-2 hours)"
-        echo "Note: Uses limited dataset (500 samples) from docker_gsm8k script"
+        echo "Note: Uses limited dataset (500 samples)"
         ;;
     3hour)
         CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_3hour.yaml"
-        TRAIN_SCRIPT="examples/docker_gsm8k/gsm8k_grpo_3hour.py"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
         EXPERIMENT_NAME="gsm8k-grpo-cloud-3hour"
         echo "Using 3-HOUR training configuration (~3-4 hours)"
-        echo "Note: Uses limited dataset (1000 samples) from docker_gsm8k script"
+        echo "Note: Uses limited dataset (1000 samples)"
         ;;
     full)
         # Full training requires high-end GPUs
@@ -118,7 +118,7 @@ case "$CONFIG_NAME" in
         fi
         
         CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_cloud.yaml"
-        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_cloud.py"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
         EXPERIMENT_NAME="gsm8k-grpo-cloud-full"
         echo "Using FULL training configuration (full dataset, 5 epochs)"
         echo "GPU: $GPU_NAME ($GPU_MEMORY MB) - suitable for full training"
@@ -131,28 +131,16 @@ case "$CONFIG_NAME" in
         ;;
 esac
 
-# Check if config file exists, fallback to docker_gsm8k versions
+# Check if config file exists
 if [ ! -f "$CONFIG_FILE" ]; then
-    DOCKER_CONFIG="examples/docker_gsm8k/$(basename "$CONFIG_FILE")"
-    if [ -f "$DOCKER_CONFIG" ]; then
-        echo "Using config from docker_gsm8k: $DOCKER_CONFIG"
-        CONFIG_FILE="$DOCKER_CONFIG"
-    else
-        echo "ERROR: Config file not found: $CONFIG_FILE"
-        exit 1
-    fi
+    echo "ERROR: Config file not found: $CONFIG_FILE"
+    exit 1
 fi
 
-# Check if training script exists, fallback to docker_gsm8k versions
+# Check if training script exists
 if [ ! -f "$TRAIN_SCRIPT" ]; then
-    DOCKER_SCRIPT="examples/docker_gsm8k/$(basename "$TRAIN_SCRIPT")"
-    if [ -f "$DOCKER_SCRIPT" ]; then
-        echo "Using script from docker_gsm8k: $DOCKER_SCRIPT"
-        TRAIN_SCRIPT="$DOCKER_SCRIPT"
-    else
-        echo "ERROR: Training script not found: $TRAIN_SCRIPT"
-        exit 1
-    fi
+    echo "ERROR: Training script not found: $TRAIN_SCRIPT"
+    exit 1
 fi
 
 # Generate trial name with timestamp

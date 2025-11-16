@@ -107,12 +107,21 @@ cd /workspace
 pip config set global.index-url https://pypi.org/simple
 pip config set global.extra-index-url ""
 
-# Clone repository (DL4Math branch)
-git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
-cd AReaL
+# Smart repository handling: update if exists, clone if not
+if [ -d AReaL/.git ]; then
+    cd AReaL
+    git fetch origin
+    git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL)
+else
+    rm -rf AReaL
+    git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
+    cd AReaL
+fi
 
-# Install AReaL
-pip install -e .
+# Smart installation: only install if not already installed
+if ! python3 -c "import areal" 2>/dev/null; then
+    pip install -e .
+fi
 
 # Verify GPU
 nvidia-smi
@@ -274,12 +283,29 @@ ls -lh /workspace/outputs/grpo/checkpoints/
 When you restart a pod (after stopping or interruption):
 
 1. **Deploy new pod** (or restart existing) with same volume mounted
-2. **Clone repository** (if not already there):
+2. **Set up repository** (smart handling: update if exists, clone if not):
    ```bash
    cd /workspace
-   git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
-   cd AReaL
-   pip install -e .
+   
+   # Fix pip configuration
+   pip config set global.index-url https://pypi.org/simple
+   pip config set global.extra-index-url ""
+   
+   # Smart repository handling: update if exists, clone if not
+   if [ -d AReaL/.git ]; then
+       cd AReaL
+       git fetch origin
+       git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL)
+   else
+       rm -rf AReaL
+       git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
+       cd AReaL
+   fi
+   
+   # Smart installation: only install if not already installed
+   if ! python3 -c "import areal" 2>/dev/null; then
+       pip install -e .
+   fi
    ```
 3. **Verify checkpoint exists**:
    ```bash

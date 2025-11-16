@@ -5,6 +5,12 @@
 experiment_name: gsm8k-grpo-1hour
 trial_name: trial0
 
+# Training configuration
+max_train_samples: 500  # Limit dataset to 500 samples for ~1 hour training
+training_mode: "1-HOUR"
+circuit_breaker_enabled: true
+circuit_breaker_threshold: 10
+
 seed: 1
 total_train_epochs: 2  # 2 epochs for better convergence
 tokenizer_path: ${actor.path}

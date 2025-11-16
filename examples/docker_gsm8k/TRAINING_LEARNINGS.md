@@ -69,7 +69,7 @@ Normalized advantages:
 
 **Usage**:
 ```bash
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_fast.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_fast.yaml \
     experiment_name=gsm8k-grpo-fast \
     trial_name=trial0
@@ -90,7 +90,7 @@ python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_fast.py \
 
 **Usage**:
 ```bash
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_1hour.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_1hour.yaml \
     experiment_name=gsm8k-grpo-1hour \
     trial_name=trial0
@@ -111,7 +111,7 @@ python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_1hour.py \
 
 **Usage**:
 ```bash
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_3hour.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_3hour.yaml \
     experiment_name=gsm8k-grpo-3hour \
     trial_name=trial0
@@ -132,7 +132,7 @@ python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_3hour.py \
 
 **Usage**:
 ```bash
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_full.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_full.yaml \
     experiment_name=gsm8k-grpo-full \
     trial_name=trial0
@@ -303,7 +303,7 @@ If automatic recovery doesn't work:
 
 3. **Resume training** (auto-detects checkpoint):
    ```bash
-   python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_full.py \
+   python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
        --config examples/docker_gsm8k/gsm8k_grpo_full.yaml \
        experiment_name=gsm8k-grpo-full \
        trial_name=trial0

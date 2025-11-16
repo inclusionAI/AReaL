@@ -119,7 +119,7 @@ python examples/cloud_gsm8k/setup_recovery.py \
 
 ```bash
 # After setting up recovery, resume with:
-python -m areal.launcher.local examples/cloud_gsm8k/gsm8k_grpo_cloud.py \
+python -m areal.launcher.local examples/cloud_gsm8k/gsm8k_grpo_train.py \
     --config examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml \
     experiment_name=gsm8k-grpo-cloud-1hour \
     trial_name=trial_YYYYMMDD_HHMMSS \
@@ -156,7 +156,7 @@ When resuming with `recover.mode=auto`:
 
 ### Overview
 
-The training script (`gsm8k_grpo_cloud.py`) includes a **circuit breaker** that prevents model corruption from training on invalid data.
+The training script (`gsm8k_grpo_train.py`) includes a **circuit breaker** that prevents model corruption from training on invalid data.
 
 ### How It Works
 

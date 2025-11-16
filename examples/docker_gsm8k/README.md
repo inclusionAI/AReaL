@@ -58,25 +58,25 @@ cd /workspace/AReaL
 export WANDB_API_KEY=your-api-key-here
 
 # Fast training (20-30 minutes, 200 samples)
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_fast.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_fast.yaml \
     experiment_name=gsm8k-grpo-docker-fast \
     trial_name=trial0
 
 # 1-hour training (500 samples, 2 epochs)
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_1hour.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_1hour.yaml \
     experiment_name=gsm8k-grpo-docker-1hour \
     trial_name=trial0
 
 # 3-hour training (1000 samples, 3 epochs)
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_3hour.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_3hour.yaml \
     experiment_name=gsm8k-grpo-docker-3hour \
     trial_name=trial0
 
 # Full dataset training (all samples, 5 epochs, ~5 days)
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_full.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_full.yaml \
     experiment_name=gsm8k-grpo-docker-full \
     trial_name=trial0
@@ -84,13 +84,16 @@ python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_full.py \
 
 ## Files
 
-- `gsm8k_grpo.py` - Main training script with single-GPU fix
-- `gsm8k_grpo.yaml` - Base configuration
-- `gsm8k_grpo_fast.py` / `gsm8k_grpo_fast.yaml` - Fast training (20-30 min)
-- `gsm8k_grpo_1hour.py` / `gsm8k_grpo_1hour.yaml` - 1-hour training
-- `gsm8k_grpo_3hour.py` / `gsm8k_grpo_3hour.yaml` - 3-hour training
-- `gsm8k_grpo_full.py` / `gsm8k_grpo_full.yaml` - Full dataset training
+- `gsm8k_grpo_train.py` - **Consolidated training script** (handles all configurations)
+  - Handles all training configurations (fast, 1hour, 3hour, full)
+  - Configuration is controlled via YAML files and command-line overrides
+- `gsm8k_grpo.yaml` - Base configuration (full dataset)
+- `gsm8k_grpo_fast.yaml` - Fast training (20-30 min, 200 samples)
+- `gsm8k_grpo_1hour.yaml` - 1-hour training (500 samples)
+- `gsm8k_grpo_3hour.yaml` - 3-hour training (1000 samples)
+- `gsm8k_grpo_full.yaml` - Full dataset training (all samples)
 - `run_training.sh` - Training launcher script
+- `run_full_training.sh` - Multi-session full dataset training script
 - `test_trained_model.py` - Model evaluation script
 - `README.md` - This file
 - `TRAINING_LEARNINGS.md` - Consolidated learnings and best practices
@@ -138,12 +141,106 @@ Key settings for single-GPU Docker training:
 
 ## Testing Trained Models
 
+### Simple Test Script (Recommended)
+
+The simplest way to test your trained model is using the direct model loading script (no SGLang server needed):
+
 ```bash
-# Test a trained model
-python examples/docker_gsm8k/test_trained_model.py \
+# Test a trained model (simple, no launcher needed)
+python3 examples/docker_gsm8k/test_trained_model.py \
     --model-path ./outputs/grpo/checkpoints/root/gsm8k-grpo-docker/trial0/default/epoch0epochstep0globalstep1 \
     --max-samples 10
+
+# Test on full test set
+python3 examples/docker_gsm8k/test_trained_model.py \
+    --model-path ./outputs/grpo/checkpoints/root/gsm8k-grpo-docker/trial0/default/epoch0epochstep0globalstep1 \
+    --all
+
+# Test with sampling (temperature > 0)
+python3 examples/docker_gsm8k/test_trained_model.py \
+    --model-path ./outputs/grpo/checkpoints/root/gsm8k-grpo-docker/trial0/default/epoch0epochstep0globalstep1 \
+    --max-samples 50 \
+    --temperature 1.0
 ```
+
+**Advantages:**
+- ✅ No launcher or SGLang server needed
+- ✅ Fast startup (direct model loading)
+- ✅ Easy to debug
+- ✅ Simple command-line interface
+
+### SGLang-Based Test Script (Advanced)
+
+For testing that matches the training environment exactly, use the SGLang-based script:
+
+```bash
+# Test a trained model (run through launcher with SGLang)
+# Use environment variables to pass model path and sample count
+EVAL_MODEL_PATH=./outputs/grpo/checkpoints/root/gsm8k-grpo-docker/trial0/default/epoch0epochstep0globalstep1 \
+EVAL_MAX_SAMPLES=10 \
+python3 -m areal.launcher.local examples/docker_gsm8k/test_trained_model_sglang.py \
+    --config examples/docker_gsm8k/gsm8k_grpo_fast.yaml \
+    allocation_mode=sglang.d1p1t1+eval \
+    stats_logger.wandb.mode=offline
+```
+
+**When to use SGLang-based testing:**
+- When you want to match the exact training inference environment
+- For large-scale batch evaluation
+- When testing advanced generation features
+
+**Note**: 
+- The `allocation_mode=sglang.d1p1t1+eval` parameter tells the launcher to:
+  - Start 1 SGLang server (`sglang.d1p1t1`)
+  - Launch evaluation processes (`+eval`) instead of training processes
+- **Why environment variables?** When running through the launcher, Hydra parses all arguments and validates them against the config structure. Since `eval_model_path` and `eval_max_samples` are not part of `GRPOConfig`, they must be passed as environment variables:
+  - `EVAL_MODEL_PATH` - Path to the checkpoint directory
+  - `EVAL_MAX_SAMPLES` - Maximum number of test samples (optional, defaults to full test set)
+
+### Choosing Between Simple and SGLang-Based Testing
+
+#### Direct Model Loading (Simple Test Script)
+
+**Pros:**
+- ✅ **Simple**: Just load model and generate - no server, no launcher
+- ✅ **Fast startup**: No server initialization time
+- ✅ **Easy to debug**: Direct Python script, can use debugger easily
+- ✅ **Standalone**: Works anywhere, no special infrastructure
+- ✅ **Sufficient for evaluation**: Perfect for accuracy testing
+
+**Cons:**
+- ❌ **Slower for large batches**: Not optimized for high-throughput inference
+- ❌ **Different from training**: Uses different inference path than training
+- ❌ **No advanced optimizations**: No radix attention, no batch optimizations
+- ❌ **Memory inefficient**: Loads full model in memory (though fine for small models)
+
+#### SGLang Remote Inference Engine (Advanced Test Script)
+
+**Pros:**
+- ✅ **Matches training environment**: Uses the same inference backend as training, ensuring consistency
+- ✅ **Optimized for batch inference**: SGLang is highly optimized for throughput, especially with multiple samples per prompt
+- ✅ **Radix attention**: Efficient caching for repeated prompts (though less relevant for evaluation)
+- ✅ **Production-ready**: Same infrastructure as training, easier to scale
+- ✅ **Supports advanced features**: Can use same generation configs, temperature, sampling as training
+
+**Cons:**
+- ❌ **Complex setup**: Requires launcher, SGLang server, distributed environment
+- ❌ **Overhead**: Server startup time, network communication
+- ❌ **Harder to debug**: More moving parts, harder to troubleshoot
+- ❌ **Not necessary for simple evaluation**: Overkill for basic accuracy testing
+
+#### Recommendation
+
+**For simple evaluation/testing**: Use **direct model loading** (`test_trained_model.py`)
+- Faster to run
+- Easier to use
+- Sufficient for accuracy testing
+- No infrastructure overhead
+
+**For production evaluation or large-scale testing**: Use **SGLang remote engine** (`test_trained_model_sglang.py`)
+- Matches training environment
+- Better throughput for large batches
+- More consistent with training setup
 
 ## Viewing Training Progress
 
@@ -178,4 +275,3 @@ Common issues:
 ## Learn More
 
 - **Training Learnings**: See `TRAINING_LEARNINGS.md` for detailed guides, GRPO explanation, and best practices
-- **Cloud Training**: See `examples/cloud_gsm8k/` for RunPod cloud training setup
