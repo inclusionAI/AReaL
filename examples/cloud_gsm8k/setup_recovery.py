@@ -122,7 +122,7 @@ def setup_recovery(
         print(f"✅ Checkpoint copied successfully!")
         print(f"\n📝 Next steps:")
         print(f"   1. Resume training with:")
-        print(f"      python -m areal.launcher.local examples/cloud_gsm8k/gsm8k_grpo_cloud.py \\")
+        print(f"      python -m areal.launcher.local examples/cloud_gsm8k/gsm8k_grpo_train.py \\")
         print(f"          --config examples/cloud_gsm8k/gsm8k_grpo_cloud.yaml \\")
         print(f"          experiment_name={experiment_name} \\")
         print(f"          trial_name={trial_name} \\")

@@ -178,4 +178,3 @@ Common issues:
 ## Learn More
 
 - **Training Learnings**: See `TRAINING_LEARNINGS.md` for detailed guides, GRPO explanation, and best practices
-- **Cloud Training**: See `examples/cloud_gsm8k/` for RunPod cloud training setup

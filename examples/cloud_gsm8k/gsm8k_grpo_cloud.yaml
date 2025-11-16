@@ -9,6 +9,12 @@
 experiment_name: gsm8k-grpo-cloud
 trial_name: trial0
 
+# Training configuration
+max_train_samples: null  # Use full dataset (no limiting)
+training_mode: "FULL"
+circuit_breaker_enabled: true
+circuit_breaker_threshold: 10
+
 seed: 1
 total_train_epochs: 5  # Full training with all samples
 tokenizer_path: ${actor.path}

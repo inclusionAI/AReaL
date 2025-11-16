@@ -585,7 +585,7 @@ This prevents deleting code during training while still handling restart scenari
 
 6. **Try regular (non-spot) instance** to rule out spot interruptions
 
-**Note**: Training crashes can be caused by OOM, SGLang server disconnects, or configuration issues. See `H200_STEP188_DIAGNOSIS.md` for an example analysis. The circuit breaker in `gsm8k_grpo_cloud.py` will automatically stop training if task reward is zero for 10 consecutive steps.
+**Note**: Training crashes can be caused by OOM, SGLang server disconnects, or configuration issues. See `H200_STEP188_DIAGNOSIS.md` for an example analysis. The circuit breaker in `gsm8k_grpo_train.py` will automatically stop training if task reward is zero for 10 consecutive steps.
 
 ### Training Too Slow
 
@@ -614,8 +614,8 @@ Process 2965022 has 8.05 GiB memory in use.   # Trainer
    # Use the A40-optimized config file
    bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
    # But override config to use A40 version:
-   python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_1hour.py \
-       --config examples/cloud_gsm8k/gsm8k_grpo_1hour_memory_optimized.yaml \
+   python3 -m areal.launcher.local examples/cloud_gsm8k/gsm8k_grpo_train.py \
+       --config examples/cloud_gsm8k/gsm8k_grpo_1hour.yaml \
        experiment_name=gsm8k-grpo-cloud-1hour \
        trial_name=trial0
    ```

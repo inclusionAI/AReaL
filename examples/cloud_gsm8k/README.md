@@ -64,7 +64,9 @@ bash examples/cloud_gsm8k/run_training_cloud.sh full       # 5 days, REQUIRES H2
 - `gsm8k_grpo_fast.yaml` - Fast training (20-30 min)
 
 ### Training Scripts
-- `gsm8k_grpo_cloud.py` - Main training script (used by `run_training_cloud.sh`)
+- `gsm8k_grpo_train.py` - **Consolidated training script** (used by `run_training_cloud.sh`)
+  - Handles all training configurations (fast, 1hour, 3hour, full)
+  - Configuration is controlled via YAML files and command-line overrides
 
 ### Recovery and Checkpoint Management
 - `list_checkpoints.py` - List available checkpoints
