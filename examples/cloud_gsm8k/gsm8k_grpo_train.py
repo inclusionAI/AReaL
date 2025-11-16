@@ -47,7 +47,49 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
 
 def main(args):
-    config, _ = load_expr_config(args, GRPOConfig)
+    # Extract custom training parameters from YAML before config validation
+    # These parameters are not part of GRPOConfig, so we read them directly from YAML
+    import argparse
+    from omegaconf import OmegaConf
+    from pathlib import Path
+    
+    # Parse args to find config file
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", help="Path to the main configuration file", required=True)
+    # Skip script path if present
+    if args and args[0].endswith(".py"):
+        args = args[1:]
+    parsed_args, _ = parser.parse_known_args(args)
+    
+    # Load YAML directly to extract custom fields
+    config_file = Path(parsed_args.config)
+    if not config_file.is_absolute():
+        # Make it absolute relative to current working directory
+        config_file = Path.cwd() / config_file
+    raw_yaml = OmegaConf.load(config_file)
+    
+    # Extract custom training parameters
+    max_train_samples = raw_yaml.get("max_train_samples", None)
+    if max_train_samples is not None:
+        max_train_samples = int(max_train_samples)
+    training_mode = raw_yaml.get("training_mode", "TRAINING")
+    circuit_breaker_enabled = raw_yaml.get("circuit_breaker_enabled", True)
+    circuit_breaker_threshold = int(raw_yaml.get("circuit_breaker_threshold", 10))
+    
+    # Remove custom fields from config to avoid validation errors
+    # Use OmegaConf/Hydra delete syntax (~key) to remove keys
+    custom_keys = ["max_train_samples", "training_mode", "circuit_breaker_enabled", "circuit_breaker_threshold"]
+    override_args = []
+    for key in custom_keys:
+        if key in raw_yaml:
+            # Use ~ prefix to delete the key in OmegaConf/Hydra
+            override_args.append(f"~{key}")
+    
+    # Add overrides to args to remove custom keys
+    args_with_overrides = args + override_args
+    
+    # Now load config normally - the overrides will remove the custom keys
+    config, _ = load_expr_config(args_with_overrides, GRPOConfig)
     config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
@@ -57,12 +99,6 @@ def main(args):
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
     assert parallel_strategy is not None
-
-    # Get training configuration from config or defaults
-    max_train_samples = getattr(config, "max_train_samples", None)
-    training_mode = getattr(config, "training_mode", "TRAINING")
-    circuit_breaker_enabled = getattr(config, "circuit_breaker_enabled", True)
-    circuit_breaker_threshold = getattr(config, "circuit_breaker_threshold", 10)
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
