@@ -767,6 +767,8 @@ class SGLangConfig:
     decode_log_interval: int = 20
     enable_stats_push: bool = True
     stats_push_address: str = "localhost:50051"
+    enable_prefill_completion_stats: bool = True
+    prefill_completion_stats_batch_size: int = 1
     # Extra loader arguments
     # NOTE: These arguments will be parsed into a dict json-string
     # and passed as `model_loader_extra_config` to SGLang.
