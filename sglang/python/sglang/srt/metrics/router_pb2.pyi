@@ -1,8 +1,12 @@
-from google.protobuf.internal import containers as _containers
+from collections.abc import Iterable as _Iterable
+from collections.abc import Mapping as _Mapping
+from typing import ClassVar as _ClassVar
+from typing import Optional as _Optional
+from typing import Union as _Union
+
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from google.protobuf.internal import containers as _containers
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -44,8 +48,57 @@ class ListBackendsResponse(_message.Message):
     backends: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, backends: _Optional[_Iterable[str]] = ...) -> None: ...
 
+class PrefillCompletionStatsProto(_message.Message):
+    __slots__ = (
+        "request_id",
+        "prefill_latency_ms",
+        "ttft_ms",
+        "prompt_tokens",
+        "cached_tokens",
+        "queue_time_ms",
+        "priority",
+        "batch_size",
+    )
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    PREFILL_LATENCY_MS_FIELD_NUMBER: _ClassVar[int]
+    TTFT_MS_FIELD_NUMBER: _ClassVar[int]
+    PROMPT_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    CACHED_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    QUEUE_TIME_MS_FIELD_NUMBER: _ClassVar[int]
+    PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    BATCH_SIZE_FIELD_NUMBER: _ClassVar[int]
+    request_id: str
+    prefill_latency_ms: float
+    ttft_ms: float
+    prompt_tokens: int
+    cached_tokens: int
+    queue_time_ms: float
+    priority: int
+    batch_size: int
+    def __init__(
+        self,
+        request_id: _Optional[str] = ...,
+        prefill_latency_ms: _Optional[float] = ...,
+        ttft_ms: _Optional[float] = ...,
+        prompt_tokens: _Optional[int] = ...,
+        cached_tokens: _Optional[int] = ...,
+        queue_time_ms: _Optional[float] = ...,
+        priority: _Optional[int] = ...,
+        batch_size: _Optional[int] = ...,
+    ) -> None: ...
+
 class PushStatsRequest(_message.Message):
-    __slots__ = ("server_host", "server_port", "timestamp", "stats_type", "scheduler_stats", "tokenizer_stats", "cache_stats", "storage_stats")
+    __slots__ = (
+        "server_host",
+        "server_port",
+        "timestamp",
+        "stats_type",
+        "scheduler_stats",
+        "tokenizer_stats",
+        "cache_stats",
+        "storage_stats",
+        "prefill_completion_stats",
+    )
     SERVER_HOST_FIELD_NUMBER: _ClassVar[int]
     SERVER_PORT_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMP_FIELD_NUMBER: _ClassVar[int]
@@ -54,6 +107,7 @@ class PushStatsRequest(_message.Message):
     TOKENIZER_STATS_FIELD_NUMBER: _ClassVar[int]
     CACHE_STATS_FIELD_NUMBER: _ClassVar[int]
     STORAGE_STATS_FIELD_NUMBER: _ClassVar[int]
+    PREFILL_COMPLETION_STATS_FIELD_NUMBER: _ClassVar[int]
     server_host: str
     server_port: int
     timestamp: int
@@ -62,7 +116,23 @@ class PushStatsRequest(_message.Message):
     tokenizer_stats: TokenizerStatsProto
     cache_stats: CacheStatsProto
     storage_stats: StorageStatsProto
-    def __init__(self, server_host: _Optional[str] = ..., server_port: _Optional[int] = ..., timestamp: _Optional[int] = ..., stats_type: _Optional[str] = ..., scheduler_stats: _Optional[_Union[SchedulerStatsProto, _Mapping]] = ..., tokenizer_stats: _Optional[_Union[TokenizerStatsProto, _Mapping]] = ..., cache_stats: _Optional[_Union[CacheStatsProto, _Mapping]] = ..., storage_stats: _Optional[_Union[StorageStatsProto, _Mapping]] = ...) -> None: ...
+    prefill_completion_stats: _containers.RepeatedCompositeFieldContainer[
+        PrefillCompletionStatsProto
+    ]
+    def __init__(
+        self,
+        server_host: _Optional[str] = ...,
+        server_port: _Optional[int] = ...,
+        timestamp: _Optional[int] = ...,
+        stats_type: _Optional[str] = ...,
+        scheduler_stats: _Optional[_Union[SchedulerStatsProto, _Mapping]] = ...,
+        tokenizer_stats: _Optional[_Union[TokenizerStatsProto, _Mapping]] = ...,
+        cache_stats: _Optional[_Union[CacheStatsProto, _Mapping]] = ...,
+        storage_stats: _Optional[_Union[StorageStatsProto, _Mapping]] = ...,
+        prefill_completion_stats: _Optional[
+            _Iterable[_Union[PrefillCompletionStatsProto, _Mapping]]
+        ] = ...,
+    ) -> None: ...
 
 class PushStatsResponse(_message.Message):
     __slots__ = ("success", "message")
@@ -73,7 +143,37 @@ class PushStatsResponse(_message.Message):
     def __init__(self, success: bool = ..., message: _Optional[str] = ...) -> None: ...
 
 class SchedulerStatsProto(_message.Message):
-    __slots__ = ("num_running_reqs", "num_used_tokens", "token_usage", "pending_prealloc_token_usage", "swa_token_usage", "mamba_usage", "gen_throughput", "num_queue_reqs", "num_grammar_queue_reqs", "num_running_reqs_offline_batch", "cache_hit_rate", "spec_accept_length", "spec_accept_rate", "num_retracted_reqs", "num_paused_reqs", "num_prefill_prealloc_queue_reqs", "num_prefill_inflight_queue_reqs", "num_decode_prealloc_queue_reqs", "num_decode_transfer_queue_reqs", "kv_transfer_speed_gb_s", "kv_transfer_latency_ms", "kv_transfer_bootstrap_ms", "kv_transfer_alloc_ms", "utilization", "max_running_requests_under_SLO", "engine_startup_time", "engine_load_weights_time", "new_token_ratio", "is_cuda_graph")
+    __slots__ = (
+        "num_running_reqs",
+        "num_used_tokens",
+        "token_usage",
+        "pending_prealloc_token_usage",
+        "swa_token_usage",
+        "mamba_usage",
+        "gen_throughput",
+        "num_queue_reqs",
+        "num_grammar_queue_reqs",
+        "num_running_reqs_offline_batch",
+        "cache_hit_rate",
+        "spec_accept_length",
+        "spec_accept_rate",
+        "num_retracted_reqs",
+        "num_paused_reqs",
+        "num_prefill_prealloc_queue_reqs",
+        "num_prefill_inflight_queue_reqs",
+        "num_decode_prealloc_queue_reqs",
+        "num_decode_transfer_queue_reqs",
+        "kv_transfer_speed_gb_s",
+        "kv_transfer_latency_ms",
+        "kv_transfer_bootstrap_ms",
+        "kv_transfer_alloc_ms",
+        "utilization",
+        "max_running_requests_under_SLO",
+        "engine_startup_time",
+        "engine_load_weights_time",
+        "new_token_ratio",
+        "is_cuda_graph",
+    )
     NUM_RUNNING_REQS_FIELD_NUMBER: _ClassVar[int]
     NUM_USED_TOKENS_FIELD_NUMBER: _ClassVar[int]
     TOKEN_USAGE_FIELD_NUMBER: _ClassVar[int]
@@ -132,10 +232,50 @@ class SchedulerStatsProto(_message.Message):
     engine_load_weights_time: float
     new_token_ratio: float
     is_cuda_graph: float
-    def __init__(self, num_running_reqs: _Optional[int] = ..., num_used_tokens: _Optional[int] = ..., token_usage: _Optional[float] = ..., pending_prealloc_token_usage: _Optional[float] = ..., swa_token_usage: _Optional[float] = ..., mamba_usage: _Optional[float] = ..., gen_throughput: _Optional[float] = ..., num_queue_reqs: _Optional[int] = ..., num_grammar_queue_reqs: _Optional[int] = ..., num_running_reqs_offline_batch: _Optional[int] = ..., cache_hit_rate: _Optional[float] = ..., spec_accept_length: _Optional[float] = ..., spec_accept_rate: _Optional[float] = ..., num_retracted_reqs: _Optional[int] = ..., num_paused_reqs: _Optional[int] = ..., num_prefill_prealloc_queue_reqs: _Optional[int] = ..., num_prefill_inflight_queue_reqs: _Optional[int] = ..., num_decode_prealloc_queue_reqs: _Optional[int] = ..., num_decode_transfer_queue_reqs: _Optional[int] = ..., kv_transfer_speed_gb_s: _Optional[float] = ..., kv_transfer_latency_ms: _Optional[float] = ..., kv_transfer_bootstrap_ms: _Optional[float] = ..., kv_transfer_alloc_ms: _Optional[float] = ..., utilization: _Optional[float] = ..., max_running_requests_under_SLO: _Optional[int] = ..., engine_startup_time: _Optional[float] = ..., engine_load_weights_time: _Optional[float] = ..., new_token_ratio: _Optional[float] = ..., is_cuda_graph: _Optional[float] = ...) -> None: ...
+    def __init__(
+        self,
+        num_running_reqs: _Optional[int] = ...,
+        num_used_tokens: _Optional[int] = ...,
+        token_usage: _Optional[float] = ...,
+        pending_prealloc_token_usage: _Optional[float] = ...,
+        swa_token_usage: _Optional[float] = ...,
+        mamba_usage: _Optional[float] = ...,
+        gen_throughput: _Optional[float] = ...,
+        num_queue_reqs: _Optional[int] = ...,
+        num_grammar_queue_reqs: _Optional[int] = ...,
+        num_running_reqs_offline_batch: _Optional[int] = ...,
+        cache_hit_rate: _Optional[float] = ...,
+        spec_accept_length: _Optional[float] = ...,
+        spec_accept_rate: _Optional[float] = ...,
+        num_retracted_reqs: _Optional[int] = ...,
+        num_paused_reqs: _Optional[int] = ...,
+        num_prefill_prealloc_queue_reqs: _Optional[int] = ...,
+        num_prefill_inflight_queue_reqs: _Optional[int] = ...,
+        num_decode_prealloc_queue_reqs: _Optional[int] = ...,
+        num_decode_transfer_queue_reqs: _Optional[int] = ...,
+        kv_transfer_speed_gb_s: _Optional[float] = ...,
+        kv_transfer_latency_ms: _Optional[float] = ...,
+        kv_transfer_bootstrap_ms: _Optional[float] = ...,
+        kv_transfer_alloc_ms: _Optional[float] = ...,
+        utilization: _Optional[float] = ...,
+        max_running_requests_under_SLO: _Optional[int] = ...,
+        engine_startup_time: _Optional[float] = ...,
+        engine_load_weights_time: _Optional[float] = ...,
+        new_token_ratio: _Optional[float] = ...,
+        is_cuda_graph: _Optional[float] = ...,
+    ) -> None: ...
 
 class TokenizerStatsProto(_message.Message):
-    __slots__ = ("prompt_tokens", "generation_tokens", "cached_tokens", "num_requests", "num_aborted_requests", "avg_ttft", "avg_itl", "avg_e2e_latency")
+    __slots__ = (
+        "prompt_tokens",
+        "generation_tokens",
+        "cached_tokens",
+        "num_requests",
+        "num_aborted_requests",
+        "avg_ttft",
+        "avg_itl",
+        "avg_e2e_latency",
+    )
     PROMPT_TOKENS_FIELD_NUMBER: _ClassVar[int]
     GENERATION_TOKENS_FIELD_NUMBER: _ClassVar[int]
     CACHED_TOKENS_FIELD_NUMBER: _ClassVar[int]
@@ -152,10 +292,25 @@ class TokenizerStatsProto(_message.Message):
     avg_ttft: float
     avg_itl: float
     avg_e2e_latency: float
-    def __init__(self, prompt_tokens: _Optional[int] = ..., generation_tokens: _Optional[int] = ..., cached_tokens: _Optional[int] = ..., num_requests: _Optional[int] = ..., num_aborted_requests: _Optional[int] = ..., avg_ttft: _Optional[float] = ..., avg_itl: _Optional[float] = ..., avg_e2e_latency: _Optional[float] = ...) -> None: ...
+    def __init__(
+        self,
+        prompt_tokens: _Optional[int] = ...,
+        generation_tokens: _Optional[int] = ...,
+        cached_tokens: _Optional[int] = ...,
+        num_requests: _Optional[int] = ...,
+        num_aborted_requests: _Optional[int] = ...,
+        avg_ttft: _Optional[float] = ...,
+        avg_itl: _Optional[float] = ...,
+        avg_e2e_latency: _Optional[float] = ...,
+    ) -> None: ...
 
 class CacheStatsProto(_message.Message):
-    __slots__ = ("evicted_tokens", "loaded_back_tokens", "avg_eviction_duration", "avg_load_back_duration")
+    __slots__ = (
+        "evicted_tokens",
+        "loaded_back_tokens",
+        "avg_eviction_duration",
+        "avg_load_back_duration",
+    )
     EVICTED_TOKENS_FIELD_NUMBER: _ClassVar[int]
     LOADED_BACK_TOKENS_FIELD_NUMBER: _ClassVar[int]
     AVG_EVICTION_DURATION_FIELD_NUMBER: _ClassVar[int]
@@ -164,7 +319,13 @@ class CacheStatsProto(_message.Message):
     loaded_back_tokens: int
     avg_eviction_duration: float
     avg_load_back_duration: float
-    def __init__(self, evicted_tokens: _Optional[int] = ..., loaded_back_tokens: _Optional[int] = ..., avg_eviction_duration: _Optional[float] = ..., avg_load_back_duration: _Optional[float] = ...) -> None: ...
+    def __init__(
+        self,
+        evicted_tokens: _Optional[int] = ...,
+        loaded_back_tokens: _Optional[int] = ...,
+        avg_eviction_duration: _Optional[float] = ...,
+        avg_load_back_duration: _Optional[float] = ...,
+    ) -> None: ...
 
 class StorageStatsProto(_message.Message):
     __slots__ = ("prefetch_pgs", "backup_pgs", "prefetch_bandwidth", "backup_bandwidth")
@@ -176,4 +337,10 @@ class StorageStatsProto(_message.Message):
     backup_pgs: _containers.RepeatedScalarFieldContainer[int]
     prefetch_bandwidth: _containers.RepeatedScalarFieldContainer[float]
     backup_bandwidth: _containers.RepeatedScalarFieldContainer[float]
-    def __init__(self, prefetch_pgs: _Optional[_Iterable[int]] = ..., backup_pgs: _Optional[_Iterable[int]] = ..., prefetch_bandwidth: _Optional[_Iterable[float]] = ..., backup_bandwidth: _Optional[_Iterable[float]] = ...) -> None: ...
+    def __init__(
+        self,
+        prefetch_pgs: _Optional[_Iterable[int]] = ...,
+        backup_pgs: _Optional[_Iterable[int]] = ...,
+        prefetch_bandwidth: _Optional[_Iterable[float]] = ...,
+        backup_bandwidth: _Optional[_Iterable[float]] = ...,
+    ) -> None: ...

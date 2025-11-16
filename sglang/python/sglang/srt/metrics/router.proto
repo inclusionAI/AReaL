@@ -34,6 +34,17 @@ message ListBackendsResponse {
   repeated string backends = 1;
 }
 
+message PrefillCompletionStatsProto {
+  string request_id = 1;
+  float prefill_latency_ms = 2;
+  float ttft_ms = 3;
+  int32 prompt_tokens = 4;
+  int32 cached_tokens = 5;
+  float queue_time_ms = 6;
+  int32 priority = 7;
+  int32 batch_size = 8;
+}
+
 message PushStatsRequest {
   string server_host = 1;
   int32 server_port = 2;
@@ -44,6 +55,7 @@ message PushStatsRequest {
   TokenizerStatsProto tokenizer_stats = 6;
   CacheStatsProto cache_stats = 7;
   StorageStatsProto storage_stats = 8;
+  repeated PrefillCompletionStatsProto prefill_completion_stats = 9;
 }
 
 message PushStatsResponse {

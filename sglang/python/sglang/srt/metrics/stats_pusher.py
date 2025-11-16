@@ -180,6 +180,52 @@ class StatsPusher:
         except Exception as e:
             logger.info(f"Stats push failed: {e}")
 
+    def push_prefill_completion_stats_batch(self, stats_list):
+        """
+        Push a batch of prefill completion stats to gRPC server.
+
+        Args:
+            stats_list: List of dicts, each containing prefill completion metrics
+        """
+        if not self._ensure_initialized():
+            return
+
+        if not stats_list:
+            return
+
+        try:
+            # Convert stats dicts to proto messages
+            proto_stats = []
+            for stats in stats_list:
+                proto_stat = self._pb2.PrefillCompletionStatsProto(
+                    request_id=stats.get("request_id", ""),
+                    prefill_latency_ms=stats.get("prefill_latency_ms", 0.0),
+                    ttft_ms=stats.get("ttft_ms", 0.0),
+                    prompt_tokens=stats.get("prompt_tokens", 0),
+                    cached_tokens=stats.get("cached_tokens", 0),
+                    queue_time_ms=stats.get("queue_time_ms", 0.0),
+                    priority=stats.get("priority", 0),
+                    batch_size=stats.get("batch_size", 1),
+                )
+                proto_stats.append(proto_stat)
+
+            request = self._pb2.PushStatsRequest(
+                server_host=self.server_host,
+                server_port=self.server_port,
+                timestamp=int(time.time() * 1000),
+                stats_type="prefill_completion",
+                prefill_completion_stats=proto_stats,
+            )
+
+            self.stub.PushStats(request, timeout=1.0)
+
+        except grpc.RpcError as e:
+            logger.info(
+                f"Prefill completion stats push failed (gRPC error): {e.code()}"
+            )
+        except Exception as e:
+            logger.info(f"Prefill completion stats push failed: {e}")
+
     def close(self):
         """Close the gRPC channel."""
         if self.channel:

@@ -118,6 +118,58 @@ class SchedulerOutputProcessorMixin:
                         # This updates radix so others can match
                         self.tree_cache.cache_unfinished_req(req)
 
+                    # Collect prefill completion stats
+                    if (
+                        hasattr(self, "prefill_completion_collector")
+                        and self.prefill_completion_collector is not None
+                    ):
+                        try:
+                            prefill_latency_ms = 0.0
+                            ttft_ms = 0.0
+                            queue_time_ms = 0.0
+
+                            if (
+                                req.time_stats.prefill_end_time > 0
+                                and req.time_stats.prefill_start_time > 0
+                            ):
+                                prefill_latency_ms = (
+                                    req.time_stats.prefill_end_time
+                                    - req.time_stats.prefill_start_time
+                                ) * 1000
+
+                            if (
+                                req.time_stats.prefill_end_time > 0
+                                and req.time_stats.wait_queue_entry_time > 0
+                            ):
+                                ttft_ms = (
+                                    req.time_stats.prefill_end_time
+                                    - req.time_stats.wait_queue_entry_time
+                                ) * 1000
+
+                            if hasattr(req.time_stats, "get_queueing_time"):
+                                queue_time_ms = (
+                                    req.time_stats.get_queueing_time() * 1000
+                                )
+
+                            stats = {
+                                "request_id": req.rid,
+                                "prefill_latency_ms": prefill_latency_ms,
+                                "ttft_ms": ttft_ms,
+                                "prompt_tokens": len(req.origin_input_ids),
+                                "cached_tokens": req.cached_tokens,
+                                "queue_time_ms": queue_time_ms,
+                                "priority": req.priority,
+                                "batch_size": len(batch.reqs),
+                            }
+                            self.prefill_completion_collector.collect(stats)
+                        except Exception as e:
+                            # Don't crash serving if stats collection fails
+                            import logging
+
+                            logging.getLogger(__name__).debug(
+                                f"Failed to collect prefill completion stats: {e}"
+                            )
+
                     if batch.return_logprob:
                         assert extend_logprob_start_len_per_req is not None
                         assert extend_input_len_per_req is not None

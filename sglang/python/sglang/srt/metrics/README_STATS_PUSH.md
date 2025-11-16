@@ -2,27 +2,6 @@
 
 Push SGLang metrics to an external gRPC server.
 
-## Setup
-
-### 1. Install gRPC Tools
-
-```bash
-pip install "grpcio==1.75.1" "grpcio-tools==1.75.1"
-```
-
-### 2. Compile Protocol Buffers
-
-```bash
-cd python/sglang/srt/metrics
-python compile_router_proto.py
-```
-
-This generates:
-
-- `router_pb2.py` - Protocol buffer message classes
-- `router_pb2_grpc.py` - gRPC service classes
-- `router_pb2.pyi` - Type stubs
-
 ## Usage
 
 ### Start SGLang with Stats Push
@@ -32,13 +11,18 @@ python -m sglang.launch_server \
     --model-path <model-path> \
     --enable-stats-push \
     --stats-push-address localhost:50051 \
-    --enable-metrics
+    --enable-metrics \
+    --enable-prefill-completion-stats \
+    --prefill-completion-stats-batch-size 1
 ```
 
 ### Command-Line Flags
 
 - `--enable-stats-push`: Enable pushing stats to gRPC server
 - `--stats-push-address`: gRPC server address (e.g., 'localhost:50051')
+- `--enable-prefill-completion-stats`: Enable per-request prefill completion stats
+- `--prefill-completion-stats-batch-size`: Batch size for prefill stats (default: 32,
+  set to 1 for per-request)
 
 ## Testing
 
@@ -79,6 +63,22 @@ Scheduler Stats:
 - `cache_hit_rate` - Prefix cache hit rate
 - PD disaggregation metrics (if enabled)
 - Speculative decoding metrics (if enabled)
+
+### Prefill Completion Stats (pushed when enabled)
+
+Per-request metrics sent when a request completes its prefill phase:
+
+- `request_id` - Unique request identifier
+- `prefill_latency_ms` - Time spent in prefill (milliseconds)
+- `ttft_ms` - Time to first token from queue entry (milliseconds)
+- `prompt_tokens` - Number of tokens in the prompt
+- `cached_tokens` - Number of tokens served from prefix cache
+- `queue_time_ms` - Time spent waiting in queue (milliseconds)
+- `priority` - Request priority
+- `batch_size` - Number of requests in the prefill batch
+
+**Batching**: Stats are batched according to `--prefill-completion-stats-batch-size`
+(default: 32). Set to 1 for immediate per-request pushing.
 
 ### Server Info (included with every push)
 

@@ -308,6 +308,8 @@ class ServerArgs:
     enable_metrics_for_all_schedulers: bool = False
     enable_stats_push: bool = False
     stats_push_address: Optional[str] = None
+    enable_prefill_completion_stats: bool = False
+    prefill_completion_stats_batch_size: int = 32
     tokenizer_metrics_custom_labels_header: str = "x-custom-labels"
     tokenizer_metrics_allowed_custom_labels: Optional[List[str]] = None
     bucket_time_to_first_token: Optional[List[float]] = None
@@ -2333,6 +2335,17 @@ class ServerArgs:
             type=str,
             default=ServerArgs.stats_push_address,
             help="gRPC server address for stats pushing (e.g., 'localhost:50051').",
+        )
+        parser.add_argument(
+            "--enable-prefill-completion-stats",
+            action="store_true",
+            help="Enable pushing per-request prefill completion stats to external gRPC server.",
+        )
+        parser.add_argument(
+            "--prefill-completion-stats-batch-size",
+            type=int,
+            default=ServerArgs.prefill_completion_stats_batch_size,
+            help="Batch size for prefill completion stats pushing. Set to 1 for per-request pushing.",
         )
         parser.add_argument(
             "--tokenizer-metrics-custom-labels-header",

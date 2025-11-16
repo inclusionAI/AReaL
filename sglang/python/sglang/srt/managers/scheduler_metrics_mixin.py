@@ -81,6 +81,23 @@ class SchedulerMetricsMixin:
         else:
             self.stats_pusher = None
 
+        # Initialize prefill completion stats collector
+        if (
+            self.server_args.enable_prefill_completion_stats
+            and self.server_args.stats_push_address
+            and self.stats_pusher is not None
+        ):
+            from sglang.srt.metrics.prefill_completion_collector import (
+                PrefillCompletionCollector,
+            )
+
+            self.prefill_completion_collector = PrefillCompletionCollector(
+                stats_pusher=self.stats_pusher,
+                batch_size=self.server_args.prefill_completion_stats_batch_size,
+            )
+        else:
+            self.prefill_completion_collector = None
+
     def init_kv_events(self: Scheduler, kv_events_config: Optional[str]):
         if self.enable_kv_cache_events:
             self.kv_event_publisher = EventPublisherFactory.create(

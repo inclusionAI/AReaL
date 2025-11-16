@@ -1,25 +1,4 @@
 #!/usr/bin/env python3
-"""
-Test gRPC server for receiving stats from SGLang.
-
-This is a simple test server that implements the RouterManagement service
-and prints received stats to the console.
-
-Usage:
-    1. First compile the proto:
-       cd python/sglang/srt/metrics
-       python compile_router_proto.py
-
-    2. Run this test server:
-       python test_stats_server.py
-
-    3. Start SGLang with stats push enabled:
-       python -m sglang.launch_server \
-           --model-path <model> \
-           --enable-stats-push \
-           --stats-push-address localhost:50051
-"""
-
 import logging
 from concurrent import futures
 
@@ -99,6 +78,25 @@ def run_server():
                 logger.info("\nStorage Stats:")
                 logger.info(f"  Prefetch pgs: {list(stats.prefetch_pgs)}")
                 logger.info(f"  Backup pgs: {list(stats.backup_pgs)}")
+
+            if request.prefill_completion_stats:
+                logger.info(
+                    f"\nPrefill Completion Stats (batch of {len(request.prefill_completion_stats)}):"
+                )
+                logger.info(
+                    f"{'Request ID':<40} {'TTFT':>8} {'Prefill':>8} {'Queue':>8} {'Prompt':>7} {'Cached':>7} {'Priority':>8} {'Batch':>6}"
+                )
+                logger.info("-" * 120)
+                for stats in request.prefill_completion_stats:
+                    logger.info(
+                        f"{stats.request_id:<40} {stats.ttft_ms:>7.1f}ms {stats.prefill_latency_ms:>7.1f}ms "
+                        f"{stats.queue_time_ms:>7.1f}ms {stats.prompt_tokens:>7} {stats.cached_tokens:>7} "
+                        f"{stats.priority:>8} {stats.batch_size:>6}"
+                    )
+                logger.info(
+                    f"\nBatch summary: {len(request.prefill_completion_stats)} requests, "
+                    f"avg TTFT: {sum(s.ttft_ms for s in request.prefill_completion_stats) / len(request.prefill_completion_stats):.1f}ms"
+                )
 
             logger.info("=" * 80 + "\n")
 
