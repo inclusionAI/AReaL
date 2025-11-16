@@ -373,6 +373,18 @@ class TokenizerManager(TokenizerCommunicatorMixin):
                 collect_tokens_histogram=self.server_args.collect_tokens_histogram,
             )
 
+        # Stats pusher
+        if self.server_args.enable_stats_push and self.server_args.stats_push_address:
+            from sglang.srt.metrics.stats_pusher import StatsPusher
+
+            self.stats_pusher = StatsPusher(
+                address=self.server_args.stats_push_address,
+                server_host=self.server_args.host,
+                server_port=self.server_args.port,
+            )
+        else:
+            self.stats_pusher = None
+
         # Configure GC warning
         if self.server_args.gc_warning_threshold_secs > 0.0:
             configure_gc_warning(self.server_args.gc_warning_threshold_secs)

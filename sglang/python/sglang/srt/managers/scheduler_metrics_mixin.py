@@ -70,6 +70,17 @@ class SchedulerMetricsMixin:
                 labels["dp_rank"] = dp_rank
             self.metrics_collector = SchedulerMetricsCollector(labels=labels)
 
+        if self.server_args.enable_stats_push and self.server_args.stats_push_address:
+            from sglang.srt.metrics.stats_pusher import StatsPusher
+
+            self.stats_pusher = StatsPusher(
+                address=self.server_args.stats_push_address,
+                server_host=self.server_args.host,
+                server_port=self.server_args.port,
+            )
+        else:
+            self.stats_pusher = None
+
     def init_kv_events(self: Scheduler, kv_events_config: Optional[str]):
         if self.enable_kv_cache_events:
             self.kv_event_publisher = EventPublisherFactory.create(
@@ -200,6 +211,9 @@ class SchedulerMetricsMixin:
             self.calculate_utilization()
             self.metrics_collector.log_stats(self.stats)
             self._emit_kv_metrics()
+
+            if self.stats_pusher is not None:
+                self.stats_pusher.push_scheduler_stats(self.stats, "prefill")
         self._publish_kv_events()
 
     def log_decode_stats(
@@ -345,6 +359,9 @@ class SchedulerMetricsMixin:
             self.calculate_utilization()
             self.metrics_collector.log_stats(self.stats)
             self._emit_kv_metrics()
+
+            if self.stats_pusher is not None:
+                self.stats_pusher.push_scheduler_stats(self.stats, "decode")
         self._publish_kv_events()
 
     def _emit_kv_metrics(self: Scheduler):

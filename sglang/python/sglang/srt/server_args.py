@@ -306,6 +306,8 @@ class ServerArgs:
     show_time_cost: bool = False
     enable_metrics: bool = False
     enable_metrics_for_all_schedulers: bool = False
+    enable_stats_push: bool = False
+    stats_push_address: Optional[str] = None
     tokenizer_metrics_custom_labels_header: str = "x-custom-labels"
     tokenizer_metrics_allowed_custom_labels: Optional[List[str]] = None
     bucket_time_to_first_token: Optional[List[float]] = None
@@ -2320,6 +2322,17 @@ class ServerArgs:
             help="Enable --enable-metrics-for-all-schedulers when you want schedulers on all TP ranks (not just TP 0) "
             "to record request metrics separately. This is especially useful when dp_attention is enabled, as "
             "otherwise all metrics appear to come from TP 0.",
+        )
+        parser.add_argument(
+            "--enable-stats-push",
+            action="store_true",
+            help="Enable pushing stats to external gRPC server.",
+        )
+        parser.add_argument(
+            "--stats-push-address",
+            type=str,
+            default=ServerArgs.stats_push_address,
+            help="gRPC server address for stats pushing (e.g., 'localhost:50051').",
         )
         parser.add_argument(
             "--tokenizer-metrics-custom-labels-header",
