@@ -55,11 +55,12 @@ RunPod is the most economical cloud GPU platform. This complete guide covers eve
 
    **Docker Command:**
    ```bash
-   bash -c "set -e && pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && pip install -e . && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
+   bash -c "set -e && pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && (python3 -c 'import areal' 2>/dev/null || pip install -e .) && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
    ```
    
    **⚠️ Important**: 
-   - **Smart git handling**: If AReaL exists and is a valid git repo, it updates with `git pull` (preserves code during container restarts). Only removes/clones if invalid or missing. This prevents deleting code during training.
+   - **Smart git handling**: If AReaL exists and is a valid git repo, it updates with `git fetch` and `git checkout` (preserves code during container restarts). Only removes/clones if invalid or missing. This prevents deleting code during training.
+   - **Smart installation**: Only installs AReaL if not already installed (`python3 -c 'import areal'` check). This prevents re-installing dependencies on every pod restart or login session.
    - **Pip fix**: The Docker image (`ghcr.io/inclusionai/areal-runtime:v0.3.4`) is configured to use an internal PyPI mirror (`pypi.antfin-inc.com`) that's not accessible from RunPod. The command above overrides it to use the public PyPI (`pypi.org`).
 
    **Environment Variables:**
@@ -285,13 +286,19 @@ cd /workspace
 pip config set global.index-url https://pypi.org/simple
 pip config set global.extra-index-url ""
 
-# Clone repository if not already there
+# Clone repository if not already there, update if exists
 if [ ! -d "AReaL" ]; then
     git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
     cd AReaL
     pip install -e .
 else
     cd AReaL
+    git fetch origin
+    git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout DL4Math
+    # Only install if not already installed
+    if ! python3 -c "import areal" 2>/dev/null; then
+        pip install -e .
+    fi
 fi
 ```
 
@@ -489,9 +496,9 @@ pip config set global.extra-index-url ""
 pip install -e .
 ```
 
-**For templates/pod commands**, include this fix in the Docker command:
+**For templates/pod commands**, include this fix in the Docker command (with smart installation):
 ```bash
-bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL && pip install -e . && ..."
+bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && (python3 -c 'import areal' 2>/dev/null || pip install -e .) && ..."
 ```
 
 **Why this happens**: The AReaL Docker image (`ghcr.io/inclusionai/areal-runtime:v0.3.4`) is built for internal use at Ant Group and includes pip configuration pointing to their internal PyPI mirror, which is not accessible from external cloud platforms like RunPod.
@@ -509,19 +516,22 @@ bash -c "pip config set global.index-url https://pypi.org/simple && pip config s
 
 **Root Cause**: Docker command tries to `git clone` AReaL, but directory already exists from previous run. `git clone` fails, container exits, RunPod auto-restarts it, creating infinite loop.
 
-**Solution**: Updated Docker command to remove AReaL before cloning:
+**Solution**: Updated Docker command with smart git handling and installation:
 ```bash
-bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && (rm -rf AReaL || true) && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL && pip install -e . && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
+bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && (python3 -c 'import areal' 2>/dev/null || pip install -e .) && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
 ```
 
-**Key change**: Smart git handling:
-- If AReaL exists and is a valid git repo: Updates it with `git pull` (preserves code during restarts)
-- If AReaL exists but is invalid: Removes and clones fresh
-- If AReaL doesn't exist: Clones fresh
+**Key improvements**:
+- **Smart git handling**: Checks if AReaL exists and is valid before cloning
+  - If AReaL exists and is a valid git repo: Updates it with `git fetch` and `git checkout` (preserves code during restarts)
+  - If AReaL exists but is invalid: Removes and clones fresh
+  - If AReaL doesn't exist: Clones fresh
+- **Smart installation**: Only installs if not already installed (`python3 -c 'import areal'` check)
+- **Prevents restart loops**: Handles existing directories gracefully
 
 This prevents deleting code during training while still handling restart scenarios.
 
-**Detailed guide**: See `CONTAINER_RESTART_LOOP_FIX.md` for complete analysis.
+**Note**: Container restart loops are usually caused by Docker command errors or missing dependencies. Check the Docker command in your template and ensure all required environment variables are set.
 
 ### Training Crashes Around Step 50-60 (Repeating Pattern)
 
@@ -575,7 +585,7 @@ This prevents deleting code during training while still handling restart scenari
 
 6. **Try regular (non-spot) instance** to rule out spot interruptions
 
-**Detailed guide**: See `CRASH_DIAGNOSIS.md` for complete analysis and solutions.
+**Note**: Training crashes can be caused by OOM, SGLang server disconnects, or configuration issues. See `H200_STEP188_DIAGNOSIS.md` for an example analysis. The circuit breaker in `gsm8k_grpo_cloud.py` will automatically stop training if task reward is zero for 10 consecutive steps.
 
 ### Training Too Slow
 
@@ -605,7 +615,7 @@ Process 2965022 has 8.05 GiB memory in use.   # Trainer
    bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
    # But override config to use A40 version:
    python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_1hour.py \
-       --config examples/cloud_gsm8k/gsm8k_grpo_1hour_a40.yaml \
+       --config examples/cloud_gsm8k/gsm8k_grpo_1hour_memory_optimized.yaml \
        experiment_name=gsm8k-grpo-cloud-1hour \
        trial_name=trial0
    ```
@@ -652,7 +662,7 @@ Process 2965022 has 8.05 GiB memory in use.   # Trainer
      max_concurrent_rollouts: 16  # Reduce from 32
    ```
 
-**Quick fix for A40**: Use the provided `gsm8k_grpo_1hour_a40.yaml` config file which includes all these optimizations.
+**Quick fix for A40/RTX 5090**: The script automatically detects memory-constrained GPUs and uses `gsm8k_grpo_1hour_memory_optimized.yaml` which includes all these optimizations. You can also manually specify it if needed.
 
 **Memory breakdown on A40**:
 - SGLang server: ~36GB (with `mem_fraction_static: 0.8`)

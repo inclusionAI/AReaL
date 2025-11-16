@@ -1,12 +1,16 @@
-# Cloud-Optimized Training Configuration for GRPO
-# This config is optimized for cloud GPU platforms
-# Uses cloud-friendly paths and settings
+# Full Training Configuration for GRPO
+# REQUIRES: H200, H100, A100-80GB, or equivalent GPU (80GB+ memory)
+# This config uses the full GSM8K dataset (7473 training samples) for 5 epochs
+# Estimated training time: ~5 days on H200-class GPUs
+# 
+# DO NOT use this config on GPUs with less than 80GB memory (e.g., RTX 4090, RTX 5090, A40)
+# For smaller GPUs, use: fast, 1hour, or 3hour configs instead
 
 experiment_name: gsm8k-grpo-cloud
 trial_name: trial0
 
 seed: 1
-total_train_epochs: 5  # Full training for cloud (more compute available)
+total_train_epochs: 5  # Full training with all samples
 tokenizer_path: ${actor.path}
 async_training: true
 
@@ -28,6 +32,9 @@ rollout:
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
+  request_timeout: 7200  # 2 hours - increased for long-running full training
+  request_retries: 5  # Increased retries for better reliability
+  setup_timeout: 300  # 5 minutes for server startup
 
 gconfig:
   n_samples: 4  # Full GRPO quality
@@ -98,6 +105,7 @@ sglang:
   max_running_requests: null
   context_length: 4096
   mem_fraction_static: 0.8
+  attention_backend: flashinfer  # Required for RTX 5090 (SM 100+), also works on other GPUs
 
 # datasets
 train_dataset:
