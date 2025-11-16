@@ -5,6 +5,12 @@
 experiment_name: gsm8k-grpo-fast
 trial_name: trial0
 
+# Training configuration
+max_train_samples: 200  # Limit dataset to 200 samples for fast iteration
+training_mode: "FAST"
+circuit_breaker_enabled: true
+circuit_breaker_threshold: 10
+
 seed: 1
 total_train_epochs: 1  # Reduced from 5 to 1
 tokenizer_path: ${actor.path}

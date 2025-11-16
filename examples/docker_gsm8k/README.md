@@ -58,25 +58,25 @@ cd /workspace/AReaL
 export WANDB_API_KEY=your-api-key-here
 
 # Fast training (20-30 minutes, 200 samples)
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_fast.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_fast.yaml \
     experiment_name=gsm8k-grpo-docker-fast \
     trial_name=trial0
 
 # 1-hour training (500 samples, 2 epochs)
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_1hour.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_1hour.yaml \
     experiment_name=gsm8k-grpo-docker-1hour \
     trial_name=trial0
 
 # 3-hour training (1000 samples, 3 epochs)
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_3hour.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_3hour.yaml \
     experiment_name=gsm8k-grpo-docker-3hour \
     trial_name=trial0
 
 # Full dataset training (all samples, 5 epochs, ~5 days)
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_full.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_full.yaml \
     experiment_name=gsm8k-grpo-docker-full \
     trial_name=trial0
@@ -84,13 +84,16 @@ python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_full.py \
 
 ## Files
 
-- `gsm8k_grpo.py` - Main training script with single-GPU fix
-- `gsm8k_grpo.yaml` - Base configuration
-- `gsm8k_grpo_fast.py` / `gsm8k_grpo_fast.yaml` - Fast training (20-30 min)
-- `gsm8k_grpo_1hour.py` / `gsm8k_grpo_1hour.yaml` - 1-hour training
-- `gsm8k_grpo_3hour.py` / `gsm8k_grpo_3hour.yaml` - 3-hour training
-- `gsm8k_grpo_full.py` / `gsm8k_grpo_full.yaml` - Full dataset training
+- `gsm8k_grpo_train.py` - **Consolidated training script** (handles all configurations)
+  - Handles all training configurations (fast, 1hour, 3hour, full)
+  - Configuration is controlled via YAML files and command-line overrides
+- `gsm8k_grpo.yaml` - Base configuration (full dataset)
+- `gsm8k_grpo_fast.yaml` - Fast training (20-30 min, 200 samples)
+- `gsm8k_grpo_1hour.yaml` - 1-hour training (500 samples)
+- `gsm8k_grpo_3hour.yaml` - 3-hour training (1000 samples)
+- `gsm8k_grpo_full.yaml` - Full dataset training (all samples)
 - `run_training.sh` - Training launcher script
+- `run_full_training.sh` - Multi-session full dataset training script
 - `test_trained_model.py` - Model evaluation script
 - `README.md` - This file
 - `TRAINING_LEARNINGS.md` - Consolidated learnings and best practices

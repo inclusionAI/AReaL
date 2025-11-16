@@ -14,7 +14,7 @@ cd "$PROJECT_ROOT"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-gsm8k-grpo-full-local}"
 TRIAL_NAME="${TRIAL_NAME:-trial0}"
 CONFIG_FILE="${CONFIG_FILE:-examples/docker_gsm8k/gsm8k_grpo_full.yaml}"
-TRAIN_SCRIPT="${TRAIN_SCRIPT:-examples/docker_gsm8k/gsm8k_grpo_full.py}"
+TRAIN_SCRIPT="${TRAIN_SCRIPT:-examples/docker_gsm8k/gsm8k_grpo_train.py}"
 
 # Session configuration (optional - can be overridden)
 # Set MAX_STEPS_PER_SESSION to limit steps per session (0 = no limit)

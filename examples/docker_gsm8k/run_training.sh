@@ -33,7 +33,7 @@ echo "Config: examples/docker_gsm8k/gsm8k_grpo.yaml"
 echo "Experiment: gsm8k-grpo-docker"
 echo ""
 
-python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo.py \
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo.yaml \
     experiment_name=gsm8k-grpo-docker \
     trial_name=trial0
