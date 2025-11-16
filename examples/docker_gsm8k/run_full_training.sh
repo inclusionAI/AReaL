@@ -37,6 +37,11 @@ echo "=========================================="
 echo ""
 
 # Check WandB API key
+# Trim whitespace from environment variable if set
+if [ -n "$WANDB_API_KEY" ]; then
+    export WANDB_API_KEY=$(echo "$WANDB_API_KEY" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+fi
+
 if [ -z "$WANDB_API_KEY" ]; then
     echo "WARNING: WANDB_API_KEY not set. WandB logging will be disabled."
     echo "Set it with: export WANDB_API_KEY=your-api-key"
