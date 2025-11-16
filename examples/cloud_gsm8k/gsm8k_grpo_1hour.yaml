@@ -1,5 +1,5 @@
 # Cloud 1-Hour Training Configuration
-# Same as docker_gsm8k version, but with cloud-friendly paths
+# Optimized for memory efficiency - works on all GPUs (RTX 4090, RTX 5090, A40, A100, H200, etc.)
 
 experiment_name: gsm8k-grpo-cloud-1hour
 trial_name: trial0
@@ -22,16 +22,19 @@ allocation_mode: sglang.d1p1t1+d1p1t1
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 32
+  max_concurrent_rollouts: 16
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
+  request_timeout: 7200
+  request_retries: 5
+  setup_timeout: 300
 
 gconfig:
   n_samples: 4
   min_new_tokens: 0
-  max_new_tokens: 512
+  max_new_tokens: 256
   greedy: false
   temperature: 1.0
 
@@ -41,10 +44,10 @@ actor:
   path: Qwen/Qwen2.5-0.5B-Instruct
   init_from_scratch: false
   disable_dropout: true
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 5120
+    max_tokens_per_mb: 4096
   optimizer:
     type: adam
     lr: 1.70e-5
@@ -84,7 +87,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 5120
+    max_tokens_per_mb: 4096
   optimizer: null
   backend: fsdp
 
@@ -95,11 +98,11 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 4096
-  mem_fraction_static: 0.8
-  attention_backend: flashinfer  # Required for RTX 5090 (SM 100+), also works on other GPUs
+  mem_fraction_static: 0.5
+  attention_backend: flashinfer
 
 train_dataset:
-  batch_size: 8
+  batch_size: 4
   shuffle: true
   pin_memory: true
   num_workers: 0
@@ -108,7 +111,7 @@ train_dataset:
   max_length: 512
 
 valid_dataset:
-  batch_size: 8
+  batch_size: 4
   shuffle: true
   pin_memory: true
   num_workers: 0

@@ -615,7 +615,7 @@ Process 2965022 has 8.05 GiB memory in use.   # Trainer
    bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
    # But override config to use A40 version:
    python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_1hour.py \
-       --config examples/cloud_gsm8k/gsm8k_grpo_1hour_a40.yaml \
+       --config examples/cloud_gsm8k/gsm8k_grpo_1hour_memory_optimized.yaml \
        experiment_name=gsm8k-grpo-cloud-1hour \
        trial_name=trial0
    ```
@@ -662,7 +662,7 @@ Process 2965022 has 8.05 GiB memory in use.   # Trainer
      max_concurrent_rollouts: 16  # Reduce from 32
    ```
 
-**Quick fix for A40**: Use the provided `gsm8k_grpo_1hour_a40.yaml` config file which includes all these optimizations.
+**Quick fix for A40/RTX 5090**: The script automatically detects memory-constrained GPUs and uses `gsm8k_grpo_1hour_memory_optimized.yaml` which includes all these optimizations. You can also manually specify it if needed.
 
 **Memory breakdown on A40**:
 - SGLang server: ~36GB (with `mem_fraction_static: 0.8`)

@@ -28,9 +28,14 @@ This directory contains scripts and configurations for running AReaL GRPO traini
 
 ### 4. Run Training
 ```bash
-# Inside pod
-bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
+# Inside pod - choose appropriate config for your GPU:
+bash examples/cloud_gsm8k/run_training_cloud.sh fast      # 20-30 min, any GPU
+bash examples/cloud_gsm8k/run_training_cloud.sh 1hour     # 1-2 hours, any GPU (default)
+bash examples/cloud_gsm8k/run_training_cloud.sh 3hour     # 3-4 hours, any GPU
+bash examples/cloud_gsm8k/run_training_cloud.sh full       # 5 days, REQUIRES H200/H100/A100-80GB
 ```
+
+**⚠️ Important**: The `full` config requires H200, H100, or A100-80GB (80GB+ memory). The script will automatically validate your GPU and reject full training on smaller GPUs.
 
 **💡 Important**: Set your WandB API key as an environment variable in RunPod (see `RUNPOD_COMPLETE_GUIDE.md` for details)
 
@@ -38,8 +43,9 @@ bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
 
 ### Main Training Script
 - `run_training_cloud.sh` - **Main training script** - Use this to start training
-  - Supports: `fast`, `1hour`, `3hour`, `full`, `h200` configs
-  - Auto-detects GPU type (A40, H200, etc.) and uses appropriate config
+  - Supports: `fast`, `1hour`, `3hour`, `full` configs
+  - Auto-detects GPU type (A40, RTX 5090, H200, etc.) and uses appropriate optimized config
+  - Validates GPU requirements for `full` training (requires 80GB+ memory)
   - Usage: `bash examples/cloud_gsm8k/run_training_cloud.sh [config_name]`
 
 ### RunPod Documentation
@@ -48,11 +54,13 @@ bash examples/cloud_gsm8k/run_training_cloud.sh 1hour
 - `runpod_template.json` - RunPod template configuration (optional)
 
 ### Training Configurations
-- `gsm8k_grpo_cloud.yaml` - Full training (cloud-optimized, for H200/full runs)
-- `gsm8k_grpo_1hour.yaml` - 1-hour training (RTX 4090/A100)
-- `gsm8k_grpo_1hour_a40.yaml` - 1-hour training (A40 GPU optimized) ⭐
-- `gsm8k_grpo_3hour.yaml` - 3-hour training
-- `gsm8k_grpo_3hour_a40.yaml` - 3-hour training (A40 GPU optimized)
+- `gsm8k_grpo_cloud.yaml` - **Full training** (REQUIRES H200/H100/A100-80GB, 80GB+ memory)
+  - Full dataset (7473 samples), 5 epochs, ~5 days training time
+  - Auto-validated: script checks GPU before allowing full training
+- `gsm8k_grpo_1hour.yaml` - 1-hour training (works on all GPUs)
+  - Memory-optimized settings: works on RTX 4090, RTX 5090, A40, A100, H200, etc.
+- `gsm8k_grpo_3hour.yaml` - 3-hour training (works on all GPUs)
+  - Memory-optimized settings: works on RTX 4090, RTX 5090, A40, A100, H200, etc.
 - `gsm8k_grpo_fast.yaml` - Fast training (20-30 min)
 
 ### Training Scripts
@@ -83,17 +91,25 @@ For 3-hour training:
 - **RunPod RTX 4090 Spot**: ~$0.27 ⭐ **Best Value**
 - **RunPod RTX 4090**: ~$0.87
 - **RunPod A40**: ~$1.20-1.50 (if RTX 4090 unavailable)
-- **RunPod H200**: ~$4.50-6.00 (for full dataset training)
+- **RunPod RTX 5090**: ~$1.50-2.00
 
-**Note**: A40 GPU requires memory-optimized config. The training script auto-detects A40 and uses `gsm8k_grpo_1hour_a40.yaml` or `gsm8k_grpo_3hour_a40.yaml` automatically.
+For full training (5 days):
+- **RunPod H200**: ~$540-720 (for full dataset, 5 epochs)
+- **RunPod H100**: ~$360-480
+- **RunPod A100 80GB**: ~$300-400
+
+**Note**: All configs use memory-optimized settings that work across all GPUs. No GPU-specific configs needed.
 
 ## Key Features
 
-1. **Automatic GPU Detection**: Script detects GPU type and uses appropriate config
-2. **Circuit Breaker**: Training stops automatically if task reward is zero for 10 consecutive steps
-3. **Checkpoint Recovery**: Easy recovery from checkpoints using provided scripts
-4. **Network Volumes**: Persistent storage for checkpoints across pod restarts
-5. **Spot Instances**: Enable for 50-70% cost savings
+1. **Universal Configs**: All configs use memory-optimized settings that work on all GPUs
+   - No need for GPU-specific configs - one config per time length works everywhere
+   - Optimized for memory efficiency while maintaining training quality
+2. **Full Training Validation**: `full` config automatically validates GPU (requires 80GB+ memory)
+3. **Circuit Breaker**: Training stops automatically if task reward is zero for 10 consecutive steps
+4. **Checkpoint Recovery**: Easy recovery from checkpoints using provided scripts
+5. **Network Volumes**: Persistent storage for checkpoints across pod restarts
+6. **Spot Instances**: Enable for 50-70% cost savings
 
 ## Important: Using Your Forked Branch
 
