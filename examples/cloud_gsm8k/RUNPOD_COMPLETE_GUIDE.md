@@ -134,12 +134,23 @@ cd /workspace
 pip config set global.index-url https://pypi.org/simple
 pip config set global.extra-index-url ""
 
-# Clone AReaL repository (DL4Math branch)
-git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
-cd AReaL
+# Smart repository handling: update if exists, clone if not
+# This prevents re-cloning on every pod restart, making restarts faster
+if [ -d AReaL/.git ]; then
+    cd AReaL
+    git fetch origin
+    git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL)
+else
+    rm -rf AReaL
+    git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
+    cd AReaL
+fi
 
-# Install AReaL
-pip install -e .
+# Smart installation: only install if not already installed
+# This prevents re-installing dependencies on every pod restart
+if ! python3 -c "import areal" 2>/dev/null; then
+    pip install -e .
+fi
 
 # Verify GPU
 nvidia-smi
@@ -286,19 +297,22 @@ cd /workspace
 pip config set global.index-url https://pypi.org/simple
 pip config set global.extra-index-url ""
 
-# Clone repository if not already there, update if exists
-if [ ! -d "AReaL" ]; then
-    git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
-    cd AReaL
-    pip install -e .
-else
+# Smart repository handling: update if exists, clone if not
+# This prevents re-cloning on every pod restart, making restarts faster
+if [ -d AReaL/.git ]; then
     cd AReaL
     git fetch origin
-    git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout DL4Math
-    # Only install if not already installed
-    if ! python3 -c "import areal" 2>/dev/null; then
-        pip install -e .
-    fi
+    git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL)
+else
+    rm -rf AReaL
+    git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
+    cd AReaL
+fi
+
+# Smart installation: only install if not already installed
+# This prevents re-installing dependencies on every pod restart
+if ! python3 -c "import areal" 2>/dev/null; then
+    pip install -e .
 fi
 ```
 
@@ -498,7 +512,7 @@ pip install -e .
 
 **For templates/pod commands**, include this fix in the Docker command (with smart installation):
 ```bash
-bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && (python3 -c 'import areal' 2>/dev/null || pip install -e .) && ..."
+bash -c "set -e && pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && (python3 -c 'import areal' 2>/dev/null || pip install -e .) && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
 ```
 
 **Why this happens**: The AReaL Docker image (`ghcr.io/inclusionai/areal-runtime:v0.3.4`) is built for internal use at Ant Group and includes pip configuration pointing to their internal PyPI mirror, which is not accessible from external cloud platforms like RunPod.
@@ -518,7 +532,7 @@ bash -c "pip config set global.index-url https://pypi.org/simple && pip config s
 
 **Solution**: Updated Docker command with smart git handling and installation:
 ```bash
-bash -c "pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && (python3 -c 'import areal' 2>/dev/null || pip install -e .) && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
+bash -c "set -e && pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && (python3 -c 'import areal' 2>/dev/null || pip install -e .) && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
 ```
 
 **Key improvements**:
