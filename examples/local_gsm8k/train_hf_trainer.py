@@ -89,35 +89,49 @@ def prepare_dataset(tokenizer, max_length=512, max_samples=None):
         print(f"Limited dataset to {len(dataset)} samples")
     
     def process_function(sample):
-        """Format question and answer for training."""
-        # Tokenize question and full text
-        question_text = sample['question']
-        full_text = sample['question'] + sample['answer']
-        
-        question_tokens = tokenizer.encode(question_text, add_special_tokens=False, max_length=max_length, truncation=True)
-        full_tokens = tokenizer.encode(full_text, add_special_tokens=False, max_length=max_length, truncation=True)
-        
-        # Add EOS token to full_tokens
-        if len(full_tokens) < max_length:
-            full_tokens.append(tokenizer.eos_token_id)
-        elif full_tokens[-1] != tokenizer.eos_token_id:
-            # Replace last token with EOS if we truncated
-            full_tokens[-1] = tokenizer.eos_token_id
-        
-        # Create labels: -100 for question tokens, actual token IDs for answer
-        # Make sure labels length matches full_tokens length
-        labels = [-100] * len(question_tokens) + full_tokens[len(question_tokens):]
-        
-        # Ensure labels length matches input_ids
-        if len(labels) != len(full_tokens):
-            # This can happen if question was truncated
-            labels = [-100] * min(len(question_tokens), len(full_tokens)) + full_tokens[len(question_tokens):]
-            labels = labels[:len(full_tokens)]
-        
-        return {
-            "input_ids": full_tokens,
-            "labels": labels,
-        }
+        q = sample["question"]
+        a = sample["answer"]
+
+        # 1. Build full chat conversation (user + assistant)
+        messages = [
+            {"role": "user", "content": q},
+            {"role": "assistant", "content": a},
+        ]
+
+        # 2. Get the templated chat as text and tokenize once
+        full_text = tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=False,
+            tokenize=False,
+        )
+        enc = tokenizer(full_text, max_length=max_length, truncation=True)
+        input_ids = enc["input_ids"]
+
+        # 3. Start with all labels ignored
+        labels = [-100] * len(input_ids)
+
+        # 4. Get the assistant segment *alone* in the same format
+        assistant_text = f"<|im_start|>assistant\n{a}{tokenizer.eos_token}"
+        assistant_ids = tokenizer(
+            assistant_text,
+            add_special_tokens=False,
+        )["input_ids"]
+
+        # 5. Find where the assistant segment appears in the full sequence
+        start = None
+        for i in range(len(input_ids) - len(assistant_ids) + 1):
+            if input_ids[i : i + len(assistant_ids)] == assistant_ids:
+                start = i
+                break
+
+        # If the assistant part was truncated away, drop this example
+        if start is None:
+            return {"input_ids": [], "labels": []}
+
+        end = start + len(assistant_ids)
+        labels[start:end] = input_ids[start:end]
+
+        return {"input_ids": input_ids, "labels": labels}
     
     print(f"Processing {len(dataset)} samples...")
     dataset = dataset.map(
@@ -125,6 +139,7 @@ def prepare_dataset(tokenizer, max_length=512, max_samples=None):
         remove_columns=["question", "answer"],
         desc="Processing dataset"
     )
+    dataset = dataset.filter(lambda ex: len(ex["input_ids"]) > 0)
     
     return dataset
 

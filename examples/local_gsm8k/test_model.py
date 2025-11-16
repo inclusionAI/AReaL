@@ -97,30 +97,10 @@ except ImportError:
         return results if len(results) > 0 else [False]
 
 
-class StopOnHash(StoppingCriteria):
-    """Stop generation when the tokenizer sequence for '####' appears."""
-
-    def __init__(self, hash_ids):
-        super().__init__()
-        self.hash_ids = hash_ids
-
-    def __call__(self, input_ids, scores, **kwargs) -> bool:
-        # input_ids: [batch, seq]
-        if input_ids is None or input_ids.shape[0] == 0:
-            return False
-        seq = input_ids[0].tolist()
-        hlen = len(self.hash_ids)
-        if hlen == 0 or len(seq) < hlen:
-            return False
-        # Check if the end of sequence matches '####'
-        return seq[-hlen:] == self.hash_ids
-
-
 def test_model(
     model_path: str,
     max_samples: int = 10,
     max_new_tokens: int = 1024,
-    stop_on_hash: bool = True,
     log_dir: str | None = None,
     test_all: bool = False,
 ):
@@ -150,6 +130,10 @@ def test_model(
     
     # Use CPU for more stable inference
     device = torch.device("cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
     _log(f"Using device: {device}")
     
     torch_dtype = torch.float32  # Use float32 for CPU
@@ -160,12 +144,6 @@ def test_model(
         trust_remote_code=True,
     )
     model = model.to(device)
-    
-    # Prepare stopping criteria (optional)
-    stopping_criteria = None
-    if stop_on_hash:
-        hash_ids = tokenizer.encode("####", add_special_tokens=False)
-        stopping_criteria = StoppingCriteriaList([StopOnHash(hash_ids)])
 
     # Load GSM8K test set
     from datasets import load_dataset
@@ -192,22 +170,27 @@ def test_model(
         prompt = f"{question}\n"
         
         # Tokenize
-        inputs = tokenizer(prompt, return_tensors="pt").to(device)
+        messages = [
+            {"role": "user", "content": prompt},
+        ]
+        inputs = tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            return_tensors="pt"
+        ).to(device)
         
         # Generate with greedy decoding for stability
         with torch.no_grad():
             gen_kwargs = {
                 "max_new_tokens": max_new_tokens,
                 "do_sample": False,
-                "pad_token_id": tokenizer.eos_token_id,
+                "pad_token_id": tokenizer.pad_token_id,
                 "eos_token_id": tokenizer.eos_token_id,
             }
-            if stopping_criteria is not None:
-                gen_kwargs["stopping_criteria"] = stopping_criteria
-            outputs = model.generate(**inputs, **gen_kwargs)
+            outputs = model.generate(inputs, **gen_kwargs)
         
         # Get the generated token IDs (excluding the prompt)
-        input_len = inputs.input_ids.shape[-1]
+        input_len = inputs.shape[-1]
         generated_token_ids = outputs[0][input_len:]
         
         # Check if EOS was generated
@@ -218,21 +201,12 @@ def test_model(
             if eos_positions:
                 eos_position = eos_positions[0]  # First EOS position
         
-        # Decode without skipping special tokens first to check for EOS
-        full_output_raw = tokenizer.decode(outputs[0], skip_special_tokens=False)
-        
         # Decode with skipping special tokens for final output
-        full_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        generated_text = full_output[len(prompt):]
-        
-        # Also decode just the generated tokens to verify
-        generated_text_from_tokens = tokenizer.decode(generated_token_ids, skip_special_tokens=True)
+        generated_text = tokenizer.decode(generated_token_ids, skip_special_tokens=True)
 
         # Determine stop reason
         new_tokens = len(generated_token_ids)
-        if stop_on_hash and "####" in generated_text:
-            stop_reason = "hash"
-        elif new_tokens >= max_new_tokens:
+        if new_tokens >= max_new_tokens:
             stop_reason = "max_new_tokens"
         elif eos_was_generated:
             stop_reason = f"eos_token (at position {eos_position})"
@@ -321,13 +295,7 @@ def test_model(
             # Show what was decoded up to EOS vs full sequence
             generated_up_to_eos = tokenizer.decode(generated_token_ids[:eos_position], skip_special_tokens=True)
             _log(f"Generated up to EOS (before truncation):\n{generated_up_to_eos}")
-        # Verify decoding consistency
-        if generated_text != generated_text_from_tokens:
-            _log(f"WARNING: Decoding mismatch detected!")
-            _log(f"From full output: {repr(generated_text[:100])}")
-            _log(f"From tokens only: {repr(generated_text_from_tokens[:100])}")
-        _log(f"Generated (full, from full_output):\n{generated_text}")
-        _log(f"Generated (from tokens only, for verification):\n{generated_text_from_tokens}")
+        _log(f"Generated Answer:\n{generated_text}")
         _log(f"Correct Answer (full):\n{correct_answer}")
         _log(f"Extracted -> GT: {gt_extracted} | Pred: {pred_extracted}")
         _log(f"Result: {'[CORRECT]' if is_correct else '[INCORRECT]'}")
@@ -434,11 +402,6 @@ def main():
         default=1024,
         help="Maximum new tokens to generate",
     )
-    parser.add_argument(
-        "--no-stop-on-hash",
-        action="store_true",
-        help="Disable stopping generation when '####' is produced",
-    )
     
     args = parser.parse_args()
     
@@ -456,7 +419,6 @@ def main():
             args.model,
             max_samples=args.max_samples,
             max_new_tokens=args.max_new_tokens,
-            stop_on_hash=not args.no_stop_on_hash,
             log_dir=args.log_dir,
             test_all=test_all,
         )
@@ -466,7 +428,6 @@ def main():
             args.trained_model,
             max_samples=args.max_samples,
             max_new_tokens=args.max_new_tokens,
-            stop_on_hash=not args.no_stop_on_hash,
             log_dir=args.log_dir,
             test_all=test_all,
         )
