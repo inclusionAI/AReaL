@@ -50,7 +50,7 @@ class StatsPusher:
                 )
                 return False
             except Exception as e:
-                logger.debug(f"Stats pusher init failed: {e}")
+                logger.info(f"Stats pusher init failed: {e}")
                 return False
 
     def push_scheduler_stats(self, stats, stats_type: str = "scheduler"):
@@ -106,9 +106,9 @@ class StatsPusher:
             self.stub.PushStats(request, timeout=1.0)
 
         except grpc.RpcError as e:
-            logger.debug(f"Stats push failed (gRPC error): {e.code()}")
+            logger.info(f"Stats push failed (gRPC error): {e.code()}")
         except Exception as e:
-            logger.debug(f"Stats push failed: {e}")
+            logger.info(f"Stats push failed: {e}")
 
     def push_tokenizer_stats(
         self,
@@ -148,9 +148,9 @@ class StatsPusher:
             self.stub.PushStats(request, timeout=1.0)
 
         except grpc.RpcError as e:
-            logger.debug(f"Stats push failed (gRPC error): {e.code()}")
+            logger.info(f"Stats push failed (gRPC error): {e.code()}")
         except Exception as e:
-            logger.debug(f"Stats push failed: {e}")
+            logger.info(f"Stats push failed: {e}")
 
     def push_storage_stats(self, storage_metrics):
         """Push storage stats to gRPC server."""
@@ -176,9 +176,9 @@ class StatsPusher:
             self.stub.PushStats(request, timeout=1.0)
 
         except grpc.RpcError as e:
-            logger.debug(f"Stats push failed (gRPC error): {e.code()}")
+            logger.info(f"Stats push failed (gRPC error): {e.code()}")
         except Exception as e:
-            logger.debug(f"Stats push failed: {e}")
+            logger.info(f"Stats push failed: {e}")
 
     def close(self):
         """Close the gRPC channel."""

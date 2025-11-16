@@ -72,6 +72,14 @@ def launch_server_cmd(command: list[str]) -> subprocess.Popen:
     Launch inference server in a new process and return its process handle.
     """
     # Replace newline continuations and split the command string.
+    from pathlib import Path
+
+    sglang_path = Path(__file__).absolute().parent.parent.parent / "sglang" / "python"
+    command = [
+        "bash",
+        "-c",
+        '"' + f"pip install -e {sglang_path}; " + " ".join(command) + '"',
+    ]
     logger.info(f"Launch command: {' '.join(command)}")
     _env = os.environ.copy()
     # To avoid DirectoryNotEmpty error caused by triton
@@ -79,7 +87,8 @@ def launch_server_cmd(command: list[str]) -> subprocess.Popen:
     unique_triton_cache_path = os.path.join(triton_cache_path, str(uuid.uuid4()))
     _env["TRITON_CACHE_PATH"] = unique_triton_cache_path
     return subprocess.Popen(
-        command,
+        " ".join(command),
+        shell=True,
         env=_env,
         stdout=sys.stdout,
         stderr=subprocess.STDOUT,

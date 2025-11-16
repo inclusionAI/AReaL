@@ -756,7 +756,7 @@ class SGLangConfig:
     max_loras_per_batch: int = 1
     lora_backend: str = "triton"
     # logging
-    log_level: str = "warning"
+    log_level: str = "info"
     log_level_http: str | None = "warning"
     log_requests: bool = False
     log_requests_level: int = 0
@@ -764,7 +764,9 @@ class SGLangConfig:
     enable_metrics: bool = True  # Exports Prometheus-like metrics
     # The interval (in decoding iterations) to log throughput
     # and update prometheus metrics
-    decode_log_interval: int = 1
+    decode_log_interval: int = 20
+    enable_stats_push: bool = True
+    stats_push_address: str = "localhost:50051"
     # Extra loader arguments
     # NOTE: These arguments will be parsed into a dict json-string
     # and passed as `model_loader_extra_config` to SGLang.
