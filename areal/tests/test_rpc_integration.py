@@ -1,152 +1,140 @@
-import json
-from unittest.mock import MagicMock, patch
+import importlib
+import sys
+import types
+from dataclasses import dataclass
+from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ConfigDict
 
-from areal.api.cli_args import (
-    NameResolveConfig,
-    TrainEngineConfig,
-)
-from areal.api.io_struct import FinetuneSpec
-from areal.scheduler.rpc.api import (
-    CallEnginePayload,
-    ConfigurePayload,
-    CreateEnginePayload,
-    EngineNameEnum,
-)
-from areal.scheduler.rpc.server import create_app
-
-ConfigDict.use_enum_values = True
+from areal.api.engine_api import TrainEngine
+from areal.scheduler.rpc.serialization import serialize_value
 
 
-@pytest.fixture
-def app():
-    import os
-
-    os.environ["WORLD_SIZE"] = "1"
-    os.environ["RANK"] = "0"
-    os.environ["LOCAL_RANK"] = "0"
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "7777"
-    yield create_app()
+@dataclass
+class _ClusterConfig:
+    name_resolve: dict[str, str]
 
 
-@pytest.fixture
-def client(app):
-    return app.test_client()
+@dataclass
+class _ExperimentConfig:
+    cluster: _ClusterConfig
+    seed: int
 
 
-@pytest.fixture(autouse=True, scope="module")
-def mock_engines():
-    from areal.engine.fsdp_engine import FSDPEngine
-    from areal.engine.megatron_engine import MegatronEngine
-    from areal.engine.sglang_remote import RemoteSGLangEngine
-    from areal.engine.vllm_remote import RemotevLLMEngine
+class _DummyTrainEngine(TrainEngine):
+    def __init__(self, *args, **kwargs):
+        self._destroy_called = False
 
-    fsdp_cls = MagicMock(spec=FSDPEngine)
-    megatron_cls = MagicMock(spec=MegatronEngine)
-    sglang_cls = MagicMock(spec=RemoteSGLangEngine)
-    vllm_cls = MagicMock(spec=RemotevLLMEngine)
+    def initialize(self, **kwargs):
+        self._initialized_with = kwargs
 
-    fsdp_inst = fsdp_cls.return_value
-    megatron_inst = megatron_cls.return_value
-    sglang_inst = sglang_cls.return_value
-    vllm_inst = vllm_cls.return_value
+    def generate(self, *args, **kwargs):
+        return {"text": "mocked"}
 
-    fsdp_inst.initialize.return_value = None
-    megatron_inst.initialize.return_value = None
-    sglang_inst.initialize.return_value = None
-    vllm_inst.initialize.return_value = None
+    def destroy(self):
+        self._destroy_called = True
 
-    fsdp_inst.generate.return_value = {"text": "mocked"}
-    megatron_inst.generate.return_value = {"text": "mocked"}
-    sglang_inst.generate.return_value = {"text": "mocked"}
-    vllm_inst.generate.return_value = {"text": "mocked"}
+    def current_data_parallel_head(self) -> int:
+        return 0
 
-    patchers = [
-        patch("areal.scheduler.rpc.server.FSDPEngine", fsdp_cls),
-        patch("areal.scheduler.rpc.server.MegatronEngine", megatron_cls),
-        patch("areal.scheduler.rpc.server.RemoteSGLangEngine", sglang_cls),
-        patch("areal.scheduler.rpc.server.RemotevLLMEngine", vllm_cls),
-        patch("areal.scheduler.rpc.server.set_random_seed", MagicMock()),
-    ]
-    for p in patchers:
-        p.start()
-    yield
-    for p in patchers:
-        p.stop()
+    @property
+    def data_parallel_group(self):
+        return "dp-group"
+
+    @property
+    def context_and_model_parallel_group(self):
+        return "mp-group"
 
 
-def rpc(client, method: str, params=None):
-    resp = client.post(
-        "/api",
-        data=json.dumps(
-            {"jsonrpc": "2.0", "method": method, "params": params or {}, "id": 1}
-        ),
-        content_type="application/json",
+@pytest.fixture(autouse=True)
+def rpc_server(monkeypatch):
+    module_name = "areal.scheduler.rpc.rpc_server"
+    engine_module_name = "areal.engine.fsdp_engine"
+
+    stub_module = types.SimpleNamespace(FSDPEngine=_DummyTrainEngine)
+    monkeypatch.setitem(sys.modules, engine_module_name, stub_module)
+
+    sys.modules.pop(module_name, None)
+    module = importlib.import_module(module_name)
+
+    monkeypatch.setattr(module, "tensor_container_to", lambda data, device: data)
+    monkeypatch.setattr(
+        module,
+        "broadcast_tensor_container",
+        lambda data, **kwargs: data,
     )
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data["jsonrpc"] == "2.0"
-    assert "error" not in data, data.get("error")
-    return data["result"]
+    monkeypatch.setattr(module.current_platform, "current_device", lambda: "cpu")
+    monkeypatch.setattr(module.name_resolve, "reconfigure", MagicMock())
+    monkeypatch.setattr(module.seeding, "set_random_seed", MagicMock())
+    monkeypatch.setattr(
+        module.stats_tracker, "export", MagicMock(return_value={"loss": 0.1})
+    )
+    module._engine = None
+    yield module
+    module._engine = None
 
 
-class TestEngineRPC:
-    def test_lifecycle(self, client):
-        create_result = rpc(
-            client,
-            "areal.create_engine",
-            {
-                "payload": CreateEnginePayload(
-                    class_name=EngineNameEnum.FSDP,
-                    config=TrainEngineConfig(
-                        experiment_name="test",
-                        trial_name="test",
-                        path="tiny-random-gpt2",
-                        attn_impl="flash_attention_2",
-                    ),
-                    initial_args={
-                        "addr": None,
-                        "ft_spec": FinetuneSpec(
-                            total_train_epochs=1,
-                            dataset_size=1,
-                            train_batch_size=1,
-                        ),
-                    },
-                ).model_dump()
+@pytest.fixture
+def client(rpc_server):
+    return rpc_server.app.test_client()
+
+
+class TestSyncRPCServer:
+    def test_lifecycle_endpoints(self, rpc_server, client):
+        create_resp = client.post(
+            "/create_engine",
+            json={
+                "engine": "areal.engine.fsdp_engine.FSDPEngine",
+                "init_args": [],
+                "init_kwargs": {
+                    "addr": None,
+                    "ft_spec": {"total_train_epochs": 1},
+                },
             },
         )
-        assert create_result["success"] is True
-        assert create_result["message"] == "ok"
+        assert create_resp.status_code == 200
+        create_data = create_resp.get_json()
+        assert create_data["status"] == "success"
 
-        call_result = rpc(
-            client,
-            "areal.call_engine",
-            {
-                "payload": CallEnginePayload(
-                    method="generate", args=("hello",), kwargs={"max_tokens": 10}
-                ).model_dump()
+        call_resp = client.post(
+            "/call",
+            json={
+                "method": "generate",
+                "args": ["hello"],
+                "kwargs": {
+                    "max_tokens": 10,
+                    "_should_bcast": False,
+                },
             },
         )
-        assert call_result["success"] is True
+        assert call_resp.status_code == 200
+        call_data = call_resp.get_json()
+        assert call_data["status"] == "success"
+        assert call_data["result"]["text"] == "mocked"
 
-        cfg_result = rpc(
-            client,
-            "areal.configure",
-            {
-                "payload": ConfigurePayload(
-                    seed_cfg={"base_seed": 42, "key": "test"},
-                    name_resolve=NameResolveConfig(type="nfs"),
-                ).model_dump()
+        config_payload = serialize_value(
+            _ExperimentConfig(
+                cluster=_ClusterConfig(name_resolve={"type": "nfs"}),
+                seed=42,
+            )
+        )
+        cfg_resp = client.post(
+            "/configure",
+            json={
+                "config": config_payload,
+                "role": "trainer",
+                "rank": 0,
             },
         )
-        assert cfg_result["success"] is True
+        assert cfg_resp.status_code == 200
+        assert cfg_resp.get_json()["status"] == "success"
 
-        health = rpc(client, "areal.health")
-        assert health["success"] is True
+        health_resp = client.get("/health")
+        assert health_resp.status_code == 200
+        assert health_resp.get_json()["engine_initialized"] is True
 
-        stats = rpc(client, "areal.export_stats", {"reset": True})
-        assert stats["success"] is True
-        assert isinstance(stats["data"], dict)
+        stats_resp = client.post("/export_stats")
+        assert stats_resp.status_code == 200
+        stats_data = stats_resp.get_json()
+        assert stats_data["status"] == "success"
+        assert stats_data["result"] == {"loss": 0.1}
