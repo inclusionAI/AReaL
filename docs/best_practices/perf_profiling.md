@@ -8,7 +8,8 @@ making it easy to correlate computation, communication, and I/O across multiple 
 **Key capabilities**:
 
 - Flexible tracing APIs: decorators (`@trace_perf`, `@trace_session`), context managers
-  (`trace_scope`, `atrace_session_phase`), and markers (`instant`)
+  (`trace_scope`, `trace_session_phase`, `atrace_session_phase`), and markers
+  (`instant`)
 - **Per-session lifecycle tracking** (task registration → session creation → generation
   → reward → finalization) with derived metrics (total time, generation time, tool call
   time, reward calculation time)
@@ -160,7 +161,12 @@ does a single prompt take from submission to reward calculation?).
 **Example** (from `areal/workflow/rlvr.py`):
 
 ```python
-from areal.utils.perf_tracer import trace_perf, trace_session
+from areal.utils.perf_tracer import (
+    atrace_session_phase,
+    session_context,
+    trace_perf,
+    trace_session,
+)
 
 class RLVRWorkflow(RolloutWorkflow):
     @trace_perf("rlvr_workflow.arun_episode", category="compute")
@@ -184,6 +190,7 @@ class RLVRWorkflow(RolloutWorkflow):
         results = self._build_result_tensors(resps, rewards)
         return concat_padded_tensors(results)
 
+    @session_context()
     async def _collect_samples(
         self,
         engine: InferenceEngine,
@@ -191,21 +198,15 @@ class RLVRWorkflow(RolloutWorkflow):
         prompt_str: str,
         task_data: dict[str, Any],
     ) -> tuple[ModelResponse, float, str]:
-        """Generate one sample and compute its reward.
+        """Generate one sample and compute its reward with session tracing."""
+        async with atrace_session_phase("generate"):
+            resp = await engine.agenerate(req)
 
-        Registers a new session for this sample. SessionTracer automatically
-        tracks generate and reward phases via @trace_session decorators.
-        """
-        # Get task_id from context and register a new session for this sample
-        task_id = perf_tracer.get_task_id()
-        session_id = perf_tracer.register_session(task_id)
-        perf_tracer.set_session_id(session_id)
-
-        # Generate (automatically traced by engine)
-        resp = await engine.agenerate(req)
-
-        # Compute reward (traced by @trace_session decorator below)
-        reward, completion_str = await self._compute_rewards(resp, prompt_str, task_data)
+        reward, completion_str = await self._compute_rewards(
+            resp,
+            prompt_str,
+            task_data,
+        )
 
         stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
@@ -223,34 +224,89 @@ class RLVRWorkflow(RolloutWorkflow):
         return reward, completion_str
 ```
 
+#### `session_context` decorator
+
+`session_context()` registers a new session for each invocation once a `task_id` already
+exists in the current context. Use it on the workflow method that handles a single
+sample so that downstream helpers (e.g., `atrace_session_phase`, `@trace_session`) can
+read the `session_id` from contextvars.
+
+```python
+from areal.utils.perf_tracer import atrace_session_phase, session_context
+
+class MiniWorkflow:
+    @session_context()
+    async def collect(self, engine, request):
+        async with atrace_session_phase("generate"):
+            return await engine.agenerate(request)
+```
+
 **How it works**:
 
 1. `WorkflowExecutor` calls `perf_tracer.set_task_id()` before invoking `arun_episode`
 1. `arun_episode` spawns multiple `_collect_samples` calls (one per sample)
-1. Each `_collect_samples` registers its own `session_id` and sets it in the context
-1. `get_task_id()` and `get_session_id()` retrieve IDs from async context variables
+1. Each `_collect_samples` applies the `@perf_tracer.session_context()` decorator to
+   register sessions automatically and place `task_id` / `session_id` into context
+   variables
+1. Context variables store the active task/session IDs transparently
 1. Child async functions inherit this context automatically
 1. `@trace_session("reward")` reads the session ID and logs phase start/end events
 1. Session traces appear in `session_tracer/sessions-r{rank}.jsonl` with computed
    metrics like `reward_s`, `generate_s`
 
-### Pattern 4: Manual phase scopes with `atrace_session_phase`
+### Pattern 4: Manual phase scopes with `atrace_session_phase` and `trace_session_phase`
 
 **Use case**: Trace phases that aren't cleanly extractable into methods (e.g., inline
-generation loops).
+generation loops or post-processing) while reusing the session context created in
+Pattern 3.
 
 **API**:
-`async with atrace_session_phase(session_id, phase, start_payload, end_payload)`
-
-- Context manager for session-phase tracing
-- Pairs `mark_{phase}_start` and `mark_{phase}_end` automatically
-
-**Example** (shown in Pattern 3 above):
 
 ```python
-async with perf_tracer.atrace_session_phase(session_id, "generate"):
-    resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
+async with atrace_session_phase(
+    phase,
+    start_payload: dict[str, Any] | None = None,
+    end_payload: dict[str, Any] | None = None,
+):
+    ...
+
+with trace_session_phase(
+    phase,
+    start_payload: dict[str, Any] | None = None,
+    end_payload: dict[str, Any] | None = None,
+):
+    ...
 ```
+
+- Context managers for session-phase tracing (async and sync variants)
+- Automatically emit `mark_{phase}_start` / `mark_{phase}_end` events and attach
+  optional payloads for richer trace metadata
+
+**Example** (continuing the `session_context` workflow from Pattern 3):
+
+```python
+@session_context()
+async def _collect_samples(..., n_attempts: int = 1):
+    async with perf_tracer.atrace_session_phase(
+        "generate",
+        start_payload={"attempts": n_attempts},
+    ):
+        response = await engine.agenerate(req)
+
+    reward, completion_str = await self._compute_rewards(response, prompt_str, data)
+
+    with perf_tracer.trace_session_phase(
+        "postprocess",
+        end_payload={"accepted": response.accepted},
+    ):
+        filtered = self._postprocess(response)
+
+    return filtered, reward, completion_str
+```
+
+The async scope emits timing for `engine.agenerate`, while the sync scope covers any
+CPU-side post-processing. Both share the `session_id` implicitly provided by the
+`@session_context()` decorator, so their events land in the same session trace record.
 
 ### Pattern 5: Add instant markers with `instant()`
 
@@ -324,29 +380,6 @@ else:
 Enable `perf_tracer.session_tracer.enabled=true` to track per-session metrics beyond
 just performance spans. This is useful for diagnosing queueing issues and staleness.
 
-### Choosing the right session tracing API
-
-AReaL provides three complementary APIs for session-phase tracing. Choose based on your
-code structure and automation needs:
-
-| API                      | Use case                            | Automation level | Session ID source | Best for                                          |
-| ------------------------ | ----------------------------------- | ---------------- | ----------------- | ------------------------------------------------- |
-| `@trace_session(phase)`  | Trace async methods as named phases | High             | Auto from context | Extractable workflow methods (`_compute_rewards`) |
-| `atrace_session_phase()` | Trace inline code blocks            | Medium           | Manual parameter  | Inline loops, non-extractable logic               |
-| `trace_session_event()`  | Manual lifecycle event recording    | Low              | Manual parameter  | Orchestration layer (`WorkflowExecutor`)          |
-
-**Guidelines**:
-
-- Use `@trace_session` for workflow methods you can decorate—it's the cleanest and
-  inherits `session_id` automatically
-- Use `atrace_session_phase` when you can't extract a method (e.g., inline generation
-  loops)
-- Use `trace_session_event` only at the orchestration level (submission, execution,
-  consumption) or when you need custom event names beyond standard phases
-
-All three APIs write to the same `session_tracer/sessions-r{rank}.jsonl` output and
-contribute to derived metrics like `generate_s`, `reward_s`, `total_s`.
-
 ### Understanding Task-Session Hierarchy
 
 AReaL's session tracer uses a two-level hierarchy to track rollout execution:
@@ -393,6 +426,30 @@ perf_tracer.trace_session_event(
     status="accepted",
 )
 ```
+
+### Choosing the right session tracing API
+
+AReaL provides three complementary APIs for session-phase tracing. Choose based on your
+code structure and automation needs:
+
+| API                      | Use case                            | Automation level | Session ID source | Best for                                          |
+| ------------------------ | ----------------------------------- | ---------------- | ----------------- | ------------------------------------------------- |
+| `@trace_session(phase)`  | Trace async methods as named phases | High             | Auto from context | Extractable workflow methods (`_compute_rewards`) |
+| `trace_session_phase()`  | Trace inline sync blocks            | Medium           | Auto from context | Inline logic                                      |
+| `atrace_session_phase()` | Trace inline async blocks           | Medium           | Auto from context | Inline logic                                      |
+| `trace_session_event()`  | Manual lifecycle event recording    | Low              | Manual parameter  | Orchestration layer (`WorkflowExecutor`)          |
+
+**Guidelines**:
+
+- Use `@trace_session` for workflow methods you can decorate—it's the cleanest and
+  inherits `session_id` automatically
+- Use `trace_session_phase` for short synchronous blocks and `atrace_session_phase` for
+  short asynchronous blocks
+- Use `trace_session_event` only at the orchestration level (submission, execution,
+  consumption) or when you need custom event names beyond standard phases
+
+All three APIs write to the same `session_tracer/sessions-r{rank}.jsonl` output and
+contribute to derived metrics like `generate_s`, `reward_s`, `total_s`.
 
 ### What gets tracked
 
@@ -445,6 +502,36 @@ JSON object:
     }
 }
 ```
+
+### Adding custom phases
+
+Workflows that introduce new stages (e.g., verifier passes, safety filters) can emit
+dedicated phase spans with a small extension to `areal/utils/perf_tracer.py`:
+
+1. **Declare start/end events** in `SessionTraceEvent`:
+
+   ```python
+   class SessionTraceEvent(str, Enum):
+        VALIDATION_START = "validation_start"
+        VALIDATION_END = "validation_end"
+   ```
+
+1. **Register the phase** by appending a `PhaseSpec` in
+   `SessionRecord.default_phase_configs()` (set `allow_multiple` or `ready_on_complete`
+   as needed).
+
+1. **Expose derived metrics** by adding a helper like `_compute_validation_time()` and a
+   matching `FieldSpec` in `SessionRecord.default_field_specs()` if you want
+   `validation_s` in the JSONL output.
+
+1. **Map the trace methods** by updating `_SESSION_TRACE_METHOD_TO_EVENT` with
+   `"mark_validation_start"` and `"mark_validation_end"` pointing to the new enum
+   entries.
+
+After these changes, `@trace_session("validation")`,
+`trace_session_phase("validation")`, and `atrace_session_phase("validation")` work out
+of the box—the context managers will emit the new events, and the session tracer will
+serialize timing for the additional phase alongside the built-in metrics.
 
 ## Reference: Complete example
 
