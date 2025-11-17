@@ -9,7 +9,6 @@ No SGLang server or launcher required - just direct model loading like local_gsm
 import argparse
 import json
 import os
-import re
 import sys
 from datetime import datetime
 
@@ -22,39 +21,8 @@ project_root = os.path.abspath(os.path.join(script_dir, "../.."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Import AReaL's math parser for consistent answer extraction
-try:
-    from areal.reward.math_parser import process_results
-except ImportError:
-    # Fallback parser if AReaL not available
-    def process_results(completions, answer):
-        """Simple fallback parser."""
-        try:
-            gt_answer = float(re.findall(r'-?\d+\.?\d*', answer.split("####")[-1])[-1])
-        except:
-            return [False]
-        
-        results = []
-        for completion in completions:
-            pred_answer = None
-            # Try multiple extraction methods
-            if "####" in completion:
-                try:
-                    pred_answer = float(re.findall(r'-?\d+\.?\d*', completion.split("####")[-1])[-1])
-                except:
-                    pass
-            
-            if pred_answer is None:
-                numbers = re.findall(r'-?\d+\.?\d*', completion)
-                if numbers:
-                    pred_answer = float(numbers[-1])
-            
-            if pred_answer is not None:
-                results.append(abs(pred_answer - gt_answer) < 0.01)
-            else:
-                results.append(False)
-        
-        return results if len(results) > 0 else [False]
+# Import AReaL's math parser for consistent answer extraction (using boxed format)
+from areal.reward.math_parser import process_results
 
 
 def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
