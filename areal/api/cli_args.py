@@ -443,6 +443,21 @@ class TrainEngineConfig:
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
 
+    # Offload
+    offload_train: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable training offload: offload model and optimizer to CPU when not training to save GPU memory for inference."
+        },
+    )
+    offload_train_mode: str = field(
+        default="tms",
+        metadata={
+            "help": "Offload mode: 'tms' for torch_memory_saver, 'move' for moving model/optimizer to CPU.",
+            "choices": ["tms", "move"],
+        },
+    )
+
 
 @dataclass
 class PPOActorConfig(TrainEngineConfig):

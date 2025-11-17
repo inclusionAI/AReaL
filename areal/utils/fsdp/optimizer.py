@@ -1,5 +1,3 @@
-from typing import List, Tuple
-
 import torch
 
 
@@ -31,9 +29,9 @@ def to_precision_dtype(dtype_str: str) -> torch.dtype:
 class AnyPrecisionAdamW(torch.optim.Optimizer):
     def __init__(
         self,
-        params: List[torch.Tensor],
+        params: list[torch.Tensor],
         lr: float = 1e-3,
-        betas: Tuple[float, float] = (0.9, 0.999),
+        betas: tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         weight_decay: float = 0.01,
         use_kahan_summation: bool = True,
@@ -177,3 +175,19 @@ class AnyPrecisionAdamW(torch.optim.Optimizer):
                     compensation.add_(temp_buffer.sub_(p.data))
                 else:  # usual AdamW updates
                     p.data.addcdiv_(exp_avg, centered_variance, value=-step_size)
+
+
+@torch.no_grad()
+def move_torch_optimizer(optimizer: torch.optim.Optimizer, device: str = "cpu"):
+    """Move optimizer state tensors to the specified device.
+    Reference: https://github.com/volcengine/verl/blob/main/verl/utils/fsdp_utils.py
+    """
+    if not optimizer.state:
+        return
+
+    for param_group in optimizer.param_groups:
+        for param in param_group["params"]:
+            state = optimizer.state[param]
+            for key, value in state.items():
+                if isinstance(value, torch.Tensor):
+                    state[key] = value.to(device, non_blocking=True)

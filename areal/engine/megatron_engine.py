@@ -4,6 +4,7 @@ import gc
 import os
 from collections.abc import Callable
 from concurrent.futures import Future
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 
@@ -21,6 +22,7 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
 from torch import nn
+from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
@@ -62,6 +64,7 @@ from areal.utils.megatron import (
     remove_padding,
 )
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
+from areal.utils.memory_utils import clear_memory, print_memory
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.perf_tracer import trace_perf, trace_scope
@@ -226,6 +229,10 @@ class MegatronEngine(TrainEngine):
                 model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
         self.create_optimizer(ft_spec)
+
+        # Offload model after initialization if enabled
+        if self.config.offload_train:
+            self.sleep()
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
@@ -715,7 +722,14 @@ class MegatronEngine(TrainEngine):
         self._check_rollout_engine_connected()
         if meta.type == current_platform.communication_backend:
             assert self.weight_update_group_initialized
-            self._update_weights_from_distributed(meta)
+            # In offload mode, wakes up parameters as needed to perform the update.
+            tms_context = (
+                torch_memory_saver.disable()
+                if self.config.offload_train
+                else nullcontext()
+            )
+            with tms_context:
+                self._update_weights_from_distributed(meta)
         elif meta.type == "disk":
             self._update_weights_from_disk(meta)
         else:
@@ -927,6 +941,10 @@ class MegatronEngine(TrainEngine):
         loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
+        # Wake up model if offload is enabled
+        if self.config.offload_train:
+            self.wake_up()
+
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
         self.optimizer.zero_grad()
@@ -1186,3 +1204,32 @@ class MegatronEngine(TrainEngine):
             group=mpu.get_pipeline_model_parallel_group(),
         )
         return result
+
+    def sleep(self) -> None:
+        """Pause CUDA memory for all tracked tensors.
+        Ref https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
+        """
+        assert self.config.offload_train
+
+        print_memory("before offload model")
+        clear_memory()
+        torch_memory_saver.pause()
+
+        # TODO: NCCL offload
+        current_platform.synchronize()
+        dist.barrier(device_ids=[self.device.index])
+        print_memory("after offload model")
+
+    def wake_up(self) -> None:
+        """Resume CUDA memory for all tracked tensors.
+        Ref https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
+        """
+        assert self.config.offload_train
+
+        torch_memory_saver.resume()
+        clear_memory()
+
+        # TODO: NCCL onload
+        current_platform.synchronize()
+        dist.barrier(device_ids=[self.device.index])
+        print_memory("after wake_up model")

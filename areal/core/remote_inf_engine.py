@@ -794,6 +794,37 @@ class RemoteInfEngine:
         """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
 
+    def offload(self) -> None:
+        """Offload model memory on all servers."""
+        try:
+            offload_req = self.backend.get_offload_request()
+            for addr in self.addresses:
+                res = requests.post(
+                    f"http://{addr}{offload_req.endpoint}",
+                    json=offload_req.payload,
+                )
+                res.raise_for_status()
+        except NotImplementedError:
+            self.logger.warning(
+                f"Backend {type(self.backend).__name__} does not support offload"
+            )
+
+    def onload(self, tags: list[str] | None = None) -> None:
+        """Onload model memory on all servers."""
+        try:
+            onload_req = self.backend.get_onload_request(tags=tags)
+            for addr in self.addresses:
+                res = requests.post(
+                    f"http://{addr}{onload_req.endpoint}",
+                    json=onload_req.payload,
+                    tags=tags,
+                )
+                res.raise_for_status()
+        except NotImplementedError:
+            self.logger.warning(
+                f"Backend {type(self.backend).__name__} does not support onload"
+            )
+
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
         """Launch a local inference server."""
         server_args["host"] = gethostip()

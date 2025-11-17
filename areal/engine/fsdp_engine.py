@@ -4,6 +4,7 @@ import os
 import time
 from collections.abc import Callable
 from concurrent.futures import Future
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 
@@ -24,6 +25,7 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
+from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     PreTrainedTokenizerFast,
@@ -52,8 +54,9 @@ from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
-from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
+from areal.utils.fsdp.optimizer import AnyPrecisionAdamW, move_torch_optimizer
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
+from areal.utils.memory_utils import clear_memory, print_memory
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
@@ -203,6 +206,10 @@ class FSDPEngine(BaseHFEngine):
 
         self.create_optimizer(ft_spec)
         self.initialized = True
+
+        # Offload model after initialization if enabled
+        if self.config.offload_train:
+            self.sleep()
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
@@ -459,7 +466,16 @@ class FSDPEngine(BaseHFEngine):
         self._check_rollout_engine_connected()
         if meta.type == current_platform.communication_backend:
             assert self.weight_update_group_initialized
-            self._update_weights_from_distributed(meta)
+            # In offload mode, wakes up parameters as needed to perform the update.
+            tms_context = (
+                torch_memory_saver.disable()
+                if self.config.offload_train
+                and self.config.offload_train_mode == "tms"
+                and not torch.version.hip
+                else nullcontext()
+            )
+            with tms_context:
+                self._update_weights_from_distributed(meta)
         elif meta.type == "disk":
             self._update_weights_from_disk(meta)
         else:
@@ -538,6 +554,10 @@ class FSDPEngine(BaseHFEngine):
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         """Train on a batch using gradient accumulation."""
+        # Wake up model if offload is enabled
+        if self.config.offload_train:
+            self.wake_up()
+
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
@@ -909,3 +929,50 @@ class FSDPEngine(BaseHFEngine):
                 f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
             )
         self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
+
+    def sleep(self) -> None:
+        """Pause CUDA memory for all tracked tensors.
+        Ref https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
+        """
+        assert self.config.offload_train
+
+        print_memory("before offload model")
+
+        match self.config.offload_train_mode:
+            case "tms":
+                # Use torch_memory_saver to pause CUDA memory
+                clear_memory()
+                torch_memory_saver.pause()
+            case "move":
+                self.model.cpu()
+                move_torch_optimizer(self.optimizer, "cpu")
+                clear_memory()
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported offload_train_mode: {self.config.offload_train_mode}"
+                )
+
+        current_platform.synchronize()
+        dist.barrier(device_ids=[self.device.index])
+        print_memory("after offload model")
+
+    def wake_up(self) -> None:
+        """Resume CUDA memory for all tracked tensors
+        Ref https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
+        """
+        assert self.config.offload_train
+
+        match self.config.offload_train_mode:
+            case "tms":
+                torch_memory_saver.resume()
+            case "move":
+                self.model.cuda()
+                move_torch_optimizer(self.optimizer, "cuda")
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported offload_train_mode: {self.config.offload_train_mode}"
+                )
+
+        current_platform.synchronize()
+        dist.barrier(device_ids=[self.device.index])
+        print_memory("after wake_up model")
