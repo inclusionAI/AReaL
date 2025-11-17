@@ -766,7 +766,6 @@ class SGLangConfig:
     # and update prometheus metrics
     decode_log_interval: int = 20
     enable_stats_push: bool = True
-    stats_push_address: str = "localhost:50051"
     enable_prefill_completion_stats: bool = True
     prefill_completion_stats_batch_size: int = 1
     # Extra loader arguments
@@ -1286,6 +1285,7 @@ class BaseExperimentConfig:
     # NOTE: we need this unified config class because different experiments
     # have different config structures, e.g., GRPO has two engine configs,
     # but SFT only has a single one. We use subclasses to represent these structures.
+    is_replay: bool = False
     experiment_name: str = field(
         default=MISSING,
         metadata={"help": "Name of the experiment (no '_' or '/'). Required."},

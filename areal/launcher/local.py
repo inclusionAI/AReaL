@@ -19,6 +19,7 @@ from areal.api.cli_args import (
     to_structured_cfg,
     vLLMConfig,
 )
+from areal.launcher.sglang_server import kill_process_tree
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.exp_metadata import save_experiment_metadata
@@ -29,7 +30,7 @@ from areal.utils.launcher import (
     get_env_vars,
     wait_llm_server_addrs,
 )
-from areal.utils.network import find_free_ports
+from areal.utils.network import find_free_ports, gethostip
 from areal.utils.recover import check_if_recover
 
 logger = logging.getLogger("Local Scheduler")
@@ -291,6 +292,29 @@ def local_main(config, run_id: int = 0):
         )
         logger.info(f"Saved experiment metadata to {metadata_file}")
 
+    #######################################################
+    router_proc = None
+    router_addr = router_grpc_addr = ""
+    if config.is_replay:
+        # launch router
+        from pathlib import Path
+
+        router_dir = Path(__file__).absolute().parent.parent / "router"
+        router_listen_port, router_grpc_port = find_free_ports(2)
+        router_addr = f"{gethostip()}:{router_listen_port}"
+        router_grpc_addr = f"{gethostip()}:{router_grpc_port}"
+        with open("/tmp/config.toml", "w") as f:
+            f.write(f'listen = "{router_addr}"\n')
+            f.write(f'grpc_listen = "{router_grpc_addr}"\n')
+        router_proc = subprocess.Popen(
+            [str(router_dir / "router"), "--config", "/tmp/config.toml"],
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+        )
+        # wait for the ports to be accupied
+        time.sleep(1)
+    #######################################################
+
     server_addrs = []
     if alloc_mode.gen_backend in ("sglang", "vllm"):
         # Launcher should launch llm servers according to allocation mode.
@@ -323,6 +347,15 @@ def local_main(config, run_id: int = 0):
             f"python3 -m {module} {' '.join(sys.argv[1:])} {seed_arg}={base_seed}"
         )
 
+        ###########################################
+        inf_server_env_vars = get_env_vars(
+            config.cluster.cluster_name,
+            config.launcher.inference_server_env_vars,
+        )
+        if config.is_replay:
+            inf_server_env_vars["AREAL_LLM_SERVER_ROUTER_GRPC_ADDR"] = router_grpc_addr
+        ###########################################
+
         # Launch inference servers.
         launcher.submit_array(
             job_name="llm_server",
@@ -331,10 +364,7 @@ def local_main(config, run_id: int = 0):
             gpu=alloc_mode.gen.pp_size
             * alloc_mode.gen.tp_size
             * alloc_mode.gen.dp_size,
-            env_vars=get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            ),
+            env_vars=inf_server_env_vars,
         )
 
         # Get llm server addresses by name resolve
@@ -351,17 +381,57 @@ def local_main(config, run_id: int = 0):
             launcher.stop_all(signal="SIGINT")
             raise e
 
+        ###########################################
+        if config.is_replay:
+            # let all servers join the router
+            import grpc
+
+            import areal.router.proto.router_pb2 as router_pb2
+            import areal.router.proto.router_pb2_grpc as router_pb2_grpc
+
+            channel = grpc.insecure_channel(router_grpc_addr)
+            stub = router_pb2_grpc.RouterManagementStub(channel)
+
+            # Add backends
+            try:
+                for server_addr in server_addrs:
+                    response = stub.AddBackend(
+                        router_pb2.AddBackendRequest(address=f"http://{server_addr}")
+                    )
+                    if not response.success:
+                        raise RuntimeError(f"Failed to add backend: {response.message}")
+                    logger.info(f"✓ Added backend in router: http://{server_addr}")
+            except Exception:
+                if router_proc is not None:
+                    kill_process_tree(router_proc.pid)
+                raise
+        ###########################################
+
     # Launch trainer entrypoint
     if alloc_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         if alloc_mode.type_ == AllocationType.DECOUPLED_EVAL:
             gpu = 0
             nprocs = 1
+
+        ###########################################
+        elif config.is_replay:
+            gpu = 0
+            nprocs = alloc_mode.train.world_size
+        ###########################################
+
         else:
             gpu = nprocs = alloc_mode.train.world_size
+
+        ###########################################
+        # intercept AREAL_LLM_SERVER_ADDRS as router addr
         _env_vars = dict(
             AREAL_LLM_SERVER_ADDRS=",".join(server_addrs),
             AREAL_RECOVER_RUN=str(int(is_recover_run)),
         )
+        if config.is_replay:
+            _env_vars["AREAL_LLM_SERVER_ADDRS"] = router_addr
+        ###########################################
+
         if alloc_mode.gen_backend == "sglang":
             # Required by NCCL weight update group.
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
@@ -390,6 +460,10 @@ def local_main(config, run_id: int = 0):
             remove_status=(),
         )
     except (KeyboardInterrupt, JobException, TimeoutError) as e:
+        ########################################
+        if config.is_replay and router_proc is not None:
+            kill_process_tree(router_proc.pid)
+        ########################################
         launcher.stop_all("SIGTERM")
         # NOTE: For local launcher, We cannot distinguish between a completed job and a failed job.
         # So we will always try to recover the job if it is finished or failed.

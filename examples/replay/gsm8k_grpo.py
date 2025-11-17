@@ -3,7 +3,7 @@ import sys
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
-from areal.experimental.trainer.rl import MockPPOTrainer
+from areal.experimental.trainer import MockPPOTrainer, PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -50,7 +50,8 @@ def main(args):
     )
 
     # Run training.
-    with MockPPOTrainer(config, train_dataset, valid_dataset) as trainer:
+    trainer_cls = PPOTrainer if not config.is_replay else MockPPOTrainer
+    with trainer_cls(config, train_dataset, valid_dataset) as trainer:
         trainer.train(workflow=workflow, eval_workflow=eval_workflow)
 
 

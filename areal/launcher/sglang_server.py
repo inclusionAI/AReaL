@@ -75,10 +75,19 @@ def launch_server_cmd(command: list[str]) -> subprocess.Popen:
     from pathlib import Path
 
     sglang_path = Path(__file__).absolute().parent.parent.parent / "sglang" / "python"
+    areal_path = Path(__file__).absolute().parent.parent
+    if "AREAL_LLM_SERVER_ROUTER_GRPC_ADDR" in os.environ:
+        command += [
+            "--stats-push-address",
+            os.environ["AREAL_LLM_SERVER_ROUTER_GRPC_ADDR"],
+        ]
     command = [
         "bash",
         "-c",
-        '"' + f"pip install -e {sglang_path}; " + " ".join(command) + '"',
+        '"'
+        + f"pip install -q -e {areal_path} --no-deps; pip install -q -e {sglang_path}; "
+        + " ".join(command)
+        + '"',
     ]
     logger.info(f"Launch command: {' '.join(command)}")
     _env = os.environ.copy()

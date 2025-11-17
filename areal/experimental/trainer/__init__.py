@@ -1,3 +1,3 @@
-from .rl import PPOTrainer
+from .rl import MockPPOTrainer, PPOTrainer
 
-__all__ = ["PPOTrainer"]
+__all__ = ["PPOTrainer", "MockPPOTrainer"]

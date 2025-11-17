@@ -1,73 +1,47 @@
 # Replay Rollout Submissions
 
+## Step 0: Validate your training script
+
+Your training script should be able to run with `PPOTrainer` and `MockPPOTrainer`. Which
+trainer to run depends on the configuration `is_replay=${True|False}`.
+
+An example is `examples/replay/gsm8k_grpo.py`. Note that `is_replay` should be available
+in the yaml configuration, e.g., `examples/replay/gsm8k_grpo.yaml`
+
 ## Step 1: Run a real experiment with perf_tracer
 
 Any experiment ***with `perf_tracer` enabled*** will work. The experiment can be either
 local or distributed.
 
-We recommend using the `PPOTrainer` in your training script.
-
 ```bash
-python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
-    --config examples/math/gsm8k_grpo.yaml \
+python3 -m areal.launcher.${local|slurm} examples/replay/gsm8k_grpo.py \
+    --config examples/replay/gsm8k_grpo.yaml \
     allocation_mode=sglang:d4+fsdp:d2c2 \
     experiment_name=my-exp \
     trial_name=trial0 total_train_epochs=1
 ```
 
-## Step 2: Launch the inference servers for replay
+## Step 2: Run the replay job
 
-Use the same command above but with an ***inference-only allocation mode***:
-
-```bash
-python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
-    --config examples/math/gsm8k_grpo.yaml \
-    allocation_mode=sglang:d4 \
-    experiment_name=my-exp \
-    trial_name=trial0 total_train_epochs=1
-```
-
-Note that only `allocation_mode` is changed.
-
-## (Optional) Step 3: Connect all server addresses to the proxy
-
-The log of inference servers will display the server addresses, e.g.,
-
-```
-20251115-21:32:39.544 SGLangServer Wrapper INFO: SGLang server launched at: http://33.180.160.150:20908
-20251115-21:32:40.567 SGLangServer Wrapper INFO: SGLang server launched at: http://33.180.160.150:11988
-20251115-21:32:40.567 SGLangServer Wrapper INFO: SGLang server launched at: http://33.180.160.150:25651
-20251115-21:32:40.567 SGLangServer Wrapper INFO: SGLang server launched at: http://33.180.160.150:15442
-20251115-21:32:40.881 Launcher Utils INFO: Found 4 rollout servers: 33.180.160.150:25651, 33.180.160.150:15442, 33.180.160.150:20908, 33.180.160.150:11988
-20251115-21:32:40.881 Local Scheduler INFO: LLM inference server launched at: AREAL_LLM_SERVER_ADDRS=33.180.160.150:25651,33.180.160.150:15442,33.180.160.150:20908,33.180.160.150:11988
-```
-
-You can then launch the HTTP proxy with the above server addresses.
-
-## Step 4: Run the replay job
-
-In your training script, replace `PPOTrainer` with `MockPPOTrainer`, then launch the job
-with:
+Use the same command but with `is_replay=True`:
 
 ```bash
-torchrun --nproc-per-node ${train_world_size} \
-    examples/math/gsm8k_grpo_replay.py \
-    --config examples/math/gsm8k_grpo.yaml \
+python3 -m areal.launcher.${local|slurm} examples/replay/gsm8k_grpo.py \
+    --config examples/replay/gsm8k_grpo.yaml \
     allocation_mode=sglang:d4+fsdp:d2c2 \
     experiment_name=my-exp \
-    trial_name=trial0 total_train_epochs=1
+    trial_name=trial0 total_train_epochs=1 is_replay=True
 ```
 
-Note that the launch tool is changed to `torchrun` and the script is updated to
-`examples/math/gsm8k_grpo_replay.py`
+Note that you must use the same configuration as the real job, especially
+`experiment_name` and `trial_name`.
 
-Important notes:
+### How it works
 
-- Regardless of which launcher you used for the real job, you must use `torchrun` to
-  launch replay processes locally.
-- `${train_world_size}` should be set to the number of GPUs you used for training in
-  your real job.
-- You must use the same configuration as the real job, especially `experiment_name` and
-  `trial_name`.
-- If you launch a proxy, you should override the server address with an additional
-  environment variable: `AREAL_LLM_SERVER_ADDRS=${proxy_ip}:${proxy_port}`
+The replay job is launched by the local/slurm/ray launcher. The launcher will see if
+this is a replay job. If so, the launcher will launch the router (binary placed at
+`area/router/router`) and add all inference servers to the router. Then, the launcher
+replaces the `AREAL_LLM_SERVER_ADDRSS` environment variable to the router's address, and
+pass that environment variable to the trainer.
+
+In the replay mode, the trainer job will not occupy GPUs.
