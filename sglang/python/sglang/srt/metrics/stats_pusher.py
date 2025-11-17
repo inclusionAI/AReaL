@@ -33,7 +33,7 @@ class StatsPusher:
                 return True
 
             try:
-                from sglang.srt.metrics import router_pb2, router_pb2_grpc
+                from areal.router.proto import router_pb2, router_pb2_grpc
 
                 self.channel = grpc.insecure_channel(self.address)
                 self.stub = router_pb2_grpc.RouterManagementStub(self.channel)

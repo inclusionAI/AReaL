@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 def run_server():
     """Run the test gRPC server."""
     try:
-        from sglang.srt.metrics import router_pb2, router_pb2_grpc
+        from areal.router.proto import router_pb2, router_pb2_grpc
     except ImportError:
         print("Error: router_pb2 modules not found. Please compile the proto first:")
         print("  cd python/sglang/srt/metrics")
