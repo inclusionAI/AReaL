@@ -376,6 +376,17 @@ class RemoteInfEngine:
             logger=self.logger, train_data_parallel_size=train_data_parallel_size
         )
 
+        # Register session cleanup hook for AsyncTaskRunner thread
+        # This ensures sessions created in the background thread are properly closed
+        async def cleanup_session():
+            """Close thread-local aiohttp session in AsyncTaskRunner thread."""
+            if hasattr(_session_storage, "session") and _session_storage.session:
+                if not _session_storage.session.closed:
+                    await _session_storage.session.close()
+                _session_storage.session = None
+
+        self.workflow_executor.runner.register_shutdown_hook(cleanup_session)
+
     def destroy(self):
         """Destroy the engine and clean up resources."""
         # Clean up thread-local session if it exists in the current thread
@@ -384,8 +395,8 @@ class RemoteInfEngine:
                 if not _session_storage.session.closed:
                     # Try to close the session synchronously
                     # Note: This only cleans up the session in the current thread.
-                    # Sessions in other threads (e.g., AsyncTaskRunner) will be
-                    # garbage collected when those threads terminate.
+                    # Sessions in AsyncTaskRunner thread are cleaned up via shutdown hooks
+                    # registered during initialize().
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
                         # If we're in an async context, schedule the close
