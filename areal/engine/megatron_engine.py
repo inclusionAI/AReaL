@@ -1210,6 +1210,10 @@ class MegatronEngine(TrainEngine):
         Ref https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
         """
         assert self.config.offload_train
+        if self.config.offload_train_mode != "tms":
+            self.logger.warning(
+                "Only TMS offload mode is supported for Megatron engine. Using TMS mode."
+            )
 
         print_memory("before offload model")
         clear_memory()
@@ -1225,6 +1229,10 @@ class MegatronEngine(TrainEngine):
         Ref https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
         """
         assert self.config.offload_train
+        if self.config.offload_train_mode != "tms":
+            self.logger.warning(
+                "Only TMS offload mode is supported for Megatron engine. Using TMS mode."
+            )
 
         torch_memory_saver.resume()
         clear_memory()
