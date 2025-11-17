@@ -393,7 +393,7 @@ class RemoteInfEngine:
                     else:
                         # If no loop is running, run the close synchronously
                         loop.run_until_complete(_session_storage.session.close())
-            except Exception:
+            except RuntimeError:
                 # Ignore errors during cleanup (e.g., no event loop)
                 pass
             finally:
