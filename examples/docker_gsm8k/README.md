@@ -54,8 +54,11 @@ Inside the container:
 ```bash
 cd /workspace/AReaL
 
-# Set WandB API key (optional)
-export WANDB_API_KEY=your-api-key-here
+# WandB API key is automatically loaded from wandb/.wandb_api_key (if it exists)
+# Or set it manually:
+# export WANDB_API_KEY=your-api-key-here
+# Or disable WandB logging:
+# export WANDB_API_KEY=""
 
 # Fast training (20-30 minutes, 200 samples)
 python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
@@ -92,9 +95,10 @@ python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
 - `gsm8k_grpo_1hour.yaml` - 1-hour training (500 samples)
 - `gsm8k_grpo_3hour.yaml` - 3-hour training (1000 samples)
 - `gsm8k_grpo_full.yaml` - Full dataset training (all samples)
-- `run_training.sh` - Training launcher script
-- `run_full_training.sh` - Multi-session full dataset training script
-- `test_trained_model.py` - Model evaluation script
+- `run_training.sh` - Training launcher script (automatically loads WandB key from `wandb/.wandb_api_key`)
+- `run_full_training.sh` - Multi-session full dataset training script (automatically loads WandB key)
+- `test_trained_model.py` - Model evaluation script (simple, direct model loading)
+- `test_trained_model_sglang.py` - Advanced evaluation script (SGLang-based, matches training environment)
 - `README.md` - This file
 - `TRAINING_LEARNINGS.md` - Consolidated learnings and best practices
 
@@ -129,6 +133,35 @@ Training progress is automatically logged to WandB:
 - Project: `gsm8k-grpo-local`
 - Metrics: Task reward (accuracy), loss, entropy, gradient norm
 - View at: https://wandb.ai
+
+#### WandB API Key Configuration
+
+The training scripts automatically load the WandB API key from a unified location:
+
+**Automatic Loading (Recommended):**
+- The training scripts (`run_training.sh`, `run_full_training.sh`) automatically load the API key from:
+  - `wandb/.wandb_api_key` (repository root)
+- This file is git-ignored, so your key won't be committed
+- Simply create the file with your API key:
+  ```bash
+  echo "your-wandb-api-key-here" > wandb/.wandb_api_key
+  ```
+
+**Manual Environment Variable:**
+- Alternatively, set the environment variable directly:
+  ```bash
+  export WANDB_API_KEY=your-api-key-here
+  ```
+
+**Disable WandB:**
+- To disable WandB logging, either:
+  - Don't set the API key (scripts will continue without WandB)
+  - Or set an empty value: `export WANDB_API_KEY=""`
+
+**Note:** The same `wandb/.wandb_api_key` location is used by:
+- Docker training scripts (`examples/docker_gsm8k/`)
+- Local training scripts (`examples/local_gsm8k/load_wandb_key.py`)
+- Ensures consistency across all training methods
 
 ## Configuration
 
