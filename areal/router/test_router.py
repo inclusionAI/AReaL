@@ -1,11 +1,10 @@
-import json
 import sys
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
+from threading import Lock, Thread
 
 import grpc
 import requests
+from flask import Flask, jsonify, request
 
 import areal.router.proto.router_pb2 as router_pb2
 import areal.router.proto.router_pb2_grpc as router_pb2_grpc
@@ -153,51 +152,67 @@ def test_empty_address():
     channel.close()
 
 
-# Mock backend server for testing HTTP endpoints
-class MockBackendHandler(BaseHTTPRequestHandler):
-    request_log = []  # Track all requests received
+# Mock backend server for testing HTTP endpoints using Flask
+request_log = []  # Global request log shared across all mock backends
+request_log_lock = Lock()  # Thread-safe lock for request_log
 
-    def log_message(self, format, *args):
-        # Suppress default logging
-        pass
 
-    def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length).decode("utf-8")
+def create_mock_backend(port):
+    """Create a Flask app for a mock backend"""
+    app = Flask(f"mock_backend_{port}")
+    app.config["port"] = port
 
-        # Log the request
-        self.__class__.request_log.append(
+    # Disable Flask's default logging
+    import logging
+
+    log = logging.getLogger("werkzeug")
+    log.setLevel(logging.ERROR)
+
+    @app.route("/<path:path>", methods=["POST", "PUT"])
+    def handle_request(path):
+        # Log the request (thread-safe)
+        with request_log_lock:
+            request_log.append(
+                {
+                    "port": app.config["port"],
+                    "path": f"/{path}",
+                    "method": request.method,
+                    "body": request.get_data(as_text=True),
+                }
+            )
+
+        # Return successful response
+        return jsonify(
             {
-                "port": self.server.server_port,
-                "path": self.path,
-                "method": "POST",
-                "body": body,
+                "success": True,
+                "message": f"Mock backend on port {app.config['port']}",
+                "port": app.config["port"],
             }
-        )
+        ), 200
 
-        # Simulate successful response
-        response = {
-            "success": True,
-            "message": f"Mock backend on port {self.server.server_port}",
-            "port": self.server.server_port,
-        }
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(response).encode())
-
-    def do_PUT(self):
-        # Same as POST for our tests
-        self.do_POST()
+    return app
 
 
 def start_mock_backend(port):
     """Start a mock backend server on the given port"""
-    server = HTTPServer(("127.0.0.1", port), MockBackendHandler)
-    thread = Thread(target=server.serve_forever, daemon=True)
+    app = create_mock_backend(port)
+
+    def run_server():
+        app.run(host="127.0.0.1", port=port, threaded=True, use_reloader=False)
+
+    thread = Thread(target=run_server, daemon=True)
     thread.start()
-    return server
+
+    # Return a simple object with shutdown method for compatibility
+    class MockServer:
+        def __init__(self):
+            self.port = port
+
+        def shutdown(self):
+            # Flask servers in daemon threads will exit when main thread exits
+            pass
+
+    return MockServer()
 
 
 def test_generate_endpoint():
@@ -205,7 +220,7 @@ def test_generate_endpoint():
     print("\n=== Testing /generate Endpoint (Single Backend Routing) ===")
 
     # Clear request log
-    MockBackendHandler.request_log = []
+    request_log.clear()
 
     # Test POST /generate
     test_data = {
@@ -226,15 +241,11 @@ def test_generate_endpoint():
         print(f"  Request {i + 1}: Routed to backend on port {data['port']}")
 
     # Check that requests were distributed (round-robin)
-    ports_used = [
-        req["port"]
-        for req in MockBackendHandler.request_log
-        if req["path"] == "/generate"
-    ]
+    ports_used = [req["port"] for req in request_log if req["path"] == "/generate"]
     print(f"✓ Routed {len(ports_used)} requests across backends: {set(ports_used)}")
 
     # Test PUT /generate
-    MockBackendHandler.request_log = []
+    request_log.clear()
     response = requests.put("http://localhost:3000/generate", json=test_data, timeout=5)
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
     print("✓ PUT /generate works correctly")
@@ -254,7 +265,7 @@ def test_broadcast_endpoints():
         print(f"\n  Testing {endpoint}:")
 
         # Clear request log
-        MockBackendHandler.request_log = []
+        request_log.clear()
 
         test_data = {"model_path": "/path/to/model", "load_format": "safetensors"}
 
@@ -271,9 +282,7 @@ def test_broadcast_endpoints():
         assert "backends" in data["message"].lower()
 
         # Check that ALL backends received the request
-        requests_for_endpoint = [
-            req for req in MockBackendHandler.request_log if req["path"] == endpoint
-        ]
+        requests_for_endpoint = [req for req in request_log if req["path"] == endpoint]
         ports_hit = sorted([req["port"] for req in requests_for_endpoint])
 
         # We should have 2 backends (8001 and 8002)
@@ -285,15 +294,13 @@ def test_broadcast_endpoints():
         print(f"    POST: ✓ Broadcast to {len(ports_hit)} backends: {ports_hit}")
 
         # Test PUT
-        MockBackendHandler.request_log = []
+        request_log.clear()
         response = requests.put(
             f"http://localhost:3000{endpoint}", json=test_data, timeout=5
         )
 
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-        requests_for_endpoint = [
-            req for req in MockBackendHandler.request_log if req["path"] == endpoint
-        ]
+        requests_for_endpoint = [req for req in request_log if req["path"] == endpoint]
         assert len(requests_for_endpoint) == 2, (
             f"Expected 2 backends for PUT, got {len(requests_for_endpoint)}"
         )
