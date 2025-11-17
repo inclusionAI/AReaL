@@ -132,8 +132,15 @@ def test_model(
     device = torch.device("cpu")
     if torch.cuda.is_available():
         device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
+    else:
+        # Check for MPS (macOS only) - safe check for Windows compatibility
+        try:
+            mps_available = torch.backends.mps.is_available() if hasattr(torch.backends, 'mps') else False
+        except (AttributeError, RuntimeError):
+            mps_available = False
+        
+        if mps_available:
+            device = torch.device("mps")
     _log(f"Using device: {device}")
     
     torch_dtype = torch.float32  # Use float32 for CPU

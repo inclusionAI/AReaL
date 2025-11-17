@@ -226,18 +226,21 @@ def train(
         data_collator=data_collator,
     )
     
-    # Start timer if max_time is set
+    # Add callback for max_time if needed
     if max_time:
         import time
+        from transformers import TrainerCallback
+        
         start_time = time.time()
         
-        def should_stop_callback(state):
-            if time.time() - start_time > max_time:
-                print(f"\nMax time ({max_time}s) reached. Stopping training...")
-                return True
-            return False
-    else:
-        should_stop_callback = None
+        class MaxTimeCallback(TrainerCallback):
+            def on_step_end(self, args, state, control, **kwargs):
+                if time.time() - start_time > max_time:
+                    print(f"\nMax time ({max_time}s) reached. Stopping training...")
+                    control.should_training_stop = True
+                return control
+        
+        trainer.add_callback(MaxTimeCallback())
     
     # Train
     print("\nStarting training...")
