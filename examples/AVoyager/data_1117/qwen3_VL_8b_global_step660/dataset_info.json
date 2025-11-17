@@ -1,0 +1,72 @@
+{
+  "builder_name": "json",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "json",
+  "dataset_size": 776665,
+  "description": "",
+  "download_checksums": {
+    "/storage/openpsi/data/lcy_EGM/grounding_sft_v1/refcoco_test_sample.jsonl": {
+      "num_bytes": 1007254,
+      "checksum": null
+    }
+  },
+  "download_size": 1007254,
+  "features": {
+    "image": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "sent": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "bbox": {
+      "feature": {
+        "dtype": "float64",
+        "_type": "Value"
+      },
+      "_type": "List"
+    },
+    "height": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "width": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "generated_result": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "scaled_bbox": {
+      "feature": {
+        "dtype": "float64",
+        "_type": "Value"
+      },
+      "_type": "List"
+    },
+    "iou": {
+      "dtype": "float64",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 1783919,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 776665,
+      "num_examples": 5741,
+      "dataset_name": "json"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

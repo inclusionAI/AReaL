@@ -1,3 +1,0 @@
-# IOU scores (N=11261)
-mean_iou: 0.472388
-pass_rate@0.5: 0.506971

@@ -1,3 +1,0 @@
-total_time_sec: 38144.000
-total_tokens: 986837
-case_number: 11261
