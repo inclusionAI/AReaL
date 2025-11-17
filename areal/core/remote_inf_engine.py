@@ -272,6 +272,24 @@ class RemoteInfEngine:
         except requests.exceptions.RequestException:
             return False
 
+    def _ensure_server_alive(self):
+        """Check if at least one server is alive (fail-fast check).
+
+        Uses optimistic checking: returns immediately when the first healthy
+        server is found.
+
+        Raises
+        ------
+        RuntimeError
+            If all inference servers are dead
+        """
+        for addr in self.addresses:
+            base_url = f"http://{addr}"
+            if self.check_health(base_url):
+                return  # Found at least one alive server
+        # All servers are dead
+        raise RuntimeError("All inference servers are dead. Cannot process requests.")
+
     def initialize(
         self,
         engine_id: str | None = None,

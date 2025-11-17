@@ -856,6 +856,7 @@ class WorkflowExecutor:
 
         while time.perf_counter() - start_time < timeout:
             self._check_thread_exception()
+            self.inference_engine._ensure_server_alive()
 
             if len(self._pending_results) >= count:
                 break
@@ -954,6 +955,9 @@ class WorkflowExecutor:
             self.data_generator = cycle_dataloader(dataloader)
         assert dataloader.batch_size is not None
         while True:
+            self._check_thread_exception()
+            self.inference_engine._ensure_server_alive()
+
             # Submit at least two batches to allow maximum overlap
             if (
                 len(self._pending_inputs) < manager.get_pending_limit()
