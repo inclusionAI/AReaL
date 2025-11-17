@@ -25,9 +25,13 @@ import numpy as np
 import torch
 from pydantic import BaseModel, Field
 
+from areal.utils import logging
+
 TOKENIZER_ARCHIVE_INLINE_THRESHOLD = 512 * 1024
 TOKENIZER_ZSTD_THRESHOLD = 20 * 1024 * 1024
 TokenizerCompression = Literal["zip", "zstd"]
+
+logger = logging.getLogger("SyncRPCServer")
 
 
 class SerializedTensor(BaseModel):
@@ -95,9 +99,6 @@ class SerializedTensor(BaseModel):
         # Parse dtype string (e.g., "torch.float32" -> torch.float32)
         dtype_str = self.dtype.replace("torch.", "")
         dtype = getattr(torch, dtype_str)
-
-        # Reconstruct tensor from bytes
-        import numpy as np
 
         np_array = np.frombuffer(buffer, dtype=self._torch_dtype_to_numpy(dtype))
         # Copy the array to make it writable before converting to tensor
@@ -465,34 +466,41 @@ def deserialize_value(value: Any) -> Any:
                 }
                 # Reconstruct the dataclass instance
                 return dataclass_type(**deserialized_data)
-            except Exception:
+            except Exception as e:
                 # If parsing fails, treat as regular dict
-                pass
+                logger.warning(
+                    f"Failed to deserialize dataclass, treating as regular dict: {e}"
+                )
 
         # Check for SerializedTokenizer marker
         if value.get("type") == "tokenizer":
             try:
                 serialized_tokenizer = SerializedTokenizer.model_validate(value)
                 return serialized_tokenizer.to_tokenizer()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    f"Failed to deserialize tokenizer, treating as regular dict: {e}"
+                )
 
         # Check for SerializedNDArray marker
         if value.get("type") == "ndarray":
             try:
                 serialized_array = SerializedNDArray.model_validate(value)
                 return serialized_array.to_array()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    f"Failed to deserialize ndarray, treating as regular dict: {e}"
+                )
 
         # Check for SerializedTensor marker
         if value.get("type") == "tensor":
             try:
                 serialized_tensor = SerializedTensor.model_validate(value)
                 return serialized_tensor.to_tensor()
-            except Exception:
-                # If parsing fails, treat as regular dict
-                pass
+            except Exception as e:
+                logger.warning(
+                    f"Failed to deserialize tensor, treating as regular dict: {e}"
+                )
 
         # Regular dict - recursively deserialize values
         return {key: deserialize_value(val) for key, val in value.items()}
