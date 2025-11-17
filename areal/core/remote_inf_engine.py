@@ -817,7 +817,6 @@ class RemoteInfEngine:
                 res = requests.post(
                     f"http://{addr}{onload_req.endpoint}",
                     json=onload_req.payload,
-                    tags=tags,
                 )
                 res.raise_for_status()
         except NotImplementedError:

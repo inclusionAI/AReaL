@@ -2,8 +2,8 @@
 
 import gc
 
-from platforms import current_platform
-from utils.logging import getLogger
+from areal.platforms import current_platform
+from areal.utils.logging import getLogger
 
 logger = getLogger(__name__)
 
