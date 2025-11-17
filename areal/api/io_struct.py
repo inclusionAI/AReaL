@@ -206,7 +206,7 @@ class SaveLoadMeta:
     processor: Optional["AutoProcessor"] = None
     base_model_path: str | None = None
     naive_distributed: bool = False
-
+    global_step: int | None = None
 
 @dataclass
 class RolloutStat:

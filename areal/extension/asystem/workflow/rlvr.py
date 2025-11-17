@@ -1,0 +1,174 @@
+import asyncio
+import importlib
+import os
+import uuid
+from collections.abc import Callable
+
+import aiofiles
+import aiofiles.os
+import colorama
+import torch
+from transformers import PreTrainedTokenizerFast
+
+from areal.api.cli_args import GenerationHyperparameters
+from areal.api.engine_api import InferenceEngine
+from areal.api.io_struct import ModelRequest
+from areal.api.reward_api import AsyncRewardWrapper
+from areal.workflow.rlvr import RLVRWorkflow
+from areal.utils.data import concat_padded_tensors
+from areal.utils import logging, stats_tracker
+from areal.extension.asystem.util import RL_TASKS
+
+logger = logging.getLogger("RLVR workflow")
+
+
+def default_get_input_ids_fn(data, tokenizer, enable_thinking):
+    input_ids = tokenizer.apply_chat_template(
+        data,
+        tokenize=True,
+        add_generation_prompt=True,
+        enable_thinking=enable_thinking,
+    )
+    return input_ids
+
+
+def default_data_extract_prompt_fn(data):
+    return data["messages"]
+
+
+class RLVRWorkflow(RLVRWorkflow):
+    def __init__(
+        self,
+        reward_fn: Callable | str,
+        gconfig: GenerationHyperparameters,
+        tokenizer: PreTrainedTokenizerFast | str,
+        enable_thinking: bool = False,
+        rollout_stat_scope: str = "rollout",
+        dump_dir: str | None = None,
+        get_input_ids_fn: Callable = default_get_input_ids_fn,
+        data_extract_prompt_fn: Callable = default_data_extract_prompt_fn,
+    ):
+        super().__init__(reward_fn, gconfig, tokenizer, enable_thinking, rollout_stat_scope,
+                         dump_dir, get_input_ids_fn, data_extract_prompt_fn)
+
+    async def arun_episode(self, engine: InferenceEngine, data):
+        # NOTE: tokenizer and reward_fn are not jsonifiable for remote execution,
+        # so we need to load it eagerly during execution.
+        if isinstance(self.tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+            tokenizer = load_hf_tokenizer(self.tokenizer)
+            if tokenizer.pad_token_id not in self.gconfig.stop_token_ids:
+                self.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
+            if tokenizer.eos_token_id not in self.gconfig.stop_token_ids:
+                self.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
+            self.tokenizer = tokenizer
+
+        if isinstance(self.reward_fn, str):
+            module_path, fname = self.reward_fn.rsplit(".", 1)
+            module = importlib.import_module(module_path)
+            self.reward_fn = getattr(module, fname)
+            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
+
+        input_ids = self.get_input_ids_fn(
+            self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking
+        )
+
+        n_samples = self.gconfig.n_samples
+        req = ModelRequest(
+            rid=uuid.uuid4().hex,
+            input_ids=input_ids,
+            gconfig=self.gconfig.new(n_samples=1),
+            tokenizer=self.tokenizer,
+        )
+        resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
+
+        version = engine.get_version()
+        prompt_strs = []
+        completions_strs = []
+        rewards = []
+        seqlens = []
+
+        results = []
+        for resp in resps:
+            seq = resp.input_tokens + resp.output_tokens
+            logprobs = [0] * resp.input_len + resp.output_logprobs
+            prompt_mask = [1] * resp.input_len + [0] * resp.output_len
+            # output_version = resp.output_version
+            # versions = [output_version] * (resp.input_len + resp.output_len)
+            versions = [-1] * resp.input_len + resp.output_versions
+            seq_no_eos_mask = (seq[-1] != self.tokenizer.eos_token_id) and (
+                seq[-1] != self.tokenizer.pad_token_id
+            )
+
+            if "prompt" in data.keys():
+                del data["prompt"]
+            prompt_str = self.tokenizer.decode(input_ids)
+            completions_str = self.tokenizer.decode(
+                resp.output_tokens,
+                clean_up_tokenization_spaces=False,
+                skip_special_tokens=True,
+            )
+            prompt_strs.append(prompt_str)
+            completions_strs.append(completions_str)
+
+            reward = await self.reward_fn(
+                prompt=prompt_str,
+                completion=completions_str,
+                prompt_ids=resp.input_tokens,
+                completion_ids=resp.output_tokens,
+                **data,
+            )
+
+            # Log reward.
+            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            rewards.append(reward)
+
+            task_id = RL_TASKS.index(data["task"])
+            seqlen_value = len(seq)
+            seqlens.append(seqlen_value)
+
+            res = dict(
+                # unsqueeze to add an additional batch dimension
+                input_ids=torch.tensor(seq).unsqueeze(
+                    0
+                ),  # seq=[10, 22, 33] => tensor([[10, 22, 33]])
+                prompt_mask=torch.tensor(prompt_mask).unsqueeze(0),
+                logprobs=torch.tensor(logprobs).unsqueeze(0),
+                versions=torch.tensor(versions).unsqueeze(0),
+                attention_mask=torch.ones(len(seq)).unsqueeze(0),
+                rewards=torch.tensor([reward]),
+                #rewards=torch.tensor([float(reward)]),
+                seqlen=torch.tensor([len(seq)]),
+                task_ids=torch.tensor([task_id]),
+                seq_no_eos_mask=torch.tensor([seq_no_eos_mask]),
+            )
+            results.append(res)
+
+        if self.dump_dir is not None:
+            dump_path = os.path.join(self.dump_dir, str(version))
+            await aiofiles.os.makedirs(dump_path, exist_ok=True)
+            # Get the unique identifier for this prompt
+            qid = None
+            for key in ["query_id", "id", "qid"]:
+                qid = data.get(key, None)
+                if qid is not None:
+                    break
+            qid = qid or uuid.uuid4().hex
+
+            # Dump rollout to file
+            file_path = os.path.join(dump_path, f"{qid}.txt")
+            async with aiofiles.open(file_path, "a") as f:
+                n_samples = self.gconfig.n_samples
+                for i, (p, c, r, sl) in enumerate(
+                    zip(prompt_strs, completions_strs, rewards, seqlens)
+                ):
+                    info = "\n".join(
+                        [
+                            f"idx: {i + 1} / {n_samples}, seqlen: {sl}, reward is {r}.",
+                            f"prompt is \n{colorama.Fore.YELLOW + colorama.Style.DIM}{p}{colorama.Style.RESET_ALL}",
+                            f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
+                        ]
+                    )
+                    await f.write(info + "\n")
+
+        return concat_padded_tensors(results)

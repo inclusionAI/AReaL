@@ -11,6 +11,7 @@ from areal.utils import logging
 
 logger = logging.getLogger("Utils")
 
+RL_TASKS = ["math", "code", "rlhf", "stem", "general", "logic", "ifeval", "swe"]
 
 def wait_future_ordered(futures: list[Future], exit_on_exception: bool = False) -> list:
     results = [None] * len(futures)

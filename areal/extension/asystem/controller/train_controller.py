@@ -15,7 +15,6 @@ from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import FinetuneSpec
 from areal.api.scheduler_api import Job, Scheduler
 from areal.controller.train_controller import TrainController as BaseTrainController
-from areal.extension.asystem.controller.util import execute_parallel_tasks, calc_metrics
 from areal.extension.asystem.remote_hybrid_train_worker import RemoteMegatronInitConfig
 from areal.utils import logging, stats_tracker
 from areal.controller.batch import DistributedBatch
@@ -102,7 +101,7 @@ class TrainController(BaseTrainController):
 
         # Wait for workers to be ready
         self.logger.info("Waiting for workers to be ready...")
-        self.workers = self.scheduler.get_workers(role=job.role)
+        self.workers = self.scheduler.get_workers(role=job.role, timeout=1200)
         self.logger.info(f"Workers ready: {[w.id for w in self.workers]}")
 
         # Get engine class path for dynamic import on workers
@@ -113,6 +112,15 @@ class TrainController(BaseTrainController):
         asyncio.run(self._async_create_engines(engine_path))
         asyncio.run(self._async_initialize(job, ft_spec, **kwargs))
 
+        seen_dp_ranks = set()
+        self.workers_is_dp_head = []
+        for index in range(len(self.workers)):
+            rank_info = self.rank_info[index]
+            dp_rank = rank_info["dp_rank"]
+            is_dp_head = dp_rank not in seen_dp_ranks
+            self.workers_is_dp_head.append(is_dp_head)
+            if is_dp_head:
+                seen_dp_ranks.add(dp_rank)
         self.logger.info("TrainController initialization complete")
 
     async def _async_initialize(self, job: Job, ft_spec: FinetuneSpec, **kwargs):
@@ -167,32 +175,14 @@ class TrainController(BaseTrainController):
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         self.logger.info(f"start to train_batch")
-        with (stats_tracker.record_timing("train_batch_data_split"), ):
-            batches = input_.chunk_by_ffd(self.group_size, self.dp_size)
-
-        calc_metrics(batches)
-
-        tasks = [
-            self.scheduler.async_call_engine(
-                worker.id, "train_batch", batches[self.rank_info[index]["dp_rank"]], _should_bcast=False
-            )
-            for index, worker in enumerate(self.workers)
-        ]
-
-        try:
-            results = asyncio.run(asyncio.gather(*tasks, return_exceptions=False))
-        except KeyboardInterrupt:
-            raise
-        except Exception as e:
-            raise RuntimeError(f"train_batch failed, error: {e}")
-
-        for worker_result in results:
+        results = self._custom_function_call("train_batch", input_,  _should_bcast=False)
+        for worker_result in results: # TODO: Get the last pp_rank data from each dp
             if len(worker_result) > 1:
                 for minibatch in worker_result:
                     stats_tracker.scalar(**minibatch)
             else:
                 stats_tracker.scalar(**worker_result[0])
-
+        self.logger.info(f"train_batch finished, results={results}")
         return {}
 
     def compute_logp(self, input_: DistributedBatch) -> Tensor:
@@ -237,18 +227,20 @@ class TrainController(BaseTrainController):
         return concatenated_result
 
     def upload_weights(self, meta: WeightUpdateMeta):
-        """Upload weights to the inference engine."""
+        """Upload weights to the inference engine - thread-safe for ThreadPoolExecutor calls."""
         self.logger.info("begin upload_weights")
-        execute_parallel_tasks(self.workers, self.scheduler, "upload_weights", meta)
+        self._execute_async_task_on_workers("upload_weights", meta)
         self.logger.info("finished upload_weights")
 
     def save(self, meta: SaveLoadMeta):
         """Save model weights (and optimizer states) for later use."""
-        execute_parallel_tasks(self.workers, self.scheduler, "save", meta)
+        self.logger.info("begin save")
+        self._execute_async_task_on_workers("save", meta)
+        self.logger.info("finished save")
 
     def load(self, meta: SaveLoadMeta):
         """Load model weights and optimizer states from a file."""
-        execute_parallel_tasks(self.workers, self.scheduler, "load", meta)
+        return self._execute_async_task_on_workers("load", meta=meta)
 
     def notify_event(self, event: str, global_step: int) -> None:
         """Notify workers about training start/end events.
@@ -257,5 +249,118 @@ class TrainController(BaseTrainController):
             event: "train_start" or "train_end"
             global_step: Current global step
         """
-        execute_parallel_tasks(self.workers, self.scheduler, "notify_event", event, global_step)
+        self.logger.info(f"begin notify_event global_step: {global_step}")
+        self._execute_async_task_on_workers("notify_event", event, global_step)
+        self.logger.info(f"finished notify_event global_step: {global_step}")
         return None
+
+    def _custom_function_call(self, method: str, *args, **kwargs):
+        dp_split_args, dp_split_kwargs = self._dispatch_inputs(*args, **kwargs)
+        results = self._run_async_task(
+            self._call_with_dispatched_inputs(method, dp_split_args, dp_split_kwargs)
+        )
+        # Only remain data from DP head.
+        # results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
+        return results
+
+    def _align_batches_with_dp(
+        self, input_: DistributedBatch, rebalance=True
+    ) -> list[DistributedBatch]:
+        """Split DistributedBatch across DP groups.
+
+        Returns a list of batches, one for each DP head worker.
+        """
+        # Handle empty batch by replicating to all DP groups
+        if len(input_.get_data()) == 0:
+            return [input_] * self.alloc_mode.train.dp_size
+
+        # NOTE: group normalization should be done in workflow
+        if rebalance:
+            inputs = input_.chunk_by_ffd(self.group_size, self.alloc_mode.train.dp_size)
+        else:
+            inputs = input_.chunk(self.alloc_mode.train.dp_size)
+        return inputs
+
+    async def _call_with_dispatched_inputs(
+        self,
+        method: str,
+        dp_split_args: list[list[Any]],
+        dp_worker_kwargs: list[dict[str, Any]],
+    ):
+        # Call all workers.
+        # ONLY DP head workers get their data slice.
+        # Other workers will get data by broadcasting in RPC server.
+        tasks = []
+        for idx, worker in enumerate(self.workers):
+            rank_info = self.rank_info[idx]
+            dp_rank = rank_info["dp_rank"]
+            # Get this worker's slice of each argument
+            worker_args = [splits[dp_rank] for splits in dp_split_args]
+            worker_kwargs = {
+                k: splits[dp_rank] for k, splits in dp_worker_kwargs.items()
+            }
+
+            worker_args = [
+                arg.get_data() if isinstance(arg, DistributedBatch) else arg
+                for arg in worker_args
+            ]
+            worker_kwargs = {
+                k: v.get_data() if isinstance(v, DistributedBatch) else v
+                for k, v in worker_kwargs.items()
+            }
+
+            tasks.append(
+                self.scheduler.async_call_engine(
+                    worker.id,
+                    method,
+                    *worker_args,
+                    **worker_kwargs,
+                )
+            )
+        return await asyncio.gather(*tasks)
+
+    def _execute_async_task_on_workers(self, method_name: str,  *args, **kwargs):
+        def _run_async_in_thread():
+            """Run async code in a thread-safe manner."""
+            # Always create a new event loop for this thread to avoid conflicts
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                async def _async_exec_func():
+                    try:
+                        self.logger.info(f"Executing {method_name} on {len(self.workers)} workers")
+                        tasks = [
+                            self.scheduler.async_call_engine(
+                                worker.id, method_name, *args, **kwargs, _should_bcast=False
+                            )
+                            for worker in self.workers
+                        ]
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+                        
+                        # Check for exceptions in results
+                        for i, result in enumerate(results):
+                            if isinstance(result, Exception):
+                                self.logger.error(f"Worker {self.workers[i].id} failed to execute {method_name}: {result}")
+                            else:
+                                self.logger.info(f"Worker {self.workers[i].id} successfully executed {method_name}")
+                        
+                        # Re-raise if any exceptions occurred
+                        for result in results:
+                            if isinstance(result, Exception):
+                                raise result
+                        
+                        return results
+                    except Exception as e:
+                        self.logger.error(f"Failed to execute {method_name} on workers: {e}")
+                        raise e
+
+                return loop.run_until_complete(_async_exec_func())
+            finally:
+                # Always close the loop we created
+                if not loop.is_closed():
+                    loop.close()
+                # Clear the event loop for this thread
+                asyncio.set_event_loop(None)
+
+        return _run_async_in_thread()

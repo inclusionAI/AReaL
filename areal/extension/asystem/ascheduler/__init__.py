@@ -418,7 +418,7 @@ class AsystemScheduler(Scheduler):
             )
 
     def wait_for_jobs(
-        self, role: str, submitted_jobs: dict[str, str], timeout: float = 300.0
+        self, role: str, submitted_jobs: dict[str, str], timeout: float = 1200.0
     ) -> dict[str, Worker]:
         """
         等待作业启动并返回服务器信息
@@ -532,9 +532,6 @@ class AsystemScheduler(Scheduler):
         return ports_list
 
     def stop_job(self, job_uid: str):
-        # hack
-        return
-        """停止作业"""
         logger.info(f"Stopping job with UID: {job_uid}")
 
         try:

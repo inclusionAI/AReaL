@@ -5,6 +5,7 @@ the base RolloutController and overrides the initialize method.
 """
 
 import asyncio
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from areal.api.alloc_mode import AllocationMode
@@ -59,7 +60,7 @@ class RolloutController(BaseRolloutController):
 
         # Wait for workers to be ready
         self.logger.info("Waiting for workers to be ready...")
-        self.workers = self.scheduler.get_workers(role=job.role)
+        self.workers = self.scheduler.get_workers(role=job.role, timeout=1200)
         self.logger.info(f"Workers ready: {[w.id for w in self.workers]}")
 
         # Get engine class path for dynamic import on workers
@@ -92,6 +93,8 @@ class RolloutController(BaseRolloutController):
             self.scheduler.async_call_engine(worker.id, "initialize", init_config)
             for worker, init_config in zip(self.workers, init_configs)
         ]
+        import time
+        time.sleep(60)
         await asyncio.gather(*tasks)
         self.logger.info("All engines are initialized...")
 
@@ -179,16 +182,16 @@ class RolloutController(BaseRolloutController):
             main_server_addrs = [
                 f"{worker.ip}:{worker.engine_ports[0]}"
                 for worker in self.workers[
-                    index : index + self.alloc_mode.gen_instance_size
-                ]
+                              index: index + self.alloc_mode.gen_instance_size
+                              ]
                 if worker.engine_ports
             ]
             free_addrs = [
                 [
                     f"{worker.ip}:{port}"
                     for worker in self.workers[
-                        index : index + self.alloc_mode.gen_instance_size
-                    ]
+                                  index: index + self.alloc_mode.gen_instance_size
+                                  ]
                     for port in worker.engine_ports[1:]
                 ]
             ]
@@ -207,7 +210,74 @@ class RolloutController(BaseRolloutController):
 
         return init_configs
 
-    async def update_weights(self, meta: WeightUpdateMeta) -> None:
+    def update_weights(self, meta: WeightUpdateMeta) -> None:
+        """Update weights - thread-safe for ThreadPoolExecutor calls."""
         self.logger.info("begin update_weights")
-        execute_parallel_tasks(self.workers, self.scheduler, "update_weights", meta)
+        self._execute_async_task_on_workers("update_weights", meta)
         self.logger.info("finish update_weights")
+
+    def set_version(self, version: int) -> None:
+        self._version = version
+        self.logger.info("begin set_version")
+        self._execute_async_task_on_workers("set_version", version)
+        self.logger.info("finish set_version")
+
+    def notify_event(self, event: str, global_step: int) -> None:
+        """Notify workers about training start/end events.
+
+        Args:
+            event: "train_start" or "train_end"
+            global_step: Current global step
+        """
+        self.logger.info(f"begin notify_event global_step: {global_step}")
+        self._execute_async_task_on_workers("notify_event", event, global_step)
+        self.logger.info(f"finished notify_event global_step: {global_step}")
+        return None
+
+    def _execute_async_task_on_workers(self, method_name: str, *args, **kwargs):
+        def _run_async_in_thread():
+            """Run async code in a thread-safe manner."""
+            # Always create a new event loop for this thread to avoid conflicts
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                async def _async_exec_func():
+                    try:
+                        self.logger.info(f"Executing {method_name} on {len(self.workers)} workers")
+                        tasks = [
+                            self.scheduler.async_call_engine(
+                                worker.id, method_name, *args, **kwargs, _should_bcast=False
+                            )
+                            for worker in self.workers
+                        ]
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                        # Check for exceptions in results
+                        for i, result in enumerate(results):
+                            if isinstance(result, Exception):
+                                self.logger.error(
+                                    f"Worker {self.workers[i].id} failed to execute {method_name}: {result}")
+                            else:
+                                self.logger.info(f"Worker {self.workers[i].id} successfully executed {method_name}")
+
+                        # Re-raise if any exceptions occurred
+                        for result in results:
+                            if isinstance(result, Exception):
+                                raise result
+
+                        return results
+                    except Exception as e:
+                        self.logger.error(f"Failed to execute {method_name} on workers: {e}")
+                        raise e
+
+                return loop.run_until_complete(_async_exec_func())
+            finally:
+                # Always close the loop we created
+                if not loop.is_closed():
+                    loop.close()
+                # Clear the event loop for this thread
+                asyncio.set_event_loop(None)
+
+        return _run_async_in_thread()
+

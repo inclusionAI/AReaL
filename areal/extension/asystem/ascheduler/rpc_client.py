@@ -13,7 +13,6 @@ from areal.scheduler.exceptions import (
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging
 from areal.utils.http import response_retryable
-from areal.extension.asystem.utils.async_utils import run_async_with_loop
 
 logger = logging.getLogger("RPCClient")
 

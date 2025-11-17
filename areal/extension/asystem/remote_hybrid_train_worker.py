@@ -9,8 +9,9 @@ import cloudpickle
 import requests
 import torch
 
+from areal.extension.asystem.util import RL_TASKS
 from realhf.api.core.data_api import (  # 需要引擎侧也要修改
-    RL_TASKS,
+    # RL_TASKS,
     MicroBatchSpec,
     SequenceSample,
     SequenceSplitSpec,
@@ -164,7 +165,8 @@ class RemoteHybridTrainWorker(TrainEngine):
             try:
                 logger.info(
                     f"upload_weights begin send request to megatron server, "
-                    f"target_url: http://{self.megatron_addr}/update_weights"
+                    f"target_url: http://{self.megatron_addr}/update_weights,"
+                    f"path: {meta.path}."
                 )
                 target_url = f"http://{self.megatron_addr}/update_weights"
                 headers = {"Content-Type": "application/json"}
@@ -265,7 +267,6 @@ class RemoteHybridTrainWorker(TrainEngine):
             raise EngineError("TrainEngineError", "SaveError", e)
         except OSError as e:
             raise FrameworkError("FrameworkError", "OSError", e)
-        return response
 
     def load(self, meta: SaveLoadMeta):
         pass
@@ -340,6 +341,7 @@ class RemoteHybridTrainWorker(TrainEngine):
             batch["ref_logprobs"] = train_datas["ref_logprobs"]
 
         batch_size = int(input_["seqlen"].shape[0])
+        logger.info(f"dzq_debug train batch: {batch}")
         flat_input = SequenceSample.from_default(
             ids=list(range(batch_size)),
             data=batch,

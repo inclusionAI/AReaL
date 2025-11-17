@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 import torch
 
 from areal.utils import stats_tracker
-from areal.extension.asystem.utils.async_utils import run_async_with_loop
 
 
 def execute_parallel_tasks(workers, scheduler, method_name, *args):
@@ -34,7 +33,6 @@ def execute_parallel_tasks(workers, scheduler, method_name, *args):
     RuntimeError
         If any worker fails to execute the task
     """
-    logger.info(f"[DEBUG] execute_parallel_tasks called with method: {method_name}, workers: {[w.id for w in workers]}")
     tasks = [
         scheduler.async_call_engine(
             worker.id, method_name, *args, _should_bcast=False
@@ -43,14 +41,11 @@ def execute_parallel_tasks(workers, scheduler, method_name, *args):
     ]
 
     try:
-        logger.info(f"[DEBUG] Created {len(tasks)} async tasks")
         # 创建新的事件循环并运行所有任务
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            logger.info(f"[DEBUG] Starting async execution")
             result = loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=False))
-            logger.info(f"[DEBUG] Async execution completed successfully")
             return result
         finally:
             try:
@@ -60,7 +55,6 @@ def execute_parallel_tasks(workers, scheduler, method_name, *args):
     except KeyboardInterrupt:
         raise
     except Exception as e:
-        logger.error(f"[DEBUG] execute_parallel_tasks failed: {str(e)}")
         raise RuntimeError(f"{method_name} failed, error: {e}")
 
 

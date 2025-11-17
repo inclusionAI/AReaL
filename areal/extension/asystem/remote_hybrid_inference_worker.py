@@ -427,8 +427,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         return capacity
 
     def update_weights(self, meta):
-        logger.info(f"[DEBUG] update_weights called with meta: {meta}")
-        logger.info(f"[DEBUG] Available addresses: {self.addresses}")
         self._update_weights(meta)
         return True
 
@@ -466,7 +464,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             )
         elif meta.type == "nccl" or meta.type == "astate":
             load_timestamp = time.time_ns()
-            logger.info("Begin update weights.")
+            logger.info(f"Begin update weights, path: {meta.path}")
 
             def update_single_server(addr):
                 try:
@@ -489,7 +487,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                     raise EngineError(
                         "InferenceEngineError",
                         "UpdateWeightError",
-                        f"Failed to update weights on {addr}: {str(e)}, response: {response.text}",
+                        f"Failed to update weights on {addr}: {str(e)}",
                     )
 
             with ThreadPoolExecutor(max_workers=len(self.addresses)) as executor:
