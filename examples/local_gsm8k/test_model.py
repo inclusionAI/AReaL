@@ -6,96 +6,11 @@ Test and compare model performance before and after training.
 import argparse
 import json
 import os
-import re
 from datetime import datetime
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-try:
-    # Newer versions
-    from transformers.generation.stopping_criteria import (
-        StoppingCriteria,
-        StoppingCriteriaList,
-    )
-except Exception:
-    # Fallback import path
-    from transformers import StoppingCriteria, StoppingCriteriaList
-
-# Try to import from AReaL, fallback to simple version
-try:
-    from areal.reward.math_parser import process_results
-except ImportError:
-    # Simple fallback parser
-    import re
-    
-    def process_results(completions, answer):
-        """Improved parser to extract final answer from GSM8K format."""
-        # Extract answer from ground truth (GSM8K format: ... #### number.)
-        try:
-            # Look for "#### number" pattern
-            gt_answer = float(re.findall(r'-?\d+\.?\d*', answer.split("####")[-1])[-1])
-        except:
-            return [False]
-        
-        # Check completions
-        results = []
-        for completion in completions:
-            pred_answer = None
-            try:
-                # Method 1: Look for #### pattern (GSM8K standard)
-                if "####" in completion:
-                    numbers_after_hash = re.findall(r'-?\d+\.?\d*', completion.split("####")[-1])
-                    if numbers_after_hash:
-                        pred_answer = float(numbers_after_hash[-1])
-                
-                # Method 2: Look for <<...>>=X pattern (training format)
-                # Extract the value X from patterns like "<<computation=X>>X"
-                if pred_answer is None:
-                    # Find all <<...=X>> patterns
-                    pattern_matches = re.findall(r'<<[^>]*=(-?\d+\.?\d*)>>', completion)
-                    if pattern_matches:
-                        # Take the last matched value (most likely the final answer)
-                        pred_answer = float(pattern_matches[-1])
-                    
-                    # Also check for "= <<X>>" or "<<X>>" standalone patterns
-                    if pred_answer is None:
-                        # Look for "<<number>>" patterns and take the last one
-                        bracket_nums = re.findall(r'<<(-?\d+\.?\d*)>>', completion)
-                        if bracket_nums:
-                            pred_answer = float(bracket_nums[-1])
-                
-                # Method 3: Look for sentences ending with numbers (likely final answer)
-                # Find sentences that end with a number followed by period/newline
-                if pred_answer is None:
-                    # Pattern: sentence ending with "number." or "number\n"
-                    end_patterns = re.findall(r'(\d+\.?\d*)\s*[.\n]', completion)
-                    if end_patterns:
-                        # Take last number that appears near end
-                        pred_answer = float(end_patterns[-1])
-                
-                # Method 4: Fallback - just take the last number
-                if pred_answer is None:
-                    numbers = re.findall(r'-?\d+\.?\d*', completion)
-                    if numbers:
-                        # Skip very large numbers (likely intermediate calculations)
-                        # Prioritize reasonable numbers
-                        candidates = [float(n) for n in numbers[-5:]]  # Last 5 numbers
-                        # Filter out unrealistic values (like 1000000)
-                        reasonable = [n for n in candidates if abs(n) < 1000000 and (abs(n) > 0.001 or n == 0)]
-                        if reasonable:
-                            pred_answer = reasonable[-1]
-                        else:
-                            pred_answer = float(numbers[-1])
-                
-                # Compare answers (within small tolerance for floating point)
-                if pred_answer is not None:
-                    results.append(abs(pred_answer - gt_answer) < 0.01)
-                else:
-                    results.append(False)
-            except Exception as e:
-                results.append(False)
-        
-        return results if len(results) > 0 else [False]
-
+from tqdm import tqdm
+from areal.reward.math_parser import process_results, parse_digits
 
 def test_model(
     model_path: str,
@@ -114,7 +29,6 @@ def test_model(
     log_path = os.path.join(log_dir, f"test_{ts}.log")
 
     def _log(msg: str):
-        print(msg)
         with open(log_path, "a") as lf:
             lf.write(msg + "\n")
 
@@ -168,9 +82,14 @@ def test_model(
     results = []
     correct = 0
     
-    for i, sample in enumerate(dataset.select(range(num_samples))):
+    pbar = tqdm(enumerate(dataset.select(range(num_samples))), total=num_samples)
+    for i, sample in pbar:
         question = sample["question"]
+        
         correct_answer = sample["answer"]
+        hashes_idx = correct_answer.find("#### ")
+        if hashes_idx != -1:
+            correct_answer = correct_answer[:hashes_idx] + "\\boxed{" + correct_answer[hashes_idx + 5 :] + "}"
         
         # Format prompt - Use GSM8K format (no \boxed{} prompt)
         # This matches the training format
@@ -219,68 +138,12 @@ def test_model(
             stop_reason = f"eos_token (at position {eos_position})"
         else:
             stop_reason = "unknown"
-        
-        # Extract numeric answers (GT and prediction)
-        def _extract_gt(ans_text: str):
-            try:
-                return float(re.findall(r'-?\d+\.?\d*', ans_text.split("####")[-1])[-1])
-            except Exception:
-                return None
 
-        def _extract_pred(pred_text: str):
-            # Method 1: after ####
-            if "####" in pred_text:
-                try:
-                    return float(re.findall(r'-?\d+\.?\d*', pred_text.split("####")[-1])[-1])
-                except Exception:
-                    pass
-            # Method 2: <<...=X>> or <<X>>
-            try:
-                matches = re.findall(r'<<[^>]*=(-?\d+\.?\d*)>>', pred_text)
-                if matches:
-                    return float(matches[-1])
-                bracket_nums = re.findall(r'<<(-?\d+\.?\d*)>>', pred_text)
-                if bracket_nums:
-                    return float(bracket_nums[-1])
-            except Exception:
-                pass
-            # Method 3: sentence ending with number
-            try:
-                end_patterns = re.findall(r'(\d+\.?\d*)\s*[.\n]', pred_text)
-                if end_patterns:
-                    return float(end_patterns[-1])
-            except Exception:
-                pass
-            # Method 4: fallback last number
-            try:
-                numbers = re.findall(r'-?\d+\.?\d*', pred_text)
-                if numbers:
-                    candidates = [float(n) for n in numbers[-5:]]
-                    reasonable = [n for n in candidates if abs(n) < 1000000 and (abs(n) > 0.001 or n == 0)]
-                    return reasonable[-1] if reasonable else float(numbers[-1])
-            except Exception:
-                pass
-            return None
+        parser_result, extracted_answers = process_results(generated_text, correct_answer)
+        gt_extracted, sol_extracted = [parse_digits(ans) for ans in extracted_answers]
 
-        gt_extracted = _extract_gt(correct_answer)
-        pred_extracted = _extract_pred(generated_text)
+        is_correct = bool(parser_result)
 
-        # Check answer - use both methods for robustness
-        is_correct = False
-        parser_result = None
-        try:
-            # Primary correctness via parser
-            parser_result = process_results([generated_text], correct_answer)[0]
-            is_correct = bool(parser_result)
-        except Exception as e:
-            # If parser fails, fall back to direct numeric comparison
-            pass
-        
-        # If parser says incorrect or failed, double-check with direct comparison
-        if not is_correct and gt_extracted is not None and pred_extracted is not None:
-            # Use same tolerance as process_results (0.01)
-            is_correct = abs(pred_extracted - gt_extracted) < 0.01
-        
         if is_correct:
             correct += 1
         
@@ -289,7 +152,7 @@ def test_model(
             "correct_answer": correct_answer,
             "generated": generated_text,
             "gt_extracted": gt_extracted,
-            "pred_extracted": pred_extracted,
+            "sol_extracted": sol_extracted,
             "correct": is_correct,
         })
         
@@ -297,15 +160,20 @@ def test_model(
         _log(f"Question: {question}")
         _log(f"Stop reason: {stop_reason}; new_tokens: {new_tokens}/{max_new_tokens}")
         _log(f"EOS detected: {eos_was_generated}")
-        if eos_was_generated and eos_position is not None:
-            _log(f"EOS token position in generated sequence: {eos_position}")
-            # Show what was decoded up to EOS vs full sequence
-            generated_up_to_eos = tokenizer.decode(generated_token_ids[:eos_position], skip_special_tokens=True)
-            _log(f"Generated up to EOS (before truncation):\n{generated_up_to_eos}")
-        _log(f"Generated Answer:\n{generated_text}")
-        _log(f"Correct Answer (full):\n{correct_answer}")
-        _log(f"Extracted -> GT: {gt_extracted} | Pred: {pred_extracted}")
+        
+        log_ready_generated_text = generated_text.replace("\n", "\n\t").strip()
+        log_ready_correct_answer = correct_answer.replace("\n", "\n\t").strip()
+        _log(f"Generated Answer:\n\t{log_ready_generated_text}")
+        _log(f"Correct Answer (full):\n\t{log_ready_correct_answer}")
+        
+        _log(f"Extracted -> GT: {gt_extracted} | Sol: {sol_extracted}")
         _log(f"Result: {'[CORRECT]' if is_correct else '[INCORRECT]'}")
+
+        pbar.set_postfix({
+            "Correct": correct,
+            "Total": i + 1,
+            "Accuracy (%)": f"{(correct / (i + 1) * 100):.2f}",
+        })
     
     accuracy = correct / len(results) * 100
     _log(f"\n{'='*60}")

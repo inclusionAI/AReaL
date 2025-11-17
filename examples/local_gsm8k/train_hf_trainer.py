@@ -5,7 +5,6 @@ This fixes the loss masking issues from the manual implementation.
 """
 
 import argparse
-import json
 import os
 from pathlib import Path
 
@@ -91,6 +90,13 @@ def prepare_dataset(tokenizer, max_length=512, max_samples=None):
     def process_function(sample):
         q = sample["question"]
         a = sample["answer"]
+        hashes_idx = a.find("#### ")
+        
+        # Replace hashes with LaTeX boxed if found
+        if hashes_idx != -1:
+            a = a[:hashes_idx] + "\\boxed{" + a[hashes_idx + 5 :] + "}"
+        else:
+            return {"input_ids": [], "labels": []}
 
         # 1. Build full chat conversation (user + assistant)
         messages = [
@@ -128,8 +134,7 @@ def prepare_dataset(tokenizer, max_length=512, max_samples=None):
         if start is None:
             return {"input_ids": [], "labels": []}
 
-        end = start + len(assistant_ids)
-        labels[start:end] = input_ids[start:end]
+        labels[start:] = input_ids[start:]
 
         return {"input_ids": input_ids, "labels": labels}
     
