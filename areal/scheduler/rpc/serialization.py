@@ -73,8 +73,16 @@ class SerializedTensor(BaseModel):
         # Move to CPU for serialization (detach to avoid gradient tracking)
         cpu_tensor = tensor.detach().cpu()
 
+        # For dtypes that NumPy cannot represent directly (e.g., bfloat16),
+        # upcast to a compatible storage dtype for the raw buffer. We keep
+        # the original torch dtype in metadata so that deserialization can
+        # restore it exactly.
+        storage_tensor = cpu_tensor
+        if cpu_tensor.dtype is torch.bfloat16:
+            storage_tensor = cpu_tensor.to(torch.float32)
+
         # Convert to bytes and encode as base64
-        buffer = cpu_tensor.numpy().tobytes()
+        buffer = storage_tensor.numpy().tobytes()
         data_b64 = base64.b64encode(buffer).decode("utf-8")
 
         return cls(
@@ -129,6 +137,11 @@ class SerializedTensor(BaseModel):
             torch.float32: np.float32,
             torch.float64: np.float64,
             torch.float16: np.float16,
+            # NumPy does not have a native bfloat16 scalar type in all
+            # environments. We store bfloat16 tensors as float32 buffers and
+            # map them back via a float32 NumPy view and a final cast in
+            # to_tensor().
+            torch.bfloat16: np.float32,
             torch.int32: np.int32,
             torch.int64: np.int64,
             torch.int16: np.int16,

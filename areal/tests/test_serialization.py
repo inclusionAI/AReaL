@@ -66,6 +66,7 @@ class TestSerializationUtils:
             torch.zeros(5),
             torch.tensor([1, 2, 3], dtype=torch.int64),
             torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32),
+            torch.tensor([1.0, 2.0, 3.0], dtype=torch.bfloat16),
         ]
         for original in tensors:
             serialized = serialize_value(original)
