@@ -73,21 +73,10 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 )
         return dict(**self)
     
-    def build_parent_child_relationships(self) -> None:
+    def _build_parent_child_relationships(self) -> None:
         self._parent_relationship_built = True
         if len(self) == 0:
             return
-
-        for interaction in self.values():
-            if interaction.chat_template_type != "concat":
-                raise ValueError(
-                    "Cannot export interactions in 'concat' style when "
-                    "interaction.chat_template_type != 'concat' for any interaction. "
-                    "This is because when applying chat template using some "
-                    "tokenizers, there might be some tokens added or removed "
-                    "(e.g. think tokens), making it impossible to construct the conversation tree. "
-                    "Please use 'individual' style instead."
-                )
 
         def _is_prefix(a: list[int], b: list[int]) -> bool:
             # True if a is a strict prefix of b
@@ -145,7 +134,7 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             child_info["obj"].parent = best_parent
 
     def export_interactions(
-        self, style: str = "concat"
+        self, style: str = "concat", reward_discount: float | None = None
     ) -> dict[str, InteractionWithTokenLogpReward]:
         """Export cached completions/responses in different formats.
 
@@ -176,12 +165,26 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         ValueError
             If an unsupported ``style`` is provided.
         """
-        assert self._parent_relationship_built, "Please call build_parent_child_relationships before exporting interactions."
+        if reward_discount is not None and not self._apply_reward_discount_called:
+            self.apply_reward_discount(turn_discount=reward_discount)
+        if style == "concat" and not self._parent_relationship_built:
+            self._build_parent_child_relationships()
         cache = self
         if len(cache) == 0:
             return {}
 
         if style == "concat":
+            for interaction in self.values():
+                if interaction.chat_template_type != "concat":
+                    raise ValueError(
+                        "Cannot export interactions in 'concat' style when "
+                        "interaction.chat_template_type != 'concat' for any interaction. "
+                        "This is because when applying chat template using some "
+                        "tokenizers, there might be some tokens added or removed "
+                        "(e.g. think tokens), making it impossible to construct the conversation tree. "
+                        "Please use 'individual' style instead."
+                    )
+                
             # Precompute normalized data
             meta = {}
             for interaction_id, interaction in cache.items():
