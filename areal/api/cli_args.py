@@ -1288,6 +1288,12 @@ class LauncherConfig:
         default_factory=SlurmLauncherConfig,
         metadata={"help": "Slurm launcher configuration."},
     )
+    offload: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to offload the training using tms (need to setup env)."
+        },
+    )
 
 
 @dataclass

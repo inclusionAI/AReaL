@@ -17,6 +17,7 @@ from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.network import find_free_ports
+from areal.utils.tms_utils import get_tms_env_vars
 
 logger = logging.getLogger("Offload Test")
 
@@ -50,6 +51,8 @@ def fsdp_engine_with_offload(request):
     """
     offload_mode = request.param
 
+    tms_env_vars = get_tms_env_vars() if offload_mode == "tms" else {}
+
     os.environ.update(
         {
             "WORLD_SIZE": "1",
@@ -57,6 +60,7 @@ def fsdp_engine_with_offload(request):
             "LOCAL_RANK": "0",
             "MASTER_ADDR": "localhost",
             "MASTER_PORT": str(find_free_ports(1)[0]),
+            **tms_env_vars,
         }
     )
 
@@ -87,6 +91,7 @@ def fsdp_engine_with_offload(request):
 @pytest.fixture
 def megatron_engine_with_offload():
     """Create Megatron engine with offload enabled (TMS mode only)."""
+    tms_env_vars = get_tms_env_vars()
     os.environ.update(
         {
             "WORLD_SIZE": "1",
@@ -94,6 +99,7 @@ def megatron_engine_with_offload():
             "LOCAL_RANK": "0",
             "MASTER_ADDR": "localhost",
             "MASTER_PORT": str(find_free_ports(1)[0]),
+            **tms_env_vars,
         }
     )
 

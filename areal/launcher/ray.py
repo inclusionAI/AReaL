@@ -35,6 +35,7 @@ from areal.utils.launcher import (
 )
 from areal.utils.ray import get_placement_group_master_ip_and_port
 from areal.utils.recover import check_if_recover
+from areal.utils.tms_utils import get_tms_env_vars
 
 logger = logging.getLogger("RayLauncher")
 
@@ -508,6 +509,11 @@ def ray_main(config, run_id: int = 0):
             launcher.stop_all(force=True)
             raise e
 
+    if config.launcher.offload:
+        tms_env_vars = get_tms_env_vars()
+    else:
+        tms_env_vars = {}
+
     if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
         trainer_n_nodes = 1
         gpus_per_task = 0
@@ -574,6 +580,7 @@ def ray_main(config, run_id: int = 0):
                     config.launcher.trainer_env_vars,
                 ),
                 **_env_vars,
+                **tms_env_vars,
             ),
             env_hook=partial(torch_env_hook, trainer_n_nodes * n_gpus_per_node),
         )

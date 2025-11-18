@@ -621,6 +621,7 @@ Configuration for launching the LLM server and trainer processes.
 | `inference_server_env_vars`     | string                                          | `""`         | Environment variables for inference server, separated by commas. Example: 'ENV1=val1,ENV2=val2'. |
 | `trainer_env_vars`              | string                                          | `""`         | Environment variables for training, separated by commas. Example: 'ENV1=val1,ENV2=val2'.         |
 | `slurm`                         | [`SlurmLauncherConfig`](section-slurm-launcher) | **Required** | Slurm launcher configuration.                                                                    |
+| `offload`                       | boolean                                         | `False`      | Whether to offload the training using tms (need to setup env).                                   |
 
 (section-name-resolve)=
 

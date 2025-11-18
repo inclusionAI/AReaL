@@ -31,6 +31,7 @@ from areal.utils.launcher import (
 )
 from areal.utils.network import find_free_ports
 from areal.utils.recover import check_if_recover
+from areal.utils.tms_utils import get_tms_env_vars
 
 logger = logging.getLogger("Local Scheduler")
 JOB_STATE_TO_PROCESS_STATUS = {
@@ -351,6 +352,10 @@ def local_main(config, run_id: int = 0):
             launcher.stop_all(signal="SIGINT")
             raise e
 
+    if config.launcher.offload:
+        tms_env_vars = get_tms_env_vars()
+    else:
+        tms_env_vars = {}
     # Launch trainer entrypoint
     if alloc_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         if alloc_mode.type_ == AllocationType.DECOUPLED_EVAL:
@@ -376,6 +381,7 @@ def local_main(config, run_id: int = 0):
                     config.launcher.trainer_env_vars,
                 ),
                 **_env_vars,
+                **tms_env_vars,
             ),
         )
 
