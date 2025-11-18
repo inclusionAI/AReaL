@@ -1,9 +1,6 @@
 import argparse
-import importlib
 import traceback
-from collections.abc import Callable
 from concurrent.futures import Future
-from typing import Any
 
 from flask import Flask, jsonify, request
 
@@ -16,58 +13,12 @@ from areal.utils.data import (
     broadcast_tensor_container,
     tensor_container_to,
 )
+from areal.utils.dynamic_import import import_from_string
 
 logger = logging.getLogger("SyncRPCServer")
 
 # Global engine instance - must be TrainEngine or InferenceEngine
 _engine: TrainEngine | InferenceEngine | None = None
-
-
-def _handle_submit(
-    engine: InferenceEngine,
-    args: list[Any],
-    kwargs: dict[str, Any],
-) -> tuple[list[Any], dict[str, Any]]:
-    workflow_path = kwargs["workflow_path"]
-    workflow_kwargs = kwargs["workflow_kwargs"]
-    episode_data = kwargs["data"]
-    should_accept_path = kwargs["should_accept_path"]
-
-    episode_data = deserialize_value(episode_data)
-
-    module_path, class_name = workflow_path.rsplit(".", 1)
-    module = importlib.import_module(module_path)
-    workflow_class = getattr(module, class_name)
-    logger.info(f"Imported workflow class: {workflow_path}")
-
-    workflow_kwargs = deserialize_value(workflow_kwargs)
-    workflow = workflow_class(**workflow_kwargs)
-    logger.info(f"Workflow '{workflow_path}' instantiated successfully")
-
-    should_accept = None
-    if should_accept_path is not None:
-        module_path, fn_name = should_accept_path.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        should_accept = getattr(module, fn_name)
-        logger.info(f"Imported filtering function: {should_accept_path}")
-
-    new_args: list[Any] = []
-    new_kwargs: dict[str, Any] = dict(
-        data=episode_data,
-        workflow=workflow,
-        should_accept=should_accept,
-    )
-    return new_args, new_kwargs
-
-
-_METHOD_HANDLERS: dict[
-    str,
-    Callable[
-        [InferenceEngine, list[Any], dict[str, Any]], tuple[list[Any], dict[str, Any]]
-    ],
-] = {
-    "submit": _handle_submit,
-}
 
 # Create Flask app
 app = Flask(__name__)
@@ -147,9 +98,7 @@ def create_engine():
 
         # Dynamic import
         try:
-            module_path, class_name = engine_path.rsplit(".", 1)
-            module = importlib.import_module(module_path)
-            engine_class = getattr(module, class_name)
+            engine_class = import_from_string(engine_path)
 
             # Validate that the class is a TrainEngine or InferenceEngine
             if not issubclass(engine_class, TrainEngine) and not issubclass(
@@ -253,21 +202,6 @@ def call_engine_method():
             )
             return (
                 jsonify({"error": f"Data broadcast '{method_name}' failed: {str(e)}"}),
-                500,
-            )
-
-        # Special handling for some methods on inference engines
-        try:
-            if isinstance(_engine, InferenceEngine):
-                handler = _METHOD_HANDLERS.get(method_name)
-                if handler is not None:
-                    args, kwargs = handler(_engine, args, kwargs)
-        except Exception as e:
-            logger.error(
-                f"Workflow data conversion failed: {e}\n{traceback.format_exc()}"
-            )
-            return (
-                jsonify({"error": f"workflow data conversion failed: {str(e)}"}),
                 500,
             )
 
