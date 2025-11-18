@@ -503,6 +503,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         cache = (
             areal_response_cache if areal_response_cache is not None else self._cache
         )
+
         if resp_id in cache:
             raise ValueError(f"Response {resp_id} already exists in cache")
 
