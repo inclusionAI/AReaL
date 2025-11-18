@@ -83,6 +83,19 @@ python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
     --config examples/docker_gsm8k/gsm8k_grpo_full.yaml \
     experiment_name=gsm8k-grpo-docker-full \
     trial_name=trial0
+
+# Reasoning Model Training (XML format: <reasoning>...</reasoning><answer>...</answer>)
+# Fast reasoning training (20-30 minutes, 200 samples)
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
+    --config examples/docker_gsm8k/gsm8k_grpo_reasoning_fast.yaml \
+    experiment_name=gsm8k-grpo-reasoning-fast \
+    trial_name=trial0
+
+# 1-hour reasoning training (500 samples, 2 epochs)
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
+    --config examples/docker_gsm8k/gsm8k_grpo_reasoning_1hour.yaml \
+    experiment_name=gsm8k-grpo-reasoning-1hour \
+    trial_name=trial0
 ```
 
 ## Files
@@ -95,6 +108,8 @@ python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
 - `gsm8k_grpo_1hour.yaml` - 1-hour training (500 samples)
 - `gsm8k_grpo_3hour.yaml` - 3-hour training (1000 samples)
 - `gsm8k_grpo_full.yaml` - Full dataset training (all samples)
+- `gsm8k_grpo_reasoning_fast.yaml` - **Reasoning model training** (fast, XML format)
+- `gsm8k_grpo_reasoning_1hour.yaml` - **Reasoning model training** (1-hour, XML format)
 - `run_training.sh` - Training launcher script (automatically loads WandB key from `wandb/.wandb_api_key`)
 - `run_full_training.sh` - Multi-session full dataset training script (automatically loads WandB key)
 - `test_trained_model.py` - Model evaluation script (simple, direct model loading)
@@ -103,6 +118,25 @@ python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
 - `TRAINING_LEARNINGS.md` - Consolidated learnings and best practices
 
 ## Key Features
+
+### Reasoning Model Training
+
+AReaL now supports training reasoning models using XML format (similar to Unsloth's approach):
+
+- **Format**: Models are trained to output `<reasoning>...</reasoning><answer>...</answer>`
+- **System Prompt**: Automatically adds instructions for reasoning format
+- **Answer Extraction**: Reward function extracts answers from `<answer>` tags
+- **Configs**: Use `gsm8k_grpo_reasoning_*.yaml` configs
+- **Dataset**: Use `openai/gsm8k-reasoning` as the dataset path (automatically triggers reasoning format)
+
+**Example:**
+```bash
+# Train a reasoning model (fast)
+python3 -m areal.launcher.local examples/docker_gsm8k/gsm8k_grpo_train.py \
+    --config examples/docker_gsm8k/gsm8k_grpo_reasoning_fast.yaml
+```
+
+The reasoning format encourages models to show their step-by-step thinking before providing the final answer, similar to DeepSeek-R1 and other reasoning models.
 
 ### Single-GPU Weight Updates
 

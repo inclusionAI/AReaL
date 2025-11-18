@@ -363,48 +363,60 @@ def extract_answer(pred_str, data_name, use_last_number=True):
         # TODO check multiple choice
         return choice_answer_clean(pred_str)
 
-    if "final answer is $" in pred_str and "$. I hope" in pred_str:
-        # minerva_math
-        tmp = pred_str.split("final answer is $", 1)[1]
-        pred = tmp.split("$. I hope", 1)[0].strip()
-    elif "boxed" in pred_str:
-        ans = pred_str.split("boxed")[-1]
-        if len(ans) == 0:
-            return ""
-        elif ans[0] == "{":
-            stack = 1
-            a = ""
-            for c in ans[1:]:
-                if c == "{":
-                    stack += 1
-                    a += c
-                elif c == "}":
-                    stack -= 1
-                    if stack == 0:
-                        break
-                    a += c
+    # Extract from XML reasoning format: <answer>...</answer>
+    # This should be checked first before other formats
+    pred = None
+    if "<answer>" in pred_str and "</answer>" in pred_str:
+        answer_start = pred_str.find("<answer>")
+        answer_end = pred_str.find("</answer>")
+        if answer_start < answer_end:
+            pred = pred_str[answer_start + len("<answer>"):answer_end].strip()
+            # Continue with normal processing to clean the answer below
+    
+    # If XML format not found, try other extraction methods
+    if pred is None:
+        if "final answer is $" in pred_str and "$. I hope" in pred_str:
+            # minerva_math
+            tmp = pred_str.split("final answer is $", 1)[1]
+            pred = tmp.split("$. I hope", 1)[0].strip()
+        elif "boxed" in pred_str:
+            ans = pred_str.split("boxed")[-1]
+            if len(ans) == 0:
+                return ""
+            elif ans[0] == "{":
+                stack = 1
+                a = ""
+                for c in ans[1:]:
+                    if c == "{":
+                        stack += 1
+                        a += c
+                    elif c == "}":
+                        stack -= 1
+                        if stack == 0:
+                            break
+                        a += c
+                    else:
+                        a += c
+            else:
+                a = ans.split("$")[0].strip()
+            pred = a
+        elif "he answer is" in pred_str:
+            pred = pred_str.split("he answer is")[-1].strip()
+        elif "final answer is" in pred_str:
+            pred = pred_str.split("final answer is")[-1].strip()
+        elif "答案是" in pred_str:
+            # Handle Chinese few-shot multiple choice problem answer extraction
+            pred = pred_str.split("答案是")[1].strip().split("\n\n")[0].strip()
+        else:  # use the last number
+            if use_last_number:
+                pattern = "-?\d*\.?\d+"
+                pred = re.findall(pattern, pred_str.replace(",", ""))
+                if len(pred) >= 1:
+                    pred = pred[-1]
                 else:
-                    a += c
-        else:
-            a = ans.split("$")[0].strip()
-        pred = a
-    elif "he answer is" in pred_str:
-        pred = pred_str.split("he answer is")[-1].strip()
-    elif "final answer is" in pred_str:
-        pred = pred_str.split("final answer is")[-1].strip()
-    elif "答案是" in pred_str:
-        # Handle Chinese few-shot multiple choice problem answer extraction
-        pred = pred_str.split("答案是")[1].strip().split("\n\n")[0].strip()
-    else:  # use the last number
-        if use_last_number:
-            pattern = "-?\d*\.?\d+"
-            pred = re.findall(pattern, pred_str.replace(",", ""))
-            if len(pred) >= 1:
-                pred = pred[-1]
+                    pred = ""
             else:
                 pred = ""
-        else:
-            pred = ""
 
     # choice answer
     if data_name in ["sat_math", "aqua"] or "mmlu" in data_name:

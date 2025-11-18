@@ -36,15 +36,27 @@ def _get_custom_dataset(
             **kwargs,
         )
     elif "gsm8k" in path and type == "rl":
-        from .gsm8k import get_gsm8k_rl_dataset
+        # Check if this is the reasoning variant
+        if "reasoning" in path.lower() or kwargs.get("reasoning", False):
+            from .gsm8k import get_gsm8k_reasoning_rl_dataset
 
-        return get_gsm8k_rl_dataset(
-            path=path,
-            split=split,
-            tokenizer=tokenizer,
-            max_length=max_length,
-            **kwargs,
-        )
+            return get_gsm8k_reasoning_rl_dataset(
+                path=path,
+                split=split,
+                tokenizer=tokenizer,
+                max_length=max_length,
+                **kwargs,
+            )
+        else:
+            from .gsm8k import get_gsm8k_rl_dataset
+
+            return get_gsm8k_rl_dataset(
+                path=path,
+                split=split,
+                tokenizer=tokenizer,
+                max_length=max_length,
+                **kwargs,
+            )
     elif "clevr_count_70k" in path and type == "sft":
         from .clevr_count_70k import get_clevr_count_70k_sft_dataset
 
