@@ -293,7 +293,7 @@ class GRPOTrainer:
         elif self.train_backend == "megatron":
             actor = MegatronPPOActor(config=actor_config)
         else:
-            assert False, (
+            raise ValueError(
                 f"Invalid backend: {self.train_backend}, expected fsdp or megatron"
             )
         actor.create_process_group(parallel_strategy=self.parallel_strategy)
