@@ -889,15 +889,6 @@ class WorkflowExecutor:
         results, pending = results[:count], results[count:]
         self._pending_results.extendleft(reversed(pending))
 
-        perf_tracer.instant(
-            "workflow_executor.wait",
-            category="scheduler",
-            args={
-                "queue_size": self.runner.get_output_queue_size(),
-                "pending_results": len(self._pending_results),
-            },
-        )
-
         # Shuffle for randomness (helps with data diversity)
         random.shuffle(results)
 
