@@ -450,12 +450,14 @@ async def test_trace_session_phase(tmp_path):
         task_id = tracer.register_task()
         session_id = tracer.register_session(task_id)
 
+        perf_tracer.set_session_id(session_id)
+
         # Use context manager for generate phase
-        async with perf_tracer.atrace_session_phase(session_id, "generate"):
+        async with perf_tracer.atrace_session_phase("generate"):
             await asyncio.sleep(0.01)  # Simulate work
 
         # Use context manager for reward phase
-        async with perf_tracer.atrace_session_phase(session_id, "reward"):
+        async with perf_tracer.atrace_session_phase("reward"):
             await asyncio.sleep(0.01)  # Simulate work
 
         # Mark as completed using SessionTracer API
@@ -526,9 +528,11 @@ async def test_trace_session_phase_with_exception(tmp_path):
         task_id = tracer.register_task()
         session_id = tracer.register_session(task_id)
 
+        perf_tracer.set_session_id(session_id)
+
         # Even if exception occurs, end event should be recorded
         with pytest.raises(ValueError):
-            async with perf_tracer.atrace_session_phase(session_id, "generate"):
+            async with perf_tracer.atrace_session_phase("generate"):
                 raise ValueError("Simulated error")
 
         # Complete the session

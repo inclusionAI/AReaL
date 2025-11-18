@@ -43,11 +43,11 @@ repos:
         name: Run Linter Check (Ruff)
         types_or: [ python, pyi, jupyter ]
         args: [ --fix ]
-        files: ^(areal|examples|docs)/
+        files: ^(areal|examples|docs|recipe)/
       - id: ruff-format # Run the formatter.
         name: Run Formatter (Ruff)
         types_or: [ python, pyi, jupyter ]
-        files: ^(areal|examples|docs)/
+        files: ^(areal|examples|docs|recipe)/
 
   # Clean notebook outputs and metadata
   - repo: https://github.com/kynan/nbstripout

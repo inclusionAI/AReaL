@@ -368,17 +368,17 @@ class PPOActor:
     def __init__(self, config: PPOActorConfig, engine: TrainEngine):
         self.config = config
         self.engine = engine
+        self.temperature = config.temperature
 
     @torch.no_grad()
     def compute_logp(
         self,
         data: dict[str, Any],
-        temperature: float | None = None,
     ) -> torch.Tensor | None:
 
         def calc_logprobs(logits, input_data):
             labels = torch.roll(input_data["input_ids"], shifts=-1, dims=-1)
-            logprobs = gather_logprobs(logits, labels, temperature or 1.0)
+            logprobs = gather_logprobs(logits, labels, self.temperature)
             return logprobs
 
         self.engine.eval()

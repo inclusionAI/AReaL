@@ -9,6 +9,7 @@ from glob import glob
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.colors import qualitative
@@ -24,6 +25,7 @@ DURATION_COLUMNS = [
     "reward_s",
     "toolcall_s",
 ]
+DEFAULT_PHASE_ORDER: tuple[str, ...] = ("generate", "reward", "toolcall")
 STATUS_COLORS: dict[str, str] = {
     "accepted": "#1f77b4",
     "rejected": "#d62728",
@@ -239,80 +241,132 @@ def _compute_offsets(df: pd.DataFrame) -> float:
 
 def _determine_step_timepoints(
     df: pd.DataFrame,
-    batch_size: int | None,
-    step_gap: float | None,
-) -> tuple[list[float], list[int], str | None]:
-    """Determine step boundaries based on finalized timestamps."""
-    offsets = (
-        df.get("finalized_ts_offset", pd.Series(dtype="float64")).dropna().sort_values()
-    )
-    if offsets.empty:
-        return [], [], "No finalized timestamps available"
+    consumer_batch_size: int,
+) -> tuple[list[float], str | None]:
+    """Determine step boundaries based on per-rank task completion with global synchronization.
 
-    batch = batch_size if batch_size is not None and batch_size > 0 else None
-    if batch is not None:
-        timepoints: list[float] = []
-        counts: list[int] = []
-        current_count = 0
-        offsets_array = offsets.to_numpy()
-        for idx, offset in enumerate(offsets_array, start=1):
-            current_count += 1
-            if idx % batch == 0:
-                timepoints.append(float(offset))
-                counts.append(current_count)
-                current_count = 0
-        if current_count > 0:
-            final_offset = float(offsets_array[-1])
-            timepoints.append(final_offset)
-            counts.append(current_count)
-        return timepoints, counts, f"batch size {batch}"
+    Args:
+        df: DataFrame with columns: rank, task_id, finalized_ts_offset, status
+        consumer_batch_size: Global batch size (total tasks across all ranks per step)
 
-    diffs = offsets.diff().dropna()
-    if diffs.empty:
-        single_offset = float(offsets.iloc[-1])
-        return [single_offset], [len(offsets)], "single execution offset"
+    Returns:
+        timepoints: List of global step boundary timestamps
+        method: Description of the detection method used
+    """
+    # Validate required columns
+    required_cols = ["rank", "task_id", "finalized_ts_offset", "status"]
+    missing = [col for col in required_cols if col not in df.columns]
+    if missing:
+        return [], f"Missing required columns: {missing}"
 
-    auto_gap = float(diffs.quantile(0.9)) if not diffs.empty else 0.0
-    if not math.isfinite(auto_gap) or auto_gap <= 0:
-        auto_gap = float(diffs.mean()) if not diffs.empty else 0.0
-    if not math.isfinite(auto_gap) or auto_gap <= 0:
-        auto_gap = MIN_STEP_GAP
+    # Filter valid data: must have all required fields
+    valid_df = df.dropna(subset=required_cols).copy()
+    if valid_df.empty:
+        return [], "No valid data with rank, task_id, finalized_ts_offset, and status"
 
-    threshold = (
-        step_gap
-        if step_gap is not None and step_gap > 0
-        else max(MIN_STEP_GAP, auto_gap)
-    )
+    # Report total sessions before filtering
+    total_sessions = len(valid_df)
 
-    timepoints: list[float] = []
-    counts: list[int] = []
-    prev_value = float(offsets.iloc[0])
-    current_count = 1
-    for current in offsets.iloc[1:]:
-        current_f = float(current)
-        if current_f - prev_value > threshold:
-            timepoints.append(prev_value)
-            counts.append(current_count)
-            current_count = 1
-        else:
-            current_count += 1
-        prev_value = current_f
-    timepoints.append(prev_value)
-    counts.append(current_count)
+    # Only keep accepted sessions (rejected sessions are not consumed)
+    valid_df = valid_df[valid_df["status"] == "accepted"]
+    accepted_sessions = len(valid_df)
+
+    if valid_df.empty:
+        return (
+            [],
+            f"No accepted sessions found (total sessions: {total_sessions}, all rejected)",
+        )
+
+    # Report filtering results
+    rejected_count = total_sessions - accepted_sessions
+    if rejected_count > 0:
+        print(
+            f"Filtered out {rejected_count} rejected session(s) "
+            f"({accepted_sessions} accepted, {rejected_count} rejected)"
+        )
+    # Calculate number of ranks
+    ranks = sorted(valid_df["rank"].unique())
+    num_ranks = len(ranks)
+
+    if num_ranks == 0:
+        return [], "No ranks found"
+
+    # Calculate per-rank quota
+    per_rank_quota = consumer_batch_size // num_ranks
+    if per_rank_quota < 1:
+        return (
+            [],
+            f"consumer_batch_size ({consumer_batch_size}) < num_ranks ({num_ranks}). Increase batch size or reduce ranks.",
+        )
+
+    # For each rank, compute task completion times and step boundaries
+    rank_step_times: dict[Any, list[float]] = {}
+
+    for rank in ranks:
+        rank_df = valid_df[valid_df["rank"] == rank]
+
+        # Group by task_id and find the slowest (max) finalized_ts_offset for each task
+        task_completion_times = (
+            rank_df.groupby("task_id")["finalized_ts_offset"].max().sort_values()
+        )
+
+        if task_completion_times.empty:
+            rank_step_times[rank] = []
+            continue
+
+        # Split tasks into steps based on per_rank_quota
+        step_boundaries: list[float] = []
+        task_times = task_completion_times.values
+
+        # Only form complete steps (discard incomplete tail)
+        num_complete_steps = len(task_times) // per_rank_quota
+
+        for step_idx in range(num_complete_steps):
+            # The end of this step is the completion time of the last task in the batch
+            end_task_idx = (step_idx + 1) * per_rank_quota - 1
+            step_end_time = float(task_times[end_task_idx])
+            step_boundaries.append(step_end_time)
+
+        rank_step_times[rank] = step_boundaries
+
+    # Global synchronization: find minimum number of steps across all ranks
+    if not rank_step_times:
+        return [], "No rank step boundaries computed"
+
+    min_steps = min(len(times) for times in rank_step_times.values())
+
+    if min_steps == 0:
+        return [], "No complete steps formed (insufficient tasks per rank)"
+
+    # For each global step, take the maximum time across all ranks
+    global_timepoints: list[float] = []
+    for step_idx in range(min_steps):
+        step_times = [rank_step_times[rank][step_idx] for rank in ranks]
+        global_step_time = max(step_times)
+        global_timepoints.append(global_step_time)
 
     method = (
-        f"provided gap {step_gap:.3f}s"
-        if step_gap is not None and step_gap > 0
-        else f"auto gap {threshold:.3f}s"
+        f"consumer_batch_size={consumer_batch_size}, "
+        f"{num_ranks} ranks, "
+        f"{per_rank_quota} tasks/rank/step"
     )
-    return timepoints, counts, method
+
+    return global_timepoints, method
 
 
 def _apply_step_assignments(
-    df: pd.DataFrame, step_counts: Sequence[int] | None
+    df: pd.DataFrame, step_timepoints: Sequence[float] | None
 ) -> pd.Series:
-    """Populate step ids using counts derived from finalized offsets."""
-    if not step_counts:
+    """Assign step IDs to sessions based on global step timepoints.
+
+    Args:
+        df: DataFrame with finalized_ts_offset column
+        step_timepoints: List of step boundary timestamps (sessions <= timepoint belong to that step)
+
+    Returns:
+        Series with counts of sessions per step
+    """
+    if not step_timepoints:
         df["step_id"] = pd.NA
         return pd.Series(dtype="int64")
 
@@ -321,44 +375,35 @@ def _apply_step_assignments(
         df["step_id"] = pd.NA
         return pd.Series(dtype="int64")
 
-    ordered = offsets.dropna().sort_values()
-    if ordered.empty:
+    valid_offsets = offsets.dropna()
+    if valid_offsets.empty:
         df["step_id"] = pd.NA
         return pd.Series(dtype="int64")
 
-    indices = ordered.index.tolist()
-    assignments: dict[int, int] = {}
-    cursor = 0
-    total_steps = len(step_counts)
-    for step_idx, raw_count in enumerate(step_counts):
-        try:
-            count = int(raw_count)
-        except (TypeError, ValueError):
-            continue
-        if count <= 0:
-            continue
-        for _ in range(count):
-            if cursor >= len(indices):
-                break
-            assignments[indices[cursor]] = step_idx
-            cursor += 1
-    if cursor < len(indices) and total_steps > 0:
-        fallback_step = total_steps - 1
-        for idx in indices[cursor:]:
-            assignments[idx] = fallback_step
-
-    if not assignments:
-        df["step_id"] = pd.NA
-        return pd.Series(dtype="int64")
-
-    assignment_series = pd.Series(assignments, dtype="Int64")
+    # Initialize all as NA
     df["step_id"] = pd.NA
-    df.loc[assignment_series.index, "step_id"] = assignment_series.values
-    df["step_id"] = df["step_id"].astype("Int64")
 
+    # Prepare timepoints as a sorted, finite numpy array
+    tp = np.array(step_timepoints, dtype=float)
+    if tp.size == 0 or not np.isfinite(tp).all():
+        df["step_id"] = pd.NA
+        return pd.Series(dtype="int64")
+    tp_sorted = np.unique(tp)
+
+    # Build bins such that intervals are (-inf, t1], (t1, t2], ..., (t_{n-1}, t_n]
+    bins = np.concatenate(([-np.inf], tp_sorted))
+    labels = list(range(len(tp_sorted)))
+
+    # Use pd.cut to assign each finalized offset to the first step with timepoint >= offset.
+    # Values beyond the last timepoint (offset > last timepoint) will be NaN (unassigned), matching previous logic.
+    step_series = pd.cut(offsets, bins=bins, labels=labels, right=True)
+    df["step_id"] = step_series.astype("Int64")
+
+    # Count sessions per step (0..N-1)
     counts_series = (
-        assignment_series.value_counts()
-        .reindex(range(total_steps), fill_value=0)
+        df["step_id"]
+        .value_counts()
+        .reindex(range(len(tp_sorted)), fill_value=0)
         .sort_index()
         .astype("int64")
     )
@@ -412,8 +457,14 @@ def _build_timeline(
         # (start_offset, end_offset, phase_name)
         all_spans: list[tuple[float, float, str]] = []
 
-        if phases_data and isinstance(phases_data, dict):
-            for phase_name in ["generate", "reward", "toolcall"]:
+        if isinstance(phases_data, dict):
+            default_phases = set(DEFAULT_PHASE_ORDER)
+            additional_phases = sorted(
+                p for p in phases_data if str(p) not in default_phases
+            )
+            phase_sequence = list(DEFAULT_PHASE_ORDER) + additional_phases
+
+            for phase_name in phase_sequence:
                 phase_executions = phases_data.get(phase_name, [])
                 if not isinstance(phase_executions, list):
                     continue
@@ -1085,6 +1136,7 @@ def build_latency_figure(
                     name=label,
                     hovertemplate=f"{label}: %{{y:.3f}}s<extra></extra>",
                     showlegend=False,
+                    visible=False,
                 )
                 fig.add_trace(percentile_trace, row=1, col=1)
                 percentile_trace_indices.append(len(tuple(fig.data)) - 1)
@@ -1134,7 +1186,7 @@ def build_latency_figure(
                 ],
                 direction="left",
                 showactive=True,
-                active=0,
+                active=1,
                 x=0.28,
                 y=-0.18,
                 xanchor="left",
@@ -1179,24 +1231,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Optional HTML output path (defaults to a path derived from input)",
     )
     parser.add_argument(
-        "--step-gap",
-        type=float,
-        default=None,
-        help="Gap threshold (seconds) between session starts to split steps",
-    )
-    parser.add_argument(
-        "-b",
+        "-B",
         "--consumer-batch-size",
         type=int,
-        default=None,
-        help="Optional number of sessions per consumer batch to derive step boundaries",
+        required=True,
+        help="Global consumer batch size (total tasks across all ranks per step, should match controller config)",
+    )
+    parser.add_argument(
+        "-L",
+        "--enable-lifecycle",
+        action="store_true",
+        help="Enable generation of lifecycle timeline figures (one per rank)",
     )
     parser.add_argument(
         "-N",
         "--max-lifecycle-sessions",
         type=int,
         default=None,
-        help="Maximum number of sessions to show in lifecycle timeline (earliest finalized first)",
+        help="Maximum number of sessions to show in lifecycle timeline (earliest finalized first). Only effective when --enable-lifecycle is set.",
     )
     return parser.parse_args(argv)
 
@@ -1244,27 +1296,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     _maybe_compute_durations(df)
     _extract_phase_timestamps(df)
     _compute_offsets(df)
-    step_timepoints, step_timepoint_counts, timepoint_method = (
-        _determine_step_timepoints(
-            df,
-            args.consumer_batch_size,
-            args.step_gap,
-        )
+    step_timepoints, timepoint_method = _determine_step_timepoints(
+        df,
+        args.consumer_batch_size,
     )
     if step_timepoints:
         method_desc = timepoint_method or "unspecified method"
         print(
             f"Identified {len(step_timepoints)} step timepoint(s) using {method_desc}."
         )
-        for idx, (offset, req_count) in enumerate(
-            zip(step_timepoints, step_timepoint_counts),
-            1,
-        ):
-            print(f"  Step {idx}: end offset {offset:.3f}s (sessions: {req_count})")
+        # Assign steps first to get session counts
+        step_counts = _apply_step_assignments(df, step_timepoints)
+        for idx, offset in enumerate(step_timepoints, 1):
+            session_count = step_counts.get(idx - 1, 0) if not step_counts.empty else 0
+            print(f"  Step {idx}: end offset {offset:.3f}s (sessions: {session_count})")
     else:
         reason = timepoint_method or "insufficient data"
         print(f"No step timepoints identified ({reason}).")
-    step_counts = _apply_step_assignments(df, step_timepoint_counts)
+        step_counts = _apply_step_assignments(df, step_timepoints)
     if step_counts.empty:
         print("No step assignments available for distribution analysis.")
 
@@ -1290,55 +1339,64 @@ def main(argv: Sequence[str] | None = None) -> int:
         step_fig.write_html(step_path, include_plotlyjs="cdn", full_html=True)
 
     # Build lifecycle figures with optional session limit (one per rank)
-    total_sessions_with_submit = len(df.dropna(subset=["submit_ts"]))
-    timeline_figures = build_timeline_figures(df, args.max_lifecycle_sessions)
+    # Only generate if --enable-lifecycle is set
+    if args.enable_lifecycle:
+        total_sessions_with_submit = len(df.dropna(subset=["submit_ts"]))
+        timeline_figures = build_timeline_figures(df, args.max_lifecycle_sessions)
 
-    # Calculate how many sessions are actually being visualized
-    timeline_df = df.dropna(subset=["submit_ts"])
-    if (
-        args.max_lifecycle_sessions is not None
-        and args.max_lifecycle_sessions > 0
-        and total_sessions_with_submit > args.max_lifecycle_sessions
-    ):
-        sessions_visualized = args.max_lifecycle_sessions
-        timeline_df = timeline_df.sort_values("finalized_ts").head(sessions_visualized)
-    else:
-        sessions_visualized = total_sessions_with_submit
-
-    # Get rank information
-    ranked_values = timeline_df["rank"].dropna().unique().tolist()
-    include_nan = timeline_df["rank"].isna().any()
-    num_ranks = len(ranked_values) + (1 if include_nan else 0)
-
-    if num_ranks > 1:
-        print(
-            f"Lifecycle visualization: {sessions_visualized} out of "
-            f"{total_sessions_with_submit} sessions across {num_ranks} ranks "
-            f"(one file per rank)."
-        )
-    else:
+        # Calculate how many sessions are actually being visualized
+        timeline_df = df.dropna(subset=["submit_ts"])
         if (
             args.max_lifecycle_sessions is not None
             and args.max_lifecycle_sessions > 0
             and total_sessions_with_submit > args.max_lifecycle_sessions
         ):
-            print(
-                f"Lifecycle visualization limited to {sessions_visualized} out of "
-                f"{total_sessions_with_submit} sessions (earliest finalized first)."
+            sessions_visualized = args.max_lifecycle_sessions
+            timeline_df = timeline_df.sort_values("finalized_ts").head(
+                sessions_visualized
             )
         else:
-            print(
-                f"Lifecycle visualization includes all {sessions_visualized} sessions."
-            )
+            sessions_visualized = total_sessions_with_submit
 
-    # Write lifecycle figures - one file per rank
-    lifecycle_paths: list[Path] = []
-    for rank_key, fig in timeline_figures.items():
-        lifecycle_path = overall_path.with_name(f"sessions-lifecycle-{rank_key}.html")
-        if lifecycle_path.parent != Path(".") and not lifecycle_path.parent.exists():
-            lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.write_html(lifecycle_path, include_plotlyjs="cdn", full_html=True)
-        lifecycle_paths.append(lifecycle_path)
+        # Get rank information
+        ranked_values = timeline_df["rank"].dropna().unique().tolist()
+        include_nan = timeline_df["rank"].isna().any()
+        num_ranks = len(ranked_values) + (1 if include_nan else 0)
+
+        if num_ranks > 1:
+            print(
+                f"Lifecycle visualization: {sessions_visualized} out of "
+                f"{total_sessions_with_submit} sessions across {num_ranks} ranks "
+                f"(one file per rank)."
+            )
+        else:
+            if (
+                args.max_lifecycle_sessions is not None
+                and args.max_lifecycle_sessions > 0
+                and total_sessions_with_submit > args.max_lifecycle_sessions
+            ):
+                print(
+                    f"Lifecycle visualization limited to {sessions_visualized} out of "
+                    f"{total_sessions_with_submit} sessions (earliest finalized first)."
+                )
+            else:
+                print(
+                    f"Lifecycle visualization includes all {sessions_visualized} sessions."
+                )
+
+        # Write lifecycle figures - one file per rank
+        lifecycle_paths: list[Path] = []
+        for rank_key, fig in timeline_figures.items():
+            lifecycle_path = overall_path.with_name(
+                f"sessions-lifecycle-{rank_key}.html"
+            )
+            if (
+                lifecycle_path.parent != Path(".")
+                and not lifecycle_path.parent.exists()
+            ):
+                lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.write_html(lifecycle_path, include_plotlyjs="cdn", full_html=True)
+            lifecycle_paths.append(lifecycle_path)
 
     latency_fig = build_latency_figure(df, step_timepoints)
     latency_path = overall_path.with_name("sessions-latency.html")
@@ -1349,8 +1407,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Wrote overall distribution report to {overall_path}")
     if step_fig is not None:
         print(f"Wrote step distribution report to {step_path}")
-    for lifecycle_path in lifecycle_paths:
-        print(f"Wrote lifecycle report to {lifecycle_path}")
+    if args.enable_lifecycle:
+        for lifecycle_path in lifecycle_paths:
+            print(f"Wrote lifecycle report to {lifecycle_path}")
     print(f"Wrote execution report to {latency_path}")
     return 0
 

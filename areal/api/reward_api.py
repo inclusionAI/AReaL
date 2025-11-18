@@ -1,4 +1,5 @@
 import asyncio
+import os
 import threading
 import traceback
 import weakref
@@ -10,6 +11,29 @@ from functools import partial
 from areal.utils import logging
 
 logger = logging.getLogger("Reward API")
+
+
+def _get_device_count_safely() -> int:
+    """
+    Safely get device count without initializing CUDA context.
+    """
+    gpu_types = ["nvidia", "davinci"]
+    try:
+        if os.path.exists("/dev"):
+            for gpu_type in gpu_types:
+                devices = [
+                    f
+                    for f in os.listdir("/dev")
+                    if f.startswith(gpu_type) and f[len(gpu_type) :].isdigit()
+                ]
+                if devices:
+                    return len(devices)
+    except (OSError, ValueError) as e:
+        # /dev doesn't exist or can't read (e.g., Windows, macOS)
+        logger.debug(f"Could not read device list from /dev, using fallback: {e}")
+
+    # Fallback: assume 8 devices for cautious max_workers calculation
+    return 8
 
 
 def reward_fn(
@@ -54,6 +78,12 @@ class AsyncRewardWrapper:
     ):
         self.reward_fn = reward_fn
         self.timeout_seconds = timeout_seconds
+        if max_workers is None:
+            cpu_count = os.cpu_count() or 1
+            device_count = _get_device_count_safely()
+            # Heuristic for max_workers: distribute CPU cores across devices,
+            # then halve to be conservative, ensuring at least one worker.
+            max_workers = max((cpu_count // device_count) // 2, 1)
         self.max_workers = max_workers
         self.max_retries = max_retries
         self._executor_key = max_workers

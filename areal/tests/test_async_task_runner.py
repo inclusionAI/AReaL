@@ -476,3 +476,131 @@ class TestAsyncTaskRunnerWithDifferentTypes:
         assert set(even_numbers) == {0, 2, 4, 6, 8}
 
         runner.destroy()
+
+
+class TestAsyncTaskRunnerShutdownHooks:
+    """Test shutdown hook functionality."""
+
+    def test_shutdown_hook_execution(self):
+        """Test that shutdown hooks are called during destroy."""
+        runner = AsyncTaskRunner[int](max_queue_size=10)
+        runner.initialize()
+
+        # Track hook execution
+        hook_called = []
+
+        async def cleanup_hook():
+            await asyncio.sleep(0.01)
+            hook_called.append(True)
+
+        runner.register_shutdown_hook(cleanup_hook)
+        runner.destroy()
+
+        assert hook_called == [True]
+
+    def test_multiple_hooks_reverse_order(self):
+        """Test that multiple hooks are called in reverse order (LIFO)."""
+        runner = AsyncTaskRunner[int](max_queue_size=10)
+        runner.initialize()
+
+        order = []
+
+        async def hook1():
+            order.append(1)
+
+        async def hook2():
+            order.append(2)
+
+        async def hook3():
+            order.append(3)
+
+        runner.register_shutdown_hook(hook1)
+        runner.register_shutdown_hook(hook2)
+        runner.register_shutdown_hook(hook3)
+        runner.destroy()
+
+        assert order == [3, 2, 1]  # LIFO order
+
+    def test_hook_exception_doesnt_prevent_cleanup(self):
+        """Test that hook exceptions don't prevent other hooks from running."""
+        runner = AsyncTaskRunner[int](max_queue_size=10)
+        runner.initialize()
+
+        executed = []
+
+        async def failing_hook():
+            executed.append("failing")
+            raise ValueError("Hook failed!")
+
+        async def working_hook():
+            executed.append("working")
+
+        runner.register_shutdown_hook(working_hook)
+        runner.register_shutdown_hook(failing_hook)
+        runner.destroy()
+
+        # Both hooks should have executed
+        assert "failing" in executed
+        assert "working" in executed
+
+    def test_shutdown_hook_with_tasks(self):
+        """Test that hooks run even when tasks are pending."""
+        runner = AsyncTaskRunner[int](max_queue_size=50)
+        runner.initialize()
+
+        hook_executed = []
+
+        async def cleanup_hook():
+            hook_executed.append(True)
+
+        async def long_task(x: int) -> int:
+            await asyncio.sleep(10.0)
+            return x
+
+        # Submit tasks that won't complete
+        for i in range(5):
+            runner.submit(long_task, i)
+
+        runner.register_shutdown_hook(cleanup_hook)
+        runner.destroy()
+
+        # Hook should still have executed
+        assert hook_executed == [True]
+
+    def test_hook_registered_after_shutdown(self):
+        """Test that hooks registered after shutdown don't cause errors."""
+        runner = AsyncTaskRunner[int](max_queue_size=10)
+        runner.initialize()
+
+        # Trigger shutdown
+        runner.exiting.set()
+        time.sleep(0.1)
+
+        # Try to register a hook after shutdown started
+        async def late_hook():
+            pass
+
+        # Should not raise an error
+        runner.register_shutdown_hook(late_hook)
+
+        runner.destroy()
+
+    def test_shutdown_hook_cleanup_shared_resource(self):
+        """Test shutdown hook cleaning up a shared resource."""
+        runner = AsyncTaskRunner[int](max_queue_size=10)
+        runner.initialize()
+
+        # Simulate a shared resource (like a session)
+        shared_resource = {"active": True, "connections": 5}
+
+        async def cleanup_resource():
+            await asyncio.sleep(0.01)
+            shared_resource["active"] = False
+            shared_resource["connections"] = 0
+
+        runner.register_shutdown_hook(cleanup_resource)
+        runner.destroy()
+
+        # Resource should be cleaned up
+        assert shared_resource["active"] is False
+        assert shared_resource["connections"] == 0

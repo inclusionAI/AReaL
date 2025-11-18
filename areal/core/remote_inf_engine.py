@@ -3,6 +3,7 @@ import os
 import random
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -40,6 +41,10 @@ from areal.utils.perf_tracer import trace_perf
 from .workflow_executor import WorkflowExecutor
 
 RID_CACHE_SIZE = 128
+
+# Thread-local storage for aiohttp sessions
+# Each thread gets its own session to ensure thread safety and event loop compatibility
+_session_storage = threading.local()
 
 
 class RemoteInfBackendProtocol(Protocol):
@@ -250,6 +255,35 @@ class RemoteInfEngine:
         self.workflow_executor: WorkflowExecutor
         self.local_server_processes: list[LocalInfServerInfo] = []
 
+    def _get_or_create_session(self) -> aiohttp.ClientSession:
+        """Get or create a ClientSession for the current thread/event loop.
+
+        This method provides thread-local session storage to avoid creating
+        a new session for every request while maintaining thread safety.
+        Each thread gets its own isolated session that is bound to that
+        thread's event loop.
+
+        Returns
+        -------
+        aiohttp.ClientSession
+            A session object for the current thread
+        """
+        if (
+            not hasattr(_session_storage, "session")
+            or _session_storage.session is None
+            or _session_storage.session.closed
+        ):
+            _session_storage.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=self.config.request_timeout,
+                    sock_connect=self.config.request_timeout,
+                    connect=self.config.request_timeout,
+                ),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            )
+        return _session_storage.session
+
     def _wait_for_server(self, address):
         """Wait for a server to become healthy."""
         base_url = f"http://{address}"
@@ -342,8 +376,40 @@ class RemoteInfEngine:
             logger=self.logger, train_data_parallel_size=train_data_parallel_size
         )
 
+        # Register session cleanup hook for AsyncTaskRunner thread
+        # This ensures sessions created in the background thread are properly closed
+        async def cleanup_session():
+            """Close thread-local aiohttp session in AsyncTaskRunner thread."""
+            if hasattr(_session_storage, "session") and _session_storage.session:
+                if not _session_storage.session.closed:
+                    await _session_storage.session.close()
+                _session_storage.session = None
+
+        self.workflow_executor.runner.register_shutdown_hook(cleanup_session)
+
     def destroy(self):
         """Destroy the engine and clean up resources."""
+        # Clean up thread-local session if it exists in the current thread
+        if hasattr(_session_storage, "session") and _session_storage.session:
+            try:
+                if not _session_storage.session.closed:
+                    # Try to close the session synchronously
+                    # Note: This only cleans up the session in the current thread.
+                    # Sessions in AsyncTaskRunner thread are cleaned up via shutdown hooks
+                    # registered during initialize().
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If we're in an async context, schedule the close
+                        asyncio.create_task(_session_storage.session.close())
+                    else:
+                        # If no loop is running, run the close synchronously
+                        loop.run_until_complete(_session_storage.session.close())
+            except RuntimeError:
+                # Ignore errors during cleanup (e.g., no event loop)
+                pass
+            finally:
+                _session_storage.session = None
+
         if hasattr(self, "workflow_executor"):
             self.workflow_executor.destroy()
         if hasattr(self, "executor"):
@@ -435,70 +501,62 @@ class RemoteInfEngine:
             self.rid_to_address[req.rid] = server_addr
             self.rid_queue.append(req.rid)
 
-        # Create a new session because we don't know whether this method
-        # is called in the workflow thread or the main thread.
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(
-                total=self.config.request_timeout,
-                sock_connect=self.config.request_timeout,
-                connect=self.config.request_timeout,
-            ),
-            read_bufsize=1024 * 1024 * 10,
-            connector=get_default_connector(),
-        ) as session:
-            # Deal with rollout interruption
-            stop_reason = None
-            while (
-                stop_reason not in ["stop", "tool_calls", "length"]
-                and len(accumulated_output_tokens) < gconfig.max_new_tokens
-            ):
-                # Request is interrupted, wait for some time to avoid interfering
-                # with update weights requests
-                while self.workflow_executor.is_paused():
-                    await asyncio.sleep(0.5)
+        # Get or create thread-local session
+        # Thread-local storage ensures each thread has its own session,
+        # maintaining thread safety and event loop compatibility
+        session = self._get_or_create_session()
 
-                # Build request using backend
-                http_req = self.backend.build_generation_request(
-                    req, self.lora_initialized
-                )
+        # Deal with rollout interruption
+        stop_reason = None
+        while (
+            stop_reason not in ["stop", "tool_calls", "length"]
+            and len(accumulated_output_tokens) < gconfig.max_new_tokens
+        ):
+            # Request is interrupted, wait for some time to avoid interfering
+            # with update weights requests
+            while self.workflow_executor.is_paused():
+                await asyncio.sleep(0.5)
 
-                # Loop until the generation is complete
-                result = await arequest_with_retry(
-                    session=session,
-                    addr=server_addr,
-                    endpoint=http_req.endpoint,
-                    payload=http_req.payload,
-                    method=http_req.method,
-                    max_retries=self.config.request_retries,
-                    timeout=self.config.request_timeout,
-                )
+            # Build request using backend
+            http_req = self.backend.build_generation_request(req, self.lora_initialized)
 
-                # Parse response using backend
-                gen_result = self.backend.parse_generation_response(result)
-                stop_reason = gen_result.stop_reason
+            # Loop until the generation is complete
+            result = await arequest_with_retry(
+                session=session,
+                addr=server_addr,
+                endpoint=http_req.endpoint,
+                payload=http_req.payload,
+                method=http_req.method,
+                max_retries=self.config.request_retries,
+                timeout=self.config.request_timeout,
+            )
 
-                # Update accumulated outputs
-                accumulated_output_tokens.extend(gen_result.output_tokens)
-                accumulated_output_logprobs.extend(gen_result.output_logprobs)
-                accumulated_versions.extend(
-                    [self.get_version()] * len(gen_result.output_tokens)
-                )
+            # Parse response using backend
+            gen_result = self.backend.parse_generation_response(result)
+            stop_reason = gen_result.stop_reason
 
-                # Update request for next iteration
-                req.input_ids += gen_result.output_tokens
-                req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
-                assert req.gconfig.max_new_tokens >= 0, (
-                    req.gconfig.max_new_tokens,
-                    len(gen_result.output_tokens),
-                    len(req.input_ids),
-                )
+            # Update accumulated outputs
+            accumulated_output_tokens.extend(gen_result.output_tokens)
+            accumulated_output_logprobs.extend(gen_result.output_logprobs)
+            accumulated_versions.extend(
+                [self.get_version()] * len(gen_result.output_tokens)
+            )
 
-            # Final abort handling
-            if stop_reason == "abort":
-                # If stop_reason is "abort", the only reason we exit the loop is
-                # len(accumulated_output_tokens) >= gconfig.max_new_tokens
-                # so the actual reason is length
-                stop_reason = "length"
+            # Update request for next iteration
+            req.input_ids += gen_result.output_tokens
+            req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
+            assert req.gconfig.max_new_tokens >= 0, (
+                req.gconfig.max_new_tokens,
+                len(gen_result.output_tokens),
+                len(req.input_ids),
+            )
+
+        # Final abort handling
+        if stop_reason == "abort":
+            # If stop_reason is "abort", the only reason we exit the loop is
+            # len(accumulated_output_tokens) >= gconfig.max_new_tokens
+            # so the actual reason is length
+            stop_reason = "length"
 
         latency = time.perf_counter() - start_time
 

@@ -8,7 +8,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional
 
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names, pkg_version
@@ -58,8 +57,8 @@ NA132_ENVIRONS = {
 
 
 def get_env_vars(
-    cluster_name: str, additional_env_vars: Optional[str] = None
-) -> Dict[str, str]:
+    cluster_name: str, additional_env_vars: str | None = None
+) -> dict[str, str]:
     """Returns the environment variables for the cluster."""
     _additional_env_vars = (
         dict(item.split("=") for item in additional_env_vars.split(","))
@@ -85,7 +84,6 @@ class JobState(enum.Enum):
 
 
 class JobException(Exception):
-
     def __init__(self, run_name, worker_type, host, reason: JobState):
         super().__init__(f"Job {run_name}:{worker_type} {reason} at node {host}")
         self.run_name = run_name
@@ -98,19 +96,19 @@ class JobException(Exception):
 class JobInfo:
     name: str
     state: JobState
-    host: Optional[str] = (
+    host: str | None = (
         None  # The host on which the job is/was running. None if the job had not run.
     )
-    submit_time: Optional[str] = None
-    start_time: Optional[str] = None
-    slurm_id: Optional[int] = None  # Slurm only. The Slurm id of the job.
+    submit_time: str | None = None
+    start_time: str | None = None
+    slurm_id: int | None = None  # Slurm only. The Slurm id of the job.
 
 
 def wait_llm_server_addrs(
     experiment_name: str,
     trial_name: str,
     n_rollout_servers: int = 1,
-    timeout: int | None = 360,
+    timeout: int | None = 1200,
 ):
     # Get rollout nodes, find the hosts
     name = names.gen_servers(experiment_name, trial_name)
@@ -147,17 +145,18 @@ def validate_config_for_distributed_launcher(config):
         )
     if allocation_mode.gen_backend == "sglang":
         # Launcher should launch SGLang servers according to allocation mode.
-        assert (
-            allocation_mode.gen.pp_size == 1
-        ), "Pipeline generation in SGLang is not supported for now."
+        if allocation_mode.gen.pp_size > 1:
+            raise NotImplementedError(
+                "Pipeline generation in SGLang is not supported for now."
+            )
     elif allocation_mode.gen_backend == "vllm":
         # Launcher should launch vLLM servers according to allocation mode.
-        assert (
-            allocation_mode.gen.pp_size == 1
-        ), "Pipeline generation in vLLM is not supported for now."
-        assert (
-            allocation_mode.gen.tp_size <= config.cluster.n_gpus_per_node
-        ), "Currently only support vLLM TP size less <= #GPUs per node."
+        if allocation_mode.gen.pp_size > 1:
+            raise NotImplementedError(
+                "Pipeline generation in vLLM is not supported for now."
+            )
+        if allocation_mode.gen.tp_size > config.cluster.n_gpus_per_node:
+            raise ValueError("Currently only support vLLM TP size <= #GPUs per node.")
 
 
 def apply_sglang_patch():

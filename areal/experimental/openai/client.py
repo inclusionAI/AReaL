@@ -1,7 +1,6 @@
 import datetime
 import os
 import uuid
-from collections import OrderedDict, defaultdict
 from collections.abc import Iterable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
@@ -39,6 +38,7 @@ from openai.types.shared_params.metadata import Metadata
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
+from areal.experimental.openai.cache import CompletionCache
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
@@ -67,7 +67,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         client,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        cache: dict[str, InteractionWithTokenLogpReward],
+        cache: CompletionCache,
         tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -97,7 +97,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
-        areal_completion_cache: dict[str, InteractionWithTokenLogpReward] | None = None,
+        areal_completion_cache: CompletionCache | None = None,
         **kwargs: Any,
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
@@ -253,7 +253,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         client,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        cache: dict[str, InteractionWithTokenLogpReward],
+        cache: CompletionCache,
         tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -515,6 +515,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         cache = (
             areal_response_cache if areal_response_cache is not None else self._cache
         )
+
         if resp_id in cache:
             raise ValueError(f"Response {resp_id} already exists in cache")
 
@@ -569,7 +570,7 @@ class ArealOpenAI(AsyncOpenAI):
         self.tool_call_parser = tool_call_parser
 
         # Use an ordered dict to maintain insertion order of completions/responses
-        self._cache: OrderedDict[str, InteractionWithTokenLogpReward] = OrderedDict()
+        self._cache: CompletionCache = CompletionCache()
 
         # Override responses with our extended implementation
         self.responses = AsyncResponsesWithReward(
@@ -615,14 +616,13 @@ class ArealOpenAI(AsyncOpenAI):
         """Set reward for a specific completion/response by its ID."""
         if id not in self._cache:
             raise KeyError(f"Interaction with ID {id} not found in cache")
-        self._cache[id].reward = reward
+        return self._cache.set_reward(id, reward)
 
     def set_final_reward(self, reward: float) -> None:
         """Set reward for the most recent completion/response."""
         if not self._cache:
             raise RuntimeError("No interaction in cache to set reward for")
-        last_interaction_id = next(reversed(self._cache))
-        self._cache[last_interaction_id].reward = reward
+        return self._cache.set_final_reward(reward)
 
     def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
         """Apply backward discounted rewards across cached completions/responses.
@@ -652,30 +652,10 @@ class ArealOpenAI(AsyncOpenAI):
             A shallow copy of the completion/response cache after rewards have been
             updated in-place.
         """
-        # Assign rewards to interactions in cache based on their creation order
-        interaction_time_sequence = list(
-            reversed([interaction for _, interaction in self._cache.items()])
-        )
-
-        # Check if the last-created interaction has a reward set
-        if interaction_time_sequence:
-            if interaction_time_sequence[0].reward is None:
-                logger.warning(
-                    "The most recent interaction does not have a reward set. "
-                    "All interactions will have None reward."
-                )
-                interaction_time_sequence[0].reward = 0.0
-            # Propagate rewards backwards with discounting if reward is not set
-            for i in range(1, len(interaction_time_sequence)):
-                if interaction_time_sequence[i].reward is None:
-                    interaction_time_sequence[i].reward = 0.0
-                interaction_time_sequence[i].reward += (
-                    interaction_time_sequence[i - 1].reward * turn_discount
-                )
-        return dict(**self._cache)
+        return self._cache.apply_reward_discount(turn_discount)
 
     def export_interactions(
-        self, style: str = "concat"
+        self, style: str
     ) -> dict[str, InteractionWithTokenLogpReward]:
         """Export cached completions/responses in different formats.
 
@@ -706,104 +686,7 @@ class ArealOpenAI(AsyncOpenAI):
         ValueError
             If an unsupported ``style`` is provided.
         """
-        cache = self._cache
-        if len(cache) == 0:
-            return {}
-
-        if style == "concat":
-            for interaction in cache.values():
-                if interaction.chat_template_type != "concat":
-                    raise ValueError(
-                        "Cannot export interactions in 'concat' style when "
-                        "interaction.chat_template_type != 'concat' for any interaction. "
-                        "This is because when applying chat template using some "
-                        "tokenizers, there might be some tokens added or removed "
-                        "(e.g. think tokens), making it impossible to construct the conversation tree. "
-                        "Please use 'individual' style instead."
-                    )
-
-            def _is_prefix(a: list[dict], b: list[dict]) -> bool:
-                # True if a is a strict prefix of b
-                if len(a) >= len(b):
-                    return False
-                for i in range(len(a)):
-                    if a[i] != b[i]:
-                        return False
-                return True
-
-            # Precompute normalized data
-            meta = {}
-            for interaction_id, interaction in cache.items():
-                if interaction.is_completion:
-                    norm_data = interaction.messages or []
-                else:  # response
-                    norm_data = interaction.input_data
-                meta[interaction_id] = {
-                    "norm_data": norm_data,
-                    "obj": interaction,
-                }
-
-            # 1) Construct parent-child relationships using longest prefix rule
-            # Sort potential children by (data length asc, created asc)
-            # so parents are available
-            ordered = sorted(
-                meta.items(),
-                key=lambda kv: (
-                    len(kv[1]["norm_data"]),
-                    (
-                        kv[1]["obj"].completion.created
-                        if kv[1]["obj"].is_completion
-                        else kv[1]["obj"].response.created_at
-                    ),
-                ),
-            )
-
-            # Reset parents before rebuilding
-            for _, info in ordered:
-                info["obj"].parent = None
-
-            for child_id, child_info in ordered:
-                child_data = child_info["norm_data"]
-                best_parent = None
-                best_len = -1
-                for parent_id, parent_info in ordered:
-                    if parent_id == child_id:
-                        continue
-                    parent_data = parent_info["norm_data"]
-                    if _is_prefix(parent_data, child_data):
-                        plen = len(str(parent_data))
-                        # choose the longest prefix
-                        if plen > best_len:
-                            best_parent = parent_info["obj"]
-                            best_len = plen
-                child_info["obj"].parent = best_parent
-
-            # Build children mapping to find leaf nodes.
-            children_map: dict[
-                str,
-                list[InteractionWithTokenLogpReward],
-            ] = defaultdict(list)
-            for _, info in meta.items():
-                obj = info["obj"]
-                if obj.parent is not None:
-                    if obj.is_completion:
-                        children_map[obj.parent.completion.id].append(obj)
-                    else:  # response
-                        children_map[obj.parent.response.id].append(obj)
-
-            # Return only leaf nodes (nodes without children)
-            parents_with_children = set(children_map.keys())
-            leaf_only: dict[str, InteractionWithTokenLogpReward] = {}
-            for interaction_id, info in meta.items():
-                obj = info["obj"]
-                obj_id = obj.completion.id if obj.is_completion else obj.response.id
-                if obj_id not in parents_with_children:
-                    leaf_only[interaction_id] = obj
-            return leaf_only
-        elif style == "individual":
-            return dict(**cache)
-        else:
-            raise ValueError(f"Invalid export interactions style {style}")
+        return self._cache.export_interactions(style)
 
     def export_completions(
         self, style: str = "concat"
