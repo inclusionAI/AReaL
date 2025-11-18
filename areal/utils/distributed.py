@@ -1,4 +1,23 @@
 import torch
+import torch.distributed as dist
+
+GLOO_GROUP = None
+
+
+def init_gloo_group():
+    global GLOO_GROUP
+    if GLOO_GROUP is None:
+        GLOO_GROUP = dist.new_group(backend="gloo")
+    return GLOO_GROUP
+
+
+def get_gloo_group():
+    global GLOO_GROUP
+    if GLOO_GROUP is None:
+        raise RuntimeError(
+            "Gloo group has not been initialized. Call init_gloo_group() first."
+        )
+    return GLOO_GROUP
 
 
 # Copy from pytorch and OpenRLHF to allow creating multiple main groups.
@@ -23,9 +42,9 @@ def init_custom_process_group(
         rendezvous,
     )
 
-    assert (store is None) or (
-        init_method is None
-    ), "Cannot specify both init_method and store."
+    assert (store is None) or (init_method is None), (
+        "Cannot specify both init_method and store."
+    )
 
     if store is not None:
         assert world_size > 0, "world_size must be positive if using store"

@@ -51,7 +51,11 @@ from areal.utils.data import (
     unpack_sequence,
 )
 from areal.utils.device import clear_memory, print_memory
-from areal.utils.distributed import init_custom_process_group
+from areal.utils.distributed import (
+    get_gloo_group,
+    init_custom_process_group,
+    init_gloo_group,
+)
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
@@ -146,6 +150,10 @@ class FSDPEngine(BaseHFEngine):
         self.dp_rank = dist.get_rank(self.dp_group)
 
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
+
+        # Initialize gloo group for CPU-based communication
+        # This is needed for barrier synchronization when models are moved to CPU
+        init_gloo_group()
 
     def initialize(
         self,
@@ -953,7 +961,7 @@ class FSDPEngine(BaseHFEngine):
                 )
 
         current_platform.synchronize()
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=get_gloo_group())
         print_memory("after offload model")
 
     def wake_up(self) -> None:
@@ -974,5 +982,5 @@ class FSDPEngine(BaseHFEngine):
                 )
 
         current_platform.synchronize()
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=get_gloo_group())
         print_memory("after wake_up model")
