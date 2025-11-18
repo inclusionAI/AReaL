@@ -902,10 +902,8 @@ class WorkflowExecutor:
         random.shuffle(results)
 
         # Concatenate into batch tensor format
-        trajectories = [r.data.trajectory for r in results]
-        return concat_padded_tensors(
-            [traj for traj in trajectories if traj is not None]
-        )
+        trajectories = [r.data.trajectory for r in results if r.data is not None]
+        return concat_padded_tensors(trajectories)
 
     @trace_perf("workflow_executor.rollout_batch", category="scheduler")
     def rollout_batch(
