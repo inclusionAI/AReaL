@@ -25,6 +25,7 @@ DURATION_COLUMNS = [
     "reward_s",
     "toolcall_s",
 ]
+DEFAULT_PHASE_ORDER: tuple[str, ...] = ("generate", "reward", "toolcall")
 STATUS_COLORS: dict[str, str] = {
     "accepted": "#1f77b4",
     "rejected": "#d62728",
@@ -395,7 +396,7 @@ def _apply_step_assignments(
 
     # Use pd.cut to assign each finalized offset to the first step with timepoint >= offset.
     # Values beyond the last timepoint (offset > last timepoint) will be NaN (unassigned), matching previous logic.
-    step_series = pd.cut(offsets, bins=bins, labels=labels, right=True)
+    step_series = pd.cut(offsets, bins=bins.tolist(), labels=labels, right=True)
     df["step_id"] = step_series.astype("Int64")
 
     # Count sessions per step (0..N-1)
@@ -456,8 +457,14 @@ def _build_timeline(
         # (start_offset, end_offset, phase_name)
         all_spans: list[tuple[float, float, str]] = []
 
-        if phases_data and isinstance(phases_data, dict):
-            for phase_name in ["generate", "reward", "toolcall"]:
+        if isinstance(phases_data, dict):
+            phase_sequence: list[str] = list(DEFAULT_PHASE_ORDER)
+            for phase_key in phases_data.keys():
+                phase_name = str(phase_key)
+                if phase_name not in phase_sequence:
+                    phase_sequence.append(phase_name)
+
+            for phase_name in phase_sequence:
                 phase_executions = phases_data.get(phase_name, [])
                 if not isinstance(phase_executions, list):
                     continue
