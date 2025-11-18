@@ -18,7 +18,7 @@ import io
 import os
 import tempfile
 import zipfile
-from dataclasses import is_dataclass
+from dataclasses import fields, is_dataclass
 from typing import Any, Literal
 
 import numpy as np
@@ -124,7 +124,6 @@ class SerializedTensor(BaseModel):
         numpy.dtype
             Corresponding NumPy data type
         """
-        import numpy as np
 
         dtype_map = {
             torch.float32: np.float32,
@@ -221,8 +220,6 @@ class SerializedDataclass(BaseModel):
         )
         # Get fields without recursive conversion to preserve nested dataclass instances
         # We'll handle recursive serialization in serialize_value()
-        from dataclasses import fields
-
         data = {}
         for field in fields(dataclass_instance):
             data[field.name] = getattr(dataclass_instance, field.name)
