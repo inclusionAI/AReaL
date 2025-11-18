@@ -130,7 +130,7 @@ does a single prompt take from submission to reward calculation?).
 **API**: `@trace_session(phase)`
 
 - Decorator for sync/async methods that participate in session processing
-- Automatically reads `session_id` poplulated by `@session_context()`
+- Automatically reads `session_id` populated by `@session_context()`
 - Records `mark_{phase}_start` and `mark_{phase}_end` events
 
 **Example** (from `areal/workflow/rlvr.py`):

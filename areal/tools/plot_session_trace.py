@@ -396,7 +396,7 @@ def _apply_step_assignments(
 
     # Use pd.cut to assign each finalized offset to the first step with timepoint >= offset.
     # Values beyond the last timepoint (offset > last timepoint) will be NaN (unassigned), matching previous logic.
-    step_series = pd.cut(offsets, bins=bins.tolist(), labels=labels, right=True)
+    step_series = pd.cut(offsets, bins=bins, labels=labels, right=True)
     df["step_id"] = step_series.astype("Int64")
 
     # Count sessions per step (0..N-1)
@@ -458,11 +458,11 @@ def _build_timeline(
         all_spans: list[tuple[float, float, str]] = []
 
         if isinstance(phases_data, dict):
-            phase_sequence: list[str] = list(DEFAULT_PHASE_ORDER)
-            for phase_key in phases_data.keys():
-                phase_name = str(phase_key)
-                if phase_name not in phase_sequence:
-                    phase_sequence.append(phase_name)
+            default_phases = set(DEFAULT_PHASE_ORDER)
+            additional_phases = sorted(
+                p for p in phases_data if str(p) not in default_phases
+            )
+            phase_sequence = list(DEFAULT_PHASE_ORDER) + additional_phases
 
             for phase_name in phase_sequence:
                 phase_executions = phases_data.get(phase_name, [])
