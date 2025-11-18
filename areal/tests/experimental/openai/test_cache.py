@@ -315,7 +315,7 @@ def test_multiple_exports_after_build(mock_interaction):
 
 def test_export_interactions_empty_cache(mock_interaction):
     cache = CompletionCache()
-    exported = cache.export_interactions()
+    exported = cache.export_interactions(style="concat")
     assert len(exported) == 0
 
 

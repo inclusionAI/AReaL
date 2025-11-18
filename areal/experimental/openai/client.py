@@ -643,7 +643,7 @@ class ArealOpenAI(AsyncOpenAI):
         return self._cache.apply_reward_discount(turn_discount)
 
     def export_interactions(
-        self, style: str = "concat"
+        self, style: str
     ) -> dict[str, InteractionWithTokenLogpReward]:
         """Export cached completions/responses in different formats.
 

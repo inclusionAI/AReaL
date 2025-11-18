@@ -139,7 +139,7 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             child_info["obj"].parent = best_parent
 
     def export_interactions(
-        self, style: str = "concat", reward_discount: float | None = None
+        self, style: str, reward_discount: float | None = None
     ) -> dict[str, InteractionWithTokenLogpReward]:
         """Export cached completions/responses in different formats.
 
