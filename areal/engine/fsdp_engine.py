@@ -50,13 +50,13 @@ from areal.utils.data import (
     reorder_list,
     unpack_sequence,
 )
+from areal.utils.device import clear_memory, print_memory
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW, move_torch_optimizer
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
-from areal.utils.memory_utils import clear_memory, print_memory
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path

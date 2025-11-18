@@ -1,4 +1,4 @@
-from typing import Tuple
+import gc
 
 import torch.distributed as dist
 
@@ -8,7 +8,7 @@ from areal.utils import logging
 logger = logging.getLogger(__file__)
 
 
-def _get_current_mem_info(unit: str = "GB", precision: int = 2) -> Tuple[str]:
+def _get_current_mem_info(unit: str = "GB", precision: int = 2) -> tuple[str]:
     """Get current memory usage."""
     assert unit in ["GB", "MB", "KB"]
     divisor = 1024**3 if unit == "GB" else 1024**2 if unit == "MB" else 1024
@@ -29,3 +29,25 @@ def log_gpu_stats(head: str, rank: int = 0):
         mem_allocated, mem_reserved, mem_used, mem_total = _get_current_mem_info()
         message = f"{head}, memory allocated (GB): {mem_allocated}, memory reserved (GB): {mem_reserved}, device memory used/total (GB): {mem_used}/{mem_total}"
         logger.info(msg=message)
+
+
+def clear_memory():
+    """Clear device memory cache and run garbage collection."""
+    current_platform.synchronize()
+    gc.collect()
+    current_platform.empty_cache()
+
+
+def print_memory(msg: str, clear_before_print: bool = False):
+    """Print detailed memory usage information."""
+    if clear_before_print:
+        clear_memory()
+
+    mem_allocated, mem_reserved, mem_used, mem_total = _get_current_mem_info()
+
+    logger.info(
+        f"Memory-Usage {msg}{' (cleared before print)' if clear_before_print else ''}: "
+        f"memory allocated (GB): {mem_allocated}, "
+        f"memory reserved (GB): {mem_reserved}, "
+        f"device memory used/total (GB): {mem_used}/{mem_total}"
+    )

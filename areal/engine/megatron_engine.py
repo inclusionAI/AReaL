@@ -49,6 +49,7 @@ from areal.utils.data import (
     unpack_sequence,
     unpad_logits,
 )
+from areal.utils.device import clear_memory, print_memory
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
@@ -64,7 +65,6 @@ from areal.utils.megatron import (
     remove_padding,
 )
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
-from areal.utils.memory_utils import clear_memory, print_memory
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.perf_tracer import trace_perf, trace_scope
