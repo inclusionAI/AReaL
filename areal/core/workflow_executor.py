@@ -15,7 +15,6 @@ from megatron.core import parallel_state as mpu
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.engine_api import NO_RESULT, NoResult
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.async_task_runner import (
     AsyncTaskRunner,
@@ -430,10 +429,10 @@ class WorkflowExecutor:
                         count=count, timeout=0.05, with_timing=True
                     )
 
-                    # Filter out None (rejected rollouts) and enqueue accepted
+                    # Enqueue all results. Filtering will be delayed to
+                    # `rollout_batch` or `prepare_batch`.
                     for result in results:
-                        if result.data is not None:
-                            self._pending_results.append(result)
+                        self._pending_results.append(result)
 
                 except TimeoutError:
                     # No results ready yet
@@ -840,8 +839,8 @@ class WorkflowExecutor:
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any] | NoResult:
-        """Wait for workflow results from _pending_results deque.
+    ) -> dict[str, Any]:
+        """Wait for the completion of `count` workflows from _pending_results deque.
 
         Polls _pending_results (populated by consumer thread), sorts by create_time,
         shuffles, and returns concatenated batch tensors.
@@ -871,7 +870,7 @@ class WorkflowExecutor:
                     f"only received {len(self._pending_results)}"
                 )
             else:
-                return NO_RESULT
+                return {}
 
         # Log and trace
         if self.config.enable_rollout_tracing:
@@ -904,7 +903,9 @@ class WorkflowExecutor:
 
         # Concatenate into batch tensor format
         trajectories = [r.data.trajectory for r in results]
-        return concat_padded_tensors(trajectories)
+        return concat_padded_tensors(
+            [traj for traj in trajectories if traj is not None]
+        )
 
     @trace_perf("workflow_executor.rollout_batch", category="scheduler")
     def rollout_batch(
@@ -953,6 +954,8 @@ class WorkflowExecutor:
         if not hasattr(self, "data_generator"):
             self.data_generator = cycle_dataloader(dataloader)
         assert dataloader.batch_size is not None
+        cnt = 0
+        results = []
         while True:
             # Submit at least two batches to allow maximum overlap
             if (
@@ -974,9 +977,16 @@ class WorkflowExecutor:
                         workflow_kwargs=workflow_kwargs,
                     )
             try:
-                return self.wait(dataloader.batch_size, timeout=1)
+                res = self.wait(count=1, timeout=1)
+                if not res:
+                    continue
+                cnt += 1
+                results.append(res)
+                if cnt >= dataloader.batch_size:
+                    break
             except (TimeoutError, queue.Full):
                 pass
+        return concat_padded_tensors(results)
 
     def pause(self):
         """Pause request submission for async rollout.
