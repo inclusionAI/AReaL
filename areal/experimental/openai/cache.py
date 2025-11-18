@@ -21,7 +21,9 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         last_interaction_id = next(reversed(self))
         self[last_interaction_id].reward = reward
 
-    def apply_reward_discount(self, turn_discount: float = 1.0) -> dict[str, InteractionWithTokenLogpReward]:
+    def apply_reward_discount(
+        self, turn_discount: float = 1.0
+    ) -> dict[str, InteractionWithTokenLogpReward]:
         """Apply backward discounted rewards across cached completions/responses.
 
         This method iterates over the cached completions/responses in reverse creation
@@ -50,7 +52,9 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             updated in-place.
         """
         # Assign rewards to interactions in cache based on their creation order
-        assert not self._apply_reward_discount_called, "apply_reward_discount should only be called once."
+        assert not self._apply_reward_discount_called, (
+            "apply_reward_discount should only be called once."
+        )
         self._apply_reward_discount_called = True
         interaction_time_sequence = list(
             reversed([interaction for _, interaction in self.items()])
@@ -72,7 +76,7 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     interaction_time_sequence[i - 1].reward * turn_discount
                 )
         return dict(**self)
-    
+
     def _build_parent_child_relationships(self) -> None:
         self._parent_relationship_built = True
         if len(self) == 0:
@@ -86,6 +90,7 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
 
         # Precompute normalized data
         meta = {}
+        # Here we use tokens to match parent-child relationships, both is_completion and is_response can be supported
         for interaction_id, interaction in self.items():
             parent_tokens = (
                 interaction.model_response.input_tokens
@@ -167,8 +172,7 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         """
         if reward_discount is not None and not self._apply_reward_discount_called:
             self.apply_reward_discount(turn_discount=reward_discount)
-        if style == "concat" and not self._parent_relationship_built:
-            self._build_parent_child_relationships()
+
         cache = self
         if len(cache) == 0:
             return {}
@@ -184,26 +188,16 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                         "(e.g. think tokens), making it impossible to construct the conversation tree. "
                         "Please use 'individual' style instead."
                     )
-                
-            # Precompute normalized data
-            meta = {}
-            for interaction_id, interaction in cache.items():
-                if interaction.is_completion:
-                    norm_data = interaction.messages or []
-                else:  # response
-                    norm_data = interaction.input_data
-                meta[interaction_id] = {
-                    "norm_data": norm_data,
-                    "obj": interaction,
-                }
+
+            if not self._parent_relationship_built:
+                self._build_parent_child_relationships()
 
             # Build children mapping to find leaf nodes.
             children_map: dict[
                 str,
                 list[InteractionWithTokenLogpReward],
             ] = defaultdict(list)
-            for _, info in meta.items():
-                obj = info["obj"]
+            for interaction_id, obj in self.items():
                 if obj.parent is not None:
                     if obj.is_completion:
                         children_map[obj.parent.completion.id].append(obj)
@@ -213,8 +207,7 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             # Return only leaf nodes (nodes without children)
             parents_with_children = set(children_map.keys())
             leaf_only: dict[str, InteractionWithTokenLogpReward] = {}
-            for interaction_id, info in meta.items():
-                obj = info["obj"]
+            for interaction_id, obj in self.items():
                 obj_id = obj.completion.id if obj.is_completion else obj.response.id
                 if obj_id not in parents_with_children:
                     leaf_only[interaction_id] = obj

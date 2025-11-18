@@ -1,7 +1,6 @@
-import pytest
-from collections import OrderedDict
 from unittest.mock import MagicMock
 
+import pytest
 from openai.types.responses.response import Response
 from openai.types.responses.response_output_message import ResponseOutputMessage
 from openai.types.responses.response_output_text import ResponseOutputText
@@ -163,7 +162,10 @@ def test_export_interactions_concat_style(mock_interaction):
     #              -> i3
     # Leaves: i3, i4
     i1 = mock_interaction(
-        id="1", messages=[{"role": "user", "content": "A"}], response_text="B", created=1
+        id="1",
+        messages=[{"role": "user", "content": "A"}],
+        response_text="B",
+        created=1,
     )
     i2 = mock_interaction(
         id="2",
@@ -277,7 +279,10 @@ def test_concat_export_is_idempotent(mock_interaction):
 def test_multiple_exports_after_build(mock_interaction):
     cache = CompletionCache()
     i1 = mock_interaction(
-        id="1", messages=[{"role": "user", "content": "A"}], response_text="B", created=1
+        id="1",
+        messages=[{"role": "user", "content": "A"}],
+        response_text="B",
+        created=1,
     )
     i2 = mock_interaction(
         id="2",
