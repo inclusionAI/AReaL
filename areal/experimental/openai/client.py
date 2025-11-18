@@ -673,6 +673,7 @@ class ArealOpenAI(AsyncOpenAI):
         ValueError
             If an unsupported ``style`` is provided.
         """
+        self._cache.build_parent_child_relationships()
         return self._cache.export_interactions(style)
 
     def export_completions(

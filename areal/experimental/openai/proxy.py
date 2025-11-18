@@ -91,6 +91,7 @@ class SessionData:
             return {}
         self.completions.set_final_reward(self.final_reward or 0.0)
         self.completions.apply_reward_discount(turn_discount=discount)
+        self.completions.build_parent_child_relationships()
         return self.completions.export_interactions(style=style)
 
 
