@@ -308,7 +308,7 @@ class GRPOTrainer:
         elif self.inference_backend == "vllm":
             engine = RemotevLLMEngine(deepcopy(rollout_config))
         else:
-            assert False, (
+            raise ValueError(
                 f"Invalid backend: {self.inference_backend}, expected sglang or vllm"
             )
 
