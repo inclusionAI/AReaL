@@ -7,6 +7,11 @@ logger = logging.getLogger("AReaLOpenAI Client")
 
 
 class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._apply_reward_discount_called = False
+        self._parent_relationship_built = False
+
     def set_reward(self, id: str, reward: float) -> None:
         """Set reward for a specific completion/response by its ID."""
         self[id].reward = reward
@@ -16,7 +21,7 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         last_interaction_id = next(reversed(self))
         self[last_interaction_id].reward = reward
 
-    def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
+    def apply_reward_discount(self, turn_discount: float = 1.0) -> dict[str, InteractionWithTokenLogpReward]:
         """Apply backward discounted rewards across cached completions/responses.
 
         This method iterates over the cached completions/responses in reverse creation
@@ -45,6 +50,8 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             updated in-place.
         """
         # Assign rewards to interactions in cache based on their creation order
+        assert not self._apply_reward_discount_called, "apply_reward_discount should only be called once."
+        self._apply_reward_discount_called = True
         interaction_time_sequence = list(
             reversed([interaction for _, interaction in self.items()])
         )
@@ -65,6 +72,77 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     interaction_time_sequence[i - 1].reward * turn_discount
                 )
         return dict(**self)
+    
+    def build_parent_child_relationships(self) -> None:
+        self._parent_relationship_built = True
+        if len(self) == 0:
+            return
+
+        for interaction in self.values():
+            if interaction.chat_template_type != "concat":
+                raise ValueError(
+                    "Cannot export interactions in 'concat' style when "
+                    "interaction.chat_template_type != 'concat' for any interaction. "
+                    "This is because when applying chat template using some "
+                    "tokenizers, there might be some tokens added or removed "
+                    "(e.g. think tokens), making it impossible to construct the conversation tree. "
+                    "Please use 'individual' style instead."
+                )
+
+        def _is_prefix(a: list[int], b: list[int]) -> bool:
+            # True if a is a strict prefix of b
+            if len(a) >= len(b):
+                return False
+            return b[: len(a)] == a
+
+        # Precompute normalized data
+        meta = {}
+        for interaction_id, interaction in self.items():
+            parent_tokens = (
+                interaction.model_response.input_tokens
+                + interaction.model_response.output_tokens
+            )
+            child_tokens = interaction.model_response.input_tokens
+            meta[interaction_id] = {
+                "parent_tokens": parent_tokens,
+                "child_tokens": child_tokens,
+                "obj": interaction,
+            }
+
+        # 1) Construct parent-child relationships using longest prefix rule
+        # Sort potential children by (data length asc, created asc)
+        # so parents are available
+        ordered = sorted(
+            meta.items(),
+            key=lambda kv: (
+                len(kv[1]["parent_tokens"]),
+                (
+                    kv[1]["obj"].completion.created
+                    if kv[1]["obj"].is_completion
+                    else kv[1]["obj"].response.created_at
+                ),
+            ),
+        )
+
+        # Reset parents before rebuilding
+        for _, info in ordered:
+            info["obj"].parent = None
+
+        for child_id, child_info in ordered:
+            child_data = child_info["child_tokens"]
+            best_parent = None
+            best_len = -1
+            for parent_id, parent_info in ordered:
+                if parent_id == child_id:
+                    continue
+                parent_data = parent_info["parent_tokens"]
+                if _is_prefix(parent_data, child_data):
+                    plen = len(parent_data)
+                    # choose the longest prefix
+                    if plen > best_len:
+                        best_parent = parent_info["obj"]
+                        best_len = plen
+            child_info["obj"].parent = best_parent
 
     def export_interactions(
         self, style: str = "concat"
@@ -98,31 +176,12 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         ValueError
             If an unsupported ``style`` is provided.
         """
+        assert self._parent_relationship_built, "Please call build_parent_child_relationships before exporting interactions."
         cache = self
         if len(cache) == 0:
             return {}
 
         if style == "concat":
-            for interaction in cache.values():
-                if interaction.chat_template_type != "concat":
-                    raise ValueError(
-                        "Cannot export interactions in 'concat' style when "
-                        "interaction.chat_template_type != 'concat' for any interaction. "
-                        "This is because when applying chat template using some "
-                        "tokenizers, there might be some tokens added or removed "
-                        "(e.g. think tokens), making it impossible to construct the conversation tree. "
-                        "Please use 'individual' style instead."
-                    )
-
-            def _is_prefix(a: list[dict], b: list[dict]) -> bool:
-                # True if a is a strict prefix of b
-                if len(a) >= len(b):
-                    return False
-                for i in range(len(a)):
-                    if a[i] != b[i]:
-                        return False
-                return True
-
             # Precompute normalized data
             meta = {}
             for interaction_id, interaction in cache.items():
@@ -134,41 +193,6 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     "norm_data": norm_data,
                     "obj": interaction,
                 }
-
-            # 1) Construct parent-child relationships using longest prefix rule
-            # Sort potential children by (data length asc, created asc)
-            # so parents are available
-            ordered = sorted(
-                meta.items(),
-                key=lambda kv: (
-                    len(kv[1]["norm_data"]),
-                    (
-                        kv[1]["obj"].completion.created
-                        if kv[1]["obj"].is_completion
-                        else kv[1]["obj"].response.created_at
-                    ),
-                ),
-            )
-
-            # Reset parents before rebuilding
-            for _, info in ordered:
-                info["obj"].parent = None
-
-            for child_id, child_info in ordered:
-                child_data = child_info["norm_data"]
-                best_parent = None
-                best_len = -1
-                for parent_id, parent_info in ordered:
-                    if parent_id == child_id:
-                        continue
-                    parent_data = parent_info["norm_data"]
-                    if _is_prefix(parent_data, child_data):
-                        plen = len(str(parent_data))
-                        # choose the longest prefix
-                        if plen > best_len:
-                            best_parent = parent_info["obj"]
-                            best_len = plen
-                child_info["obj"].parent = best_parent
 
             # Build children mapping to find leaf nodes.
             children_map: dict[
