@@ -25,11 +25,9 @@ class MultiAgentMathAgent:
         self,
         max_tokens_per_turn: int = 1024,
         max_turns: int = 8,
-        max_total_tokens: int = 32768,
     ):
         self.max_tokens_per_turn = max_tokens_per_turn
         self.max_turns = max_turns
-        self.max_total_tokens = max_total_tokens
         self.reward_fn = gsm8k_reward_fn
 
     def _create_agent_workflow(self) -> OpenAIAgent:
@@ -139,8 +137,7 @@ class MultiAgentMathAgent:
             tracing_disabled=True,
             model_settings=ModelSettings(
                 temperature=1.0,
-                top_p=1.0,
-                max_tokens=self.max_total_tokens,
+                extra_args={"max_completion_tokens": self.max_tokens_per_turn},
             ),
         )
 
