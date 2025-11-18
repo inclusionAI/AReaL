@@ -808,6 +808,7 @@ def trace_session_phase(
     ----------
     phase : str
         Phase name (e.g., "generate", "reward", "execution").
+        Will call ``mark_{phase}_start`` and ``mark_{phase}_end``.
     start_payload : dict[str, Any] | None
         Optional payload to pass to the start event.
     end_payload : dict[str, Any] | None
@@ -859,6 +860,7 @@ def atrace_session_phase(
     ----------
     phase : str
         Phase name (e.g., "generate", "reward").
+        Will call ``mark_{phase}_start`` and ``mark_{phase}_end``.
     start_payload : dict[str, Any] | None
         Optional payload to pass to the start event.
     end_payload : dict[str, Any] | None
