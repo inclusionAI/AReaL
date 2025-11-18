@@ -72,6 +72,7 @@ def fsdp_engine_with_offload(request):
     engine.create_process_group()
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine.initialize(addr=None, ft_spec=ft_spec)
+    engine.config.offload_train = True
 
     logger.info(f"FSDP engine initialized with offload_train_mode={offload_mode}")
 
@@ -111,6 +112,7 @@ def megatron_engine_with_offload():
     engine = MegatronEngine(config)
     engine.create_process_group(alloc_mode.train)
     engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
+    engine.config.offload_train = True
 
     logger.info(
         f"Megatron engine initialized with offload_train={config.offload_train}"
