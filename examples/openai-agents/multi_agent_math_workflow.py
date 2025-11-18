@@ -26,12 +26,10 @@ class MultiAgentMathAgent:
         tokenizer: PreTrainedTokenizerFast,
         max_tokens_per_turn: int = 1024,
         max_turns: int = 8,
-        max_total_tokens: int = 32768,
     ):
         self.tokenizer = tokenizer
         self.max_tokens_per_turn = max_tokens_per_turn
         self.max_turns = max_turns
-        self.max_total_tokens = max_total_tokens
         self.async_reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
 
     def _create_agent_workflow(self) -> OpenAIAgent:
@@ -212,13 +210,15 @@ class MultiAgentRLVRAgentWorkflow(RolloutWorkflow):
             tokenizer=self.tokenizer,
             max_tokens_per_turn=self.gconfig.max_new_tokens,
             max_turns=max_turns,
-            max_total_tokens=max_tokens,
         )
 
     async def arun_episode(self, engine, data):
-        clients = [
+        clients: list[ArealOpenAI] = [
             ArealOpenAI(
-                engine=engine, tokenizer=self.tokenizer, tool_call_parser="qwen25"
+                engine=engine,
+                tokenizer=self.tokenizer,
+                tool_call_parser="qwen25",
+                chat_template_type="concat",
             )
             for _ in range(self.n_trajs)
         ]
@@ -239,6 +239,7 @@ class MultiAgentRLVRAgentWorkflow(RolloutWorkflow):
         interactions_with_reward = {}
         for client in clients:
             client.apply_reward_discount(turn_discount=0.9)
-            interactions = client.export_interactions(style="individual")
+            interactions = client.export_interactions(style="concat")
             interactions_with_reward.update(interactions)
+
         return interactions_with_reward
