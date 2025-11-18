@@ -3,7 +3,7 @@ from collections import OrderedDict, defaultdict
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
 
-logger = logging.getLogger("AReaLOpenAI Client")
+logger = logging.getLogger("AReaLOpenAI Interaction Cache")
 
 
 class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
