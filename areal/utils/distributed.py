@@ -42,9 +42,8 @@ def init_custom_process_group(
         rendezvous,
     )
 
-    assert (store is None) or (init_method is None), (
-        "Cannot specify both init_method and store."
-    )
+    if store is not None and init_method is not None:
+        raise ValueError("Cannot specify both init_method and store.")
 
     if store is not None:
         assert world_size > 0, "world_size must be positive if using store"

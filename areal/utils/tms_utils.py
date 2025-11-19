@@ -18,9 +18,8 @@ def get_tms_env_vars() -> dict[str, str]:
         "torch_memory_saver_hook_mode_preload.abi3.so",
     )
 
-    assert os.path.exists(dynlib_path), (
-        f"LD_PRELOAD so file {dynlib_path} does not exist."
-    )
+    if not os.path.exists(dynlib_path):
+        raise RuntimeError(f"LD_PRELOAD so file {dynlib_path} does not exist.")
 
     env_vars = {
         "LD_PRELOAD": dynlib_path,
