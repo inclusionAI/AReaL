@@ -146,6 +146,33 @@ class VLLMBackend:
         """Get vLLM health check request."""
         return HttpRequest(endpoint="/health", payload={}, method="GET")
 
+    def get_offload_request(self) -> HttpRequest:
+        """Get vLLM offload request.
+
+        Uses vLLM's /sleep endpoint to offload model memory to CPU.
+        Default level is 1. vLLM reads parameters from query string.
+        """
+        return HttpRequest(endpoint="/sleep", payload={}, method="POST")
+
+    def get_onload_request(self, tags: list[str] | None = None) -> HttpRequest:
+        """Get vLLM onload request.
+
+        Uses vLLM's /wake_up endpoint to reload model memory from CPU.
+        vLLM reads parameters from query string.
+
+        Parameters
+        ----------
+        tags : list[str], optional
+            Tags to wake up specific components. If None, wakes up all components.
+        """
+        if tags is not None:
+            # Build query string with multiple tags parameters
+            tags_query = "&".join([f"tags={tag}" for tag in tags])
+            endpoint = f"/wake_up?{tags_query}"
+        else:
+            endpoint = "/wake_up"
+        return HttpRequest(endpoint=endpoint, payload={}, method="POST")
+
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch vLLM server subprocess."""
         cmd = vLLMConfig.build_cmd_from_args(server_args)
@@ -281,3 +308,9 @@ class RemotevLLMEngine(InferenceEngine):
 
     def teardown_server(self):
         return self._engine.teardown_server()
+
+    def offload(self):
+        return self._engine.offload()
+
+    def onload(self, tags: list[str] | None = None):
+        return self._engine.onload(tags=tags)

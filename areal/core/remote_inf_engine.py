@@ -193,6 +193,41 @@ class RemoteInfBackendProtocol(Protocol):
         """
         ...
 
+    def get_offload_request(self) -> HttpRequest:
+        """Get request to offload model memory.
+
+        Returns
+        -------
+        HttpRequest
+            The HTTP request to offload model memory
+
+        Raises
+        ------
+        NotImplementedError
+            If offload is not supported by this backend
+        """
+        ...
+
+    def get_onload_request(self, tags: list[str] | None = None) -> HttpRequest:
+        """Get request to onload model memory.
+
+        Parameters
+        ----------
+        tags : list[str], optional
+            Tags to onload specific components. If None, onloads all components.
+
+        Returns
+        -------
+        HttpRequest
+            The HTTP request to onload model memory
+
+        Raises
+        ------
+        NotImplementedError
+            If onload is not supported by this backend
+        """
+        ...
+
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch inference server subprocess.
 
