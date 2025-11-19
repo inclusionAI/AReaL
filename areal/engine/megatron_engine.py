@@ -133,6 +133,10 @@ class MegatronEngine(TrainEngine):
         self.seed = seed
 
         assert addr is None, "FSDPEngine does not support remote initialization."
+
+        if self.config.offload_train:
+            torch_memory_saver.hook_mode = "preload"
+
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
         self.rank = int(os.environ["RANK"])

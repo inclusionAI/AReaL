@@ -1,14 +1,11 @@
-"""Integration tests for offload functionality in FSDP and Megatron engines using TMS mode.
-
-Tests actual memory release/resume behavior and transfer speed, not just API calls.
-"""
+"""Integration tests for offload functionality in FSDP and Megatron engines using TMS."""
 
 import os
+import sys
 import time
 
 import pytest
 import torch.distributed as dist
-from torch_memory_saver import torch_memory_saver
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import MegatronEngineConfig, OptimizerConfig, TrainEngineConfig
@@ -18,6 +15,42 @@ from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
 from areal.utils.network import find_free_ports
 from areal.utils.tms_utils import get_tms_env_vars
+
+_TMS_RESTARTED_MARKER = "_AREAL_TMS_RESTARTED"
+
+
+def _should_restart_with_tms():
+    """Check if we need to restart the process with TMS LD_PRELOAD."""
+
+    if _TMS_RESTARTED_MARKER in os.environ:
+        return False
+
+    tms_env = get_tms_env_vars()
+    return tms_env["LD_PRELOAD"] != os.environ.get("LD_PRELOAD", "")
+
+
+def _restart_with_tms():
+    """Restart the current process with TMS LD_PRELOAD environment variables."""
+    tms_env = get_tms_env_vars()
+
+    print("Restarting with TMS LD_PRELOAD environment...")
+
+    # Update environment and re-execute
+    new_env = os.environ.copy()
+    new_env.update(tms_env)
+    new_env[_TMS_RESTARTED_MARKER] = "1"
+
+    # Use os.execve to replace current process
+    try:
+        os.execve(sys.executable, [sys.executable] + sys.argv, new_env)
+    except OSError as e:
+        print(f"Failed to restart with TMS environment: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+# Runs at module import time to ensure LD_PRELOAD is set before any CUDA operations
+if _should_restart_with_tms():
+    _restart_with_tms()
 
 MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
@@ -146,8 +179,6 @@ def _test_offload_and_restore(
 @pytest.fixture
 def fsdp_engine_with_offload():
     """Create FSDP engine with TMS offload enabled."""
-    tms_env_vars = get_tms_env_vars()
-
     os.environ.update(
         {
             "WORLD_SIZE": "1",
@@ -155,10 +186,8 @@ def fsdp_engine_with_offload():
             "LOCAL_RANK": "0",
             "MASTER_ADDR": "localhost",
             "MASTER_PORT": str(find_free_ports(1)[0]),
-            **tms_env_vars,
         }
     )
-    torch_memory_saver.hook_mode = "preload"
 
     config = TrainEngineConfig(
         experiment_name="test_offload",
@@ -186,7 +215,6 @@ def fsdp_engine_with_offload():
 @pytest.fixture
 def megatron_engine_with_offload():
     """Create Megatron engine with TMS offload enabled."""
-    tms_env_vars = get_tms_env_vars()
     os.environ.update(
         {
             "WORLD_SIZE": "1",
@@ -194,7 +222,6 @@ def megatron_engine_with_offload():
             "LOCAL_RANK": "0",
             "MASTER_ADDR": "localhost",
             "MASTER_PORT": str(find_free_ports(1)[0]),
-            **tms_env_vars,
         }
     )
 

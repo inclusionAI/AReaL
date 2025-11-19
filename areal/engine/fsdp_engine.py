@@ -166,6 +166,9 @@ class FSDPEngine(BaseHFEngine):
         if pkg_version.is_version_less("torch", "2.4.0"):
             raise RuntimeError("areal only supports FSDP2, which requires torch>=2.4.0")
 
+        if self.config.offload_train:
+            torch_memory_saver.hook_mode = "preload"
+
         # Create device model
         self.create_device_model()
 
