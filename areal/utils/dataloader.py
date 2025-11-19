@@ -34,8 +34,9 @@ def create_dataloader(
             world_size,
             rank,
             shuffle=dataset_config.shuffle,
-            drop_last=dataset_config.drop_last,
+            drop_last=True,
         ),
+        drop_last=dataset_config.drop_last,
         num_workers=dataset_config.num_workers,
         collate_fn=collate_fn or (lambda x: x),
     )
