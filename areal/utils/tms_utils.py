@@ -27,4 +27,5 @@ def get_tms_env_vars() -> dict[str, str]:
         "TMS_INIT_ENABLE": "1",
         "TMS_INIT_ENABLE_CPU_BACKUP": "1",
     }
+    # torch_memory_saver.hook_mode = "preload"
     return env_vars

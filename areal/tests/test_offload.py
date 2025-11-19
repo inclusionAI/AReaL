@@ -8,6 +8,7 @@ import time
 
 import pytest
 import torch.distributed as dist
+from torch_memory_saver import torch_memory_saver
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import MegatronEngineConfig, OptimizerConfig, TrainEngineConfig
@@ -15,11 +16,8 @@ from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
-from areal.utils import logging
 from areal.utils.network import find_free_ports
 from areal.utils.tms_utils import get_tms_env_vars
-
-logger = logging.getLogger("Offload Test")
 
 MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
@@ -29,7 +27,7 @@ if not os.path.exists(MODEL_PATH):
 def get_gpu_memory_allocated_gb() -> float:
     """Get currently allocated GPU memory in GB."""
     device = current_platform.current_device()
-    allocated = current_platform.memory_allocated(device)
+    allocated = current_platform.device_memory_used(device)
     return allocated / (1024**3)
 
 
@@ -63,6 +61,8 @@ def fsdp_engine_with_offload(request):
             **tms_env_vars,
         }
     )
+    if offload_mode == "tms":
+        torch_memory_saver.hook_mode = "preload"
 
     config = TrainEngineConfig(
         experiment_name="test_offload",
@@ -78,7 +78,7 @@ def fsdp_engine_with_offload(request):
     engine.initialize(addr=None, ft_spec=ft_spec)
     engine.config.offload_train = True
 
-    logger.info(f"FSDP engine initialized with offload_train_mode={offload_mode}")
+    print(f"FSDP engine initialized with offload_train_mode={offload_mode}")
 
     try:
         yield engine
@@ -120,9 +120,7 @@ def megatron_engine_with_offload():
     engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
     engine.config.offload_train = True
 
-    logger.info(
-        f"Megatron engine initialized with offload_train={config.offload_train}"
-    )
+    print(f"Megatron engine initialized with offload_train={config.offload_train}")
 
     try:
         yield engine
@@ -151,7 +149,7 @@ def test_fsdp_offload_and_restore(fsdp_engine_with_offload):
     # Measure initial memory
     current_platform.synchronize()
     initial_memory_gb = get_gpu_memory_allocated_gb()
-    logger.info(f"[{offload_mode}] Initial GPU memory: {initial_memory_gb:.2f} GB")
+    print(f"[{offload_mode}] Initial GPU memory: {initial_memory_gb:.2f} GB")
 
     # === Test Offload ===
     start_time = time.perf_counter()
@@ -162,20 +160,21 @@ def test_fsdp_offload_and_restore(fsdp_engine_with_offload):
     memory_after_offload_gb = get_gpu_memory_allocated_gb()
     memory_released_gb = initial_memory_gb - memory_after_offload_gb
 
-    logger.info(
+    print(
         f"[{offload_mode}] After offload: {memory_after_offload_gb:.2f} GB "
         f"(released {memory_released_gb:.2f} GB in {offload_time:.3f}s)"
     )
 
-    # Assert memory was released (at least 0.1 GB)
-    assert memory_released_gb > 0.1, (
+    # Assert memory was released
+    # if offload_mode == "move":
+    assert memory_released_gb > 1, (
         f"Expected memory release, but only {memory_released_gb:.2f} GB was released"
     )
 
     # Calculate and verify transfer speed
     if offload_time > 0:
         offload_speed_gbps = memory_released_gb / offload_time
-        logger.info(f"[{offload_mode}] Offload speed: {offload_speed_gbps:.2f} GB/s")
+        print(f"[{offload_mode}] Offload speed: {offload_speed_gbps:.2f} GB/s")
 
         # Speed should be reasonable (at least 0.5 GB/s)
         assert offload_speed_gbps > 0.5, (
@@ -200,7 +199,7 @@ def test_fsdp_offload_and_restore(fsdp_engine_with_offload):
     memory_after_restore_gb = get_gpu_memory_allocated_gb()
     memory_restored_gb = memory_after_restore_gb - memory_after_offload_gb
 
-    logger.info(
+    print(
         f"[{offload_mode}] After restore: {memory_after_restore_gb:.2f} GB "
         f"(restored {memory_restored_gb:.2f} GB in {restore_time:.3f}s)"
     )
@@ -216,7 +215,7 @@ def test_fsdp_offload_and_restore(fsdp_engine_with_offload):
     # Calculate restore speed
     if restore_time > 0 and memory_restored_gb > 0:
         restore_speed_gbps = memory_restored_gb / restore_time
-        logger.info(f"[{offload_mode}] Restore speed: {restore_speed_gbps:.2f} GB/s")
+        print(f"[{offload_mode}] Restore speed: {restore_speed_gbps:.2f} GB/s")
 
         # Restore speed should also be reasonable
         assert restore_speed_gbps > 0.5, (
@@ -242,7 +241,7 @@ def test_megatron_offload_and_restore(megatron_engine_with_offload):
     # Measure initial memory
     current_platform.synchronize()
     initial_memory_gb = get_gpu_memory_allocated_gb()
-    logger.info(f"[Megatron] Initial GPU memory: {initial_memory_gb:.2f} GB")
+    print(f"[Megatron] Initial GPU memory: {initial_memory_gb:.2f} GB")
 
     # === Test Offload ===
     start_time = time.perf_counter()
@@ -253,7 +252,7 @@ def test_megatron_offload_and_restore(megatron_engine_with_offload):
     memory_after_offload_gb = get_gpu_memory_allocated_gb()
     memory_released_gb = initial_memory_gb - memory_after_offload_gb
 
-    logger.info(
+    print(
         f"[Megatron] After offload: {memory_after_offload_gb:.2f} GB "
         f"(released {memory_released_gb:.2f} GB in {offload_time:.3f}s)"
     )
@@ -266,7 +265,7 @@ def test_megatron_offload_and_restore(megatron_engine_with_offload):
     # Calculate and verify transfer speed
     if offload_time > 0:
         offload_speed_gbps = memory_released_gb / offload_time
-        logger.info(f"[Megatron] Offload speed: {offload_speed_gbps:.2f} GB/s")
+        print(f"[Megatron] Offload speed: {offload_speed_gbps:.2f} GB/s")
 
         assert offload_speed_gbps > 0.5, (
             f"Offload speed {offload_speed_gbps:.2f} GB/s is too slow"
@@ -281,7 +280,7 @@ def test_megatron_offload_and_restore(megatron_engine_with_offload):
     memory_after_restore_gb = get_gpu_memory_allocated_gb()
     memory_restored_gb = memory_after_restore_gb - memory_after_offload_gb
 
-    logger.info(
+    print(
         f"[Megatron] After restore: {memory_after_restore_gb:.2f} GB "
         f"(restored {memory_restored_gb:.2f} GB in {restore_time:.3f}s)"
     )
@@ -297,7 +296,7 @@ def test_megatron_offload_and_restore(megatron_engine_with_offload):
     # Calculate restore speed
     if restore_time > 0 and memory_restored_gb > 0:
         restore_speed_gbps = memory_restored_gb / restore_time
-        logger.info(f"[Megatron] Restore speed: {restore_speed_gbps:.2f} GB/s")
+        print(f"[Megatron] Restore speed: {restore_speed_gbps:.2f} GB/s")
 
         assert restore_speed_gbps > 0.5, (
             f"Restore speed {restore_speed_gbps:.2f} GB/s is too slow"
