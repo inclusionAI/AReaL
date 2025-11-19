@@ -354,18 +354,12 @@ class RayLauncher:
 
 def main():
     ray.init(address="auto")
-    config, _ = parse_cli_args(sys.argv[1:])
-    config_path = None
-    args = sys.argv[1:]
+    config, config_file = parse_cli_args(sys.argv[1:])
     config.scaling = to_structured_cfg(config.scaling, ScalingConfig)
     # Check whether enable scaling or not
     if config.scaling.enable_scaling:
-        if "--config" in args:
-            idx = args.index("--config")
-            if idx + 1 < len(args):
-                config_path = args[idx + 1]
         try:
-            launch_scale_common(config_path)
+            launch_scale_common(str(config_file))
         except Exception as e:
             logger.info(f"[RayLauncher] Warning: Failed to scaler.py: {e}")
     ray_main(config, run_id=0)
