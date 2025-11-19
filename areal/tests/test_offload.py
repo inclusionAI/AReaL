@@ -70,14 +70,14 @@ def estimate_pcie_bandwidth_gbps() -> float:
     return 1.0
 
 
-def _test_offload_and_restore(
+def _test_offload_and_onload(
     engine,
     engine_name: str,
     min_memory_release_gb: float = 0.1,
     memory_tolerance: float = 0.1,
     warmup_rounds: int = 3,
 ):
-    """Common test logic for offload and restore.
+    """Common test logic for offload and onload.
 
     Parameters
     ----------
@@ -100,13 +100,13 @@ def _test_offload_and_restore(
     # Warm up
     print(f"[{engine_name}] Running {warmup_rounds} warmup cycles...")
     for _ in range(warmup_rounds):
-        engine.sleep()
-        engine.wake_up()
+        engine.offload()
+        engine.onload()
     current_platform.synchronize()
 
     # === Test Offload ===
     start_time = time.perf_counter()
-    engine.sleep()
+    engine.offload()
     offload_time = time.perf_counter() - start_time
 
     current_platform.synchronize()
@@ -137,36 +137,36 @@ def _test_offload_and_restore(
             f"(expected > {pcie_bandwidth_threshold:.2f} GB/s)"
         )
 
-    # === Test Restore ===
+    # === Test Onload ===
     start_time = time.perf_counter()
-    engine.wake_up()
-    restore_time = time.perf_counter() - start_time
+    engine.onload()
+    onload_time = time.perf_counter() - start_time
 
     current_platform.synchronize()
-    memory_after_restore_gb = get_gpu_memory_allocated_gb()
-    memory_restored_gb = memory_after_restore_gb - memory_after_offload_gb
+    memory_after_onload_gb = get_gpu_memory_allocated_gb()
+    memory_restored_gb = memory_after_onload_gb - memory_after_offload_gb
 
     print(
-        f"[{engine_name}] After restore: {memory_after_restore_gb:.2f} GB "
-        f"(restored {memory_restored_gb:.2f} GB in {restore_time:.3f}s)"
+        f"[{engine_name}] After onload: {memory_after_onload_gb:.2f} GB "
+        f"(restored {memory_restored_gb:.2f} GB in {onload_time:.3f}s)"
     )
 
     # Memory should be restored to approximately initial level
-    memory_diff = abs(memory_after_restore_gb - initial_memory_gb)
+    memory_diff = abs(memory_after_onload_gb - initial_memory_gb)
     tolerance = initial_memory_gb * memory_tolerance
     assert memory_diff < tolerance, (
         f"Memory not restored correctly: initial={initial_memory_gb:.2f} GB, "
-        f"after_restore={memory_after_restore_gb:.2f} GB, diff={memory_diff:.2f} GB"
+        f"after_onload={memory_after_onload_gb:.2f} GB, diff={memory_diff:.2f} GB"
     )
 
-    # Calculate restore speed
-    if restore_time > 0 and memory_restored_gb > 0:
-        restore_speed_gbps = memory_restored_gb / restore_time
-        print(f"[{engine_name}] Restore speed: {restore_speed_gbps:.2f} GB/s")
+    # Calculate onload speed
+    if onload_time > 0 and memory_restored_gb > 0:
+        onload_speed_gbps = memory_restored_gb / onload_time
+        print(f"[{engine_name}] Onload speed: {onload_speed_gbps:.2f} GB/s")
 
-        # Restore speed should also be reasonable
-        assert restore_speed_gbps > pcie_bandwidth_threshold, (
-            f"Restore speed {restore_speed_gbps:.2f} GB/s is too slow "
+        # Onload speed should also be reasonable
+        assert onload_speed_gbps > pcie_bandwidth_threshold, (
+            f"Onload speed {onload_speed_gbps:.2f} GB/s is too slow "
             f"(expected > {pcie_bandwidth_threshold:.2f} GB/s)"
         )
 
@@ -262,18 +262,18 @@ def megatron_engine_with_offload():
         ("megatron_engine_with_offload", "Megatron"),
     ],
 )
-def test_engine_offload_and_restore(request, engine_fixture, engine_name):
-    """Test engine offload releases memory and restore recovers it correctly.
+def test_engine_offload_and_onload(request, engine_fixture, engine_name):
+    """Test engine offload releases memory and onload recovers it correctly.
 
     This test validates:
     1. Memory is released during offload
     2. Transfer speed is reasonable
-    3. Memory is restored correctly after wake_up
+    3. Memory is restored correctly after onload
 
     Parametrized to test both FSDP and Megatron engines.
     """
     engine = request.getfixturevalue(engine_fixture)
-    _test_offload_and_restore(
+    _test_offload_and_onload(
         engine=engine,
         engine_name=engine_name,
         min_memory_release_gb=0.1,

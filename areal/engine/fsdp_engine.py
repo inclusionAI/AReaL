@@ -91,6 +91,8 @@ class FSDPEngine(BaseHFEngine):
         self.dp_head: int
         self.dp_rank: int
 
+        self.is_offload: bool = False
+
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
         return self.dp_group
@@ -220,7 +222,7 @@ class FSDPEngine(BaseHFEngine):
 
         # Offload model after initialization if enabled
         if self.config.offload_train:
-            self.sleep()
+            self.offload()
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
@@ -563,9 +565,8 @@ class FSDPEngine(BaseHFEngine):
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         """Train on a batch using gradient accumulation."""
-        # Wake up model if offload is enabled
-        if self.config.offload_train:
-            self.wake_up()
+        if self.is_offload:
+            self.onload()
 
         assert self.optimizer is not None
         assert self.optimizer_config is not None
@@ -681,6 +682,9 @@ class FSDPEngine(BaseHFEngine):
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
+        if self.is_offload:
+            self.onload()
+
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
@@ -771,6 +775,9 @@ class FSDPEngine(BaseHFEngine):
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
+        if self.is_offload:
+            self.onload()
+
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
@@ -939,9 +946,10 @@ class FSDPEngine(BaseHFEngine):
             )
         self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
 
-    def sleep(self) -> None:
-        """Pause CUDA memory for all tracked tensors using torch_memory_saver.
-        Ref https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
+    def offload(self) -> None:
+        """Offload model memory to CPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
         """
         assert self.config.offload_train
 
@@ -955,9 +963,12 @@ class FSDPEngine(BaseHFEngine):
         dist.barrier(group=get_gloo_group())
         print_memory("after offload model")
 
-    def wake_up(self) -> None:
-        """Resume CUDA memory for all tracked tensors using torch_memory_saver.
-        Ref https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
+        self.is_offload = True
+
+    def onload(self) -> None:
+        """Onload model memory from CPU back to GPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
         """
         assert self.config.offload_train
 
@@ -965,4 +976,6 @@ class FSDPEngine(BaseHFEngine):
 
         current_platform.synchronize()
         dist.barrier(group=get_gloo_group())
-        print_memory("after wake_up model")
+        print_memory("after onload model")
+
+        self.is_offload = False

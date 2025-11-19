@@ -120,6 +120,7 @@ class MegatronEngine(TrainEngine):
         self.checkpointer = None
         self.seed = 0
         self.own_global_group = False
+        self.is_offload: bool = False
 
     def initialize(
         self,
@@ -240,7 +241,7 @@ class MegatronEngine(TrainEngine):
 
         # Offload model after initialization if enabled
         if self.config.offload_train:
-            self.sleep()
+            self.offload()
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
@@ -950,9 +951,8 @@ class MegatronEngine(TrainEngine):
         loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
-        # Wake up model if offload is enabled
-        if self.config.offload_train:
-            self.wake_up()
+        if self.is_offload:
+            self.onload()
 
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
@@ -1048,6 +1048,9 @@ class MegatronEngine(TrainEngine):
         loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
+        if self.is_offload:
+            self.onload()
+
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
         mb_list = self.prepare_mb_list(input_)
@@ -1130,6 +1133,9 @@ class MegatronEngine(TrainEngine):
         post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
+        if self.is_offload:
+            self.onload()
+
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
@@ -1214,9 +1220,10 @@ class MegatronEngine(TrainEngine):
         )
         return result
 
-    def sleep(self) -> None:
-        """Pause CUDA memory for all tracked tensors.
-        Ref https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
+    def offload(self) -> None:
+        """Offload model memory to CPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
         """
         assert self.config.offload_train
 
@@ -1229,9 +1236,12 @@ class MegatronEngine(TrainEngine):
         dist.barrier(group=get_gloo_group())
         print_memory("after offload model")
 
-    def wake_up(self) -> None:
-        """Resume CUDA memory for all tracked tensors.
-        Ref https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
+        self.is_offload = True
+
+    def onload(self) -> None:
+        """Onload model memory from CPU back to GPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
         """
         assert self.config.offload_train
 
@@ -1241,4 +1251,6 @@ class MegatronEngine(TrainEngine):
         # TODO: NCCL onload
         current_platform.synchronize()
         dist.barrier(group=get_gloo_group())
-        print_memory("after wake_up model")
+        print_memory("after onload model")
+
+        self.is_offload = False
