@@ -96,6 +96,11 @@ class FSDPEngine(BaseHFEngine):
         self._optimizer_onload_buffer: torch.Tensor | None = None  # GPU buffer
         self._optimizer_offload_specs: list[tuple[dict, str, int, int]] = []
 
+        # Model offload/onload buffers
+        self._model_offload_buffer: torch.Tensor | None = None  # CPU buffer
+        self._model_onload_buffer: torch.Tensor | None = None  # GPU buffer
+        self._model_offload_specs: list[tuple[torch.nn.Parameter, int, int]] = []
+
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
         return self.dp_group
@@ -223,6 +228,7 @@ class FSDPEngine(BaseHFEngine):
         # Offload model after initialization if enabled
         if self.config.offload_train:
             self._initialize_optimizer_offload_buffer()
+            self._initialize_model_offload_buffer()
             self.sleep()
 
     def save(self, meta: SaveLoadMeta):
@@ -959,12 +965,50 @@ class FSDPEngine(BaseHFEngine):
                         state_refs.append((state, key))
         return tensors_to_move, state_refs
 
+    def _initialize_model_offload_buffer(self) -> None:
+        """Initialize the model parameter offload buffer."""
+        # Collect all parameters and buffers
+        params_and_buffers = []
+        for param in self.model.parameters():
+            params_and_buffers.append(param)
+        for buf in self.model.buffers():
+            params_and_buffers.append(buf)
+
+        if not params_and_buffers:
+            return
+
+        # Calculate total size
+        total_numel = sum(t.numel() for t in params_and_buffers)
+        dtype = params_and_buffers[0].dtype
+
+        # Allocate CPU buffer
+        if self._model_offload_buffer is None:
+            self._model_offload_buffer = torch.empty(
+                total_numel,
+                dtype=dtype,
+                device="cpu",
+                pin_memory=True,
+            )
+            self.logger.info(
+                f"Allocated model offload buffer: {total_numel} elements, "
+                f"{self._model_offload_buffer.element_size() * total_numel / 1024**2:.2f} MB"
+            )
+
+        # Calculate specs for each parameter/buffer
+        self._model_offload_specs = []
+        start_idx = 0
+        for tensor in params_and_buffers:
+            end_idx = start_idx + tensor.numel()
+            self._model_offload_specs.append((tensor, start_idx, end_idx))
+            start_idx = end_idx
+
     def _initialize_optimizer_offload_buffer(self) -> None:
         """Initialize the optimizer offload buffer."""
         tensors_to_move, state_refs = self._get_optimizer_tensor_and_state_refs()
         dtype = tensors_to_move[0].dtype
 
         total_numel = sum(t.numel() for t in tensors_to_move)
+
         # Allocate offload buffer
         if self._optimizer_offload_buffer is None:
             self._optimizer_offload_buffer = torch.empty(
@@ -985,6 +1029,76 @@ class FSDPEngine(BaseHFEngine):
             end_idx = start_idx + tensor.numel()
             self._optimizer_offload_specs.append((state, key, start_idx, end_idx))
             start_idx = end_idx
+
+    @torch.no_grad()
+    def _move_model(self, device: str = "cpu") -> None:
+        """Move model parameters and buffers to the specified device efficiently.
+
+        Uses pre-allocated contiguous buffers for faster transfer.
+
+        Parameters
+        ----------
+        device: str
+            Target device, either "cpu" or "cuda" ("npu")
+        """
+        if device == "cpu":
+            # Offload to CPU
+            offload_stream = current_platform.Stream()
+            offload_event = current_platform.Event()
+
+            with current_platform.stream(offload_stream):
+                # Copy all parameters and buffers to CPU buffer
+                for tensor, start_idx, end_idx in self._model_offload_specs:
+                    self._model_offload_buffer[start_idx:end_idx].copy_(
+                        tensor.data.view(-1), non_blocking=True
+                    )
+                    # Update tensor data to point to CPU buffer view
+                    tensor.data = self._model_offload_buffer[start_idx:end_idx].view(
+                        tensor.shape
+                    )
+
+            offload_event.record(offload_stream)
+            current_platform.current_stream().wait_event(offload_event)
+
+            # Free GPU buffer
+            self._model_onload_buffer = None
+
+        elif (
+            device == "cuda" or device == "npu"
+        ) and self._model_offload_buffer is not None:
+            # Onload to GPU
+            total_numel = self._model_offload_buffer.numel()
+
+            # Allocate GPU buffer
+            assert self._model_onload_buffer is None
+            self._model_onload_buffer = torch.empty(
+                total_numel,
+                dtype=self._model_offload_buffer.dtype,
+                device=device,
+            )
+            self.logger.info(
+                f"Allocated model onload buffer on {device}: {total_numel} elements, "
+                f"{self._model_onload_buffer.element_size() * total_numel / 1024**2:.2f} MB"
+            )
+
+            restore_stream = current_platform.Stream()
+            restore_event = current_platform.Event()
+
+            with current_platform.stream(restore_stream):
+                # Copy entire CPU buffer to GPU buffer
+                self._model_onload_buffer.copy_(
+                    self._model_offload_buffer,
+                    non_blocking=True,
+                )
+
+                # Update tensor data to point to GPU buffer views
+                for tensor, start_idx, end_idx in self._model_offload_specs:
+                    tensor.data = self._model_onload_buffer[start_idx:end_idx].view(
+                        tensor.shape
+                    )
+
+            restore_event.record(restore_stream)
+            current_platform.current_stream().wait_event(restore_event)
 
     @torch.no_grad()
     def _move_optimizer(self, device: str = "cpu") -> None:
@@ -1086,7 +1200,7 @@ class FSDPEngine(BaseHFEngine):
                 clear_memory()
                 torch_memory_saver.pause()
             case "move":
-                self.model.cpu()
+                self._move_model("cpu")
                 self._move_optimizer("cpu")
                 clear_memory()
             case _:
@@ -1109,7 +1223,7 @@ class FSDPEngine(BaseHFEngine):
                 torch_memory_saver.resume()
             case "move":
                 # TODO: support NPU
-                self.model.cuda()
+                self._move_model("cuda")
                 self._move_optimizer("cuda")
             case _:
                 raise NotImplementedError(
