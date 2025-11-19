@@ -91,18 +91,6 @@ class FSDPEngine(BaseHFEngine):
         self.dp_head: int
         self.dp_rank: int
 
-        # Optimizer offload/onload buffers
-        self._optimizer_offload_buffer: torch.Tensor | None = None  # CPU buffer
-        self._optimizer_onload_buffer: torch.Tensor | None = None  # GPU buffer
-        self._optimizer_offload_specs: list[tuple[dict, str, int, int]] = []
-
-        # Model offload/onload buffers
-        self._model_offload_buffer: torch.Tensor | None = None  # CPU buffer
-        self._model_onload_buffer: torch.Tensor | None = None  # GPU buffer
-        self._model_offload_specs: list[
-            tuple[torch.nn.Parameter, int, int, dict | None]
-        ] = []  # (tensor, start, end, dtensor_meta)
-
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
         return self.dp_group
@@ -229,8 +217,6 @@ class FSDPEngine(BaseHFEngine):
 
         # Offload model after initialization if enabled
         if self.config.offload_train:
-            self._initialize_optimizer_offload_buffer()
-            self._initialize_model_offload_buffer()
             self.sleep()
 
     def save(self, meta: SaveLoadMeta):
@@ -491,9 +477,7 @@ class FSDPEngine(BaseHFEngine):
             # In offload mode, wakes up parameters as needed to perform the update.
             tms_context = (
                 torch_memory_saver.disable()
-                if self.config.offload_train
-                and self.config.offload_train_mode == "tms"
-                and not torch.version.hip
+                if self.config.offload_train and not torch.version.hip
                 else nullcontext()
             )
             with tms_context:
@@ -952,346 +936,29 @@ class FSDPEngine(BaseHFEngine):
             )
         self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
 
-    def _get_optimizer_tensor_and_state_refs(
-        self,
-    ) -> tuple[list[torch.Tensor], list[tuple[dict, str]]]:
-        """Get all tensors and state references from the optimizer."""
-        tensors_to_move = []
-        state_refs = []
-        for param_group in self.optimizer.param_groups:
-            for param in param_group["params"]:
-                state = self.optimizer.state[param]
-                for key, value in state.items():
-                    if isinstance(value, torch.Tensor):
-                        tensors_to_move.append(value)
-                        state_refs.append((state, key))
-        return tensors_to_move, state_refs
-
-    def _initialize_model_offload_buffer(self) -> None:
-        """Initialize the model parameter offload buffer."""
-        # Collect all parameters and buffers
-        params_and_buffers = []
-        for param in self.model.parameters():
-            params_and_buffers.append(param)
-        for buf in self.model.buffers():
-            params_and_buffers.append(buf)
-
-        if not params_and_buffers:
-            return
-
-        # Calculate total size for local shards only
-        # For DTensor (FSDP2 sharded params), use local shard size
-        total_numel = 0
-        dtype = None
-        for t in params_and_buffers:
-            if isinstance(t.data, DTensor):
-                # Get local shard size for FSDP2 sharded parameters
-                local_tensor = t.data.to_local()
-                total_numel += local_tensor.numel()
-                if dtype is None:
-                    dtype = local_tensor.dtype
-            else:
-                # Regular tensor (not sharded)
-                total_numel += t.numel()
-                if dtype is None:
-                    dtype = t.dtype
-
-        # Allocate CPU buffer for local shards only
-        if self._model_offload_buffer is None:
-            self._model_offload_buffer = torch.empty(
-                total_numel,
-                dtype=dtype,
-                device="cpu",
-                pin_memory=True,
-            )
-            self.logger.info(
-                f"Allocated model offload buffer (local shards): {total_numel} elements, "
-                f"{self._model_offload_buffer.element_size() * total_numel / 1024**2:.2f} MB"
-            )
-
-        # Calculate specs for each parameter/buffer's local shard
-        # Store: (tensor, start_idx, end_idx, dtensor_meta)
-        # dtensor_meta = None for regular tensors
-        # dtensor_meta = (local_shape, device_mesh, placements) for DTensors
-        self._model_offload_specs = []
-        start_idx = 0
-        for tensor in params_and_buffers:
-            if isinstance(tensor.data, DTensor):
-                # Store DTensor metadata for reconstruction
-                local_tensor = tensor.data.to_local()
-                local_numel = local_tensor.numel()
-                end_idx = start_idx + local_numel
-                dtensor_meta = {
-                    "local_shape": local_tensor.shape,
-                    "device_mesh": tensor.data.device_mesh,
-                    "placements": tensor.data.placements,
-                }
-                self._model_offload_specs.append(
-                    (tensor, start_idx, end_idx, dtensor_meta)
-                )
-                start_idx = end_idx
-            else:
-                # Regular tensor (not sharded)
-                end_idx = start_idx + tensor.numel()
-                self._model_offload_specs.append((tensor, start_idx, end_idx, None))
-                start_idx = end_idx
-
-    def _initialize_optimizer_offload_buffer(self) -> None:
-        """Initialize the optimizer offload buffer."""
-        tensors_to_move, state_refs = self._get_optimizer_tensor_and_state_refs()
-        dtype = tensors_to_move[0].dtype
-
-        total_numel = sum(t.numel() for t in tensors_to_move)
-
-        # Allocate offload buffer
-        if self._optimizer_offload_buffer is None:
-            self._optimizer_offload_buffer = torch.empty(
-                total_numel,
-                dtype=dtype,
-                device="cpu",
-                pin_memory=True,
-            )
-            self.logger.info(
-                f"Allocated optimizer offload buffer: {total_numel} elements, "
-                f"{self._optimizer_offload_buffer.element_size() * total_numel / 1024**2:.2f} MB"
-            )
-
-        # Calculate specs for each tensor
-        self._optimizer_offload_specs = []
-        start_idx = 0
-        for tensor, (state, key) in zip(tensors_to_move, state_refs):
-            end_idx = start_idx + tensor.numel()
-            self._optimizer_offload_specs.append((state, key, start_idx, end_idx))
-            start_idx = end_idx
-
-    @torch.no_grad()
-    def _move_model(self, device: str = "cpu") -> None:
-        """Move model parameters and buffers to the specified device efficiently.
-
-        Uses pre-allocated contiguous buffers for faster transfer.
-
-        Parameters
-        ----------
-        device: str
-            Target device, either "cpu" or "cuda" ("npu")
-        """
-        if device == "cpu":
-            # Offload to CPU
-            offload_stream = current_platform.Stream()
-            offload_event = current_platform.Event()
-
-            dummy_tensor = torch.tensor(
-                (), device="cuda", dtype=self._model_offload_buffer.dtype
-            )
-            with current_platform.stream(offload_stream):
-                # Copy all parameters and buffers to CPU buffer
-                for spec in self._model_offload_specs:
-                    tensor, start_idx, end_idx, dtensor_meta = spec
-                    # Handle DTensor (FSDP2 sharded params) - only copy local shard
-
-                    if dtensor_meta is not None:
-                        local_tensor = tensor.data.to_local()
-                    else:
-                        local_tensor = tensor.data
-                    self._model_offload_buffer[start_idx:end_idx].copy_(
-                        local_tensor.view(-1), non_blocking=True
-                    )
-                    # Update tensor data to point to CPU buffer view
-                    tensor.data = dummy_tensor
-
-            offload_event.record(offload_stream)
-            current_platform.current_stream().wait_event(offload_event)
-
-            # Free GPU buffer
-            self._model_onload_buffer = None
-
-        elif (
-            device == "cuda" or device == "npu"
-        ) and self._model_offload_buffer is not None:
-            # Onload to GPU
-            total_numel = self._model_offload_buffer.numel()
-
-            # Allocate GPU buffer
-            assert self._model_onload_buffer is None
-            self._model_onload_buffer = torch.empty(
-                total_numel,
-                dtype=self._model_offload_buffer.dtype,
-                device=device,
-            )
-            self.logger.info(
-                f"Allocated model onload buffer on {device}: {total_numel} elements, "
-                f"{self._model_onload_buffer.element_size() * total_numel / 1024**2:.2f} MB"
-            )
-
-            restore_stream = current_platform.Stream()
-            restore_event = current_platform.Event()
-
-            with current_platform.stream(restore_stream):
-                # Copy entire CPU buffer to GPU buffer
-                self._model_onload_buffer.copy_(
-                    self._model_offload_buffer,
-                    non_blocking=True,
-                )
-
-                # Update tensor data to point to GPU buffer views
-                for spec in self._model_offload_specs:
-                    tensor, start_idx, end_idx, dtensor_meta = spec
-
-                    if dtensor_meta is not None:
-                        # Reconstruct DTensor from local shard
-                        local_shape = dtensor_meta["local_shape"]
-                        device_mesh = dtensor_meta["device_mesh"]
-                        placements = dtensor_meta["placements"]
-
-                        # Create local tensor from GPU buffer
-                        local_tensor = self._model_onload_buffer[
-                            start_idx:end_idx
-                        ].view(local_shape)
-
-                        # Reconstruct DTensor
-                        tensor.data = DTensor.from_local(
-                            local_tensor,
-                            device_mesh=device_mesh,
-                            placements=placements,
-                        )
-                    else:
-                        # Regular tensor - use original shape
-                        tensor.data = self._model_onload_buffer[start_idx:end_idx].view(
-                            tensor.shape
-                        )
-
-            restore_event.record(restore_stream)
-            current_platform.current_stream().wait_event(restore_event)
-
-    @torch.no_grad()
-    def _move_optimizer(self, device: str = "cpu") -> None:
-        """Move optimizer state tensors to the specified device.
-
-        Uses a pre-allocated contiguous CPU buffer for faster async offloading
-
-        Parameters
-        ----------
-        device: str
-            Target device, either "cpu" or "cuda" ("npu")
-        """
-        if not self.optimizer.state:
-            return
-
-        # Collect all tensors that need to be moved
-        tensors_to_move, state_refs = self._get_optimizer_tensor_and_state_refs()
-
-        if not tensors_to_move:
-            return
-
-        # Use CUDA/NPU stream for async offloading from CUDA/NPU to CPU
-        if device == "cpu":
-            offload_stream = current_platform.Stream()
-            offload_event = current_platform.Event()
-
-            with current_platform.stream(offload_stream):
-                for tensor, (state, key, start_idx, end_idx) in zip(
-                    tensors_to_move, self._optimizer_offload_specs
-                ):
-                    # Copy to the pre-allocated buffer
-                    self._optimizer_offload_buffer[start_idx:end_idx].copy_(
-                        tensor.view(-1), non_blocking=True
-                    )
-                    state[key] = self._optimizer_offload_buffer[start_idx:end_idx].view(
-                        tensor.shape
-                    )
-
-            offload_event.record(offload_stream)
-            current_platform.current_stream().wait_event(offload_event)
-
-            # Free GPU buffer
-            self._optimizer_onload_buffer = None
-
-        elif (
-            device == "cuda" or device == "npu"
-        ) and self._optimizer_offload_buffer is not None:
-            # Restore from CPU buffer to GPU buffer
-            # Strategy: Allocate GPU buffer -> Copy entire CPU buffer to GPU -> Update state pointers
-            total_numel = self._optimizer_offload_buffer.numel()
-
-            # Allocate GPU buffer
-            assert self._optimizer_onload_buffer is None
-            self._optimizer_onload_buffer = torch.empty(
-                total_numel,
-                dtype=self._optimizer_offload_buffer.dtype,
-                device=device,
-            )
-            self.logger.info(
-                f"Allocated optimizer restore buffer on {device}: {total_numel} elements, "
-                f"{self._optimizer_onload_buffer.element_size() * total_numel / 1024**2:.2f} MB"
-            )
-
-            restore_stream = current_platform.Stream()
-            restore_event = current_platform.Event()
-
-            with current_platform.stream(restore_stream):
-                # Copy entire CPU buffer to GPU buffer
-                self._optimizer_onload_buffer.copy_(
-                    self._optimizer_offload_buffer,
-                    non_blocking=True,
-                )
-
-                # Update state pointers to point to GPU buffer views
-                for state, key, start_idx, end_idx in self._optimizer_offload_specs:
-                    tensor = state[key]
-                    state[key] = self._optimizer_onload_buffer[start_idx:end_idx].view(
-                        tensor.shape
-                    )
-
-            restore_event.record(restore_stream)
-            current_platform.current_stream().wait_event(restore_event)
-
-        else:
-            for tensor, (state, key) in zip(tensors_to_move, state_refs):
-                state[key] = tensor.to(device, non_blocking=True)
-
     def sleep(self) -> None:
-        """Pause CUDA memory for all tracked tensors.
+        """Pause CUDA memory for all tracked tensors using torch_memory_saver.
         Ref https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
         """
         assert self.config.offload_train
 
         print_memory("before offload model")
 
-        match self.config.offload_train_mode:
-            case "tms":
-                # Use torch_memory_saver to pause CUDA memory
-                clear_memory()
-                torch_memory_saver.pause()
-            case "move":
-                self._move_model("cpu")
-                self._move_optimizer("cpu")
-                clear_memory()
-            case _:
-                raise NotImplementedError(
-                    f"Unsupported offload_train_mode: {self.config.offload_train_mode}"
-                )
+        # Use torch_memory_saver to pause CUDA memory
+        clear_memory()
+        torch_memory_saver.pause()
 
         current_platform.synchronize()
         dist.barrier(group=get_gloo_group())
         print_memory("after offload model")
 
     def wake_up(self) -> None:
-        """Resume CUDA memory for all tracked tensors
+        """Resume CUDA memory for all tracked tensors using torch_memory_saver.
         Ref https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
         """
         assert self.config.offload_train
 
-        match self.config.offload_train_mode:
-            case "tms":
-                torch_memory_saver.resume()
-            case "move":
-                # TODO: support NPU
-                self._move_model("cuda")
-                self._move_optimizer("cuda")
-            case _:
-                raise NotImplementedError(
-                    f"Unsupported offload_train_mode: {self.config.offload_train_mode}"
-                )
+        torch_memory_saver.resume()
 
         current_platform.synchronize()
         dist.barrier(group=get_gloo_group())

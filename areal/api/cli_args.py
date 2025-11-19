@@ -447,14 +447,7 @@ class TrainEngineConfig:
     offload_train: bool = field(
         default=False,
         metadata={
-            "help": "Enable training offload: offload model and optimizer to CPU when not training to save GPU memory for inference."
-        },
-    )
-    offload_train_mode: str = field(
-        default="tms",
-        metadata={
-            "help": "Offload mode: 'tms' for torch_memory_saver, 'move' for moving model/optimizer to CPU.",
-            "choices": ["tms", "move"],
+            "help": "Enable training offload using torch_memory_saver: offload model and optimizer to CPU when not training to save GPU memory for inference."
         },
     )
 
