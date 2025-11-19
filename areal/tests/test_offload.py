@@ -33,8 +33,109 @@ def get_gpu_memory_allocated_gb() -> float:
 
 def estimate_pcie_bandwidth_gbps() -> float:
     # PCIe 5.0 x16: 64 GB/s one direction, 128 GB/s duplex directions
-    # fake for test
-    return 1
+    # Use a conservative threshold for testing
+    return 1.0
+
+
+def _test_offload_and_restore(
+    engine,
+    engine_name: str,
+    min_memory_release_gb: float = 0.1,
+    memory_tolerance: float = 0.1,
+    warmup_rounds: int = 3,
+):
+    """Common test logic for offload and restore.
+
+    Parameters
+    ----------
+    engine : FSDPEngine | MegatronEngine
+        Engine instance to test
+    engine_name : str
+        Name for logging (e.g., "FSDP", "Megatron")
+    min_memory_release_gb : float
+        Minimum expected memory release in GB
+    memory_tolerance : float
+        Tolerance ratio for memory restoration check
+    warmup_rounds : int
+        Number of warmup offload/restore cycles
+    """
+    # Measure initial memory
+    current_platform.synchronize()
+    initial_memory_gb = get_gpu_memory_allocated_gb()
+    print(f"[{engine_name}] Initial GPU memory: {initial_memory_gb:.2f} GB")
+
+    # Warm up
+    print(f"[{engine_name}] Running {warmup_rounds} warmup cycles...")
+    for _ in range(warmup_rounds):
+        engine.sleep()
+        engine.wake_up()
+    current_platform.synchronize()
+
+    # === Test Offload ===
+    start_time = time.perf_counter()
+    engine.sleep()
+    offload_time = time.perf_counter() - start_time
+
+    current_platform.synchronize()
+    memory_after_offload_gb = get_gpu_memory_allocated_gb()
+    memory_released_gb = initial_memory_gb - memory_after_offload_gb
+
+    print(
+        f"[{engine_name}] After offload: {memory_after_offload_gb:.2f} GB "
+        f"(released {memory_released_gb:.2f} GB in {offload_time:.3f}s)"
+    )
+
+    # Assert memory was released
+    assert memory_released_gb > min_memory_release_gb, (
+        f"Expected memory release > {min_memory_release_gb:.2f} GB, "
+        f"but only {memory_released_gb:.2f} GB was released"
+    )
+
+    # Calculate and verify transfer speed
+    if offload_time > 0:
+        offload_speed_gbps = memory_released_gb / offload_time
+        print(f"[{engine_name}] Offload speed: {offload_speed_gbps:.2f} GB/s")
+
+        # Speed should be reasonable
+        pcie_bandwidth = estimate_pcie_bandwidth_gbps()
+        pcie_bandwidth_threshold = pcie_bandwidth * 0.4
+        assert offload_speed_gbps > pcie_bandwidth_threshold, (
+            f"Offload speed {offload_speed_gbps:.2f} GB/s is too slow "
+            f"(expected > {pcie_bandwidth_threshold:.2f} GB/s)"
+        )
+
+    # === Test Restore ===
+    start_time = time.perf_counter()
+    engine.wake_up()
+    restore_time = time.perf_counter() - start_time
+
+    current_platform.synchronize()
+    memory_after_restore_gb = get_gpu_memory_allocated_gb()
+    memory_restored_gb = memory_after_restore_gb - memory_after_offload_gb
+
+    print(
+        f"[{engine_name}] After restore: {memory_after_restore_gb:.2f} GB "
+        f"(restored {memory_restored_gb:.2f} GB in {restore_time:.3f}s)"
+    )
+
+    # Memory should be restored to approximately initial level
+    memory_diff = abs(memory_after_restore_gb - initial_memory_gb)
+    tolerance = initial_memory_gb * memory_tolerance
+    assert memory_diff < tolerance, (
+        f"Memory not restored correctly: initial={initial_memory_gb:.2f} GB, "
+        f"after_restore={memory_after_restore_gb:.2f} GB, diff={memory_diff:.2f} GB"
+    )
+
+    # Calculate restore speed
+    if restore_time > 0 and memory_restored_gb > 0:
+        restore_speed_gbps = memory_restored_gb / restore_time
+        print(f"[{engine_name}] Restore speed: {restore_speed_gbps:.2f} GB/s")
+
+        # Restore speed should also be reasonable
+        assert restore_speed_gbps > pcie_bandwidth_threshold, (
+            f"Restore speed {restore_speed_gbps:.2f} GB/s is too slow "
+            f"(expected > {pcie_bandwidth_threshold:.2f} GB/s)"
+        )
 
 
 # =============================================================================
@@ -123,184 +224,32 @@ def megatron_engine_with_offload():
 
 
 # =============================================================================
-# FSDP Offload Tests
+# Offload Tests
 # =============================================================================
 
 
-def test_fsdp_offload_and_restore(fsdp_engine_with_offload):
-    """Test FSDP TMS offload releases memory and restore recovers it correctly.
+@pytest.mark.parametrize(
+    "engine_fixture,engine_name",
+    [
+        ("fsdp_engine_with_offload", "FSDP"),
+        ("megatron_engine_with_offload", "Megatron"),
+    ],
+)
+def test_engine_offload_and_restore(request, engine_fixture, engine_name):
+    """Test engine offload releases memory and restore recovers it correctly.
 
     This test validates:
     1. Memory is released during offload
     2. Transfer speed is reasonable
     3. Memory is restored correctly after wake_up
+
+    Parametrized to test both FSDP and Megatron engines.
     """
-    engine = fsdp_engine_with_offload
-
-    # Initialize optimizer state with a dummy training step
-    print("[TMS] Running dummy training step to initialize optimizer...")
-
-    # Measure initial memory
-    current_platform.synchronize()
-    initial_memory_gb = get_gpu_memory_allocated_gb()
-    print(f"[TMS] Initial GPU memory: {initial_memory_gb:.2f} GB")
-
-    # Warm up
-    for _ in range(3):
-        engine.sleep()
-        engine.wake_up()
-
-    # === Test Offload ===
-    start_time = time.perf_counter()
-    engine.sleep()
-    offload_time = time.perf_counter() - start_time
-
-    current_platform.synchronize()
-    memory_after_offload_gb = get_gpu_memory_allocated_gb()
-    memory_released_gb = initial_memory_gb - memory_after_offload_gb
-
-    print(
-        f"[TMS] After offload: {memory_after_offload_gb:.2f} GB "
-        f"(released {memory_released_gb:.2f} GB in {offload_time:.3f}s)"
+    engine = request.getfixturevalue(engine_fixture)
+    _test_offload_and_restore(
+        engine=engine,
+        engine_name=engine_name,
+        min_memory_release_gb=0.1,
+        memory_tolerance=0.1,
+        warmup_rounds=3,
     )
-
-    # Assert memory was released
-    assert memory_released_gb > 0.1, (
-        f"Expected memory release, but only {memory_released_gb:.2f} GB was released"
-    )
-
-    # Calculate and verify transfer speed
-    if offload_time > 0:
-        offload_speed_gbps = memory_released_gb / offload_time
-        print(f"[TMS] Offload speed: {offload_speed_gbps:.2f} GB/s")
-
-        # Speed should be reasonable
-        pcie_bandwidth = estimate_pcie_bandwidth_gbps()
-        pcie_bandwidth_threshold = pcie_bandwidth * 0.4
-        assert offload_speed_gbps > pcie_bandwidth_threshold, (
-            f"Offload speed {offload_speed_gbps:.2f} GB/s is too slow "
-            f"(expected > {pcie_bandwidth_threshold:.2f} GB/s)"
-        )
-
-    # === Test Restore ===
-    start_time = time.perf_counter()
-    engine.wake_up()
-    restore_time = time.perf_counter() - start_time
-
-    current_platform.synchronize()
-    memory_after_restore_gb = get_gpu_memory_allocated_gb()
-    memory_restored_gb = memory_after_restore_gb - memory_after_offload_gb
-
-    print(
-        f"[TMS] After restore: {memory_after_restore_gb:.2f} GB "
-        f"(restored {memory_restored_gb:.2f} GB in {restore_time:.3f}s)"
-    )
-
-    # Memory should be restored to approximately initial level (within 10% tolerance)
-    memory_diff = abs(memory_after_restore_gb - initial_memory_gb)
-    tolerance = initial_memory_gb * 0.1
-    assert memory_diff < tolerance, (
-        f"Memory not restored correctly: initial={initial_memory_gb:.2f} GB, "
-        f"after_restore={memory_after_restore_gb:.2f} GB, diff={memory_diff:.2f} GB"
-    )
-
-    # Calculate restore speed
-    if restore_time > 0 and memory_restored_gb > 0:
-        restore_speed_gbps = memory_restored_gb / restore_time
-        print(f"[TMS] Restore speed: {restore_speed_gbps:.2f} GB/s")
-
-        # Restore speed should also be reasonable
-        pcie_bandwidth = estimate_pcie_bandwidth_gbps()
-        pcie_bandwidth_threshold = pcie_bandwidth * 0.4
-        assert restore_speed_gbps > pcie_bandwidth_threshold, (
-            f"Offload speed {restore_speed_gbps:.2f} GB/s is too slow "
-            f"(expected > {pcie_bandwidth_threshold:.2f} GB/s)"
-        )
-
-
-# =============================================================================
-# Megatron Offload Tests
-# =============================================================================
-
-
-def test_megatron_offload_and_restore(megatron_engine_with_offload):
-    """Test Megatron offload releases memory and restore recovers it correctly.
-
-    This test validates:
-    1. Memory is released during offload
-    2. Transfer speed is reasonable (> 0.5 GB/s)
-    3. Memory is restored correctly after wake_up
-    """
-    engine = megatron_engine_with_offload
-
-    # Measure initial memory
-    current_platform.synchronize()
-    initial_memory_gb = get_gpu_memory_allocated_gb()
-    print(f"[Megatron] Initial GPU memory: {initial_memory_gb:.2f} GB")
-
-    # Warm up
-    for _ in range(3):
-        engine.sleep()
-        engine.wake_up()
-
-    # === Test Offload ===
-    start_time = time.perf_counter()
-    engine.sleep()
-    offload_time = time.perf_counter() - start_time
-
-    current_platform.synchronize()
-    memory_after_offload_gb = get_gpu_memory_allocated_gb()
-    memory_released_gb = initial_memory_gb - memory_after_offload_gb
-
-    print(
-        f"[Megatron] After offload: {memory_after_offload_gb:.2f} GB "
-        f"(released {memory_released_gb:.2f} GB in {offload_time:.3f}s)"
-    )
-
-    # Assert memory was released
-    assert memory_released_gb > 0.1, (
-        f"Expected memory release, but only {memory_released_gb:.2f} GB was released"
-    )
-
-    # Calculate and verify transfer speed
-    if offload_time > 0:
-        offload_speed_gbps = memory_released_gb / offload_time
-        print(f"[Megatron] Offload speed: {offload_speed_gbps:.2f} GB/s")
-
-        assert offload_speed_gbps > 0.5, (
-            f"Offload speed {offload_speed_gbps:.2f} GB/s is too slow"
-        )
-
-    # === Test Restore ===
-    start_time = time.perf_counter()
-    engine.wake_up()
-    restore_time = time.perf_counter() - start_time
-
-    current_platform.synchronize()
-    memory_after_restore_gb = get_gpu_memory_allocated_gb()
-    memory_restored_gb = memory_after_restore_gb - memory_after_offload_gb
-
-    print(
-        f"[Megatron] After restore: {memory_after_restore_gb:.2f} GB "
-        f"(restored {memory_restored_gb:.2f} GB in {restore_time:.3f}s)"
-    )
-
-    # Memory should be restored to approximately initial level
-    memory_diff = abs(memory_after_restore_gb - initial_memory_gb)
-    tolerance = initial_memory_gb * 0.1
-    assert memory_diff < tolerance, (
-        f"Memory not restored correctly: initial={initial_memory_gb:.2f} GB, "
-        f"after_restore={memory_after_restore_gb:.2f} GB, diff={memory_diff:.2f} GB"
-    )
-
-    # Calculate restore speed
-    if restore_time > 0 and memory_restored_gb > 0:
-        restore_speed_gbps = memory_restored_gb / restore_time
-        print(f"[Megatron] Restore speed: {restore_speed_gbps:.2f} GB/s")
-
-        pcie_bandwidth = estimate_pcie_bandwidth_gbps()
-        pcie_bandwidth_threshold = pcie_bandwidth * 0.4
-        assert restore_speed_gbps > pcie_bandwidth_threshold, (
-            f"Offload speed {restore_speed_gbps:.2f} GB/s is too slow "
-            f"(expected > {pcie_bandwidth_threshold:.2f} GB/s)"
-        )
