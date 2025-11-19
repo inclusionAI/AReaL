@@ -99,7 +99,9 @@ class FSDPEngine(BaseHFEngine):
         # Model offload/onload buffers
         self._model_offload_buffer: torch.Tensor | None = None  # CPU buffer
         self._model_onload_buffer: torch.Tensor | None = None  # GPU buffer
-        self._model_offload_specs: list[tuple[torch.nn.Parameter, int, int]] = []
+        self._model_offload_specs: list[
+            tuple[torch.nn.Parameter, int, int, dict | None]
+        ] = []  # (tensor, start, end, dtensor_meta)
 
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
@@ -977,11 +979,24 @@ class FSDPEngine(BaseHFEngine):
         if not params_and_buffers:
             return
 
-        # Calculate total size
-        total_numel = sum(t.numel() for t in params_and_buffers)
-        dtype = params_and_buffers[0].dtype
+        # Calculate total size for local shards only
+        # For DTensor (FSDP2 sharded params), use local shard size
+        total_numel = 0
+        dtype = None
+        for t in params_and_buffers:
+            if isinstance(t.data, DTensor):
+                # Get local shard size for FSDP2 sharded parameters
+                local_tensor = t.data.to_local()
+                total_numel += local_tensor.numel()
+                if dtype is None:
+                    dtype = local_tensor.dtype
+            else:
+                # Regular tensor (not sharded)
+                total_numel += t.numel()
+                if dtype is None:
+                    dtype = t.dtype
 
-        # Allocate CPU buffer
+        # Allocate CPU buffer for local shards only
         if self._model_offload_buffer is None:
             self._model_offload_buffer = torch.empty(
                 total_numel,
@@ -990,17 +1005,36 @@ class FSDPEngine(BaseHFEngine):
                 pin_memory=True,
             )
             self.logger.info(
-                f"Allocated model offload buffer: {total_numel} elements, "
+                f"Allocated model offload buffer (local shards): {total_numel} elements, "
                 f"{self._model_offload_buffer.element_size() * total_numel / 1024**2:.2f} MB"
             )
 
-        # Calculate specs for each parameter/buffer
+        # Calculate specs for each parameter/buffer's local shard
+        # Store: (tensor, start_idx, end_idx, dtensor_meta)
+        # dtensor_meta = None for regular tensors
+        # dtensor_meta = (local_shape, device_mesh, placements) for DTensors
         self._model_offload_specs = []
         start_idx = 0
         for tensor in params_and_buffers:
-            end_idx = start_idx + tensor.numel()
-            self._model_offload_specs.append((tensor, start_idx, end_idx))
-            start_idx = end_idx
+            if isinstance(tensor.data, DTensor):
+                # Store DTensor metadata for reconstruction
+                local_tensor = tensor.data.to_local()
+                local_numel = local_tensor.numel()
+                end_idx = start_idx + local_numel
+                dtensor_meta = {
+                    "local_shape": local_tensor.shape,
+                    "device_mesh": tensor.data.device_mesh,
+                    "placements": tensor.data.placements,
+                }
+                self._model_offload_specs.append(
+                    (tensor, start_idx, end_idx, dtensor_meta)
+                )
+                start_idx = end_idx
+            else:
+                # Regular tensor (not sharded)
+                end_idx = start_idx + tensor.numel()
+                self._model_offload_specs.append((tensor, start_idx, end_idx, None))
+                start_idx = end_idx
 
     def _initialize_optimizer_offload_buffer(self) -> None:
         """Initialize the optimizer offload buffer."""
@@ -1048,7 +1082,11 @@ class FSDPEngine(BaseHFEngine):
 
             with current_platform.stream(offload_stream):
                 # Copy all parameters and buffers to CPU buffer
-                for tensor, start_idx, end_idx in self._model_offload_specs:
+                for spec in self._model_offload_specs:
+                    tensor, start_idx, end_idx, dtensor_meta = spec
+                    # Handle DTensor (FSDP2 sharded params) - only copy local shard
+                    if dtensor_meta is not None:
+                        local_tensor = tensor.data.to_local()
                     self._model_offload_buffer[start_idx:end_idx].copy_(
                         tensor.data.view(-1), non_blocking=True
                     )
@@ -1092,10 +1130,31 @@ class FSDPEngine(BaseHFEngine):
                 )
 
                 # Update tensor data to point to GPU buffer views
-                for tensor, start_idx, end_idx in self._model_offload_specs:
-                    tensor.data = self._model_onload_buffer[start_idx:end_idx].view(
-                        tensor.shape
-                    )
+                for spec in self._model_offload_specs:
+                    tensor, start_idx, end_idx, dtensor_meta = spec
+
+                    if dtensor_meta is not None:
+                        # Reconstruct DTensor from local shard
+                        local_shape = dtensor_meta["local_shape"]
+                        device_mesh = dtensor_meta["device_mesh"]
+                        placements = dtensor_meta["placements"]
+
+                        # Create local tensor from GPU buffer
+                        local_tensor = self._model_onload_buffer[
+                            start_idx:end_idx
+                        ].view(local_shape)
+
+                        # Reconstruct DTensor
+                        tensor.data = DTensor.from_local(
+                            local_tensor,
+                            device_mesh=device_mesh,
+                            placements=placements,
+                        )
+                    else:
+                        # Regular tensor - use original shape
+                        tensor.data = self._model_onload_buffer[start_idx:end_idx].view(
+                            tensor.shape
+                        )
 
             restore_event.record(restore_stream)
             current_platform.current_stream().wait_event(restore_event)
