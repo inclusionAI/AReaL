@@ -50,7 +50,11 @@ from areal.utils.data import (
     unpad_logits,
 )
 from areal.utils.device import clear_memory, print_memory
-from areal.utils.distributed import init_custom_process_group
+from areal.utils.distributed import (
+    get_gloo_group,
+    init_custom_process_group,
+    init_gloo_group,
+)
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
 from areal.utils.mcore.determinisitc import set_deterministic_algorithms
@@ -279,6 +283,7 @@ class MegatronEngine(TrainEngine):
         self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
         self.process_group_initialized = True
+        init_gloo_group()
 
     def _init_context_and_model_parallel_group(self):
         # Initialize context and model parallel groups, which are only used in AReaL
@@ -1217,7 +1222,7 @@ class MegatronEngine(TrainEngine):
 
         # TODO: NCCL offload
         current_platform.synchronize()
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=get_gloo_group())
         print_memory("after offload model")
 
     def wake_up(self) -> None:
@@ -1231,5 +1236,5 @@ class MegatronEngine(TrainEngine):
 
         # TODO: NCCL onload
         current_platform.synchronize()
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=get_gloo_group())
         print_memory("after wake_up model")
