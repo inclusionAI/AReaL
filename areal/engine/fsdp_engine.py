@@ -1080,6 +1080,9 @@ class FSDPEngine(BaseHFEngine):
             offload_stream = current_platform.Stream()
             offload_event = current_platform.Event()
 
+            dummy_tensor = torch.tensor(
+                (), device="cuda", dtype=self._model_offload_buffer.dtype
+            )
             with current_platform.stream(offload_stream):
                 # Copy all parameters and buffers to CPU buffer
                 for spec in self._model_offload_specs:
@@ -1094,9 +1097,7 @@ class FSDPEngine(BaseHFEngine):
                         local_tensor.view(-1), non_blocking=True
                     )
                     # Update tensor data to point to CPU buffer view
-                    tensor.data = self._model_offload_buffer[start_idx:end_idx].view(
-                        tensor.shape
-                    )
+                    tensor.data = dummy_tensor
 
             offload_event.record(offload_stream)
             current_platform.current_stream().wait_event(offload_event)
