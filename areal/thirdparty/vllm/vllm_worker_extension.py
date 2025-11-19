@@ -1,10 +1,9 @@
-from typing import List
-
 import torch
 from vllm.logger import init_logger
 from vllm.model_executor.model_loader import get_model_loader
 
 from areal.platforms import current_platform
+from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.distributed import init_custom_process_group
 
 logger = init_logger("vllm_worker_extension")
@@ -38,7 +37,7 @@ class VLLMWorkerExtension:
             return False, error_msg
 
     def set_weight_meta(
-        self, names: List[str], dtypes: List[str], shapes: List[List[int]]
+        self, names: list[str], dtypes: list[str], shapes: list[list[int]]
     ):
         logger.info("start set weights meta")
         self.areal_weight_meta_names = names
@@ -67,7 +66,7 @@ class VLLMWorkerExtension:
                 )
                 self.model_runner.model.load_weights(weights=[(name, tensor)])
             self.sync()
-            return True, f"Success"
+            return True, "Success"
         except Exception as e:
             error_msg = f"Failed to update parameter! {e}."
             logger.error(error_msg)
@@ -82,7 +81,7 @@ class VLLMWorkerExtension:
         backend: str,
         group_name: str,
     ):
-        if getattr(self, "weight_update_group", None) != None:
+        if getattr(self, "weight_update_group", None) is not None:
             return True, "Success"
         try:
             self.weight_update_group = init_custom_process_group(
@@ -91,8 +90,9 @@ class VLLMWorkerExtension:
                 init_method=f"tcp://{master_address}:{master_port}",
                 rank=self.rank + rank_offset,
                 group_name=group_name,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
-            return True, f"Success"
+            return True, "Success"
         except Exception as e:
             error_msg = f"Failed to init group! {e}."
             logger.error(error_msg)
