@@ -1,0 +1,9 @@
+lm-eval>=0.4.9
+transformers>=4.44.0
+torch>=2.2.0
+datasets>=2.19.0
+tqdm>=4.66.0
+einops>=0.7.0
+sentencepiece>=0.2.0
+protobuf>=4.25.0
+packaging>=24.0
