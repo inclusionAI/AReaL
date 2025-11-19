@@ -35,6 +35,7 @@ from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
+from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -63,7 +64,6 @@ from areal.utils.megatron import (
 )
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
-from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.perf_tracer import trace_perf, trace_scope
 
 
@@ -242,13 +242,14 @@ class MegatronEngine(TrainEngine):
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
         self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
+        backend = current_platform.communication_backend
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
-                backend="nccl",
-                timeout=NCCL_DEFAULT_TIMEOUT,
+                backend=backend,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
             # Initialize Megatron parallel states
             # NOTE: we assume all MegatronEngine has the same parallel strategy.
@@ -262,13 +263,17 @@ class MegatronEngine(TrainEngine):
                 context_parallel_size=self.parallel_strategy.context_parallel_size,
                 expert_model_parallel_size=self.parallel_strategy.expert_parallel_size,
                 expert_tensor_parallel_size=self.parallel_strategy.expert_tensor_parallel_size,
-                distributed_timeout_minutes=int(NCCL_DEFAULT_TIMEOUT.seconds / 60),
+                distributed_timeout_minutes=int(
+                    DIST_GROUP_DEFAULT_TIMEOUT.seconds / 60
+                ),
             )
             # Set megatron model parallel seed
             tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
             self.own_global_group = True
         self.logger = logging.getLogger(f"[Megatron Engine Rank {dist.get_rank()}]")
-        self._parallelism_group = dist.new_group()
+        self._parallelism_group = dist.new_group(
+            timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend=backend
+        )
         self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
         self.process_group_initialized = True
@@ -290,7 +295,7 @@ class MegatronEngine(TrainEngine):
         for dp_rank, ranks in enumerate(context_and_model_parallel_ranks):
             group = mpu.create_group(
                 ranks,
-                timeout=NCCL_DEFAULT_TIMEOUT,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
                 pg_options=mpu.get_nccl_options("tp-cp-pp", {}),
                 group_desc="CONTEXT_AND_MODEL_PARALLEL_GROUP",
             )
@@ -623,7 +628,7 @@ class MegatronEngine(TrainEngine):
                 init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
                 group_name=self.weight_update_group_name,
-                timeout=NCCL_DEFAULT_TIMEOUT,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
 
             fut.result()
