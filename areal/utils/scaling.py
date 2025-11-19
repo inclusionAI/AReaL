@@ -12,54 +12,48 @@ def handle_scale_up(name_resolve: name_resolve, actor, rollout, weight_update_me
     Handle scale-up logic when scale_up_request is detected.
     Requires: name_resolve, actor, rollout.
     """
-    new_scale = 0
-    req_raw = None
     try:
         req_raw = name_resolve.get("scale_up_request")
         new_scale = ast.literal_eval(req_raw)["scaled_k"]
     except NameEntryNotFoundError:
-        logger.info("scale_up_request not found")
-        pass  # no request → don't wait
+        return
 
-    logger.info(f"scale_up_request {req_raw}")
+    logger.info(f"Handling scale_up_request: {req_raw}")
 
-    if req_raw:
-        # Now wait until scale_up_done is posted from scaler process
-        start = time.time()
+    # Now wait until scale_up_done is posted from scaling_controller
+    start = time.time()
+    try:
+        name_resolve.delete("scale_up_request")
+    except NameEntryNotFoundError:
+        pass
+
+    while True:
         try:
-            name_resolve.delete("scale_up_request")
+            done_raw = name_resolve.get("scale_up_done")
         except NameEntryNotFoundError:
-            pass
+            done_raw = None
 
-        while True:
+        if done_raw:
+            logger.info(f"[areal] Scale-up finished: {done_raw}")
+            name_resolve.add(
+                "scale_up_time",
+                {"time": time.time() - start},
+                replace=True,
+            )
+
             try:
-                done_raw = name_resolve.get("scale_up_done")
+                name_resolve.delete("scale_up_done")
             except NameEntryNotFoundError:
-                done_raw = None
+                pass
 
-            if done_raw:
-                logger.info(f"[areal] Scale-up finished: {done_raw}")
-                name_resolve.add(
-                    "scale_up_time",
-                    {"time": time.time() - start},
-                    replace=True,
-                )
+            # Increase the number of scale in rollout engine and actor. To get correct world size
+            actor.scaling_count = actor.scaling_count + new_scale
+            rollout._engine.backend.scaling_count = (
+                rollout._engine.backend.scaling_count + new_scale
+            )
+            rollout._engine.distributed_weight_update_initialized = False
+            actor._re_init_weight_update_from_distributed(weight_update_meta)
 
-                try:
-                    name_resolve.delete("scale_up_request")
-                except NameEntryNotFoundError:
-                    pass
-                try:
-                    name_resolve.delete("scale_up_done")
-                except NameEntryNotFoundError:
-                    pass
-                # Increase teh number of scale in rollout engine and actor. To get correct world size
-                actor.scaling_count = actor.scaling_count + new_scale
-                rollout._engine.backend.scaling_count = (
-                    rollout._engine.backend.scaling_count + new_scale
-                )
-                rollout._engine.distributed_weight_update_initialized = False
-                actor._re_init_weight_update_from_distributed(weight_update_meta)
+            break
 
-                break
-            time.sleep(0.5)
+        time.sleep(0.5)
