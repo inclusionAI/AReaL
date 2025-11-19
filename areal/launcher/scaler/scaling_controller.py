@@ -115,7 +115,7 @@ shared_state = {
     "cfg": None,
     "config_path": None,
     "num_rollout": None,
-    "Vllm_entry_point": None,
+    "vllm_entry_point": None,
 }
 
 
