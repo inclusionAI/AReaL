@@ -1,142 +1,325 @@
 import argparse
-import gzip
-import os
 import traceback
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import AnyStr
+from concurrent.futures import Future
 
-import cloudpickle
+from flask import Flask, jsonify, request
 
-from areal.api.controller_api import DistributedBatch
-from areal.controller.batch import DistributedBatchMemory
-from areal.utils import logging
+from areal.api.cli_args import BaseExperimentConfig
+from areal.api.engine_api import InferenceEngine, TrainEngine
+from areal.platforms import current_platform
+from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
+from areal.utils import logging, name_resolve, seeding, stats_tracker
+from areal.utils.data import (
+    broadcast_tensor_container,
+    tensor_container_to,
+)
+from areal.utils.dynamic_import import import_from_string
 
-logger = logging.getLogger("RPCServer")
+logger = logging.getLogger("SyncRPCServer")
 
+# Global engine instance - must be TrainEngine or InferenceEngine
+_engine: TrainEngine | InferenceEngine | None = None
 
-def process_input_to_distributed_batch(*args, **kwargs):
-    for i in range(len(args)):
-        if isinstance(args[i], DistributedBatch):
-            args = list(args)
-            args[i] = args[i].get_data()
-            args = tuple(args)
-
-    for k in list(kwargs.keys()):
-        if isinstance(kwargs[k], DistributedBatch):
-            kwargs[k] = kwargs[k].get_data()
-
-    return args, kwargs
+# Create Flask app
+app = Flask(__name__)
 
 
-def process_output_to_distributed_batch(result):
-    if isinstance(result, dict):
-        return DistributedBatchMemory.from_dict(result)
-    elif isinstance(result, (list, tuple)):
-        return DistributedBatchMemory.from_list(list(result))
-    else:
-        return result
+@app.route("/health", methods=["GET"])
+def health_check():
+    """Health check endpoint to verify server is alive."""
+    global _engine
+    return jsonify({"status": "healthy", "engine_initialized": _engine is not None})
 
 
-class EngineRPCServer(BaseHTTPRequestHandler):
-    engine = None
+@app.route("/configure", methods=["POST"])
+def configure():
+    """Configure worker with experiment config."""
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"detail": "Invalid JSON in request body"}), 400
 
-    def _read_body(self, timeout=120.0) -> AnyStr:
-        old_timeout = None
+        config = data.get("config")
+        if config is None:
+            return jsonify({"detail": "Missing 'config' field in request"}), 400
+
+        role = data.get("role")
+        if role is None:
+            return jsonify({"detail": "Missing 'role' field in request"}), 400
+
+        rank = data.get("rank")
+        if rank is None:
+            return jsonify({"detail": "Missing 'rank' field in request"}), 400
+
+        config = deserialize_value(config)
+        config: BaseExperimentConfig
+
+        name_resolve.reconfigure(config.cluster.name_resolve)
+        seeding.set_random_seed(config.seed, key=f"{role}{rank}")
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": "Worker configured successful.",
+                "result": None,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in configure: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
+@app.route("/create_engine", methods=["POST"])
+def create_engine():
+    """
+    Create and initialize a TrainEngine or InferenceEngine instance on this worker.
+
+    Expected JSON payload:
+    {
+        "engine": "areal.engine.ppo.actor.FSDPPPOActor",  # Import path
+        "init_args": [...],  # Positional arguments
+        "init_kwargs": {...}  # Keyword arguments
+    }
+    """
+    global _engine
+
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON in request body"}), 400
+
+        engine_path = data.get("engine")
+        # Deserialize init_args and init_kwargs (may contain tensors or dataclasses)
+        init_args = deserialize_value(data.get("init_args", []))
+        init_kwargs = deserialize_value(data.get("init_kwargs", {}))
+
+        if not engine_path:
+            return jsonify({"error": "Missing 'engine' field in request"}), 400
+
+        # Dynamic import
         try:
-            length = int(self.headers["Content-Length"])
-            old_timeout = self.request.gettimeout()
-            logger.info(f"Receive rpc call, path: {self.path}, timeout: {old_timeout}")
-            # set max read timeout = 120s here, if read hang raise exception
-            self.request.settimeout(timeout)
-            return self.rfile.read(length)
-        except Exception as e:
-            raise e
-        finally:
-            self.request.settimeout(old_timeout)
+            engine_class = import_from_string(engine_path)
 
-    def do_POST(self):
-        data = None
-        try:
-            data = self._read_body()
-        except Exception as e:
-            self.send_response(
-                HTTPStatus.REQUEST_TIMEOUT
-            )  # 408 means read request timeout
-            self.end_headers()
-            self.wfile.write(f"Exception: {e}\n{traceback.format_exc()}".encode())
-            logger.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
-            return
-
-        try:
-            if self.path == "/create_engine":
-                decompressed_data = gzip.decompress(data)
-                engine_obj, init_args = cloudpickle.loads(decompressed_data)
-                EngineRPCServer.engine = engine_obj
-                result = EngineRPCServer.engine.initialize(init_args)
-                logger.info(f"Engine created and initialized on RPC server: {result}")
-                self.send_response(HTTPStatus.OK)
-                self.end_headers()
-                self.wfile.write(cloudpickle.dumps(result))
-            elif self.path == "/call":
-                if EngineRPCServer.engine is None:
-                    self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
-                    self.end_headers()
-                    self.wfile.write(b"Engine is none")
-                    logger.error("Call received but engine is none.")
-                    return
-                action, args, kwargs = cloudpickle.loads(data)
-                method = getattr(EngineRPCServer.engine, action)
-                # NOTE: DO NOT print args here, args may be a very huge tensor
-                logger.info(f"RPC server calling engine method: {action}")
-                args, kwargs = process_input_to_distributed_batch(*args, **kwargs)
-                result = method(*args, **kwargs)
-                result = process_output_to_distributed_batch(result)
-                self.send_response(HTTPStatus.OK)
-                self.end_headers()
-                self.wfile.write(cloudpickle.dumps(result))
-            else:
-                self.send_response(HTTPStatus.NOT_FOUND)
-                self.end_headers()
-        except Exception as e:
-            self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
-            self.end_headers()
-            self.wfile.write(f"Exception: {e}\n{traceback.format_exc()}".encode())
-            logger.error(f"Exception in do_POST: {e}\n{traceback.format_exc()}")
-
-
-def start_rpc_server(port):
-    server = ThreadingHTTPServer(("0.0.0.0", port), EngineRPCServer)
-    server.serve_forever()
-
-
-def get_serve_port(args):
-    port = args.port
-    port_str = os.environ.get("PORT_LIST", "").strip()
-
-    # Check if PORT_LIST is set
-    if port_str:
-        # Split by comma and strip whitespace
-        ports = [p.strip() for p in port_str.split(",")]
-        # Use the first valid port from the list
-        if ports and ports[0]:
-            try:
-                return int(ports[0])
-            except ValueError:
-                logger.warning(
-                    f"Invalid port '{ports[0]}' in PORT_LIST. Falling back to --port argument."
+            # Validate that the class is a TrainEngine or InferenceEngine
+            if not issubclass(engine_class, TrainEngine) and not issubclass(
+                engine_class, InferenceEngine
+            ):
+                raise TypeError(
+                    f"Engine class must be a subclass of TrainEngine or InferenceEngine, "
+                    f"got {engine_class}.."
                 )
-    return port
+        except (ValueError, ImportError, AttributeError) as e:
+            logger.error(f"Failed to import engine '{engine_path}': {e}")
+            return (
+                jsonify(
+                    {"error": f"Failed to import engine '{engine_path}': {str(e)}"}
+                ),
+                400,
+            )
+        except TypeError as e:
+            logger.error(f"Invalid engine type: {e}")
+            return jsonify({"error": str(e)}), 400
+
+        # Instantiate engine
+        try:
+            _engine = engine_class(*init_args, **init_kwargs)
+            logger.info(f"Engine '{engine_path}' instantiated successfully")
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": f"Engine '{engine_path}' created and initialized",
+                    "result": None,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to instantiate engine: {e}\n{traceback.format_exc()}")
+            return jsonify({"error": f"Failed to instantiate engine: {str(e)}"}), 500
+
+    except Exception as e:
+        logger.error(
+            f"Unexpected error in create_engine: {e}\n{traceback.format_exc()}"
+        )
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
+@app.route("/call", methods=["POST"])
+def call_engine_method():
+    """
+    Call a method on the engine instance.
+
+    Expected JSON payload:
+    {
+        "method": "train_batch",
+        "args": [...],
+        "kwargs": {...}
+    }
+    """
+    global _engine
+
+    if _engine is None:
+        return (
+            jsonify({"error": "Engine not initialized. Call /create_engine first."}),
+            503,
+        )
+
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON in request body"}), 400
+
+        method_name = data.get("method")
+        args = data.get("args", [])
+        kwargs = data.get("kwargs", {})
+
+        if not method_name:
+            return jsonify({"error": "Missing 'method' field in request"}), 400
+
+        # Deserialize args and kwargs (convert SerializedTensor dicts to tensors)
+        args = deserialize_value(args)
+        kwargs = deserialize_value(kwargs)
+
+        try:
+            should_bcast = kwargs.pop("_should_bcast", True)
+            if should_bcast and isinstance(_engine, TrainEngine):
+                logger.info(f"Broadcasting data for TrainEngine method: {method_name}")
+
+                args = tensor_container_to(args, current_platform.current_device())
+                args = broadcast_tensor_container(
+                    args,
+                    src_rank=_engine.current_data_parallel_head(),
+                    group=_engine.context_and_model_parallel_group,
+                )
+                kwargs = tensor_container_to(kwargs, current_platform.current_device())
+                kwargs = broadcast_tensor_container(
+                    kwargs,
+                    src_rank=_engine.current_data_parallel_head(),
+                    group=_engine.context_and_model_parallel_group,
+                )
+                logger.info("Broadcasting data done.")
+        except Exception as e:
+            logger.error(
+                f"Broadcasting data for method '{method_name}' failed: {e}\n{traceback.format_exc()}"
+            )
+            return (
+                jsonify({"error": f"Data broadcast '{method_name}' failed: {str(e)}"}),
+                500,
+            )
+
+        # Call method directly
+        logger.info(f"Calling engine method: {method_name}")
+        try:
+            # Get the method - will raise AttributeError if it doesn't exist
+            method = getattr(_engine, method_name)
+            result = method(*args, **kwargs)
+
+            # HACK: handle update weights future
+            if isinstance(result, Future):
+                logger.info("Waiting for update weights future")
+                result = result.result()
+                logger.info("Update weights future done")
+
+            # Serialize result (convert tensors to SerializedTensor dicts)
+            serialized_result = serialize_value(result)
+            return jsonify({"status": "success", "result": serialized_result})
+
+        except AttributeError as e:
+            logger.error(f"Method '{method_name}' not found on engine: {e}")
+            return (
+                jsonify({"error": f"Engine does not have method '{method_name}'"}),
+                400,
+            )
+        except Exception as e:
+            logger.error(
+                f"Engine method '{method_name}' failed: {e}\n{traceback.format_exc()}"
+            )
+            return (
+                jsonify({"error": f"Engine method '{method_name}' failed: {str(e)}"}),
+                500,
+            )
+
+    except Exception as e:
+        logger.error(f"Unexpected error in call: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
+@app.route("/export_stats", methods=["POST"])
+def export_stats():
+    """Export training statistics from stats_tracker."""
+    try:
+        global _engine
+        if _engine is None:
+            return jsonify({"error": "Engine not initialized"}), 503
+
+        # TrainEngine: reduce stats across data_parallel_group
+        if not isinstance(_engine, TrainEngine):
+            return (
+                jsonify({"error": "/export_stats is only available for TrainEngine"}),
+                400,
+            )
+        result = stats_tracker.export(reduce_group=_engine.data_parallel_group)
+        return jsonify({"status": "success", "result": result})
+
+    except Exception as e:
+        logger.error(f"Unexpected error in export_stats: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
+def cleanup_engine():
+    """Clean up engine on shutdown."""
+    global _engine
+    if _engine is not None:
+        try:
+            _engine.destroy()
+            logger.info("Engine destroyed successfully")
+        except Exception as e:
+            logger.error(f"Error destroying engine: {e}")
+        _engine = None
+
+
+def main():
+    """Main entry point for the sync RPC server."""
+    parser = argparse.ArgumentParser(
+        description="AReaL Sync RPC Server for TrainEngine/InferenceEngine"
+    )
+    parser.add_argument("--port", type=int, required=True, help="Port to serve on")
+    parser.add_argument(
+        "--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--werkzeug-log-level",
+        type=str,
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Log level for Werkzeug (Flask's WSGI server). Default: WARNING",
+    )
+
+    args, _ = parser.parse_known_args()
+
+    # Configure Werkzeug logging
+    import logging as stdlib_logging
+
+    werkzeug_logger = stdlib_logging.getLogger("werkzeug")
+    werkzeug_logger.setLevel(getattr(stdlib_logging, args.werkzeug_log_level))
+
+    logger.info(f"Starting sync RPC server on {args.host}:{args.port}")
+    logger.info(f"Werkzeug log level: {args.werkzeug_log_level}")
+
+    # Run Flask app with single-threaded synchronous mode
+    # threaded=False ensures NCCL compatibility
+    try:
+        app.run(
+            host=args.host,
+            port=args.port,
+            threaded=False,  # Single-threaded synchronous execution
+            processes=1,  # Single process
+            debug=False,
+            use_reloader=False,
+        )
+    except KeyboardInterrupt:
+        logger.info("Shutting down sync RPC server")
+    finally:
+        cleanup_engine()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--port", type=int, required=False)
-
-    args, unknown = parser.parse_known_args()
-    port = get_serve_port(args)
-
-    logger.info(f"About to start RPC server on {port}")
-
-    start_rpc_server(port)
+    main()

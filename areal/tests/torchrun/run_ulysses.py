@@ -10,6 +10,7 @@ from transformers.models.qwen2.modeling_qwen2 import (
 
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
+from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.ulysses import set_ulysses_sequence_parallel_group
 
 
@@ -89,7 +90,11 @@ def run_ulysses_correctness_test():
         position_embeddings=position_embeddings,
     )
 
-    sp_group = dist.new_group(ranks=list(range(world_size)))
+    sp_group = dist.new_group(
+        ranks=list(range(world_size)),
+        timeout=DIST_GROUP_DEFAULT_TIMEOUT,
+        backend="nccl",
+    )
     set_ulysses_sequence_parallel_group(sp_group)
     apply_monkey_patch(attention, ulysses_sp_size=world_size)
 
@@ -124,9 +129,10 @@ def run_ulysses_correctness_test():
 
         forward_pass_correct = torch.allclose(output_golden, output_sp_full, atol=1e-3)
 
-        assert (
-            forward_pass_correct
-        ), f"Ulysses SP implementation is wrong! Max difference: {(output_golden - output_sp_full).detach().abs().max().item()}"
+        if not forward_pass_correct:
+            raise ValueError(
+                f"Ulysses SP implementation is wrong! Max difference: {(output_golden - output_sp_full).detach().abs().max().item()}"
+            )
 
     dist.destroy_process_group()
 

@@ -25,6 +25,7 @@ DURATION_COLUMNS = [
     "reward_s",
     "toolcall_s",
 ]
+DEFAULT_PHASE_ORDER: tuple[str, ...] = ("generate", "reward", "toolcall")
 STATUS_COLORS: dict[str, str] = {
     "accepted": "#1f77b4",
     "rejected": "#d62728",
@@ -456,8 +457,14 @@ def _build_timeline(
         # (start_offset, end_offset, phase_name)
         all_spans: list[tuple[float, float, str]] = []
 
-        if phases_data and isinstance(phases_data, dict):
-            for phase_name in ["generate", "reward", "toolcall"]:
+        if isinstance(phases_data, dict):
+            default_phases = set(DEFAULT_PHASE_ORDER)
+            additional_phases = sorted(
+                p for p in phases_data if str(p) not in default_phases
+            )
+            phase_sequence = list(DEFAULT_PHASE_ORDER) + additional_phases
+
+            for phase_name in phase_sequence:
                 phase_executions = phases_data.get(phase_name, [])
                 if not isinstance(phase_executions, list):
                     continue

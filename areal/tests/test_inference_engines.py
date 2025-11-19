@@ -12,6 +12,7 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.api.io_struct import WeightUpdateMeta
+from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import network
 from areal.utils.data import get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -135,6 +136,7 @@ def test_rollout(inference_engine, n_samples):
         consumer_batch_size=2,
         enable_rollout_tracing=True,
         setup_timeout=360,
+        max_head_offpolicyness=int(1e10),
     )
 
     engine = inference_engine["engine_class"](config)
@@ -159,6 +161,18 @@ def test_rollout(inference_engine, n_samples):
     assert isinstance(result, dict)
     bs = get_batch_size(result)
     assert bs == 2 * n_samples
+
+    class NullWorkflow(RolloutWorkflow):
+        async def arun_episode(self, engine, data):
+            return None
+
+    # Test workflow returning None
+    result = engine.rollout_batch(
+        [data] * 2,
+        workflow=NullWorkflow(),
+    )
+    assert result == {}
+
     engine.destroy()
     assert not dist.is_initialized()
 

@@ -10,10 +10,7 @@ import threading
 import time
 import warnings
 from collections.abc import Callable
-from contextlib import (
-    AbstractAsyncContextManager,
-    AbstractContextManager,
-)
+from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
@@ -797,7 +794,6 @@ class _AsyncSessionPhaseScope(AbstractAsyncContextManager[Any]):
 
 
 def trace_session_phase(
-    session_id: int | None,
     phase: str,
     *,
     start_payload: dict[str, Any] | None = None,
@@ -810,11 +806,9 @@ def trace_session_phase(
 
     Parameters
     ----------
-    session_id : int | None
-        The session ID to trace. If None, no tracing occurs.
     phase : str
-        The phase name (e.g., "generate", "reward", "execution").
-        Will call mark_{phase}_start and mark_{phase}_end.
+        Phase name (e.g., "generate", "reward", "execution").
+        Will call ``mark_{phase}_start`` and ``mark_{phase}_end``.
     start_payload : dict[str, Any] | None
         Optional payload to pass to the start event.
     end_payload : dict[str, Any] | None
@@ -827,19 +821,20 @@ def trace_session_phase(
 
     Examples
     --------
-    >>> with trace_session_phase(session_id, "generate"):
+    >>> with trace_session_phase("generate"):
     ...     result = engine.generate(req)
 
-    >>> with trace_session_phase(session_id, "reward"):
+    >>> with trace_session_phase("reward"):
     ...     reward = reward_fn(prompt, completion)
 
     >>> with trace_session_phase(
-    ...     session_id,
     ...     "execution",
     ...     end_payload={"status": "accepted"}
     ... ):
     ...     result = process_request()
     """
+    session_id = get_session_id()
+
     if session_id is None:
         return _NullContext()
     return _SyncSessionPhaseScope(
@@ -851,7 +846,6 @@ def trace_session_phase(
 
 
 def atrace_session_phase(
-    session_id: int | None,
     phase: str,
     *,
     start_payload: dict[str, Any] | None = None,
@@ -864,11 +858,9 @@ def atrace_session_phase(
 
     Parameters
     ----------
-    session_id : int | None
-        The session ID to trace. If None, no tracing occurs.
     phase : str
-        The phase name (e.g., "generate", "reward").
-        Will call mark_{phase}_start and mark_{phase}_end.
+        Phase name (e.g., "generate", "reward").
+        Will call ``mark_{phase}_start`` and ``mark_{phase}_end``.
     start_payload : dict[str, Any] | None
         Optional payload to pass to the start event.
     end_payload : dict[str, Any] | None
@@ -881,19 +873,20 @@ def atrace_session_phase(
 
     Examples
     --------
-    >>> async with atrace_session_phase(session_id, "generate"):
+    >>> async with atrace_session_phase("generate"):
     ...     result = await engine.agenerate(req)
 
-    >>> async with atrace_session_phase(session_id, "reward"):
+    >>> async with atrace_session_phase("reward"):
     ...     reward = await reward_fn(prompt, completion)
 
     >>> async with atrace_session_phase(
-    ...     session_id,
     ...     "execution",
     ...     end_payload={"status": "accepted"}
     ... ):
     ...     result = await process_request()
     """
+    session_id = get_session_id()
+
     if session_id is None:
         return _NullContext()
     return _AsyncSessionPhaseScope(
@@ -1675,12 +1668,52 @@ def register_session(task_id: int) -> int | None:
     return session_id
 
 
+def session_context():
+    """Decorator factory that populates ``session_id`` from the active task.
+
+    Each wrapped invocation registers a session when a ``task_id`` exists and
+    records it in the session context for downstream tracing. No cleanup or
+    restoration is performed after execution; if no task is active the session
+    context is set to ``None``.
+
+    Returns
+    -------
+    Callable
+        Decorator applicable to both sync and async callables.
+    """
+
+    def decorator(func):
+        def _activate_session() -> None:
+            task_id = get_task_id()
+            session_id = register_session(task_id) if task_id is not None else None
+            set_session_id(session_id)
+
+        if asyncio.iscoroutinefunction(func):
+
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                _activate_session()
+                return await func(*args, **kwargs)
+
+            return async_wrapper
+        else:
+
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                _activate_session()
+                return func(*args, **kwargs)
+
+            return sync_wrapper
+
+    return decorator
+
+
 def trace_session(phase: str):
     """
     Decorator for tracing session phases using contextvars.
 
-    Automatically reads session_id from the async context (set via
-    set_session_id) and traces the phase execution.
+    Automatically reads the active session from context (populated via
+    :func:`session_context`) and traces the phase execution.
 
     Parameters
     ----------
@@ -1691,9 +1724,8 @@ def trace_session(phase: str):
     Examples
     --------
     >>> # Context is set by WorkflowExecutor before calling arun_episode
-    >>> # In your workflow implementation, session_id is available via get_session_id()
     >>> async def arun_episode(self, engine, data):
-    ...     # session_id is automatically available from context
+    ...     # session information is automatically available from context
     ...     resps = await self._do_generate(engine, req, n_samples)
     ...     results = await self._compute_rewards(resps)
     ...     return results
@@ -1715,8 +1747,7 @@ def trace_session(phase: str):
 
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
-                session_id = get_session_id()
-                async with atrace_session_phase(session_id, phase):
+                async with atrace_session_phase(phase):
                     return await func(*args, **kwargs)
 
             return async_wrapper
@@ -1724,8 +1755,7 @@ def trace_session(phase: str):
 
             @functools.wraps(func)
             def sync_wrapper(*args, **kwargs):
-                session_id = get_session_id()
-                with trace_session_phase(session_id, phase):
+                with trace_session_phase(phase):
                     return func(*args, **kwargs)
 
             return sync_wrapper
@@ -1744,6 +1774,7 @@ __all__ = [
     "atrace_session_phase",
     "trace_perf",
     "trace_session",
+    "session_context",
     "set_session_id",
     "get_session_id",
     "set_task_id",

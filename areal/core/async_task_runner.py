@@ -195,6 +195,11 @@ class AsyncTaskRunner(Generic[T]):
         self._thread_exception_lock = threading.Lock()
         self._thread_exception: Exception | None = None
 
+        # Shutdown hooks for cleanup in background thread
+        # Hooks are async functions that execute in the event loop during shutdown
+        self._shutdown_hooks: list[Callable[[], Awaitable[None]]] = []
+        self._shutdown_hooks_lock = threading.Lock()
+
         # Will be set in initialize()
         self.logger = None
         self.thread: threading.Thread | None = None
@@ -226,6 +231,39 @@ class AsyncTaskRunner(Generic[T]):
         self.exiting.set()
         if self.thread is not None:
             self.thread.join()
+
+    def register_shutdown_hook(self, hook: Callable[[], Awaitable[None]]) -> None:
+        """Register an async cleanup function to be called during shutdown.
+
+        The hook will be executed in the AsyncTaskRunner's background thread
+        event loop during the finally block of _run_async_loop(), before
+        cancelling pending tasks.
+
+        Hooks are called in reverse registration order (LIFO - like context
+        managers and atexit handlers).
+
+        Parameters
+        ----------
+        hook : Callable[[], Awaitable[None]]
+            An async function that performs cleanup. Should not raise exceptions.
+            If it does raise, the exception will be logged but won't prevent
+            other hooks from running.
+
+        Examples
+        --------
+        >>> async def cleanup_session():
+        ...     if hasattr(_session_storage, 'session'):
+        ...         await _session_storage.session.close()
+        >>> runner.register_shutdown_hook(cleanup_session)
+        """
+        with self._shutdown_hooks_lock:
+            if self.exiting.is_set():
+                if self.logger:
+                    self.logger.warning(
+                        f"Shutdown hook {hook.__name__} registered after shutdown started"
+                    )
+                return
+            self._shutdown_hooks.append(hook)
 
     def _check_thread_health(self):
         """Check if the background thread has encountered a fatal error.
@@ -362,6 +400,20 @@ class AsyncTaskRunner(Generic[T]):
                 # Sleep to avoid busy-waiting
                 await asyncio.sleep(self.poll_sleep_time)
         finally:
+            # Execute shutdown hooks in reverse order (LIFO)
+            # This happens in the background thread's event loop
+            if self._shutdown_hooks:
+                for hook in reversed(self._shutdown_hooks):
+                    try:
+                        await hook()
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.error(
+                                f"Shutdown hook {hook.__name__} failed: {e}",
+                                exc_info=True,
+                            )
+                        # Continue executing other hooks even if one fails
+
             # Cancel all remaining tasks on shutdown
             pending_tasks = [
                 task_obj.task

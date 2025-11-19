@@ -9,7 +9,7 @@ from typing import Any
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig, SGLangConfig
-from areal.api.engine_api import InferenceEngine, NoResult
+from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
@@ -275,7 +275,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any] | NoResult:
+    ) -> dict[str, Any]:
         """Wait for a specified number of requests to complete."""
         return self._engine.wait(count, timeout, raise_timeout)
 

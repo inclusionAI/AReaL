@@ -22,6 +22,7 @@ from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.platforms import current_platform
 from areal.utils import logging
+from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -33,6 +34,7 @@ from areal.utils.data import (
     unpack_sequence,
     unsqueeze_mb_list,
 )
+from areal.utils.distributed import patch_dist_group_timeout
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
     disable_dropout_in_model,
@@ -42,7 +44,6 @@ from areal.utils.model import (
     is_qwen_vl_model,
     is_valid_vision_model,
 )
-from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
 
 class BaseHFEngine(TrainEngine):
@@ -114,6 +115,9 @@ class BaseHFEngine(TrainEngine):
         return _get_default_group()
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
+        # Patch the default timeout for process groups created by DeviceMesh
+        patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
+
         backend = current_platform.communication_backend
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
@@ -121,11 +125,13 @@ class BaseHFEngine(TrainEngine):
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
                 backend=backend,
-                timeout=NCCL_DEFAULT_TIMEOUT,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
         # Each process is its own model parallel group.
-        mp_group = dist.new_group([dist.get_rank()])
+        mp_group = dist.new_group(
+            ranks=[dist.get_rank()], timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend=backend
+        )
         assert mp_group is not None
         self.mp_group = mp_group
 
