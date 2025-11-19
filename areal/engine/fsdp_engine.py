@@ -59,7 +59,7 @@ from areal.utils.distributed import (
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
-from areal.utils.fsdp.optimizer import AnyPrecisionAdamW, move_torch_optimizer
+from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.perf_tracer import trace_perf, trace_scope
@@ -90,6 +90,9 @@ class FSDPEngine(BaseHFEngine):
         self.rank: int
         self.dp_head: int
         self.dp_rank: int
+
+        # Optimizer offload buffers
+        self._optimizer_offload_buffer: torch.Tensor | None = None
 
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
@@ -938,6 +941,112 @@ class FSDPEngine(BaseHFEngine):
             )
         self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
 
+    @torch.no_grad()
+    def _move_optimizer(self, device: str = "cpu") -> None:
+        """Move optimizer state tensors to the specified device.
+
+        Uses a pre-allocated contiguous CPU buffer for faster async offloading
+
+        Parameters
+        ----------
+        device: str
+            Target device, either "cpu" or "cuda" ("npu")
+        """
+        if not self.optimizer.state:
+            return
+
+        # Collect all tensors that need to be moved
+        tensors_to_move = []
+        state_refs = []
+
+        for param_group in self.optimizer.param_groups:
+            for param in param_group["params"]:
+                state = self.optimizer.state[param]
+                for key, value in state.items():
+                    if isinstance(value, torch.Tensor):
+                        tensors_to_move.append(value)
+                        state_refs.append((state, key))
+
+        if not tensors_to_move:
+            return
+
+        # Use CUDA/NPU stream for async offloading from CUDA/NPU to CPU
+        if device == "cpu":
+            total_numel = sum(t.numel() for t in tensors_to_move)
+
+            # Allocate or reuse the large contiguous buffer
+            if (
+                self._optimizer_offload_buffer is None
+                or self._optimizer_offload_buffer.numel() != total_numel
+            ):
+                dtype = tensors_to_move[0].dtype
+                self._optimizer_offload_buffer = torch.empty(
+                    total_numel,
+                    dtype=dtype,
+                    device=device,
+                    pin_memory=True,
+                )
+                self.logger.info(
+                    f"Allocated optimizer offload buffer: {total_numel} elements, "
+                    f"{self._optimizer_offload_buffer.element_size() * total_numel / 1024**2:.2f} MB"
+                )
+
+            # Calculate specs for each tensor
+            optimizer_offload_specs = []
+            start_idx = 0
+            for tensor, (state, key) in zip(tensors_to_move, state_refs):
+                end_idx = start_idx + tensor.numel()
+                optimizer_offload_specs.append((state, key, start_idx, end_idx))
+                start_idx = end_idx
+
+            offload_stream = current_platform.Stream()
+            offload_event = current_platform.Event()
+
+            with current_platform.stream(offload_stream):
+                for tensor, (state, key, start_idx, end_idx) in zip(
+                    tensors_to_move, optimizer_offload_specs
+                ):
+                    # Copy to the pre-allocated buffer
+                    self._optimizer_offload_buffer[start_idx:end_idx].copy_(
+                        tensor.view(-1), non_blocking=True
+                    )
+                    state[key] = self._optimizer_offload_buffer[start_idx:end_idx].view(
+                        tensor.shape
+                    )
+
+            offload_event.record(offload_stream)
+            current_platform.current_stream().wait_event(offload_event)
+
+        elif (
+            device == "cuda" or device == "npu"
+        ) and self._optimizer_offload_buffer is not None:
+            # Restore from buffer to CUDA/NPU
+            restore_stream = current_platform.Stream()
+            restore_event = current_platform.Event()
+
+            with current_platform.stream(restore_stream):
+                for state, key, start_idx, end_idx in optimizer_offload_specs:
+                    tensor = state[key]
+                    new_tensor = torch.empty(
+                        tensor.shape,
+                        dtype=tensor.dtype,
+                        device=device,
+                    )
+                    new_tensor.copy_(
+                        self._optimizer_offload_buffer[start_idx:end_idx].view(
+                            tensor.shape
+                        ),
+                        non_blocking=True,
+                    )
+                    state[key] = new_tensor
+
+            restore_event.record(restore_stream)
+            current_platform.current_stream().wait_event(restore_event)
+
+        else:
+            for tensor, (state, key) in zip(tensors_to_move, state_refs):
+                state[key] = tensor.to(device, non_blocking=True)
+
     def sleep(self) -> None:
         """Pause CUDA memory for all tracked tensors.
         Ref https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
@@ -953,7 +1062,7 @@ class FSDPEngine(BaseHFEngine):
                 torch_memory_saver.pause()
             case "move":
                 self.model.cpu()
-                move_torch_optimizer(self.optimizer, "cpu")
+                self._move_optimizer("cpu")
                 clear_memory()
             case _:
                 raise NotImplementedError(
@@ -974,8 +1083,9 @@ class FSDPEngine(BaseHFEngine):
             case "tms":
                 torch_memory_saver.resume()
             case "move":
+                # TODO: support NPU
                 self.model.cuda()
-                move_torch_optimizer(self.optimizer, "cuda")
+                self._move_optimizer("cuda")
             case _:
                 raise NotImplementedError(
                     f"Unsupported offload_train_mode: {self.config.offload_train_mode}"
