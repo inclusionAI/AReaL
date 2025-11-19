@@ -1085,10 +1085,13 @@ class FSDPEngine(BaseHFEngine):
                 for spec in self._model_offload_specs:
                     tensor, start_idx, end_idx, dtensor_meta = spec
                     # Handle DTensor (FSDP2 sharded params) - only copy local shard
+
                     if dtensor_meta is not None:
                         local_tensor = tensor.data.to_local()
+                    else:
+                        local_tensor = tensor.data
                     self._model_offload_buffer[start_idx:end_idx].copy_(
-                        tensor.data.view(-1), non_blocking=True
+                        local_tensor.view(-1), non_blocking=True
                     )
                     # Update tensor data to point to CPU buffer view
                     tensor.data = self._model_offload_buffer[start_idx:end_idx].view(
