@@ -847,16 +847,13 @@ class RemoteInfEngine:
     @trace_perf("remote_inf_engine.pause_generation", category="misc")
     def pause_generation(self):
         """Pause request submission for async rollout."""
-        try:
-            pause_req = self.backend.get_pause_request()
-            for addr in self.addresses:
-                res = requests.post(
-                    f"http://{addr}{pause_req.endpoint}",
-                    json=pause_req.payload,
-                )
-                res.raise_for_status()
-        except NotImplementedError:
-            self.logger.warning("Backend does not support pause operation")
+        pause_req = self.backend.get_pause_request()
+        for addr in self.addresses:
+            res = requests.post(
+                f"http://{addr}{pause_req.endpoint}",
+                json=pause_req.payload,
+            )
+            res.raise_for_status()
 
         # The above http request may require some time to be scheduled and executed.
         # The following line waits until all requests are indeed dropped.
@@ -865,16 +862,13 @@ class RemoteInfEngine:
     @trace_perf("remote_inf_engine.continue_generation", category="misc")
     def continue_generation(self):
         """Resume request submission for async rollout."""
-        try:
-            resume_req = self.backend.get_resume_request()
-            for addr in self.addresses:
-                res = requests.post(
-                    f"http://{addr}{resume_req.endpoint}",
-                    json=resume_req.payload,
-                )
-                res.raise_for_status()
-        except NotImplementedError:
-            self.logger.warning("Backend does not support resume operation")
+        resume_req = self.backend.get_resume_request()
+        for addr in self.addresses:
+            res = requests.post(
+                f"http://{addr}{resume_req.endpoint}",
+                json=resume_req.payload,
+            )
+            res.raise_for_status()
 
     def pause(self):
         """Pause request submission for async rollout.
@@ -888,33 +882,23 @@ class RemoteInfEngine:
 
     def offload(self) -> None:
         """Offload model memory on all servers."""
-        try:
-            offload_req = self.backend.get_offload_request()
-            for addr in self.addresses:
-                res = requests.post(
-                    f"http://{addr}{offload_req.endpoint}",
-                    json=offload_req.payload,
-                )
-                res.raise_for_status()
-        except NotImplementedError:
-            self.logger.warning(
-                f"Backend {type(self.backend).__name__} does not support offload"
+        offload_req = self.backend.get_offload_request()
+        for addr in self.addresses:
+            res = requests.post(
+                f"http://{addr}{offload_req.endpoint}",
+                json=offload_req.payload,
             )
+            res.raise_for_status()
 
     def onload(self, tags: list[str] | None = None) -> None:
         """Onload model memory on all servers."""
-        try:
-            onload_req = self.backend.get_onload_request(tags=tags)
-            for addr in self.addresses:
-                res = requests.post(
-                    f"http://{addr}{onload_req.endpoint}",
-                    json=onload_req.payload,
-                )
-                res.raise_for_status()
-        except NotImplementedError:
-            self.logger.warning(
-                f"Backend {type(self.backend).__name__} does not support onload"
+        onload_req = self.backend.get_onload_request(tags=tags)
+        for addr in self.addresses:
+            res = requests.post(
+                f"http://{addr}{onload_req.endpoint}",
+                json=onload_req.payload,
             )
+            res.raise_for_status()
 
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
         """Launch a local inference server."""

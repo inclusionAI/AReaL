@@ -51,11 +51,7 @@ from areal.utils.data import (
     unpad_logits,
 )
 from areal.utils.device import clear_memory, print_memory
-from areal.utils.distributed import (
-    get_gloo_group,
-    init_custom_process_group,
-    init_gloo_group,
-)
+from areal.utils.distributed import init_custom_process_group
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
 from areal.utils.mcore.determinisitc import set_deterministic_algorithms
@@ -292,8 +288,11 @@ class MegatronEngine(TrainEngine):
         )
         self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
+        # This is needed for barrier synchronization when models are moved to CPU
+        self._cpu_group = dist.new_group(
+            timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend="gloo"
+        )
         self.process_group_initialized = True
-        init_gloo_group()
 
     def _init_context_and_model_parallel_group(self):
         # Initialize context and model parallel groups, which are only used in AReaL
@@ -402,6 +401,11 @@ class MegatronEngine(TrainEngine):
         )
 
     @property
+    def cpu_group(self) -> dist.ProcessGroup:
+        assert self.process_group_initialized
+        return self._cpu_group
+
+    @property
     def parallelism_group(self) -> dist.ProcessGroup:
         assert self.process_group_initialized
         return self._parallelism_group
@@ -456,6 +460,7 @@ class MegatronEngine(TrainEngine):
         gc.collect()
         dist.destroy_process_group(self.parallelism_group)
         dist.destroy_process_group(self.context_and_model_parallel_group)
+        dist.destroy_process_group(self.cpu_group)
         self.process_group_initialized = False
         if self.own_global_group:
             assert dist.is_initialized()
@@ -1238,7 +1243,7 @@ class MegatronEngine(TrainEngine):
 
         # TODO: NCCL offload
         current_platform.synchronize()
-        dist.barrier(group=get_gloo_group())
+        dist.barrier(group=self.cpu_group)
         print_memory("after offload model")
 
         self.is_offload = True
@@ -1255,7 +1260,7 @@ class MegatronEngine(TrainEngine):
 
         # TODO: NCCL onload
         current_platform.synchronize()
-        dist.barrier(group=get_gloo_group())
+        dist.barrier(group=self.cpu_group)
         print_memory("after onload model")
 
         self.is_offload = False
