@@ -259,7 +259,7 @@ class RemoteInfEngine:
         Returns
         -------
         aiohttp.ClientSession
-            A session object for the current thread
+            A new client session object
         """
         return aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(
