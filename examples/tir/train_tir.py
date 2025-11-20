@@ -39,7 +39,6 @@ def math_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kw
 
 def main(args):
     config, _ = load_expr_config(args, TIRGRPOConfig)
-    config: TIRGRPOConfig
 
     rank = int(os.getenv("RANK"))
 
