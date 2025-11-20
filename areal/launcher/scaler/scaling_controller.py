@@ -1,3 +1,4 @@
+import importlib.util
 import sys
 import threading
 from pathlib import Path
@@ -31,8 +32,6 @@ def run_func(file_path: str, func_name: str, argv: list[str]):
     Import module by path and invoke the named function with a single `argv` list.
     This matches vllm_server.main(argv) which expects sys.argv[2:]-style args.
     """
-    import importlib.util
-
     module_name = file_path.replace("/", "_").replace(".", "_")
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     module = importlib.util.module_from_spec(spec)
@@ -53,13 +52,12 @@ def scale_up_vllm(
     experiment_name = cfg.experiment_name
     trial_name = cfg.trial_name
 
-    # allocation_mode
     allocation_mode = AllocationMode.from_str(cfg.allocation_mode)
     vllm_tp_size = allocation_mode.gen.tp_size
-    n_existing_servers = allocation_mode.gen.dp_size
+    n_existing_servers = expected - n_new_servers
 
     cpus_per_gpu = cfg.launcher.inference_server_cpus_per_gpu
-    mem_per_gpu = cfg.launcher.inference_server_mem_per_gpu  # MB per GPU
+    mem_per_gpu = cfg.launcher.inference_server_mem_per_gpu
 
     # Submit new servers
     remote_runner = None  # we’ll bind ray.remote per device type
@@ -117,12 +115,13 @@ shared_state = {
     "num_rollout": None,
     "vllm_entry_point": None,
 }
+shared_state_lock = threading.Lock()
 
 
 @app.post("/scale_up")
 async def http_scale_up(request: Request):
     """
-    Manual scale-up endpoint.
+    Scaling controller endpoint.
     Example usage:
       curl -X POST localhost:8899/scale_up \
         -H "Content-Type: application/json" \
@@ -130,61 +129,70 @@ async def http_scale_up(request: Request):
     """
     body = await request.json()
     scaled_k = int(body.get("scaled_k", 1))
-    cfg = shared_state["cfg"]
-    config_path = shared_state["config_path"]
-    num_rollout = shared_state["num_rollout"]
 
-    if cfg is None or config_path is None:
-        return {"status": "error", "msg": "Scale server not initialized yet"}
+    with shared_state_lock:
+        cfg = shared_state["cfg"]
+        config_path = shared_state["config_path"]
+        num_rollout = shared_state["num_rollout"]
+        vllm_entry_point = shared_state["vllm_entry_point"]
+
+        # More complete initialization check
+        if (
+            cfg is None
+            or config_path is None
+            or num_rollout is None
+            or vllm_entry_point is None
+        ):
+            return {"status": "error", "msg": "Scale server not initialized yet"}
+
+        new_total = num_rollout + scaled_k
+        shared_state["num_rollout"] = new_total
 
     try:
         logger.info(f"[HTTP] Received manual scale-up request: {scaled_k}")
-        shared_state["num_rollout"] = num_rollout + scaled_k
-
         name_resolve.add("scale_up_request", {"scaled_k": int(scaled_k)}, replace=True)
+
         scale_up_vllm(
             cfg,
             config_path,
             scaled_k,
-            num_rollout + scaled_k,
-            shared_state["vllm_entry_point"],
+            new_total,
+            vllm_entry_point,
         )
         try:
             name_resolve.delete("scale_up_done")
         except NameEntryNotFoundError:
             pass
 
-        name_resolve.add("scale_up_done", {"step": 0})
-        logger.info(
-            f"[HTTP] Scale-up done. Total rollout={shared_state['num_rollout']}"
-        )
+        name_resolve.add("scale_up_done", {"done": 1})
+        logger.info(f"[HTTP] Scale-up done. Total rollout={new_total}")
         return {
             "status": "ok",
             "scaled_k": scaled_k,
-            "new_total": shared_state["num_rollout"],
+            "new_total": new_total,
         }
     except Exception as e:
         logger.error(f"[HTTP] Scale-up failed: {e}")
         return {"status": "error", "msg": str(e)}
 
 
-def run_http_server():
+def run_http_server(port: int):
     """Run FastAPI server in background thread (non-blocking)."""
-    config = Config(app, host="0.0.0.0", port=HTTP_SCALE_PORT, log_level="info")
+    config = Config(app, host="0.0.0.0", port=port, log_level="info")
     server = Server(config)
 
     def _serve():
-        logger.info(f"[HTTP] Starting manual scale-up server on port {HTTP_SCALE_PORT}")
+        logger.info(f"[HTTP] Starting scaling controller server on port {port}")
         server.run()
 
     t = threading.Thread(target=_serve, daemon=False)
     t.start()
-    logger.info("[HTTP] Manual scale-up service started in background.")
+    logger.info("[HTTP] Scaling controller server started in background.")
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        logger.info("Usage: python scaling_controller.py <config.yaml>")
+        logger.info("Usage: python scaling_controller <config.yaml> ")
         sys.exit(1)
 
     config_path = sys.argv[1]
@@ -193,35 +201,38 @@ if __name__ == "__main__":
     experiment_name = cfg.experiment_name
     trial_name = cfg.trial_name
 
-    # allocation_mode
     allocation_mode = AllocationMode.from_str(cfg.allocation_mode)
-    # Set-the-experiments-configs for rollout ------------------
     num_rollout = allocation_mode.gen.dp_size
 
     # Remove all the keys related to scaling before start the experiment
     try:
         name_resolve.delete("scale_up_request")
     except NameEntryNotFoundError:
-        logger.info("no delete")
+        pass
 
     try:
         name_resolve.delete("scale_up_done")
     except NameEntryNotFoundError:
         pass
-    # Init the ray and conncet it  to existing cluster
+
+    # Init ray and connect it to existing cluster
     ray.init(address="auto", namespace=f"{experiment_name}_{trial_name}")
 
     # Get port for scale up
     cfg.scaling = to_structured_cfg(cfg.scaling, ScalingConfig)
-    HTTP_SCALE_PORT = cfg.scaling.scaling_controller_port
+    port = cfg.scaling.scaling_controller_port
 
-    # Run http for scale-up
-    run_http_server()
-
-    logger.info("[HTTP] Manual scale-up service started in background.")
+    # Resolve vLLM entry point
     vllm_entry_point = str(Path(__file__).resolve().parent.parent / "vllm_server.py")
-    shared_state["cfg"] = cfg
-    shared_state["config_path"] = config_path
-    shared_state["num_rollout"] = num_rollout
-    shared_state["vllm_entry_point"] = vllm_entry_point
+
+    # Initialize shared_state atomically before starting HTTP server
+    with shared_state_lock:
+        shared_state["cfg"] = cfg
+        shared_state["config_path"] = config_path
+        shared_state["num_rollout"] = num_rollout
+        shared_state["vllm_entry_point"] = vllm_entry_point
+
     logger.info(f"[HTTP] num_rollout initialized to {num_rollout}")
+
+    # Run http for scale-up (after shared_state is fully initialized)
+    run_http_server(port)
