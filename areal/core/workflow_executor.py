@@ -800,7 +800,7 @@ class WorkflowExecutor:
 
         async def _managed_workflow() -> _RolloutResult | None:
             async with self.inference_engine.managed_session():
-                return _execute_workflow()
+                return await _execute_workflow()
 
         return _managed_workflow
 
