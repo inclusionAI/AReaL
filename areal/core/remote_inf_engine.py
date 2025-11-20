@@ -41,8 +41,6 @@ from .workflow_executor import WorkflowExecutor
 
 RID_CACHE_SIZE = 128
 
-# Thread-local storage for aiohttp sessions
-# Each thread gets its own session to ensure thread safety and event loop compatibility
 _session_storage = ContextVar("aiohttp.ClientSesion")
 
 
@@ -255,7 +253,7 @@ class RemoteInfEngine:
         self.local_server_processes: list[LocalInfServerInfo] = []
 
     def _create_session(self) -> aiohttp.ClientSession:
-        """Get or create a ClientSession for the current asyncio coroutine.
+        """Create a ClientSession for the current asyncio coroutine.
 
         Returns
         -------
