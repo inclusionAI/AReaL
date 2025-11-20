@@ -27,8 +27,12 @@ def _get_current_mem_info(unit: str = "GB", precision: int = 2) -> tuple[str]:
 def log_gpu_stats(head: str, rank: int = 0):
     if (not dist.is_initialized()) or (rank is None) or (dist.get_rank() == rank):
         mem_allocated, mem_reserved, mem_used, mem_total = _get_current_mem_info()
-        message = f"{head}, memory allocated (GB): {mem_allocated}, memory reserved (GB): {mem_reserved}, device memory used/total (GB): {mem_used}/{mem_total}"
-        logger.info(msg=message)
+        logger.info(
+            f"Memory-Usage {head}: "
+            f"memory allocated (GB): {mem_allocated}, "
+            f"memory reserved (GB): {mem_reserved}, "
+            f"device memory used/total (GB): {mem_used}/{mem_total}"
+        )
 
 
 def clear_memory():
@@ -36,18 +40,3 @@ def clear_memory():
     current_platform.synchronize()
     gc.collect()
     current_platform.empty_cache()
-
-
-def print_memory(msg: str, clear_before_print: bool = False):
-    """Print detailed memory usage information."""
-    if clear_before_print:
-        clear_memory()
-
-    mem_allocated, mem_reserved, mem_used, mem_total = _get_current_mem_info()
-
-    logger.info(
-        f"Memory-Usage {msg}{' (cleared before print)' if clear_before_print else ''}: "
-        f"memory allocated (GB): {mem_allocated}, "
-        f"memory reserved (GB): {mem_reserved}, "
-        f"device memory used/total (GB): {mem_used}/{mem_total}"
-    )

@@ -50,7 +50,7 @@ from areal.utils.data import (
     unpack_sequence,
     unpad_logits,
 )
-from areal.utils.device import clear_memory, print_memory
+from areal.utils.device import clear_memory, log_gpu_stats
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
@@ -745,7 +745,7 @@ class MegatronEngine(TrainEngine):
             # In offload mode, wakes up parameters as needed to perform the update.
             tms_context = (
                 torch_memory_saver.disable()
-                if self.config.offload_train
+                if self.config.offload_train and not torch.version.hip
                 else nullcontext()
             )
             with tms_context:
@@ -1237,14 +1237,14 @@ class MegatronEngine(TrainEngine):
         """
         assert self.config.offload_train
 
-        print_memory("before offload model")
+        log_gpu_stats("before offload model")
         clear_memory()
         torch_memory_saver.pause()
 
         # TODO: NCCL offload
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
-        print_memory("after offload model")
+        log_gpu_stats("after offload model")
 
         self.is_offload = True
 
@@ -1261,6 +1261,6 @@ class MegatronEngine(TrainEngine):
         # TODO: NCCL onload
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
-        print_memory("after onload model")
+        log_gpu_stats("after onload model")
 
         self.is_offload = False

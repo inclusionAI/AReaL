@@ -51,7 +51,7 @@ from areal.utils.data import (
     reorder_list,
     unpack_sequence,
 )
-from areal.utils.device import clear_memory, print_memory
+from areal.utils.device import clear_memory, log_gpu_stats
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.checkpoint import DCPState
@@ -945,7 +945,7 @@ class FSDPEngine(BaseHFEngine):
         """
         assert self.config.offload_train
 
-        print_memory("before offload model")
+        log_gpu_stats("before offload model")
 
         # Use torch_memory_saver to pause CUDA memory
         clear_memory()
@@ -953,7 +953,7 @@ class FSDPEngine(BaseHFEngine):
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
-        print_memory("after offload model")
+        log_gpu_stats("after offload model")
 
         self.is_offload = True
 
@@ -968,6 +968,6 @@ class FSDPEngine(BaseHFEngine):
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
-        print_memory("after onload model")
+        log_gpu_stats("after onload model")
 
         self.is_offload = False

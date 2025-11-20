@@ -150,7 +150,7 @@ class VLLMBackend:
         """Get vLLM offload request.
 
         Uses vLLM's /sleep endpoint to offload model memory to CPU.
-        Default level is 1. vLLM reads parameters from query string.
+        Default level is 1.
         """
         return HttpRequest(endpoint="/sleep", payload={}, method="POST")
 
