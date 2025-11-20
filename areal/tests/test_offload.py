@@ -55,9 +55,8 @@ def _create_engine(engine_type: str):
 
     engine.create_process_group(alloc_mode.train)
     engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
-    engine.config.offload_train = True
 
-    print(f"{engine_type} engine initialized with offload_train=True")
+    print(f"{engine_type} engine initialized")
     return engine
 
 
@@ -148,21 +147,6 @@ def _test_offload_and_onload(
     memory_tolerance: float = 0.1,
     warmup_rounds: int = 3,
 ):
-    """Common test logic for offload and onload.
-
-    Parameters
-    ----------
-    engine : FSDPEngine | MegatronEngine
-        Engine instance to test
-    engine_name : str
-        Name for logging (e.g., "FSDP", "Megatron")
-    min_memory_release_gb : float
-        Minimum expected memory release in GB
-    memory_tolerance : float
-        Tolerance ratio for memory restoration check
-    warmup_rounds : int
-        Number of warmup offload/restore cycles
-    """
     # Measure initial memory
     current_platform.synchronize()
     initial_memory_gb = get_gpu_memory_allocated_gb()
