@@ -21,7 +21,7 @@ uvloop.install()
 
 logger = logging.getLogger("CLI args")
 
-CLS = TypeVar("_CLS")
+ConfigT = TypeVar("ConfigT")
 
 
 @dataclass
