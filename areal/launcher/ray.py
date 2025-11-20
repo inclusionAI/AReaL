@@ -33,9 +33,9 @@ from areal.utils.launcher import (
     validate_config_for_distributed_launcher,
     wait_llm_server_addrs,
 )
+from areal.utils.offload import get_tms_env_vars
 from areal.utils.ray import get_placement_group_master_ip_and_port
 from areal.utils.recover import check_if_recover
-from areal.utils.tms_utils import get_tms_env_vars
 
 logger = logging.getLogger("RayLauncher")
 

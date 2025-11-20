@@ -30,8 +30,8 @@ from areal.utils.launcher import (
     wait_llm_server_addrs,
 )
 from areal.utils.network import find_free_ports
+from areal.utils.offload import get_tms_env_vars
 from areal.utils.recover import check_if_recover
-from areal.utils.tms_utils import get_tms_env_vars
 
 logger = logging.getLogger("Local Scheduler")
 JOB_STATE_TO_PROCESS_STATUS = {

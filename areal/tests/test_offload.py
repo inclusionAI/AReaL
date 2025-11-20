@@ -16,7 +16,7 @@ from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
 from areal.utils.network import find_free_ports
-from areal.utils.tms_utils import get_tms_env_vars
+from areal.utils.offload import get_tms_env_vars
 
 MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):

@@ -27,6 +27,7 @@ from areal.utils.launcher import (
     get_env_vars,
     wait_llm_server_addrs,
 )
+from areal.utils.offload import get_tms_env_vars
 from areal.utils.recover import check_if_recover
 from areal.utils.slurm import (
     APPTAINER_CMD_TEMPLATE,
@@ -36,7 +37,6 @@ from areal.utils.slurm import (
     query_jobs,
     validate_config_for_slurm_launcher,
 )
-from areal.utils.tms_utils import get_tms_env_vars
 
 logger = logging.getLogger("SlurmLauncher")
 

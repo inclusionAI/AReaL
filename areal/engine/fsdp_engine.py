@@ -58,9 +58,9 @@ from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
+from areal.utils.offload import is_tms_enabled
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
-from areal.utils.tms_utils import is_tms_enabled
 from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
     ulysses_pad,

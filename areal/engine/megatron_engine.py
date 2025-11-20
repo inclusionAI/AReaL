@@ -67,8 +67,8 @@ from areal.utils.megatron import (
 )
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
+from areal.utils.offload import is_tms_enabled
 from areal.utils.perf_tracer import trace_perf, trace_scope
-from areal.utils.tms_utils import is_tms_enabled
 
 
 class _MegatronModelList(list):
