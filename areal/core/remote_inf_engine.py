@@ -7,6 +7,7 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ProcessPoolExecutor
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from threading import Lock
@@ -269,6 +270,30 @@ class RemoteInfEngine:
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         )
+
+    @asynccontextmanager
+    async def managed_session(self):
+        """Provide a managed ClientSession with automatic lifecycle handling.
+
+        Creates a ClientSession, stores it in task-local context for nested
+        agenerate() calls to reuse, and ensures proper cleanup.
+
+        Yields
+        ------
+            None
+
+        Examples
+        --------
+            async with engine.managed_session():
+                result = await engine.agenerate(request)
+        """
+        session = self._create_session()
+        token = _session_storage.set(session)
+        try:
+            yield
+        finally:
+            await session.close()
+            _session_storage.reset(token)
 
     def _wait_for_server(self, address):
         """Wait for a server to become healthy."""
