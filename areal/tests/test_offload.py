@@ -1,8 +1,10 @@
 """Integration tests for offload functionality in FSDP and Megatron engines using TMS."""
 
+import multiprocessing
 import os
-import sys
 import time
+import traceback
+from contextlib import contextmanager
 
 import pytest
 import torch.distributed as dist
@@ -16,45 +18,120 @@ from areal.platforms import current_platform
 from areal.utils.network import find_free_ports
 from areal.utils.tms_utils import get_tms_env_vars
 
-_TMS_RESTARTED_MARKER = "_AREAL_TMS_RESTARTED"
-
-
-def _should_restart_with_tms():
-    """Check if we need to restart the process with TMS LD_PRELOAD."""
-
-    if _TMS_RESTARTED_MARKER in os.environ:
-        return False
-
-    tms_env = get_tms_env_vars()
-    return tms_env["LD_PRELOAD"] != os.environ.get("LD_PRELOAD", "")
-
-
-def _restart_with_tms():
-    """Restart the current process with TMS LD_PRELOAD environment variables."""
-    tms_env = get_tms_env_vars()
-
-    print("Restarting with TMS LD_PRELOAD environment...")
-
-    # Update environment and re-execute
-    new_env = os.environ.copy()
-    new_env.update(tms_env)
-    new_env[_TMS_RESTARTED_MARKER] = "1"
-
-    # Use os.execve to replace current process
-    try:
-        os.execve(sys.executable, [sys.executable] + sys.argv, new_env)
-    except OSError as e:
-        print(f"Failed to restart with TMS environment: {e}", file=sys.stderr)
-        sys.exit(1)
-
-
-# Runs at module import time to ensure LD_PRELOAD is set before any CUDA operations
-if _should_restart_with_tms():
-    _restart_with_tms()
-
 MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 if not os.path.exists(MODEL_PATH):
     MODEL_PATH = "Qwen/Qwen3-0.6B"
+
+
+def _create_engine(engine_type: str):
+    """Create FSDP/Megatron engine with TMS offload enabled."""
+    os.environ.update(
+        {
+            "WORLD_SIZE": "1",
+            "RANK": "0",
+            "LOCAL_RANK": "0",
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": str(find_free_ports(1)[0]),
+        }
+    )
+
+    config = TrainEngineConfig(
+        experiment_name="test_offload",
+        trial_name=f"{engine_type}_tms",
+        path=MODEL_PATH,
+        optimizer=OptimizerConfig(),
+        megatron=MegatronEngineConfig(),
+    )
+
+    alloc_mode = AllocationMode.from_str("d1p1t1")
+    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
+
+    if engine_type == "FSDP":
+        engine = FSDPEngine(config)
+    elif engine_type == "Megatron":
+        engine = MegatronEngine(config)
+    else:
+        raise ValueError(f"Unknown engine type: {engine_type}")
+
+    engine.create_process_group(alloc_mode.train)
+    engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
+    engine.config.offload_train = True
+
+    print(f"{engine_type} engine initialized with offload_train=True")
+    return engine
+
+
+def _run_test(
+    engine_type: str,
+    min_memory_release_gb: float = 0.1,
+    memory_tolerance: float = 0.1,
+    warmup_rounds: int = 3,
+    output_queue=None,
+):
+    """Function to run in subprocess. Creates engine and runs test."""
+    try:
+        print(f"[Subprocess] Starting test for {engine_type}...")
+
+        engine = _create_engine(engine_type)
+
+        try:
+            _test_offload_and_onload(
+                engine=engine,
+                engine_name=engine_type,
+                min_memory_release_gb=min_memory_release_gb,
+                memory_tolerance=memory_tolerance,
+                warmup_rounds=warmup_rounds,
+            )
+            if output_queue:
+                output_queue.put(True)
+        finally:
+            engine.destroy()
+            if dist.is_initialized():
+                dist.destroy_process_group()
+
+    except Exception as e:
+        print(f"[Subprocess] Error: {e}")
+        traceback.print_exc()
+        if output_queue:
+            output_queue.put(False)
+        raise
+
+
+# =============================================================================
+# Multiprocessing Helpers
+# =============================================================================
+
+
+@contextmanager
+def _tms_env_context():
+    tms_env = get_tms_env_vars()
+    os.environ.update(tms_env)
+    yield
+
+
+def _run_in_subprocess(target, kwargs):
+    """Run function in a subprocess with TMS environment configured."""
+    ctx = multiprocessing.get_context("spawn")
+    output_queue = ctx.Queue()
+    kwargs["output_queue"] = output_queue
+
+    # Set env vars in parent process before spawning
+    # Spawned process will inherit these variables
+    with _tms_env_context():
+        p = ctx.Process(target=target, kwargs=kwargs)
+        p.start()
+        p.join()
+
+    # Check results
+    if not output_queue.empty():
+        success = output_queue.get()
+        if not success:
+            pytest.fail("Test failed in subprocess")
+    else:
+        if p.exitcode != 0:
+            pytest.fail(f"Subprocess crashed with exit code {p.exitcode}")
+        else:
+            pytest.fail("Subprocess finished but returned no result")
 
 
 def get_gpu_memory_allocated_gb() -> float:
@@ -150,97 +227,12 @@ def _test_offload_and_onload(
 
 
 # =============================================================================
-# Fixtures
-# =============================================================================
-
-
-@pytest.fixture
-def fsdp_engine_with_offload():
-    """Create FSDP engine with TMS offload enabled."""
-    os.environ.update(
-        {
-            "WORLD_SIZE": "1",
-            "RANK": "0",
-            "LOCAL_RANK": "0",
-            "MASTER_ADDR": "localhost",
-            "MASTER_PORT": str(find_free_ports(1)[0]),
-        }
-    )
-
-    config = TrainEngineConfig(
-        experiment_name="test_offload",
-        trial_name="fsdp_tms",
-        path=MODEL_PATH,
-        optimizer=OptimizerConfig(),
-    )
-
-    engine = FSDPEngine(config)
-    engine.create_process_group()
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
-    engine.initialize(addr=None, ft_spec=ft_spec)
-    engine.config.offload_train = True
-
-    print("FSDP engine initialized with offload_train=True")
-
-    try:
-        yield engine
-    finally:
-        engine.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
-
-
-@pytest.fixture
-def megatron_engine_with_offload():
-    """Create Megatron engine with TMS offload enabled."""
-    os.environ.update(
-        {
-            "WORLD_SIZE": "1",
-            "RANK": "0",
-            "LOCAL_RANK": "0",
-            "MASTER_ADDR": "localhost",
-            "MASTER_PORT": str(find_free_ports(1)[0]),
-        }
-    )
-
-    config = TrainEngineConfig(
-        experiment_name="test_offload",
-        trial_name="megatron",
-        path=MODEL_PATH,
-        optimizer=OptimizerConfig(),
-        megatron=MegatronEngineConfig(),
-    )
-
-    alloc_mode = AllocationMode.from_str("d1p1t1")
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
-
-    engine = MegatronEngine(config)
-    engine.create_process_group(alloc_mode.train)
-    engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
-    engine.config.offload_train = True
-
-    print(f"Megatron engine initialized with offload_train={config.offload_train}")
-    try:
-        yield engine
-    finally:
-        engine.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
-
-
-# =============================================================================
 # Offload Tests
 # =============================================================================
 
 
-@pytest.mark.parametrize(
-    "engine_fixture,engine_name",
-    [
-        ("fsdp_engine_with_offload", "FSDP"),
-        ("megatron_engine_with_offload", "Megatron"),
-    ],
-)
-def test_engine_offload_and_onload(request, engine_fixture, engine_name):
+@pytest.mark.parametrize("engine_type", ["FSDP", "Megatron"])
+def test_engine_offload_and_onload(engine_type):
     """Test engine offload releases memory and onload recovers it correctly.
 
     This test validates:
@@ -250,11 +242,12 @@ def test_engine_offload_and_onload(request, engine_fixture, engine_name):
 
     Parametrized to test both FSDP and Megatron engines.
     """
-    engine = request.getfixturevalue(engine_fixture)
-    _test_offload_and_onload(
-        engine=engine,
-        engine_name=engine_name,
-        min_memory_release_gb=0.1,
-        memory_tolerance=0.1,
-        warmup_rounds=3,
+    _run_in_subprocess(
+        target=_run_test,
+        kwargs={
+            "engine_type": engine_type,
+            "min_memory_release_gb": 0.1,
+            "memory_tolerance": 0.1,
+            "warmup_rounds": 3,
+        },
     )
