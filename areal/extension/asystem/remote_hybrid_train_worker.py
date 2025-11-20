@@ -9,7 +9,6 @@ import cloudpickle
 import requests
 import torch
 
-from areal.extension.asystem.util import RL_TASKS
 from realhf.api.core.data_api import (  # 需要引擎侧也要修改
     # RL_TASKS,
     MicroBatchSpec,
@@ -25,6 +24,7 @@ from areal.api.engine_api import (
     TrainEngine,
     WeightUpdateMeta,
 )
+from areal.extension.asystem.utils.util import RL_TASKS
 from areal.utils import logging, stats_tracker
 from areal.utils.errors import EngineError, FrameworkError
 
@@ -938,6 +938,7 @@ class RemoteHybridTrainWorker(TrainEngine):
 
     def get_version(self) -> int:
         return self._version
+
 
 def serialize_and_compress(data):
     serialized_data = cloudpickle.dumps(data)

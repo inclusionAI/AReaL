@@ -18,6 +18,41 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class LLMRequest:
+    rid: str = field(default_factory=lambda: str(uuid.uuid4()))
+    text: str | None = None
+    input_ids: list[int] = field(default_factory=list)
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
+    metadata: dict[str, Any] = field(default_factory=dict)
+    model_id: str | None = None
+
+
+@dataclass
+class LLMResponse:
+    # outputs
+    input_tokens: list[int] = field(default_factory=list)
+    output_tokens: list[int] = field(default_factory=list)
+    output_logprobs: list[float] = field(default_factory=list)
+    output_version: int = field(default_factory=int)
+    stop_reason: Literal["length", "stop", "interrupt", "abort"] = "stop"
+
+    # statistics
+    latency: float = float("inf")
+    ttft: float = float("inf")  # Time to first token
+    itl: list[float] = field(default_factory=list)  # List of inter-token latencies
+
+    @property
+    def input_len(self) -> int:
+        return len(self.input_tokens)
+
+    @property
+    def output_len(self) -> int:
+        return len(self.output_tokens)
+
+
+@dataclass
 class ModelRequest:
     rid: str = field(default_factory=lambda: str(uuid.uuid4()))
     input_ids: list[int] = field(default_factory=list)
@@ -207,6 +242,7 @@ class SaveLoadMeta:
     base_model_path: str | None = None
     naive_distributed: bool = False
     global_step: int | None = None
+
 
 @dataclass
 class RolloutStat:

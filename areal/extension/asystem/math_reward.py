@@ -43,7 +43,7 @@ async def reward_fn(
     answers = [completion]
     query_id_strs = [query_id]
 
-    info_details = {key: value[0] for key, value in kwargs.items()}
+    info_details = {key: value for key, value in kwargs.items()}
     info_details["prompt"] = prompt
     id2info = {query_id: info_details}
 
@@ -71,9 +71,6 @@ async def reward_fn(
         answers,
     )
 
-    # logger.info(
-    #     f"task: {task}, completion: {completion}, query_id: {query_id}, reward: {format_rewards}"
-    # )
     return format_rewards[0]
 
     # labels = math_verify([solutions], [completion], [query_id])

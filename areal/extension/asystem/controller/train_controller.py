@@ -5,20 +5,25 @@ the base TrainController and overrides the initialize method.
 """
 
 import asyncio
-import torch
-
-from torch import Tensor
 from collections.abc import Callable
 from typing import Any
-from areal.extension.asystem.api.cli_args import TrainEngineConfig
+
+import torch
+from torch import Tensor
+
 from areal.api.engine_api import TrainEngine
-from areal.api.io_struct import FinetuneSpec
+from areal.api.io_struct import (
+    AllocationMode,
+    FinetuneSpec,
+    SaveLoadMeta,
+    WeightUpdateMeta,
+)
 from areal.api.scheduler_api import Job, Scheduler
+from areal.controller.batch import DistributedBatch
 from areal.controller.train_controller import TrainController as BaseTrainController
+from areal.extension.asystem.api.cli_args import TrainEngineConfig
 from areal.extension.asystem.remote_hybrid_train_worker import RemoteMegatronInitConfig
 from areal.utils import logging, stats_tracker
-from areal.controller.batch import DistributedBatch
-from areal.api.io_struct import AllocationMode, SaveLoadMeta, WeightUpdateMeta
 
 logger = logging.getLogger("TrainController")
 
@@ -127,7 +132,7 @@ class TrainController(BaseTrainController):
         # Initialize engines
         self.logger.info("Calling engine initialization...")
         init_configs = self._build_engine_initialize_config(
-            enable_colocate_mode=job.scheduling_strategy.type == "colocation"
+            enable_colocate_mode=kwargs.get("enable_colocate_mode", False)
         )
 
         assert len(init_configs) == len(self.workers)
@@ -174,9 +179,9 @@ class TrainController(BaseTrainController):
         loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
-        self.logger.info(f"start to train_batch")
-        results = self._custom_function_call("train_batch", input_,  _should_bcast=False)
-        for worker_result in results: # TODO: Get the last pp_rank data from each dp
+        self.logger.info("start to train_batch")
+        results = self._custom_function_call("train_batch", input_, _should_bcast=False)
+        for worker_result in results:  # TODO: Get the last pp_rank data from each dp
             if len(worker_result) > 1:
                 for minibatch in worker_result:
                     stats_tracker.scalar(**minibatch)
@@ -187,14 +192,17 @@ class TrainController(BaseTrainController):
 
     def compute_logp(self, input_: DistributedBatch) -> Tensor:
         """Update the model with a batch of data and a loss function."""
-        logger.info(f"start to compute_logp")
+        logger.info("start to compute_logp")
         with (
             stats_tracker.record_timing("compute_logp_data_split"),
         ):
             batches = input_.chunk(self.dp_size)
             tasks = [
                 self.scheduler.async_call_engine(
-                    worker.id, "compute_logprobs", batches[self.rank_info[index]["dp_rank"]], _should_bcast=False
+                    worker.id,
+                    "compute_logprobs",
+                    batches[self.rank_info[index]["dp_rank"]],
+                    _should_bcast=False,
                 )
                 for index, worker in enumerate(self.workers)
             ]
@@ -319,40 +327,53 @@ class TrainController(BaseTrainController):
             )
         return await asyncio.gather(*tasks)
 
-    def _execute_async_task_on_workers(self, method_name: str,  *args, **kwargs):
+    def _execute_async_task_on_workers(self, method_name: str, *args, **kwargs):
         def _run_async_in_thread():
             """Run async code in a thread-safe manner."""
             # Always create a new event loop for this thread to avoid conflicts
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
+
             try:
+
                 async def _async_exec_func():
                     try:
-                        self.logger.info(f"Executing {method_name} on {len(self.workers)} workers")
+                        self.logger.info(
+                            f"Executing {method_name} on {len(self.workers)} workers"
+                        )
                         tasks = [
                             self.scheduler.async_call_engine(
-                                worker.id, method_name, *args, **kwargs, _should_bcast=False
+                                worker.id,
+                                method_name,
+                                *args,
+                                **kwargs,
+                                _should_bcast=False,
                             )
                             for worker in self.workers
                         ]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
-                        
+
                         # Check for exceptions in results
                         for i, result in enumerate(results):
                             if isinstance(result, Exception):
-                                self.logger.error(f"Worker {self.workers[i].id} failed to execute {method_name}: {result}")
+                                self.logger.error(
+                                    f"Worker {self.workers[i].id} failed to execute {method_name}: {result}"
+                                )
                             else:
-                                self.logger.info(f"Worker {self.workers[i].id} successfully executed {method_name}")
-                        
+                                self.logger.info(
+                                    f"Worker {self.workers[i].id} successfully executed {method_name}"
+                                )
+
                         # Re-raise if any exceptions occurred
                         for result in results:
                             if isinstance(result, Exception):
                                 raise result
-                        
+
                         return results
                     except Exception as e:
-                        self.logger.error(f"Failed to execute {method_name} on workers: {e}")
+                        self.logger.error(
+                            f"Failed to execute {method_name} on workers: {e}"
+                        )
                         raise e
 
                 return loop.run_until_complete(_async_exec_func())

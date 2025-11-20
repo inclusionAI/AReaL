@@ -1,3 +1,4 @@
+import json
 import os
 import signal
 import traceback
@@ -12,6 +13,7 @@ from areal.utils import logging
 logger = logging.getLogger("Utils")
 
 RL_TASKS = ["math", "code", "rlhf", "stem", "general", "logic", "ifeval", "swe"]
+
 
 def wait_future_ordered(futures: list[Future], exit_on_exception: bool = False) -> list:
     results = [None] * len(futures)
@@ -58,3 +60,36 @@ class ShuffleSampler(Sampler):
 
     def __len__(self):
         return len(self.data_source)
+
+
+def worker_dump_rollout_output(sample_info: dict):
+    worker_log_root_dir = os.environ.get("LOG_DIR", None)
+    assert worker_log_root_dir is not None, "LOG_DIR environment variable must be set"
+
+    version = sample_info["versions"][-1]
+    query_id = sample_info["query_id"]
+
+    json_log_dir = f"{worker_log_root_dir}/rollouts/{version}/json"
+    human_log_dir = f"{worker_log_root_dir}/rollouts/{version}/human"
+    os.makedirs(json_log_dir, exist_ok=True)
+    os.makedirs(human_log_dir, exist_ok=True)
+    json_log_file = os.path.join(json_log_dir, f"{query_id}.jsonl")
+
+    with open(json_log_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(sample_info, ensure_ascii=False) + "\n")
+
+    human_format_log = "################# prompt #################\n"
+    human_format_log += f"{sample_info['prompt']}\n\n"
+    human_format_log += "----------------- stop reason ------------------\n"
+    human_format_log += f"{sample_info['stop_reason']}\n"
+    human_format_log += "---------------- reward ------------------\n"
+    human_format_log += f"{sample_info['reward']}\n"
+    human_format_log += "----------------- seq_len -------------------\n"
+    human_format_log += f"{sample_info['seq_len']}\n"
+    human_format_log += "----------------- completion -------------------\n"
+    human_format_log += f"{sample_info['completion']}\n\n"
+    human_format_log += "################# end #################\n\n"
+
+    human_format_log_file = os.path.join(human_log_dir, f"{query_id}.txt")
+    with open(human_format_log_file, "a", encoding="utf-8") as f:
+        f.write(human_format_log)

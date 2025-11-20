@@ -82,7 +82,9 @@ class RLVRWorkflow(RolloutWorkflow):
             self.data_extract_prompt_fn(data), self.tokenizer, self.enable_thinking
         )
         debug_prompt = self.tokenizer.decode(input_ids)
-        print(f"RLVRWorkflow arun_episode data: {data}, decode input_ids: {debug_prompt}")
+        print(
+            f"RLVRWorkflow arun_episode data: {data}, decode input_ids: {debug_prompt}"
+        )
         n_samples = self.gconfig.n_samples
         req = ModelRequest(
             rid=uuid.uuid4().hex,
@@ -106,7 +108,12 @@ class RLVRWorkflow(RolloutWorkflow):
             versions = [-1] * resp.input_len + resp.output_versions
 
             prompt_str = self.tokenizer.decode(input_ids)
-            completions_str = self.tokenizer.decode(resp.output_tokens)
+            completions_str = self.tokenizer.decode(
+                resp.output_tokens,
+                clean_up_tokenization_spaces=False,
+                skip_special_tokens=True,
+            )
+            # completions_str = self.tokenizer.decode(resp.output_tokens)
             print(
                 f"RLVRWorkflow arun_episode prompt_str: {prompt_str}, completions_str: {completions_str}"
             )
