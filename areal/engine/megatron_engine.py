@@ -68,6 +68,7 @@ from areal.utils.megatron import (
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.perf_tracer import trace_perf, trace_scope
+from areal.utils.tms_utils import is_tms_enabled
 
 
 class _MegatronModelList(list):
@@ -131,7 +132,7 @@ class MegatronEngine(TrainEngine):
 
         assert addr is None, "FSDPEngine does not support remote initialization."
 
-        if self.config.offload_train:
+        if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
 
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
@@ -234,10 +235,6 @@ class MegatronEngine(TrainEngine):
                 model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
         self.create_optimizer(ft_spec)
-
-        # Offload model after initialization if enabled
-        if self.config.offload_train:
-            self.offload()
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
@@ -745,7 +742,7 @@ class MegatronEngine(TrainEngine):
             # In offload mode, wakes up parameters as needed to perform the update.
             tms_context = (
                 torch_memory_saver.disable()
-                if self.config.offload_train and not torch.version.hip
+                if self.is_offload and not torch.version.hip
                 else nullcontext()
             )
             with tms_context:
@@ -1235,7 +1232,6 @@ class MegatronEngine(TrainEngine):
 
         Ref: https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
         """
-        assert self.config.offload_train
 
         log_gpu_stats("before offload model")
         clear_memory()
@@ -1253,7 +1249,6 @@ class MegatronEngine(TrainEngine):
 
         Ref: https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
         """
-        assert self.config.offload_train
 
         torch_memory_saver.resume()
         clear_memory()

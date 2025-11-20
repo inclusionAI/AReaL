@@ -60,6 +60,7 @@ from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
+from areal.utils.tms_utils import is_tms_enabled
 from areal.utils.ulysses import (
     set_ulysses_sequence_parallel_group,
     ulysses_pad,
@@ -160,7 +161,7 @@ class FSDPEngine(BaseHFEngine):
         if pkg_version.is_version_less("torch", "2.4.0"):
             raise RuntimeError("areal only supports FSDP2, which requires torch>=2.4.0")
 
-        if self.config.offload_train:
+        if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
 
         # Create device model
@@ -211,10 +212,6 @@ class FSDPEngine(BaseHFEngine):
 
         self.create_optimizer(ft_spec)
         self.initialized = True
-
-        # Offload model after initialization if enabled
-        if self.config.offload_train:
-            self.offload()
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
@@ -474,7 +471,7 @@ class FSDPEngine(BaseHFEngine):
             # In offload mode, wakes up parameters as needed to perform the update.
             tms_context = (
                 torch_memory_saver.disable()
-                if self.config.offload_train and not torch.version.hip
+                if self.is_offload and not torch.version.hip
                 else nullcontext()
             )
             with tms_context:
@@ -943,7 +940,6 @@ class FSDPEngine(BaseHFEngine):
 
         Ref: https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
         """
-        assert self.config.offload_train
 
         log_gpu_stats("before offload model")
 
@@ -962,7 +958,6 @@ class FSDPEngine(BaseHFEngine):
 
         Ref: https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
         """
-        assert self.config.offload_train
 
         torch_memory_saver.resume()
 
