@@ -41,31 +41,31 @@ class StatsLogger:
         if self.config.wandb.mode != "disabled":
             wandb.login()
 
-        if self.config.wandb.wandb_base_url:
-            os.environ["WANDB_API_KEY"] = self.config.wandb.wandb_api_key
-        if self.config.wandb.wandb_api_key:
-            os.environ["WANDB_BASE_URL"] = self.config.wandb.wandb_base_url
+            if self.config.wandb.wandb_base_url:
+                os.environ["WANDB_API_KEY"] = self.config.wandb.wandb_api_key
+            if self.config.wandb.wandb_api_key:
+                os.environ["WANDB_BASE_URL"] = self.config.wandb.wandb_base_url
 
-        suffix = self.config.wandb.id_suffix
-        if suffix == "timestamp":
-            suffix = time.strftime("%Y_%m_%d_%H_%M_%S")
+            suffix = self.config.wandb.id_suffix
+            if suffix == "timestamp":
+                suffix = time.strftime("%Y_%m_%d_%H_%M_%S")
 
-        wandb.init(
-            mode=self.config.wandb.mode,
-            entity=self.config.wandb.entity,
-            project=self.config.wandb.project or self.config.experiment_name,
-            name=self.config.wandb.name or self.config.trial_name,
-            job_type=self.config.wandb.job_type,
-            group=self.config.wandb.group
-            or f"{self.config.experiment_name}_{self.config.trial_name}",
-            notes=self.config.wandb.notes,
-            tags=self.config.wandb.tags,
-            config=self.exp_config,  # save all experiment config to wandb
-            dir=self.get_log_path(self.config),
-            force=True,
-            id=f"{self.config.experiment_name}_{self.config.trial_name}_{suffix}",
-            resume="allow",
-        )
+            wandb.init(
+                mode=self.config.wandb.mode,
+                entity=self.config.wandb.entity,
+                project=self.config.wandb.project or self.config.experiment_name,
+                name=self.config.wandb.name or self.config.trial_name,
+                job_type=self.config.wandb.job_type,
+                group=self.config.wandb.group
+                or f"{self.config.experiment_name}_{self.config.trial_name}",
+                notes=self.config.wandb.notes,
+                tags=self.config.wandb.tags,
+                config=self.exp_config,  # save all experiment config to wandb
+                dir=self.get_log_path(self.config),
+                force=True,
+                id=f"{self.config.experiment_name}_{self.config.trial_name}_{suffix}",
+                resume="allow",
+            )
 
         swanlab_config = self.config.swanlab
         if swanlab_config.mode != "disabled":
@@ -131,8 +131,10 @@ class StatsLogger:
         for i, item in enumerate(data):
             logger.info(f"Stats ({i+1}/{len(data)}):")
             self.print_stats(item)
-            wandb.log(item, step=log_step + i)
-            swanlab.log(item, step=log_step + i)
+            if self.config.wandb.mode != "disabled":
+                wandb.log(item, step=log_step + i)
+            if self.config.swanlab.mode != "disabled":
+                swanlab.log(item, step=log_step + i)
             if self.summary_writer is not None:
                 for key, val in item.items():
                     self.summary_writer.add_scalar(f"{key}", val, log_step + i)

@@ -155,8 +155,8 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: online
-    wandb_api_key: ${oc.env:WANDB_API_KEY}
+    mode: disabled  # Set to 'online' and provide WANDB_API_KEY to enable WandB logging
+    wandb_api_key: ${oc.env:WANDB_API_KEY,""}
     project: gsm8k-grpo-reasoning-local
 
 launcher:
