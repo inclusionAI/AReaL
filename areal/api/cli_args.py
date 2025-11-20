@@ -635,6 +635,35 @@ class PPOActorConfig(TrainEngineConfig):
             "choices": ["token", "sequence"],
         },
     )
+    # Proximal Log-Probability Approximation
+    use_prox_approx: bool = field(
+        default=False,
+        metadata={
+            "help": "Use approximation for proximal policy log-probabilities instead of recomputation. "
+            "Only effective when use_decoupled_loss=True. Reduces computational cost but may introduce approximation error."
+        },
+    )
+    prox_approx_method: str = field(
+        default="linear",
+        metadata={
+            "help": "Method for approximating proximal policy log-probabilities. "
+            "Options: 'linear' (recommended, interpolates in log-space), "
+            "'harmonic' (interpolates in probability space, more conservative), "
+            "'quadratic' (adds second-order correction), "
+            "'identity' (uses behavior policy as-is, baseline).",
+            "choices": ["linear", "harmonic", "quadratic", "identity"],
+        },
+    )
+    log_prox_approx_metrics: bool = field(
+        default=False,
+        metadata={
+            "help": "Log detailed approximation quality metrics (comparison with ground truth). "
+            "When True, proximal policy will be recomputed for comparison even when using approximation. "
+            "When False, skips recomputation entirely for maximum performance. "
+            "Only effective when use_prox_approx=True. "
+            "Recommended: False for production, True for evaluation/research."
+        },
+    )
     # Advanced Options
     dynamic_sampling: bool = field(
         default=False,

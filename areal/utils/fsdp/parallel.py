@@ -20,7 +20,6 @@ from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import FSDPParallelStrategy
 from areal.api.cli_args import FSDPWrapPolicy, TrainEngineConfig
-from areal.models.transformers.qwen3_vl import patch_qwen3_vl_deepstack_process_for_tp
 from areal.platforms import current_platform
 from areal.utils.fsdp import apply_fsdp2
 from areal.utils.model import (
@@ -379,6 +378,13 @@ def apply_non_moe_tp(
 
             # For Qwen3 VL, patch _deepstack_process for TP
             if is_qwen3_vl_model(model_config.model_type):
+                # NOTE: Lazy import to avoid ImportError when qwen3_vl model is not used.
+                # transformers.models.qwen3_vl doesn't exist in all transformers versions,
+                # so we only import it when actually needed for Qwen3 VL models.
+                from areal.models.transformers.qwen3_vl import (
+                    patch_qwen3_vl_deepstack_process_for_tp,
+                )
+
                 patch_qwen3_vl_deepstack_process_for_tp(model.model.language_model)
 
             parallelize_module(
