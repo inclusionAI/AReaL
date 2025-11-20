@@ -154,7 +154,6 @@ def get_countdown_dataset(dataset_path, rank, world_size):
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)

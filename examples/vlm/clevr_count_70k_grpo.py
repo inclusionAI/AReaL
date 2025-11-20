@@ -47,7 +47,6 @@ def clevr_count_70k_reward_fn(
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
 

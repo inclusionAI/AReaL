@@ -4,7 +4,7 @@ import os
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import uvloop
 import yaml
@@ -20,6 +20,8 @@ from areal.utils.pkg_version import is_version_less
 uvloop.install()
 
 logger = logging.getLogger("CLI args")
+
+ConfigT = TypeVar("ConfigT")
 
 
 @dataclass
@@ -1406,7 +1408,7 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def load_expr_config(argv: list[str], config_cls):
+def load_expr_config(argv: list[str], config_cls: type[ConfigT]) -> tuple[ConfigT, str]:
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)

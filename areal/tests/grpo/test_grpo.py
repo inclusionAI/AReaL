@@ -17,7 +17,6 @@ def test_grpo(tmp_path: str):
     config, _ = load_expr_config(
         ["--config", os.path.join(base_dir, f"config.yaml")], GRPOConfig
     )
-    config: GRPOConfig
 
     local_model_path = config.actor.path.replace("/", "__")
     local_model_path = os.path.join("/storage/openpsi/models", local_model_path)

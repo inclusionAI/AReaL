@@ -35,7 +35,6 @@ def rw_modeling_colate_fn(items):
 
 def main(args):
     config, _ = load_expr_config(args, RWConfig)
-    config: RWConfig
 
     rank = int(os.getenv("RANK"))
 

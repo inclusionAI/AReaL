@@ -155,7 +155,6 @@ class MultiturnRLVRWorkflow(RolloutWorkflow):
 
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
-    config: AgentRLConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)

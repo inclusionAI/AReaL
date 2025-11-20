@@ -37,7 +37,6 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
 def main(args):
     config, _ = load_expr_config(args, AEntGRPOConfig)
-    config: AEntGRPOConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)

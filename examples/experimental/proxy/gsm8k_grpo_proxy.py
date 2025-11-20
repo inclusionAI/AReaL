@@ -171,7 +171,6 @@ class ProxyAgentConfig(GRPOConfig):
 
 def main(args):
     config, _ = load_expr_config(args, ProxyAgentConfig)
-    config: ProxyAgentConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)

@@ -25,7 +25,6 @@ from areal.utils.stats_logger import StatsLogger
 
 def main(args):
     config, _ = load_expr_config(args, SFTConfig)
-    config: SFTConfig
 
     rank = int(os.getenv("RANK"))
 

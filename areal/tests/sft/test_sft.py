@@ -18,7 +18,6 @@ def test_sft(tmp_path: str):
     config, _ = load_expr_config(
         ["--config", os.path.join(base_dir, f"config.yaml")], SFTConfig
     )
-    config: SFTConfig
 
     local_model_path = config.model.path.replace("/", "__")
     local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
