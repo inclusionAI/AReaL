@@ -41,7 +41,7 @@ from .workflow_executor import WorkflowExecutor
 
 RID_CACHE_SIZE = 128
 
-_session_storage = ContextVar("aiohttp.ClientSesion")
+_session_storage = ContextVar("aiohttp.ClientSession")
 
 
 class RemoteInfBackendProtocol(Protocol):
