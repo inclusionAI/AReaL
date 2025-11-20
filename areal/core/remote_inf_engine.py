@@ -880,7 +880,7 @@ class RemoteInfEngine:
         onload_req = self.backend.get_onload_request(tags=tags)
         self._run_request_on_all_servers(onload_req)
 
-    def _run_request_on_all_servers(self, req):
+    def _run_request_on_all_servers(self, req: HttpRequest):
         async def _fn():
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.config.request_timeout),
