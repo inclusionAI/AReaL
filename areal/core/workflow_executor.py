@@ -703,6 +703,11 @@ class WorkflowExecutor:
 
         async def _execute_workflow() -> _RolloutResult | None:
             """Execute workflow.arun_episode and apply AReaL-specific logic."""
+            from areal.core.remote_inf_engine import _session_storage
+
+            session = self.inference_engine._create_session()
+            _tok = _session_storage.set(session)
+
             task_id = pending_task.task_id
 
             # Set task_id in ContextVar before entering arun_episode
@@ -797,6 +802,9 @@ class WorkflowExecutor:
                         "Workflow execution failed: %s", exc, exc_info=True
                     )
                 return None
+            finally:
+                await session.close()
+                _session_storage.reset(_tok)
 
         return _execute_workflow
 
