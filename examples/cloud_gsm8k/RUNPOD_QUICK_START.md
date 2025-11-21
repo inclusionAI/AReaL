@@ -114,13 +114,13 @@ if [ -d AReaL/.git ]; then
     git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL)
 else
     rm -rf AReaL
-    git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
-    cd AReaL
+git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
+cd AReaL
 fi
 
 # Smart installation: only install if not already installed
 if ! python3 -c "import areal" 2>/dev/null; then
-    pip install -e .
+pip install -e .
 fi
 
 # Verify GPU
@@ -298,13 +298,13 @@ When you restart a pod (after stopping or interruption):
        git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git && cd AReaL)
    else
        rm -rf AReaL
-       git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
-       cd AReaL
+   git clone -b DL4Math https://github.com/nexthybrid/AReaL.git
+   cd AReaL
    fi
    
    # Smart installation: only install if not already installed
    if ! python3 -c "import areal" 2>/dev/null; then
-       pip install -e .
+   pip install -e .
    fi
    ```
 3. **Verify checkpoint exists**:

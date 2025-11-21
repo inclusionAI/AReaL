@@ -1,328 +1,136 @@
-2025-11-21T20:36:37.020773787Z ==========
-2025-11-21T20:36:37.020778092Z == CUDA ==
-2025-11-21T20:36:37.020780323Z ==========
-2025-11-21T20:36:37.025956922Z CUDA Version 12.9.1
-2025-11-21T20:36:37.028230618Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-2025-11-21T20:36:37.029220839Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
-2025-11-21T20:36:37.029228403Z By pulling and using the container, you accept the terms and conditions of this license:
-2025-11-21T20:36:37.029234439Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
-2025-11-21T20:36:37.029244826Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
-2025-11-21T20:36:37.256712595Z Writing to /root/.config/pip/pip.conf
-2025-11-21T20:36:37.495759464Z Writing to /root/.config/pip/pip.conf
-2025-11-21T20:36:37.536825557Z Cloning into 'AReaL'...
-2025-11-21T20:36:39.170307657Z Checking AReaL installation...
-2025-11-21T20:36:39.272869400Z AReaL already installed. Skipping installation.
-2025-11-21T20:36:39.272941763Z Cleaning up any leftover GPU processes...
-2025-11-21T20:36:39.273290881Z Installing cleanup tools (psmisc, lsof)...
-2025-11-21T20:36:39.396766862Z Get:2 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  InRelease [1,581 B]
-2025-11-21T20:36:39.572480744Z Get:3 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy InRelease [18.1 kB]
-2025-11-21T20:36:39.773053640Z Get:4 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy/main amd64 Packages [38.5 kB]
-2025-11-21T20:36:41.330239619Z Hit:5 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy InRelease
-2025-11-21T20:36:41.447838543Z Get:6 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  Packages [2,151 kB]
-2025-11-21T20:36:41.658630660Z Get:7 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates InRelease [128 kB]
-2025-11-21T20:36:42.602753263Z Get:8 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports InRelease [127 kB]
-2025-11-21T20:36:43.031157129Z Get:9 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security InRelease [129 kB]
-2025-11-21T20:36:43.051201442Z Ign:1 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  InRelease
-2025-11-21T20:36:43.058754121Z Get:10 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release [496 B]
-2025-11-21T20:36:43.063110201Z Get:11 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release.gpg [833 B]
-2025-11-21T20:36:43.261780010Z Get:12 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Packages [18.8 kB]
-2025-11-21T20:36:43.440941302Z Get:13 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/multiverse amd64 Packages [69.2 kB]
-2025-11-21T20:36:43.517163832Z Get:14 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/universe amd64 Packages [1,595 kB]
-2025-11-21T20:36:44.332375708Z Get:15 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/restricted amd64 Packages [6,214 kB]
-2025-11-21T20:36:44.994564639Z Get:16 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/main amd64 Packages [3,873 kB]
-2025-11-21T20:36:45.284318450Z Get:17 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/main amd64 Packages [83.9 kB]
-2025-11-21T20:36:45.286228615Z Get:18 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/universe amd64 Packages [35.2 kB]
-2025-11-21T20:36:45.287270043Z Get:19 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/universe amd64 Packages [1,290 kB]
-2025-11-21T20:36:45.436584782Z Get:20 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/multiverse amd64 Packages [60.9 kB]
-2025-11-21T20:36:45.437799948Z Get:21 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/main amd64 Packages [3,532 kB]
-2025-11-21T20:36:45.717288605Z Get:22 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/restricted amd64 Packages [5,988 kB]
-2025-11-21T20:36:46.538224745Z Fetched 25.4 MB in 7s (3,541 kB/s)
-2025-11-21T20:36:47.648167686Z Reading package lists...
-2025-11-21T20:36:47.663853111Z W: http://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64/Release.gpg: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
-2025-11-21T20:36:48.766479079Z Reading package lists...
-2025-11-21T20:36:48.978342616Z Building dependency tree...
-2025-11-21T20:36:48.978815414Z Reading state information...
-2025-11-21T20:36:49.166611385Z lsof is already the newest version (4.93.2+dfsg-1.1build2).
-2025-11-21T20:36:49.166652098Z The following NEW packages will be installed:
-2025-11-21T20:36:49.166657861Z   psmisc
-2025-11-21T20:36:51.472233460Z 0 upgraded, 1 newly installed, 0 to remove and 62 not upgraded.
-2025-11-21T20:36:51.472281307Z Need to get 119 kB of archives.
-2025-11-21T20:36:51.472288420Z After this operation, 463 kB of additional disk space will be used.
-2025-11-21T20:36:51.472294620Z Get:1 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy/main amd64 psmisc amd64 23.4-2build3 [119 kB]
-2025-11-21T20:36:52.212419673Z debconf: delaying package configuration, since apt-utils is not installed
-2025-11-21T20:36:52.249556049Z Fetched 119 kB in 3s (42.4 kB/s)
-2025-11-21T20:36:52.281297450Z Selecting previously unselected package psmisc.
-2025-11-21T20:36:52.324601592Z (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 70438 files and directories currently installed.)
-2025-11-21T20:36:52.326293079Z Preparing to unpack .../psmisc_23.4-2build3_amd64.deb ...
-2025-11-21T20:36:52.327149133Z Unpacking psmisc (23.4-2build3) ...
-2025-11-21T20:36:52.370507482Z Setting up psmisc (23.4-2build3) ...
-2025-11-21T20:36:52.375470036Z Processing triggers for man-db (2.10.2-1) ...
-2025-11-21T20:36:55.482414204Z Checking for processes holding GPU device files...
-2025-11-21T20:36:56.591764500Z Found processes holding GPU devices: 1
-2025-11-21T20:36:56.591809311Z 19
-2025-11-21T20:36:56.591815466Z 542
-2025-11-21T20:36:56.591821398Z 543
-2025-11-21T20:36:56.591826261Z Killing process 1...
-2025-11-21T20:36:56.591833118Z Killing process 542...
-2025-11-21T20:36:56.592179569Z Killing process 543...
-2025-11-21T20:36:58.596177953Z Using fuser to kill processes on GPU devices...
-2025-11-21T20:37:00.632727345Z Checking GPU...
-2025-11-21T20:37:00.689880816Z NVIDIA A40, 46068 MiB
-2025-11-21T20:37:00.689948636Z NVIDIA A40, 46068 MiB
-2025-11-21T20:37:00.689956729Z NVIDIA A40, 46068 MiB
-2025-11-21T20:37:00.689961926Z NVIDIA A40, 46068 MiB
-2025-11-21T20:37:00.710337304Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
-2025-11-21T20:37:00.710357554Z Detected 4 GPU(s)
-2025-11-21T20:37:00.710360336Z Checking GPU status...
-2025-11-21T20:37:00.752467311Z index, name, utilization.gpu [%], memory.used [MiB], compute_mode
-2025-11-21T20:37:00.753289261Z 0, NVIDIA A40, 0, 0, Default
-2025-11-21T20:37:00.753733732Z 1, NVIDIA A40, 0, 0, Default
-2025-11-21T20:37:00.754043279Z 2, NVIDIA A40, 0, 0, Default
-2025-11-21T20:37:00.754366079Z 3, NVIDIA A40, 0, 0, Default
-2025-11-21T20:37:00.822725553Z Starting training...
-2025-11-21T20:37:02.825709015Z Using REASONING 2000 SAMPLES 4 GPUs training configuration
-2025-11-21T20:37:02.825760715Z Note: Trains reasoning model with XML format (2000 samples, 4x A40 GPUs)
-2025-11-21T20:37:02.825767247Z GPU count: 4 (required: 4)
-2025-11-21T20:37:02.829890443Z ==========================================
-2025-11-21T20:37:02.829895773Z Starting GRPO Training (Cloud)
-2025-11-21T20:37:02.829980130Z ==========================================
-2025-11-21T20:37:02.830019937Z Config: reasoning_2000samples_4GPUs
-2025-11-21T20:37:02.830025706Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml
-2025-11-21T20:37:02.830054907Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
-2025-11-21T20:37:02.830067400Z Experiment: gsm8k-grpo-reasoning-4gpu-2000samples
-2025-11-21T20:37:02.830072517Z Trial: trial_20251121_203702
-2025-11-21T20:37:02.830077686Z GPU: NVIDIA A40 NVIDIA A40 NVIDIA A40 NVIDIA A40 (46068 MB)
-2025-11-21T20:37:02.830106637Z WandB API key: e1adc5be02...
-2025-11-21T20:37:02.830115813Z ==========================================
-2025-11-21T20:37:02.830251838Z Reversing GPU order to avoid potential issues with GPU 0...
-2025-11-21T20:37:03.695247597Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:37:03.695271885Z   import pynvml  # type: ignore[import]
-2025-11-21T20:37:08.112530918Z [37m20251121-20:37:08.112 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T20:37:08.112573281Z [37m20251121-20:37:08.112 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T20:37:08.112836639Z [37m20251121-20:37:08.112 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-4gpu-2000samples/trial_20251121_203702[0m
-2025-11-21T20:37:08.237769041Z [37m20251121-20:37:08.237 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-4gpu-2000samples, trial_name=trial_20251121_203702, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
-2025-11-21T20:37:08.246109971Z [37m20251121-20:37:08.245 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=3 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml experiment_name=gsm8k-grpo-reasoning-4gpu-2000samples trial_name=trial_20251121_203702 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-4gpu-2000samples/trial_20251121_203702/llm_server.log[0m
-2025-11-21T20:37:09.157431077Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:37:09.157481863Z   import pynvml  # type: ignore[import]
-2025-11-21T20:37:10.761462128Z [37m20251121-20:37:10.760 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T20:37:10.762164882Z [37m20251121-20:37:10.761 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T20:37:10.856231159Z [37m20251121-20:37:10.855 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.16.16.2 --port 41710 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:44046 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 4 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashinfer --context-length 4096 --mem-fraction-static 0.6 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
-2025-11-21T20:37:12.139158125Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:37:12.139228639Z   import pynvml  # type: ignore[import]
-2025-11-21T20:37:18.076465937Z INFO 11-21 20:37:18 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T20:37:19.455341195Z `torch_dtype` is deprecated! Use `dtype` instead!
-2025-11-21T20:37:20.569530217Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:37:20.569574593Z   import pynvml  # type: ignore[import]
-2025-11-21T20:37:20.618689926Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:37:20.618733027Z   import pynvml  # type: ignore[import]
-2025-11-21T20:37:25.943898661Z INFO 11-21 20:37:25 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T20:37:26.360784590Z INFO 11-21 20:37:26 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T20:37:27.198650335Z `torch_dtype` is deprecated! Use `dtype` instead!
-2025-11-21T20:37:27.710439398Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
-2025-11-21T20:37:27.725125173Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
-2025-11-21T20:37:27.725823089Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
-2025-11-21T20:37:27.726524666Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
-2025-11-21T20:37:27.797332332Z [2025-11-21 20:37:27] MOE_RUNNER_BACKEND is not initialized, using triton backend
-2025-11-21T20:37:28.373899777Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
-2025-11-21T20:37:28.373978157Z   warnings.warn(
-2025-11-21T20:37:28.373984493Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
-2025-11-21T20:37:28.373989753Z   warnings.warn(
-2025-11-21T20:37:32.133101908Z Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
-2025-11-21T20:37:32.335401151Z Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  4.95it/s]
-2025-11-21T20:37:32.335881392Z Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  4.94it/s]
-2025-11-21T20:38:14.091999786Z   0%|          | 0/23 [00:00<?, ?it/s]Capturing batches (bs=160 avail_mem=16.85 GB):   0%|          | 0/23 [00:00<?, ?it/s]Capturing batches (bs=160 avail_mem=16.85 GB):   4%|▍         | 1/23 [00:39<14:25, 39.32s/it]Capturing batches (bs=152 avail_mem=16.76 GB):   4%|▍         | 1/23 [00:39<14:25, 39.32s/it]Capturing batches (bs=144 avail_mem=16.74 GB):   4%|▍         | 1/23 [00:39<14:25, 39.32s/it]Capturing batches (bs=144 avail_mem=16.74 GB):  13%|█▎        | 3/23 [00:39<03:24, 10.25s/it]Capturing batches (bs=136 avail_mem=16.73 GB):  13%|█▎        | 3/23 [00:39<03:24, 10.25s/it]Capturing batches (bs=128 avail_mem=16.71 GB):  13%|█▎        | 3/23 [00:39<03:24, 10.25s/it]Capturing batches (bs=128 avail_mem=16.71 GB):  22%|██▏       | 5/23 [00:39<01:30,  5.02s/it]Capturing batches (bs=120 avail_mem=16.70 GB):  22%|██▏       | 5/23 [00:39<01:30,  5.02s/it]Capturing batches (bs=112 avail_mem=16.69 GB):  22%|██▏       | 5/23 [00:39<01:30,  5.02s/it]Capturing batches (bs=112 avail_mem=16.69 GB):  30%|███       | 7/23 [00:39<00:46,  2.92s/it]Capturing batches (bs=104 avail_mem=16.66 GB):  30%|███       | 7/23 [00:39<00:46,  2.92s/it]Capturing batches (bs=96 avail_mem=16.66 GB):  30%|███       | 7/23 [00:39<00:46,  2.92s/it] Capturing batches (bs=96 avail_mem=16.66 GB):  39%|███▉      | 9/23 [00:39<00:25,  1.85s/it]Capturing batches (bs=88 avail_mem=16.63 GB):  39%|███▉      | 9/23 [00:39<00:25,  1.85s/it]Capturing batches (bs=80 avail_mem=16.62 GB):  39%|███▉      | 9/23 [00:39<00:25,  1.85s/it]Capturing batches (bs=80 avail_mem=16.62 GB):  48%|████▊     | 11/23 [00:40<00:14,  1.22s/it]Capturing batches (bs=72 avail_mem=16.62 GB):  48%|████▊     | 11/23 [00:40<00:14,  1.22s/it]Capturing batches (bs=64 avail_mem=16.59 GB):  48%|████▊     | 11/23 [00:40<00:14,  1.22s/it]Capturing batches (bs=64 avail_mem=16.59 GB):  57%|█████▋    | 13/23 [00:40<00:08,  1.19it/s]Capturing batches (bs=56 avail_mem=16.59 GB):  57%|█████▋    | 13/23 [00:40<00:08,  1.19it/s]Capturing batches (bs=48 avail_mem=16.56 GB):  57%|█████▋    | 13/23 [00:40<00:08,  1.19it/s]Capturing batches (bs=48 avail_mem=16.56 GB):  65%|██████▌   | 15/23 [00:40<00:04,  1.69it/s]Capturing batches (bs=40 avail_mem=16.55 GB):  65%|██████▌   | 15/23 [00:40<00:04,  1.69it/s]Capturing batches (bs=32 avail_mem=16.55 GB):  65%|██████▌   | 15/23 [00:40<00:04,  1.69it/s]Capturing batches (bs=32 avail_mem=16.55 GB):  74%|███████▍  | 17/23 [00:40<00:02,  2.35it/s]Capturing batches (bs=24 avail_mem=16.52 GB):  74%|███████▍  | 17/23 [00:40<00:02,  2.35it/s]Capturing batches (bs=16 avail_mem=16.52 GB):  74%|███████▍  | 17/23 [00:40<00:02,  2.35it/s]Capturing batches (bs=16 avail_mem=16.52 GB):  83%|████████▎ | 19/23 [00:40<00:01,  3.07it/s]Capturing batches (bs=8 avail_mem=16.49 GB):  83%|████████▎ | 19/23 [00:40<00:01,  3.07it/s] Capturing batches (bs=4 avail_mem=16.48 GB):  83%|████████▎ | 19/23 [00:40<00:01,  3.07it/s]Capturing batches (bs=4 avail_mem=16.48 GB):  91%|█████████▏| 21/23 [00:40<00:00,  4.06it/s]Capturing batches (bs=2 avail_mem=16.48 GB):  91%|█████████▏| 21/23 [00:40<00:00,  4.06it/s]Capturing batches (bs=1 avail_mem=16.45 GB):  91%|█████████▏| 21/23 [00:40<00:00,  4.06it/s]Capturing batches (bs=1 avail_mem=16.45 GB): 100%|██████████| 23/23 [00:40<00:00,  5.13it/s]Capturing batches (bs=1 avail_mem=16.45 GB): 100%|██████████| 23/23 [00:40<00:00,  1.78s/it]
-2025-11-21T20:38:20.019374490Z [37m20251121-20:38:20.018 SGLangServer Wrapper INFO: SGLang server launched at: http://172.16.16.2:41710[0m
-2025-11-21T20:38:20.262681264Z [37m20251121-20:38:20.261 Launcher Utils INFO: Found 1 rollout servers: 172.16.16.2:41710[0m
-2025-11-21T20:38:20.262728621Z [37m20251121-20:38:20.262 Local Scheduler INFO: LLM inference server launched at: AREAL_LLM_SERVER_ADDRS=172.16.16.2:41710[0m
-2025-11-21T20:38:20.268871436Z [37m20251121-20:38:20.268 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL AREAL_LLM_SERVER_ADDRS=172.16.16.2:41710 AREAL_RECOVER_RUN=0 NCCL_CUMEM_ENABLE=0 NCCL_NVLS_ENABLE=0 CUDA_VISIBLE_DEVICES=2,1,0 stdbuf -oL torchrun --nnodes 1 --nproc-per-node 3 --master-addr localhost --master-port 21713 examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml experiment_name=gsm8k-grpo-reasoning-4gpu-2000samples trial_name=trial_20251121_203702 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-4gpu-2000samples/trial_20251121_203702/trainer.log[0m
-2025-11-21T20:38:20.270148569Z [37m20251121-20:38:20.269 Local Scheduler INFO: Waiting for 2 local running processes, pids: 722 1801[0m
-2025-11-21T20:38:20.989662925Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:38:20.989690541Z   import pynvml  # type: ignore[import]
-2025-11-21T20:38:21.770473806Z W1121 20:38:21.769000 1802 torch/distributed/run.py:774]
-2025-11-21T20:38:21.770512856Z W1121 20:38:21.769000 1802 torch/distributed/run.py:774] *****************************************
-2025-11-21T20:38:21.770520210Z W1121 20:38:21.769000 1802 torch/distributed/run.py:774] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed.
-2025-11-21T20:38:21.770530176Z W1121 20:38:21.769000 1802 torch/distributed/run.py:774] *****************************************
-2025-11-21T20:38:22.283686365Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:38:22.283750091Z   import pynvml  # type: ignore[import]
-2025-11-21T20:38:22.342744476Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:38:22.342783856Z   import pynvml  # type: ignore[import]
-2025-11-21T20:38:22.342790776Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:38:22.342796176Z   import pynvml  # type: ignore[import]
-2025-11-21T20:38:29.679206508Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
-2025-11-21T20:38:29.679264848Z   warnings.warn(
-2025-11-21T20:38:29.679686202Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
-2025-11-21T20:38:29.679710386Z   warnings.warn(
-2025-11-21T20:38:29.898078858Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
-2025-11-21T20:38:29.898143989Z   warnings.warn(
-2025-11-21T20:38:29.898179888Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
-2025-11-21T20:38:29.898192759Z   warnings.warn(
-2025-11-21T20:38:30.085452580Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
-2025-11-21T20:38:30.085480465Z   warnings.warn(
-2025-11-21T20:38:30.086296218Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
-2025-11-21T20:38:30.086332967Z   warnings.warn(
-2025-11-21T20:38:32.293275426Z [37m20251121-20:38:32.292 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T20:38:32.293928663Z [37m20251121-20:38:32.293 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T20:38:32.572851570Z [37m20251121-20:38:32.572 [FSDP Engine Rank 2] INFO: Initializing device mesh with parallel dims (dp=3, sp=1, tp=1, ep=1, etp=1, world_size=3).[0m
-2025-11-21T20:38:32.575797520Z [37m20251121-20:38:32.575 [FSDP Engine Rank 2] INFO: Data parallel head 2 and rank 2[0m
-2025-11-21T20:38:32.593425615Z [37m20251121-20:38:32.593 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T20:38:32.593452225Z [37m20251121-20:38:32.593 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T20:38:32.775564245Z [37m20251121-20:38:32.774 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T20:38:32.776259447Z [37m20251121-20:38:32.775 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T20:38:32.875507709Z [37m20251121-20:38:32.875 [FSDP Engine Rank 0] INFO: Initializing device mesh with parallel dims (dp=3, sp=1, tp=1, ep=1, etp=1, world_size=3).[0m
-2025-11-21T20:38:32.878591939Z [37m20251121-20:38:32.878 [FSDP Engine Rank 0] INFO: Data parallel head 0 and rank 0[0m
-2025-11-21T20:38:33.066089317Z [37m20251121-20:38:33.065 [FSDP Engine Rank 1] INFO: Initializing device mesh with parallel dims (dp=3, sp=1, tp=1, ep=1, etp=1, world_size=3).[0m
-2025-11-21T20:38:33.069424001Z [37m20251121-20:38:33.069 [FSDP Engine Rank 1] INFO: Data parallel head 1 and rank 1[0m
-2025-11-21T20:38:36.630986591Z Generating train split:   0%|          | 0/7473 [00:00<?, ? examples/s]Generating train split: 100%|██████████| 7473/7473 [00:00<00:00, 115790.10 examples/s]
-2025-11-21T20:38:36.638757737Z Generating test split:   0%|          | 0/1319 [00:00<?, ? examples/s]Generating test split: 100%|██████████| 1319/1319 [00:00<00:00, 191038.61 examples/s]
-2025-11-21T20:38:40.455078901Z Map:   0%|          | 0/7473 [00:00<?, ? examples/s]Map:   0%|          | 0/7473 [00:00<?, ? examples/s]Map:   0%|          | 0/7473 [00:00<?, ? examples/s]Map:  19%|█▉        | 1453/7473 [00:00<00:00, 14241.60 examples/s]Map:  13%|█▎        | 1000/7473 [00:03<00:21, 304.72 examples/s]Map:  13%|█▎        | 1000/7473 [00:03<00:20, 311.59 examples/s]Map:  51%|█████▏    | 3833/7473 [00:03<00:03, 1038.39 examples/s] Map:  59%|█████▉    | 4391/7473 [00:03<00:01, 1706.55 examples/s]Map:  57%|█████▋    | 4276/7473 [00:03<00:01, 1694.37 examples/s]Map:  86%|████████▌ | 6418/7473 [00:03<00:00, 2422.98 examples/s]Map:  79%|███████▊  | 5869/7473 [00:03<00:00, 1610.94 examples/s]Map: 100%|██████████| 7473/7473 [00:03<00:00, 2004.12 examples/s]
-2025-11-21T20:38:40.477250825Z Map:  92%|█████████▏| 6876/7473 [00:03<00:00, 2544.87 examples/s]Map: 100%|██████████| 7473/7473 [00:03<00:00, 1953.38 examples/s]
-2025-11-21T20:38:40.487690308Z Map: 100%|██████████| 7473/7473 [00:03<00:00, 1959.95 examples/s]
-2025-11-21T20:38:41.863431744Z Filter:   0%|          | 0/7473 [00:00<?, ? examples/s]Filter:   0%|          | 0/7473 [00:00<?, ? examples/s]Filter:   0%|          | 0/7473 [00:00<?, ? examples/s]Filter:  13%|█▎        | 1000/7473 [00:00<00:01, 5086.34 examples/s]Filter:  13%|█▎        | 1000/7473 [00:00<00:01, 4384.77 examples/s]Filter:  13%|█▎        | 1000/7473 [00:00<00:01, 5216.19 examples/s]Filter:  27%|██▋       | 2000/7473 [00:00<00:01, 5399.13 examples/s]Filter:  27%|██▋       | 2000/7473 [00:00<00:01, 5458.89 examples/s]Filter:  27%|██▋       | 2000/7473 [00:00<00:01, 4561.43 examples/s]Filter:  40%|████      | 3000/7473 [00:00<00:00, 5602.00 examples/s]Filter:  40%|████      | 3000/7473 [00:00<00:00, 5634.12 examples/s]Filter:  40%|████      | 3000/7473 [00:00<00:00, 4865.22 examples/s]Filter:  54%|█████▎    | 4000/7473 [00:00<00:00, 5686.03 examples/s]Filter:  54%|█████▎    | 4000/7473 [00:00<00:00, 5707.96 examples/s]Filter:  54%|█████▎    | 4000/7473 [00:00<00:00, 5219.05 examples/s]Filter:  67%|██████▋   | 5000/7473 [00:00<00:00, 5667.41 examples/s]Filter:  67%|██████▋   | 5000/7473 [00:00<00:00, 5742.51 examples/s]Filter:  67%|██████▋   | 5000/7473 [00:00<00:00, 5442.05 examples/s]Filter:  80%|████████  | 6000/7473 [00:01<00:00, 5729.99 examples/s]Filter:  80%|████████  | 6000/7473 [00:01<00:00, 5781.33 examples/s]Filter:  80%|████████  | 6000/7473 [00:01<00:00, 5602.87 examples/s]Filter:  94%|█████████▎| 7000/7473 [00:01<00:00, 5765.25 examples/s]Filter:  94%|█████████▎| 7000/7473 [00:01<00:00, 5801.13 examples/s]Filter:  94%|█████████▎| 7000/7473 [00:01<00:00, 5707.48 examples/s]Filter: 100%|██████████| 7473/7473 [00:01<00:00, 5668.48 examples/s]
-2025-11-21T20:38:41.882192020Z Filter: 100%|██████████| 7473/7473 [00:01<00:00, 5713.81 examples/s]
-2025-11-21T20:38:41.916499054Z Filter: 100%|██████████| 7473/7473 [00:01<00:00, 5383.15 examples/s]
-2025-11-21T20:38:43.268757370Z Map:   0%|          | 0/1319 [00:00<?, ? examples/s]Map:   0%|          | 0/1319 [00:00<?, ? examples/s]Map: 100%|██████████| 1319/1319 [00:00<00:00, 15052.70 examples/s]
-2025-11-21T20:38:43.352053303Z Filter:   0%|          | 0/1319 [00:00<?, ? examples/s]Map: 100%|██████████| 1319/1319 [00:00<00:00, 14628.44 examples/s]
-2025-11-21T20:38:43.589477798Z Filter:   0%|          | 0/1319 [00:00<?, ? examples/s]Filter:   0%|          | 0/1319 [00:00<?, ? examples/s]Filter:  76%|███████▌  | 1000/1319 [00:00<00:00, 5220.98 examples/s]Filter: 100%|██████████| 1319/1319 [00:00<00:00, 5196.91 examples/s]
-2025-11-21T20:38:43.589814066Z [REASONING-2000-SAMPLES-4GPUS] Limiting dataset from 7473 to 2000 samples
-2025-11-21T20:38:43.592406412Z [37m20251121-20:38:43.592 Launcher Utils INFO: Found 1 rollout servers: 172.16.16.2:41710[0m
-2025-11-21T20:38:43.592764660Z [37m20251121-20:38:43.592 [Remote Inference Engine Rank 2] INFO: Get server addresses from name_resolve.[0m
-2025-11-21T20:38:43.592773066Z [37m20251121-20:38:43.592 [Remote Inference Engine Rank 2] INFO: Waiting for server ready...[0m
-2025-11-21T20:38:43.735343108Z Filter:  76%|███████▌  | 1000/1319 [00:00<00:00, 4345.13 examples/s]Filter:  76%|███████▌  | 1000/1319 [00:00<00:00, 5059.39 examples/s]Filter: 100%|██████████| 1319/1319 [00:00<00:00, 4334.64 examples/s]
-2025-11-21T20:38:43.735999076Z [REASONING-2000-SAMPLES-4GPUS] Limiting dataset from 7473 to 2000 samples
-2025-11-21T20:38:43.738992490Z [37m20251121-20:38:43.738 Launcher Utils INFO: Found 1 rollout servers: 172.16.16.2:41710[0m
-2025-11-21T20:38:43.739385597Z [37m20251121-20:38:43.738 [Remote Inference Engine Rank 1] INFO: Get server addresses from name_resolve.[0m
-2025-11-21T20:38:43.739393144Z [37m20251121-20:38:43.739 [Remote Inference Engine Rank 1] INFO: Waiting for server ready...[0m
-2025-11-21T20:38:43.741703514Z Filter: 100%|██████████| 1319/1319 [00:00<00:00, 5088.94 examples/s]
-2025-11-21T20:38:43.742029087Z [REASONING-2000-SAMPLES-4GPUS] Limiting dataset from 7473 to 2000 samples
-2025-11-21T20:38:43.744676641Z [37m20251121-20:38:43.744 Launcher Utils INFO: Found 1 rollout servers: 172.16.16.2:41710[0m
-2025-11-21T20:38:43.744972537Z [37m20251121-20:38:43.744 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
-2025-11-21T20:38:43.744983602Z [37m20251121-20:38:43.744 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
-2025-11-21T20:38:44.596225374Z [37m20251121-20:38:44.595 [Remote Inference Engine Rank 2] INFO: Servers are all ready![0m
-2025-11-21T20:38:44.612575927Z [37m20251121-20:38:44.612 Launcher Utils INFO: Found 1 rollout servers: 172.16.16.2:41710[0m
-2025-11-21T20:38:44.612608164Z [37m20251121-20:38:44.612 [Remote Inference Engine Rank 2] INFO: Get server addresses from name_resolve.[0m
-2025-11-21T20:38:44.613181580Z [37m20251121-20:38:44.612 [Remote Inference Engine Rank 2] INFO: Waiting for server ready...[0m
-2025-11-21T20:38:44.743146626Z [37m20251121-20:38:44.742 [Remote Inference Engine Rank 1] INFO: Servers are all ready![0m
-2025-11-21T20:38:44.745743143Z [37m20251121-20:38:44.745 Launcher Utils INFO: Found 1 rollout servers: 172.16.16.2:41710[0m
-2025-11-21T20:38:44.746155627Z [37m20251121-20:38:44.745 [Remote Inference Engine Rank 1] INFO: Get server addresses from name_resolve.[0m
-2025-11-21T20:38:44.746169853Z [37m20251121-20:38:44.745 [Remote Inference Engine Rank 1] INFO: Waiting for server ready...[0m
-2025-11-21T20:38:44.753714511Z [37m20251121-20:38:44.753 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
-2025-11-21T20:38:44.757641502Z [37m20251121-20:38:44.757 Launcher Utils INFO: Found 1 rollout servers: 172.16.16.2:41710[0m
-2025-11-21T20:38:44.758101183Z [37m20251121-20:38:44.757 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
-2025-11-21T20:38:44.758116719Z [37m20251121-20:38:44.757 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
-2025-11-21T20:38:45.615667551Z [37m20251121-20:38:45.615 [Remote Inference Engine Rank 2] INFO: Servers are all ready![0m
-2025-11-21T20:38:45.648525119Z [rank2]: Traceback (most recent call last):
-2025-11-21T20:38:45.648556854Z [rank2]:   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 521, in <module>
-2025-11-21T20:38:45.648562802Z [rank2]:     main(sys.argv[1:])
-2025-11-21T20:38:45.648568136Z [rank2]:   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 167, in main
-2025-11-21T20:38:45.648592375Z [rank2]:     actor.initialize(None, ft_spec)
-2025-11-21T20:38:45.648598642Z [rank2]:   File "/workspace/AReaL/areal/engine/fsdp_engine.py", line 156, in initialize
-2025-11-21T20:38:45.648603575Z [rank2]:     self.create_device_model()
-2025-11-21T20:38:45.648608386Z [rank2]:   File "/workspace/AReaL/areal/engine/base_hf_engine.py", line 133, in create_device_model
-2025-11-21T20:38:45.648613186Z [rank2]:     current_platform.set_device(int(os.environ["LOCAL_RANK"]))
-2025-11-21T20:38:45.648618366Z [rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py", line 569, in set_device
-2025-11-21T20:38:45.648623386Z [rank2]:     torch._C._cuda_setDevice(device)
-2025-11-21T20:38:45.648628165Z [rank2]: torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
-2025-11-21T20:38:45.648632975Z [rank2]: Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
-2025-11-21T20:38:45.749310202Z [37m20251121-20:38:45.748 [Remote Inference Engine Rank 1] INFO: Servers are all ready![0m
-2025-11-21T20:38:45.761421059Z [37m20251121-20:38:45.760 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
-2025-11-21T20:38:46.957253909Z [rank2]:[W1121 20:38:46.838082552 ProcessGroupNCCL.cpp:1538] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
-2025-11-21T20:38:46.965220811Z [37m20251121-20:38:46.964 [FSDP Engine Rank 1] INFO: Model creation and loading time: 1.0659209210425615[0m
-2025-11-21T20:38:46.988397790Z [37m20251121-20:38:46.987 [FSDP Engine Rank 0] INFO: Model creation and loading time: 1.0845146588981152[0m
-2025-11-21T20:38:47.090786373Z [37m20251121-20:38:47.090 [FSDP Engine Rank 1] INFO: Applying FSDP2 with N-D parallelism for 0.13 seconds[0m
-2025-11-21T20:38:47.091440246Z [37m20251121-20:38:47.091 [FSDP Engine Rank 1] INFO: Create optimizer time: 0.0008925888687372208[0m
-2025-11-21T20:38:47.108165257Z [37m20251121-20:38:47.107 [FSDP Engine Rank 0] INFO: Applying FSDP2 with N-D parallelism for 0.12 seconds[0m
-2025-11-21T20:38:47.109028455Z [37m20251121-20:38:47.108 [FSDP Engine Rank 0] INFO: Create optimizer time: 0.0008114166557788849[0m
-2025-11-21T20:38:47.136152064Z [37m20251121-20:38:47.135 [FSDP Engine Rank 0] INFO: Initializing weight update group: type=nccl init_method=tcp://172.16.16.2:34213 group=update_weight_group[0m
-2025-11-21T20:38:47.147709329Z [37m20251121-20:38:47.147 [Remote Inference Engine Rank 0] INFO: Initialized NCCL group for distributed weight update for update_weight_group.[0m
-2025-11-21T20:38:47.843623080Z W1121 20:38:47.841000 1802 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 1868 closing signal SIGTERM
-2025-11-21T20:38:47.846855023Z W1121 20:38:47.844000 1802 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 1869 closing signal SIGTERM
-2025-11-21T20:38:48.064178822Z E1121 20:38:48.062000 1802 torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: 1) local_rank: 2 (pid: 1870) of binary: /usr/bin/python3
-2025-11-21T20:38:48.066287405Z Traceback (most recent call last):
-2025-11-21T20:38:48.066666685Z   File "/usr/local/bin/torchrun", line 7, in <module>
-2025-11-21T20:38:48.066679398Z     sys.exit(main())
-2025-11-21T20:38:48.066689206Z              ^^^^^^
-2025-11-21T20:38:48.067069722Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 357, in wrapper
-2025-11-21T20:38:48.067477007Z     return f(*args, **kwargs)
-2025-11-21T20:38:48.067485147Z            ^^^^^^^^^^^^^^^^^^
-2025-11-21T20:38:48.067490736Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 901, in main
-2025-11-21T20:38:48.068265539Z     run(args)
-2025-11-21T20:38:48.068629573Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 892, in run
-2025-11-21T20:38:48.069293712Z     elastic_launch(
-2025-11-21T20:38:48.069565805Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 143, in __call__
-2025-11-21T20:38:48.069599225Z     return launch_agent(self._config, self._entrypoint, list(args))
-2025-11-21T20:38:48.069974453Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-2025-11-21T20:38:48.069994816Z   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 277, in launch_agent
-2025-11-21T20:38:48.070000662Z     raise ChildFailedError(
-2025-11-21T20:38:48.070799596Z torch.distributed.elastic.multiprocessing.errors.ChildFailedError:
-2025-11-21T20:38:48.070807276Z ============================================================
-2025-11-21T20:38:48.070812584Z examples/cloud_gsm8k/gsm8k_grpo_train.py FAILED
-2025-11-21T20:38:48.070817648Z ------------------------------------------------------------
-2025-11-21T20:38:48.070822656Z Failures:
-2025-11-21T20:38:48.070827984Z   <NO_OTHER_FAILURES>
-2025-11-21T20:38:48.070833188Z ------------------------------------------------------------
-2025-11-21T20:38:48.070838081Z Root Cause (first observed failure):
-2025-11-21T20:38:48.070843098Z [0]:
-2025-11-21T20:38:48.070848781Z   time      : 2025-11-21_20:38:47
-2025-11-21T20:38:48.070853656Z   host      : 811fade02b8d
-2025-11-21T20:38:48.070858624Z   rank      : 2 (local_rank: 2)
-2025-11-21T20:38:48.070863441Z   exitcode  : 1 (pid: 1870)
-2025-11-21T20:38:48.070868136Z   error_file: <N/A>
-2025-11-21T20:38:48.070873139Z   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
-2025-11-21T20:38:48.070877941Z ============================================================
-2025-11-21T20:38:50.278987683Z [37m20251121-20:38:50.278 Local Scheduler INFO: Stopping local process with signal SIGTERM, pid: [722][0m
-2025-11-21T20:38:50.423767161Z Killed
-2025-11-21T20:38:50.437868886Z [37m20251121-20:38:50.437 Local Scheduler INFO: Stopping local process with signal SIGTERM, pid: [1801][0m
-2025-11-21T20:38:50.439062168Z Traceback (most recent call last):
-2025-11-21T20:38:50.439067255Z   File "<frozen runpy>", line 198, in _run_module_as_main
-2025-11-21T20:38:50.439069263Z   File "<frozen runpy>", line 88, in _run_code
-2025-11-21T20:38:50.439070769Z   File "/workspace/AReaL/areal/launcher/local.py", line 405, in <module>
-2025-11-21T20:38:50.439450975Z     main()
-2025-11-21T20:38:50.439485287Z   File "/workspace/AReaL/areal/launcher/local.py", line 260, in main
-2025-11-21T20:38:50.439575753Z     local_main(config, run_id=0)
-2025-11-21T20:38:50.439609991Z   File "/workspace/AReaL/areal/launcher/local.py", line 399, in local_main
-2025-11-21T20:38:50.439710939Z     raise e
-2025-11-21T20:38:50.439727755Z   File "/workspace/AReaL/areal/launcher/local.py", line 375, in local_main
-2025-11-21T20:38:50.439840032Z     launcher.wait(
-2025-11-21T20:38:50.439842410Z   File "/workspace/AReaL/areal/launcher/local.py", line 235, in wait
-2025-11-21T20:38:50.439943656Z     raise JobException(
-2025-11-21T20:38:50.439957421Z areal.utils.launcher.JobException: Job gsm8k-grpo-reasoning-4gpu-2000samples_trial_20251121_203702:trainer JobState.COMPLETED at node local
-2025-11-21T20:38:50.662730559Z [37m20251121-20:38:50.662 Local Scheduler INFO: Waiting for 0 local running processes, pids: [0m
-2025-11-21T20:39:00.212050798Z ==========
-2025-11-21T20:39:00.212054811Z == CUDA ==
-2025-11-21T20:39:00.212057563Z ==========
-2025-11-21T20:39:00.215989994Z CUDA Version 12.9.1
-2025-11-21T20:39:00.217309055Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-2025-11-21T20:39:00.218916516Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
-2025-11-21T20:39:00.218919337Z By pulling and using the container, you accept the terms and conditions of this license:
-2025-11-21T20:39:00.218921637Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
-2025-11-21T20:39:00.218925757Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
-2025-11-21T20:39:00.415239593Z Writing to /root/.config/pip/pip.conf
-2025-11-21T20:39:00.618022507Z Writing to /root/.config/pip/pip.conf
-2025-11-21T20:39:00.990585936Z Branch 'feature/reasoning_model' set up to track remote branch 'feature/reasoning_model' from 'origin'.
-2025-11-21T20:39:00.990626989Z Your branch is up to date with 'origin/feature/reasoning_model'.
-2025-11-21T20:39:01.070953442Z Checking AReaL installation...
-2025-11-21T20:39:01.142863481Z AReaL already installed. Skipping installation.
-2025-11-21T20:39:01.142916988Z Cleaning up any leftover GPU processes...
-2025-11-21T20:39:04.164361474Z Checking for processes holding GPU device files...
-2025-11-21T20:39:04.978541512Z Found processes holding GPU devices: 1
-2025-11-21T20:39:04.978583755Z 20
-2025-11-21T20:39:04.978589596Z 70
-2025-11-21T20:39:04.978595559Z 71
-2025-11-21T20:39:04.978600695Z Killing process 1...
-2025-11-21T20:39:04.978620406Z Killing process 70...
-2025-11-21T20:39:04.979048803Z Killing process 71...
-2025-11-21T20:39:06.982997259Z Using fuser to kill processes on GPU devices...
-2025-11-21T20:39:09.030606800Z Checking GPU...
-2025-11-21T20:39:09.094089107Z NVIDIA A40, 46068 MiB
-2025-11-21T20:39:09.094149310Z NVIDIA A40, 46068 MiB
-2025-11-21T20:39:09.094155897Z NVIDIA A40, 46068 MiB
-2025-11-21T20:39:09.094161023Z NVIDIA A40, 46068 MiB
-2025-11-21T20:39:09.121108276Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
-2025-11-21T20:39:09.121162439Z Detected 4 GPU(s)
-2025-11-21T20:39:09.121169071Z Checking GPU status...
-2025-11-21T20:39:09.167242675Z index, name, utilization.gpu [%], memory.used [MiB], compute_mode
-2025-11-21T20:39:09.168521411Z 0, NVIDIA A40, 0, 0, Default
-2025-11-21T20:39:09.169136268Z 1, NVIDIA A40, 0, 0, Default
-2025-11-21T20:39:09.169629327Z 2, NVIDIA A40, 0, 0, Default
-2025-11-21T20:39:09.170111815Z 3, NVIDIA A40, 0, 0, Default
-2025-11-21T20:39:09.244970964Z Starting training...
+2025-11-21T22:51:17.807614645Z ==========
+2025-11-21T22:51:17.807617289Z == CUDA ==
+2025-11-21T22:51:17.807618745Z ==========
+2025-11-21T22:51:17.811409753Z CUDA Version 12.9.1
+2025-11-21T22:51:17.812641463Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-21T22:51:17.814137802Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-21T22:51:17.814143428Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-21T22:51:17.814147281Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-21T22:51:17.814154941Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-21T22:51:18.007950869Z Writing to /root/.config/pip/pip.conf
+2025-11-21T22:51:18.208760821Z Writing to /root/.config/pip/pip.conf
+2025-11-21T22:51:18.234973457Z Cloning into 'AReaL'...
+2025-11-21T22:51:20.001800511Z Checking AReaL installation...
+2025-11-21T22:51:20.140884783Z AReaL already installed. Skipping installation.
+2025-11-21T22:51:20.140950813Z Cleaning up any leftover GPU processes...
+2025-11-21T22:51:20.141325011Z Installing cleanup tools (psmisc, lsof)...
+2025-11-21T22:51:20.255196927Z Get:2 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  InRelease [1,581 B]
+2025-11-21T22:51:20.698601707Z Get:3 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy InRelease [18.1 kB]
+2025-11-21T22:51:20.936993717Z Get:4 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy/main amd64 Packages [38.5 kB]
+2025-11-21T22:51:21.138060911Z Get:5 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  Packages [2,151 kB]
+2025-11-21T22:51:22.025978170Z Ign:1 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  InRelease
+2025-11-21T22:51:22.034093237Z Get:6 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release [496 B]
+2025-11-21T22:51:22.038577632Z Get:7 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release.gpg [833 B]
+2025-11-21T22:51:22.251133834Z Get:8 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Packages [18.8 kB]
+2025-11-21T22:51:22.561848468Z Hit:9 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy InRelease
+2025-11-21T22:51:22.880990835Z Get:10 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates InRelease [128 kB]
+2025-11-21T22:51:23.777700685Z Get:11 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports InRelease [127 kB]
+2025-11-21T22:51:24.192330726Z Get:12 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security InRelease [129 kB]
+2025-11-21T22:51:24.602292012Z Get:13 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/main amd64 Packages [3,873 kB]
+2025-11-21T22:51:25.768388765Z Get:14 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/multiverse amd64 Packages [69.2 kB]
+2025-11-21T22:51:25.772213898Z Get:15 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/universe amd64 Packages [1,595 kB]
+2025-11-21T22:51:25.890664854Z Get:16 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/restricted amd64 Packages [6,214 kB]
+2025-11-21T22:51:26.395692796Z Get:17 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/universe amd64 Packages [35.2 kB]
+2025-11-21T22:51:26.396638055Z Get:18 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/main amd64 Packages [83.9 kB]
+2025-11-21T22:51:26.398738831Z Get:19 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/multiverse amd64 Packages [60.9 kB]
+2025-11-21T22:51:26.400573725Z Get:20 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/universe amd64 Packages [1,290 kB]
+2025-11-21T22:51:26.544674017Z Get:21 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/main amd64 Packages [3,532 kB]
+2025-11-21T22:51:26.815369477Z Get:22 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/restricted amd64 Packages [5,988 kB]
+2025-11-21T22:51:27.625376682Z Fetched 25.4 MB in 7s (3,434 kB/s)
+2025-11-21T22:51:28.872193079Z Reading package lists...
+2025-11-21T22:51:28.896963432Z W: http://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64/Release.gpg: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
+2025-11-21T22:51:30.109654938Z Reading package lists...
+2025-11-21T22:51:30.320508027Z Building dependency tree...
+2025-11-21T22:51:30.321133780Z Reading state information...
+2025-11-21T22:51:30.489273621Z lsof is already the newest version (4.93.2+dfsg-1.1build2).
+2025-11-21T22:51:30.489315776Z The following NEW packages will be installed:
+2025-11-21T22:51:30.489321709Z   psmisc
+2025-11-21T22:51:32.841875060Z 0 upgraded, 1 newly installed, 0 to remove and 62 not upgraded.
+2025-11-21T22:51:32.841937813Z Need to get 119 kB of archives.
+2025-11-21T22:51:32.841947203Z After this operation, 463 kB of additional disk space will be used.
+2025-11-21T22:51:32.841953759Z Get:1 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy/main amd64 psmisc amd64 23.4-2build3 [119 kB]
+2025-11-21T22:51:33.553477093Z debconf: delaying package configuration, since apt-utils is not installed
+2025-11-21T22:51:33.578129289Z Fetched 119 kB in 3s (41.8 kB/s)
+2025-11-21T22:51:33.599994345Z Selecting previously unselected package psmisc.
+2025-11-21T22:51:33.633719591Z (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 70438 files and directories currently installed.)
+2025-11-21T22:51:33.635140249Z Preparing to unpack .../psmisc_23.4-2build3_amd64.deb ...
+2025-11-21T22:51:33.635866187Z Unpacking psmisc (23.4-2build3) ...
+2025-11-21T22:51:33.677437846Z Setting up psmisc (23.4-2build3) ...
+2025-11-21T22:51:33.682896374Z Processing triggers for man-db (2.10.2-1) ...
+2025-11-21T22:51:36.775424204Z Checking for processes holding GPU device files...
+2025-11-21T22:51:37.461069038Z Found processes holding GPU devices: 1
+2025-11-21T22:51:37.461112901Z 20
+2025-11-21T22:51:37.461119374Z 555
+2025-11-21T22:51:37.461124467Z 556
+2025-11-21T22:51:37.461129801Z Killing process 1...
+2025-11-21T22:51:37.461150088Z Killing process 555...
+2025-11-21T22:51:37.461685108Z Killing process 556...
+2025-11-21T22:51:39.464381316Z Using fuser to kill processes on GPU devices...
+2025-11-21T22:51:41.486030966Z Checking GPU...
+2025-11-21T22:51:41.513404666Z NVIDIA A40, 46068 MiB
+2025-11-21T22:51:41.538051487Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-21T22:51:41.538091125Z Detected 1 GPU(s)
+2025-11-21T22:51:41.538097642Z Checking GPU status...
+2025-11-21T22:51:41.558437517Z index, name, utilization.gpu [%], memory.used [MiB], compute_mode
+2025-11-21T22:51:41.559359816Z 0, NVIDIA A40, 0, 0, Default
+2025-11-21T22:51:41.597121896Z Starting training...
+2025-11-21T22:51:43.599546746Z Using REASONING FAST training configuration (20-30 minutes)
+2025-11-21T22:51:43.599595802Z Note: Trains reasoning model with XML format
+2025-11-21T22:51:43.602806834Z ==========================================
+2025-11-21T22:51:43.602810915Z Starting GRPO Training (Cloud)
+2025-11-21T22:51:43.602813737Z ==========================================
+2025-11-21T22:51:43.602816886Z Config: reasoning_fast
+2025-11-21T22:51:43.602820479Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml
+2025-11-21T22:51:43.602823021Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
+2025-11-21T22:51:43.602826120Z Experiment: gsm8k-grpo-reasoning-fast
+2025-11-21T22:51:43.602829181Z Trial: trial_20251121_225143
+2025-11-21T22:51:43.602831834Z GPU: NVIDIA A40 (46068 MB)
+2025-11-21T22:51:43.602834626Z WandB API key: e1adc5be02...
+2025-11-21T22:51:43.602837414Z ==========================================
+2025-11-21T22:51:44.544978215Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T22:51:44.545042722Z   import pynvml  # type: ignore[import]
+2025-11-21T22:51:48.655622822Z [37m20251121-22:51:48.655 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-21T22:51:48.655665275Z [37m20251121-22:51:48.655 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T22:51:48.655960893Z [37m20251121-22:51:48.655 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-fast/trial_20251121_225143[0m
+2025-11-21T22:51:48.782720623Z [37m20251121-22:51:48.782 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-fast, trial_name=trial_20251121_225143, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-21T22:51:48.794634510Z [37m20251121-22:51:48.794 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml experiment_name=gsm8k-grpo-reasoning-fast trial_name=trial_20251121_225143 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-fast/trial_20251121_225143/llm_server.log[0m
+2025-11-21T22:51:49.825546428Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T22:51:49.825609178Z   import pynvml  # type: ignore[import]
+2025-11-21T22:51:51.316932537Z [37m20251121-22:51:51.316 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-21T22:51:51.317210747Z [37m20251121-22:51:51.316 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T22:51:51.409486348Z [37m20251121-22:51:51.408 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.16.16.2 --port 17309 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:25701 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashinfer --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-21T22:51:52.871321025Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T22:51:52.871369124Z   import pynvml  # type: ignore[import]
+2025-11-21T22:51:58.567822772Z INFO 11-21 22:51:58 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T22:51:59.783456047Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-21T22:52:00.962057213Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T22:52:00.962122994Z   import pynvml  # type: ignore[import]
+2025-11-21T22:52:01.028571841Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T22:52:01.028609504Z   import pynvml  # type: ignore[import]
+2025-11-21T22:52:06.320846308Z INFO 11-21 22:52:06 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T22:52:06.595715104Z INFO 11-21 22:52:06 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T22:52:07.099162125Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-21T22:52:07.430638510Z [2025-11-21 22:52:07] Context: self.device='cuda' self.gpu_id=0 os.environ.get('CUDA_VISIBLE_DEVICES')='0' self.tp_rank=0 self.tp_size=1
+2025-11-21T22:52:07.432515459Z [2025-11-21 22:52:07] Scheduler hit an exception: Traceback (most recent call last):
+2025-11-21T22:52:07.432528325Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 2587, in run_scheduler_process
+2025-11-21T22:52:07.432534705Z     scheduler = Scheduler(
+2025-11-21T22:52:07.432545658Z                 ^^^^^^^^^^
+2025-11-21T22:52:07.432550790Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 329, in __init__
+2025-11-21T22:52:07.432555825Z     self.tp_worker = TpWorkerClass(
+2025-11-21T22:52:07.432560690Z                      ^^^^^^^^^^^^^^
+2025-11-21T22:52:07.432565580Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker_overlap_thread.py", line 71, in __init__
+2025-11-21T22:52:07.432570542Z     self.worker = TpModelWorker(
+2025-11-21T22:52:07.432575445Z                   ^^^^^^^^^^^^^^
+2025-11-21T22:52:07.432580415Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker.py", line 93, in __init__
+2025-11-21T22:52:07.432585292Z     self.model_runner = ModelRunner(
+2025-11-21T22:52:07.432590215Z                         ^^^^^^^^^^^^
+2025-11-21T22:52:07.432595180Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 240, in __init__
+2025-11-21T22:52:07.432600175Z     min_per_gpu_memory = self.init_torch_distributed()
+2025-11-21T22:52:07.432605368Z                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-21T22:52:07.432610143Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 597, in init_torch_distributed
+2025-11-21T22:52:07.432615743Z     torch.get_device_module(self.device).set_device(self.gpu_id)
+2025-11-21T22:52:07.432620683Z   File "/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py", line 569, in set_device
+2025-11-21T22:52:07.432625533Z     torch._C._cuda_setDevice(device)
+2025-11-21T22:52:07.432630415Z torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
+2025-11-21T22:52:07.432635393Z Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+2025-11-21T22:52:07.433238684Z [2025-11-21 22:52:07] Received sigquit from a child process. It usually means the child failed.
