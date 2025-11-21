@@ -12,6 +12,7 @@
 #   - reasoning_fast: Reasoning model fast training (20-30 min, 200 samples, 1 epoch)
 #   - reasoning_1hour: Reasoning model 1-hour training (500 samples, 2 epochs)
 #   - reasoning_3hour: Reasoning model 3-hour training (1000 samples, 3 epochs)
+#   - reasoning_2000samples_4GPUs: Reasoning model with 2000 samples using 4x A40 GPUs
 #
 # All configs use memory-optimized settings that work on all GPUs.
 
@@ -53,13 +54,16 @@ if [ -z "$GPU_INFO" ]; then
     echo "WARNING: nvidia-smi not available. GPU may not be accessible."
     GPU_NAME=""
     GPU_MEMORY=""
+    GPU_COUNT=0
 else
     echo "$GPU_INFO"
     GPU_NAME=$(echo "$GPU_INFO" | cut -d',' -f1 | xargs)
     GPU_MEMORY=$(echo "$GPU_INFO" | cut -d',' -f2 | xargs | grep -oE '[0-9]+' | head -1)
+    GPU_COUNT=$(echo "$GPU_INFO" | wc -l | xargs)
     # Set PyTorch memory allocator for better memory management
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     echo "Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management"
+    echo "Detected $GPU_COUNT GPU(s)"
 fi
 
 # Function to check if GPU is suitable for full training
@@ -148,9 +152,26 @@ case "$CONFIG_NAME" in
         echo "Using REASONING 3-HOUR training configuration (~3-4 hours)"
         echo "Note: Trains reasoning model with XML format (1000 samples)"
         ;;
+    reasoning_2000samples_4GPUs)
+        # Check GPU count
+        if [ -z "$GPU_COUNT" ] || [ "$GPU_COUNT" -lt 4 ]; then
+            echo "ERROR: This config requires 4 GPUs"
+            echo "Detected: $GPU_COUNT GPU(s)"
+            echo ""
+            echo "This config is optimized for 4x A40 GPUs (48GB each)"
+            echo "Please use a pod with 4 GPUs or use a different config"
+            exit 1
+        fi
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-reasoning-4gpu-2000samples"
+        echo "Using REASONING 2000 SAMPLES 4 GPUs training configuration"
+        echo "Note: Trains reasoning model with XML format (2000 samples, 4x A40 GPUs)"
+        echo "GPU count: $GPU_COUNT (required: 4)"
+        ;;
     *)
         echo "ERROR: Unknown config name: $CONFIG_NAME"
-        echo "Valid options: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour"
+        echo "Valid options: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_2000samples_4GPUs"
         exit 1
         ;;
 esac
