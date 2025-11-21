@@ -657,7 +657,7 @@ class MegatronEngine(TrainEngine):
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         num_moe_experts = self.tf_config.num_moe_experts
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
@@ -681,7 +681,7 @@ class MegatronEngine(TrainEngine):
         if converted_named_tensors:
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         buffer_size = 0
         named_tensors = []
@@ -702,13 +702,13 @@ class MegatronEngine(TrainEngine):
             # This function will early return if not pipeline parallel head
             self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         if dist.get_rank() == 0:
             self.rollout_engine.continue_generation()
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     @trace_perf("megatron_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
@@ -732,7 +732,8 @@ class MegatronEngine(TrainEngine):
 
             fut.result()
 
-        dist.barrier(device_ids=[self.device.index])
+        # Use CPU group for disk I/O synchronization (no GPU memory needed)
+        dist.barrier(group=self.cpu_group)
         current_platform.synchronize()
 
     def update_weights(self, meta: WeightUpdateMeta):
@@ -769,8 +770,8 @@ class MegatronEngine(TrainEngine):
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""
@@ -864,7 +865,7 @@ class MegatronEngine(TrainEngine):
                 tokenizer.save_pretrained(path)
             if processor is not None:
                 processor.save_pretrained(path)
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
     def load(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":

@@ -144,7 +144,7 @@ def main_sft():
                     processor=processor,
                 )
 
-            dist.barrier(device_ids=[engine.device.index])
+            dist.barrier(group=engine.cpu_group)
             current_platform.synchronize()
 
             with stats_tracker.record_timing("eval"):
@@ -169,7 +169,7 @@ def main_sft():
                     global_step,
                 )
 
-            dist.barrier(device_ids=[engine.device.index])
+            dist.barrier(group=engine.cpu_group)
             current_platform.synchronize()
 
             stats_logger.commit(

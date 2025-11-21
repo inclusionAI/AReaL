@@ -291,8 +291,8 @@ def main(args):
                 tokenizer=tokenizer,
             )
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Upload statistics to the logger (e.g., wandb)
         with perf_tracer.trace_scope(
@@ -303,8 +303,8 @@ def main(args):
             stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
             stats_logger.commit(epoch, step, global_step, stats)
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Resume rollout
         rollout.resume()

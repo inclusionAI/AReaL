@@ -141,7 +141,7 @@ def main(args):
                     tokenizer=tokenizer,
                 )
 
-            dist.barrier(device_ids=[engine.device.index])
+            dist.barrier(group=engine.cpu_group)
             current_platform.synchronize()
 
             with stats_tracker.record_timing("eval"):
@@ -164,7 +164,7 @@ def main(args):
                     global_step,
                 )
 
-            dist.barrier(device_ids=[engine.device.index])
+            dist.barrier(group=engine.cpu_group)
             current_platform.synchronize()
 
             stats_logger.commit(

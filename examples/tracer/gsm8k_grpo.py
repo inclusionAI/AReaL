@@ -263,7 +263,7 @@ def main(args):
                 tokenizer=tokenizer,
             )
 
-        dist.barrier(device_ids=[actor.device.index])
+        dist.barrier(group=actor.cpu_group)
         current_platform.synchronize()
 
         with (
@@ -283,7 +283,7 @@ def main(args):
                             eval_rollout.submit(item, eval_workflow)
                             cnt += 1
                     eval_rollout.wait(cnt, timeout=None)
-                dist.barrier(device_ids=[actor.device.index])
+                dist.barrier(group=actor.cpu_group)
                 current_platform.synchronize()
 
             evaluator.evaluate(
@@ -293,7 +293,7 @@ def main(args):
                 global_step,
             )
 
-        dist.barrier(device_ids=[actor.device.index])
+        dist.barrier(group=actor.cpu_group)
         current_platform.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
@@ -305,7 +305,7 @@ def main(args):
             stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
             stats_logger.commit(epoch, step, global_step, stats)
 
-        dist.barrier(device_ids=[actor.device.index])
+        dist.barrier(group=actor.cpu_group)
         current_platform.synchronize()
 
         # Resume rollout
