@@ -47,6 +47,28 @@ else
     echo "AReaL already installed. Skipping installation."
 fi
 
+# Clean up any leftover processes that might be using the GPU
+echo "Cleaning up any leftover GPU processes..."
+# Kill any Python processes that might be holding the GPU
+pkill -9 -f "sglang" 2>/dev/null || true
+pkill -9 -f "areal.launcher" 2>/dev/null || true
+pkill -9 -f "torchrun" 2>/dev/null || true
+pkill -9 -f "python.*gsm8k_grpo" 2>/dev/null || true
+# Wait a moment for processes to terminate
+sleep 3
+# Additional cleanup: kill any processes using CUDA devices
+if command -v fuser &> /dev/null; then
+    for gpu_id in /dev/nvidia*; do
+        if [ -e "$gpu_id" ]; then
+            fuser -k "$gpu_id" 2>/dev/null || true
+        fi
+    done
+    sleep 1
+fi
+# Try to reset GPU state (may require root, so ignore errors)
+nvidia-smi --gpu-reset -i 0 2>/dev/null || nvidia-smi --gpu-reset 2>/dev/null || true
+sleep 2
+
 # Get GPU information
 echo "Checking GPU..."
 GPU_INFO=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null)
@@ -64,6 +86,20 @@ else
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     echo "Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management"
     echo "Detected $GPU_COUNT GPU(s)"
+    
+    # Check GPU utilization - warn if GPUs are busy
+    echo "Checking GPU utilization..."
+    GPU_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo "")
+    if [ -n "$GPU_UTIL" ]; then
+        for util in $GPU_UTIL; do
+            if [ "$util" -gt 5 ]; then
+                echo "WARNING: GPU shows ${util}% utilization - may be busy from previous run"
+                echo "Waiting 5 seconds for GPU to become available..."
+                sleep 5
+                break
+            fi
+        done
+    fi
 fi
 
 # Function to check if GPU is suitable for full training
