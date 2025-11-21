@@ -732,8 +732,8 @@ class MegatronEngine(TrainEngine):
 
             fut.result()
 
-        dist.barrier(group=self.cpu_group)
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
