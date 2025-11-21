@@ -29,7 +29,7 @@ from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf, trace_session_event
 
 if TYPE_CHECKING:
-    from areal.api.engine_api import InferenceEngine
+    from .remote_inf_engine import RemoteInfEngine
 
 
 def check_trajectory_format(
@@ -254,7 +254,7 @@ class WorkflowExecutor:
     - AsyncTaskRunner: generic async executor running workflows in background event loop
 
     The executor manages:
-    - Integration with InferenceEngine for model generation
+    - Integration with RemoteInfEngine for model generation
     - Staleness-aware capacity control via StalenessManager
     - Trajectory format validation
     - Result filtering via should_accept_fn callbacks
@@ -266,7 +266,7 @@ class WorkflowExecutor:
     config : InferenceEngineConfig
         Configuration for the inference engine including queue sizes,
         concurrency limits, and validation settings.
-    inference_engine : InferenceEngine
+    inference_engine : RemoteInfEngine
         The inference engine to use for generating completions/responses.
     staleness_manager : StalenessManager | None, optional
         Manager for staleness-aware capacity control. If None, a default manager
@@ -282,7 +282,7 @@ class WorkflowExecutor:
     def __init__(
         self,
         config: InferenceEngineConfig,
-        inference_engine: InferenceEngine,
+        inference_engine: RemoteInfEngine,
         staleness_manager: StalenessManager | None = None,
     ):
         self.max_concurrent_rollouts = (
@@ -798,7 +798,11 @@ class WorkflowExecutor:
                     )
                 return None
 
-        return _execute_workflow
+        async def _managed_workflow() -> _RolloutResult | None:
+            async with self.inference_engine.managed_session():
+                return await _execute_workflow()
+
+        return _managed_workflow
 
     def submit(
         self,
