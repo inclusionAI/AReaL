@@ -1,0 +1,101 @@
+2025-11-21T16:06:53.749850258Z ==========
+2025-11-21T16:06:53.749859105Z == CUDA ==
+2025-11-21T16:06:53.749879763Z ==========
+2025-11-21T16:06:53.751664110Z CUDA Version 12.9.1
+2025-11-21T16:06:53.752394305Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-21T16:06:53.752764317Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-21T16:06:53.752765559Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-21T16:06:53.752766391Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-21T16:06:53.752767874Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-21T16:06:53.893549731Z Writing to /root/.config/pip/pip.conf
+2025-11-21T16:06:53.977877735Z Writing to /root/.config/pip/pip.conf
+2025-11-21T16:06:53.993334538Z Cloning into 'AReaL'...
+2025-11-21T16:06:55.263554114Z Checking AReaL installation...
+2025-11-21T16:06:55.312484048Z AReaL already installed. Skipping installation.
+2025-11-21T16:06:55.312492093Z Checking GPU...
+2025-11-21T16:06:55.326415699Z NVIDIA GeForce RTX 5090, 32607 MiB
+2025-11-21T16:06:55.331238958Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-21T16:06:55.331248986Z Detected 1 GPU(s)
+2025-11-21T16:06:55.331322404Z Using REASONING FAST training configuration (20-30 minutes)
+2025-11-21T16:06:55.331330649Z Note: Trains reasoning model with XML format
+2025-11-21T16:06:55.332362699Z ==========================================
+2025-11-21T16:06:55.332364051Z Starting GRPO Training (Cloud)
+2025-11-21T16:06:55.332364923Z ==========================================
+2025-11-21T16:06:55.332366586Z Config: reasoning_fast
+2025-11-21T16:06:55.332371626Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml
+2025-11-21T16:06:55.332376304Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
+2025-11-21T16:06:55.332376875Z Experiment: gsm8k-grpo-reasoning-fast
+2025-11-21T16:06:55.332388337Z Trial: trial_20251121_160655
+2025-11-21T16:06:55.332391052Z GPU: NVIDIA GeForce RTX 5090 (32607 MB)
+2025-11-21T16:06:55.332398366Z WandB API key: e1adc5be02...
+2025-11-21T16:06:55.332399067Z ==========================================
+2025-11-21T16:06:56.042374305Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T16:06:56.042399442Z   import pynvml  # type: ignore[import]
+2025-11-21T16:06:58.866049018Z [37m20251121-16:06:58.865 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-21T16:06:58.866067953Z [37m20251121-16:06:58.865 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T16:06:58.866228554Z [37m20251121-16:06:58.866 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-fast/trial_20251121_160655[0m
+2025-11-21T16:06:58.924344595Z [37m20251121-16:06:58.924 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-fast, trial_name=trial_20251121_160655, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-21T16:06:58.929377115Z [37m20251121-16:06:58.929 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml experiment_name=gsm8k-grpo-reasoning-fast trial_name=trial_20251121_160655 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-fast/trial_20251121_160655/llm_server.log[0m
+2025-11-21T16:06:59.311771051Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T16:06:59.311792662Z   import pynvml  # type: ignore[import]
+2025-11-21T16:07:00.055245510Z [37m20251121-16:07:00.055 Platform init INFO: Detected CUDA device: NVIDIA GEFORCE RTX 5090[0m
+2025-11-21T16:07:00.055803794Z [37m20251121-16:07:00.055 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T16:07:00.118326004Z [37m20251121-16:07:00.118 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.18.0.2 --port 14975 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:48211 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend fa3 --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-21T16:07:00.727228356Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T16:07:00.727258272Z   import pynvml  # type: ignore[import]
+2025-11-21T16:07:03.996020842Z INFO 11-21 16:07:03 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T16:07:04.757464301Z All deep_gemm operations loaded successfully!
+2025-11-21T16:07:04.968275465Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-21T16:07:05.315670417Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T16:07:05.315698820Z   import pynvml  # type: ignore[import]
+2025-11-21T16:07:05.316040068Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T16:07:05.316042343Z   import pynvml  # type: ignore[import]
+2025-11-21T16:07:08.386735233Z INFO 11-21 16:07:08 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T16:07:08.388885284Z INFO 11-21 16:07:08 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T16:07:09.025881379Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-21T16:07:09.381631334Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-21T16:07:09.387824795Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-21T16:07:09.388056709Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-21T16:07:09.388277872Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-21T16:07:09.425455691Z [2025-11-21 16:07:09] MOE_RUNNER_BACKEND is not initialized, using triton backend
+2025-11-21T16:07:09.818840338Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-21T16:07:09.818879802Z   warnings.warn(
+2025-11-21T16:07:09.818881946Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-21T16:07:09.818883178Z   warnings.warn(
+2025-11-21T16:07:13.353886107Z All deep_gemm operations loaded successfully!
+2025-11-21T16:07:13.354277769Z Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
+2025-11-21T16:07:13.447543747Z Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00, 10.69it/s]
+2025-11-21T16:07:13.555304178Z [2025-11-21 16:07:13] Scheduler hit an exception: Traceback (most recent call last):
+2025-11-21T16:07:13.555324165Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 2587, in run_scheduler_process
+2025-11-21T16:07:13.555325988Z     scheduler = Scheduler(
+2025-11-21T16:07:13.555327251Z                 ^^^^^^^^^^
+2025-11-21T16:07:13.555328303Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 329, in __init__
+2025-11-21T16:07:13.555329355Z     self.tp_worker = TpWorkerClass(
+2025-11-21T16:07:13.555330617Z                      ^^^^^^^^^^^^^^
+2025-11-21T16:07:13.555331569Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker_overlap_thread.py", line 71, in __init__
+2025-11-21T16:07:13.555332591Z     self.worker = TpModelWorker(
+2025-11-21T16:07:13.555333542Z                   ^^^^^^^^^^^^^^
+2025-11-21T16:07:13.555334504Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker.py", line 93, in __init__
+2025-11-21T16:07:13.555335486Z     self.model_runner = ModelRunner(
+2025-11-21T16:07:13.555336408Z                         ^^^^^^^^^^^^
+2025-11-21T16:07:13.555337400Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 250, in __init__
+2025-11-21T16:07:13.555338331Z     self.initialize(min_per_gpu_memory)
+2025-11-21T16:07:13.555339564Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 385, in initialize
+2025-11-21T16:07:13.555340666Z     self.init_attention_backend()
+2025-11-21T16:07:13.555342078Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 1542, in init_attention_backend
+2025-11-21T16:07:13.555343221Z     self.attn_backend = self._get_attention_backend()
+2025-11-21T16:07:13.555344263Z                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-21T16:07:13.555345194Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 1580, in _get_attention_backend
+2025-11-21T16:07:13.555346176Z     attn_backend = self._get_attention_backend_from_str(
+2025-11-21T16:07:13.555347098Z                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-21T16:07:13.555348040Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 1651, in _get_attention_backend_from_str
+2025-11-21T16:07:13.555349132Z     assert (
+2025-11-21T16:07:13.555350514Z            ^
+2025-11-21T16:07:13.555351446Z AssertionError: FlashAttention v3 Backend requires SM>=80 and SM<=90. Please use `--attention-backend flashinfer`.
+2025-11-21T16:07:13.555601413Z [2025-11-21 16:07:13] Received sigquit from a child process. It usually means the child failed.
+2025-11-21T16:07:13.555919238Z Exception ignored in atexit callback: <function move_cutlass_compiled_cache at 0x7004eda2d080>
+2025-11-21T16:07:13.556130753Z Traceback (most recent call last):
+2025-11-21T16:07:13.556134019Z   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/codegen/cuda/cutlass_utils.py", line 39, in move_cutlass_compiled_cache
+2025-11-21T16:07:13.556137065Z     if not os.path.exists(cutlass.CACHE_FILE):
+2025-11-21T16:07:13.556138498Z                           ^^^^^^^^^^^^^^^^^^
+2025-11-21T16:07:13.556139890Z AttributeError: module 'cutlass' has no attribute 'CACHE_FILE'

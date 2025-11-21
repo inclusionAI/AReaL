@@ -104,6 +104,7 @@ sglang:
   max_running_requests: null
   context_length: 4096
   mem_fraction_static: 0.8
+  attention_backend: flashinfer  # Required for RTX 5090 (SM 100+)
 
 # datasets - Use reasoning variant by adding "-reasoning" to path
 train_dataset:

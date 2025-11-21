@@ -35,6 +35,9 @@ RunPod is the most economical cloud GPU platform. This complete guide covers eve
 3. **Settings**:
    - **Name**: `areal-outputs`
    - **Size**: 50GB (enough for multiple training runs)
+     - For reasoning models: 50GB recommended (see `REASONING_VOLUME_SIZE_GUIDE.md` for details)
+     - For multi-GPU reasoning: 60GB recommended
+     - For multiple experiments: 100GB+ recommended
    - **Description**: "AReaL GRPO training outputs and checkpoints"
 4. **Click "Create"**
 
@@ -449,7 +452,12 @@ If you see "Starting training from scratch", the checkpoint wasn't found. Verify
 - **Persistent storage** across pod restarts
 - **Shared** between pods (if needed)
 - **Fast access** (network-attached)
-- **Recommended size**: 50GB for checkpoints
+- **Recommended size**: 
+  - **Regular training**: 50GB for checkpoints
+  - **Reasoning models**: 50-60GB (longer outputs require more space)
+  - **Multi-GPU reasoning**: 60GB recommended
+  - **Multiple experiments**: 100GB+ recommended
+  - See `REASONING_VOLUME_SIZE_GUIDE.md` for detailed breakdown
 
 ### Spot Instances
 
