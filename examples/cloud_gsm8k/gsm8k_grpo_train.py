@@ -455,12 +455,15 @@ def main(args):
                 if is_reasoning:
                     # Use reasoning test script
                     test_script = os.path.join(script_dir, "test_reasoning_model_cloud.py")
+                    # Save logs to network volume (persists after pod stops)
+                    test_log_dir = os.path.join(config.cluster.fileroot, "test_logs")
                     test_cmd = [
                         sys.executable,
                         test_script,
                         "--model-path", latest_checkpoint,
                         "--all",  # Test on full validation dataset
                         "--max-new-tokens", "1024",  # Increased for reasoning chains
+                        "--log-dir", test_log_dir,  # Save to network volume
                     ]
                 else:
                     # Use regular test script (requires config file)
@@ -476,6 +479,7 @@ def main(args):
                             pass
                     
                     if config_file_for_test:
+                        # Note: test_trained_model_cloud.py automatically saves logs to network volume
                         test_cmd = [
                             sys.executable,
                             test_script,

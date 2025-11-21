@@ -285,6 +285,8 @@ ls -lh /workspace/outputs/grpo/checkpoints/
 
 **✅ Your checkpoints are safe in the network volume!** They will persist even after the pod stops.
 
+**✅ Test logs are also saved to the network volume!** After training completes, the test script automatically runs and saves results to `/workspace/outputs/grpo/test_logs/`. You can access these logs from the RunPod dashboard (Volumes → areal-outputs → test_logs) without starting the pod again!
+
 ### Step 9.4: Completion Marker Protection
 
 The training script includes **completion marker** protection:
@@ -732,6 +734,7 @@ Process 2965022 has 8.05 GiB memory in use.   # Trainer
 7. ✅ **Use same experiment_name/trial_name** when resuming training
 8. ✅ **Download important checkpoints** to local machine as backup
 9. ✅ **Use templates** for repeated runs (ensures consistent volume mounting)
+10. ✅ **Test logs are saved to network volume** at `/workspace/outputs/grpo/test_logs/` - accessible after pod stops!
 
 ## Quick Reference
 

@@ -67,9 +67,10 @@ def test_reasoning_model(
 ):
     """Test the reasoning model on GSM8K samples using XML reasoning format."""
     
-    # Prepare logging
+    # Prepare logging - save to network volume so it persists after pod stops
     if log_dir is None:
-        log_dir = os.path.join("examples", "cloud_gsm8k", "logs")
+        # Default to network volume location (persists after pod stops)
+        log_dir = os.path.join("/workspace", "outputs", "grpo", "test_logs")
     os.makedirs(log_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = os.path.join(log_dir, f"test_reasoning_{ts}.log")

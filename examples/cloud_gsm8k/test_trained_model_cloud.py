@@ -7,6 +7,7 @@ This script loads a trained model checkpoint and evaluates it on the GSM8K test 
 import os
 import sys
 import warnings
+from datetime import datetime
 
 # Suppress annoying warnings
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
@@ -40,6 +41,22 @@ def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
 
+    # Set up logging to network volume (persists after pod stops)
+    log_dir = os.path.join("/workspace", "outputs", "grpo", "test_logs")
+    os.makedirs(log_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(log_dir, f"test_model_{ts}.log")
+    
+    def _log(msg: str):
+        print(msg)
+        with open(log_path, "a", encoding="utf-8") as lf:
+            lf.write(msg + "\n")
+    
+    _log(f"\n{'='*80}")
+    _log(f"Testing model from config: {config.experiment_name}/{config.trial_name}")
+    _log(f"Log file: {log_path}")
+    _log(f"{'='*80}\n")
+
     dist.init_process_group("gloo")
     # Create a group for stats all-reduce.
     group = dist.new_group()
@@ -58,7 +75,7 @@ def main(args):
     # Optional: Limit test samples via environment variable
     max_test_samples = int(os.getenv("MAX_TEST_SAMPLES", "0"))
     if max_test_samples > 0 and len(valid_dataset) > max_test_samples:
-        print(f"[EVAL] Limiting test set from {len(valid_dataset)} to {max_test_samples} samples")
+        _log(f"[EVAL] Limiting test set from {len(valid_dataset)} to {max_test_samples} samples")
         valid_dataset = valid_dataset.select(range(max_test_samples))
     
     valid_dataloader = create_dataloader(
@@ -89,8 +106,8 @@ def main(args):
         ),
     )
 
-    print(f"Evaluating on {len(valid_dataset)} test samples...")
-    print(f"Using model from: {config.rollout.experiment_name}/{config.rollout.trial_name}")
+    _log(f"Evaluating on {len(valid_dataset)} test samples...")
+    _log(f"Using model from: {config.rollout.experiment_name}/{config.rollout.trial_name}")
 
     # Run evaluation.
     cnt = 0
@@ -99,15 +116,16 @@ def main(args):
             eval_rollout.submit(item, workflow)
             cnt += 1
     
-    print(f"Submitted {cnt} evaluation tasks. Waiting for completion...")
+    _log(f"Submitted {cnt} evaluation tasks. Waiting for completion...")
     eval_rollout.wait(cnt, timeout=None)
 
     eval_rollout_stats = stats_tracker.export_all(reduce_group=group)
     
-    print("\n" + "="*80)
-    print("EVALUATION RESULTS")
-    print("="*80)
-    print(tabulate_stats(eval_rollout_stats))
+    results_text = "\n" + "="*80 + "\n"
+    results_text += "EVALUATION RESULTS\n"
+    results_text += "="*80 + "\n"
+    results_text += tabulate_stats(eval_rollout_stats) + "\n"
+    _log(results_text)
     
     # Extract accuracy from reward stats
     accuracy = None
@@ -128,14 +146,26 @@ def main(args):
                 break
     
     if accuracy is not None:
-        print(f"\n{'='*80}")
-        print(f"ACCURACY: {accuracy:.2f}%")
-        print(f"{'='*80}\n")
+        accuracy_text = f"\n{'='*80}\n"
+        accuracy_text += f"ACCURACY: {accuracy:.2f}%\n"
+        accuracy_text += f"{'='*80}\n"
+        _log(accuracy_text)
     else:
-        print(f"\n{'='*80}")
-        print("WARNING: Could not extract accuracy from stats.")
-        print(f"Available keys: {list(eval_rollout_stats.keys())}")
-        print(f"{'='*80}\n")
+        warning_text = f"\n{'='*80}\n"
+        warning_text += "WARNING: Could not extract accuracy from stats.\n"
+        warning_text += f"Available keys: {list(eval_rollout_stats.keys())}\n"
+        warning_text += f"{'='*80}\n"
+        _log(warning_text)
+    
+    _log(f"\n{'='*80}")
+    _log(f"Log saved to: {log_path}")
+    _log(f"{'='*80}\n")
+    
+    print(f"\n{'='*80}")
+    if accuracy is not None:
+        print(f"ACCURACY: {accuracy:.2f}%")
+    print(f"Log saved to: {log_path}")
+    print(f"{'='*80}\n")
     
     eval_rollout.destroy()
     dist.destroy_process_group()
