@@ -9,6 +9,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 seed: 1
+enable_offload: false
 total_train_epochs: 3
 tokenizer_path: ${actor.path}
 

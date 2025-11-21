@@ -196,6 +196,41 @@ class RemoteInfBackendProtocol(Protocol):
         """
         ...
 
+    def get_offload_request(self) -> HttpRequest:
+        """Get request to offload model memory.
+
+        Returns
+        -------
+        HttpRequest
+            The HTTP request to offload model memory
+
+        Raises
+        ------
+        NotImplementedError
+            If offload is not supported by this backend
+        """
+        ...
+
+    def get_onload_request(self, tags: list[str] | None = None) -> HttpRequest:
+        """Get request to onload model memory.
+
+        Parameters
+        ----------
+        tags : list[str], optional
+            Tags to onload specific components. If None, onloads all components.
+
+        Returns
+        -------
+        HttpRequest
+            The HTTP request to onload model memory
+
+        Raises
+        ------
+        NotImplementedError
+            If onload is not supported by this backend
+        """
+        ...
+
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch inference server subprocess.
 
@@ -798,16 +833,8 @@ class RemoteInfEngine:
     @trace_perf("remote_inf_engine.pause_generation", category="misc")
     def pause_generation(self):
         """Pause request submission for async rollout."""
-        try:
-            pause_req = self.backend.get_pause_request()
-            for addr in self.addresses:
-                res = requests.post(
-                    f"http://{addr}{pause_req.endpoint}",
-                    json=pause_req.payload,
-                )
-                res.raise_for_status()
-        except NotImplementedError:
-            self.logger.warning("Backend does not support pause operation")
+        pause_req = self.backend.get_pause_request()
+        self._run_request_on_all_servers(pause_req)
 
         # The above http request may require some time to be scheduled and executed.
         # The following line waits until all requests are indeed dropped.
@@ -816,16 +843,8 @@ class RemoteInfEngine:
     @trace_perf("remote_inf_engine.continue_generation", category="misc")
     def continue_generation(self):
         """Resume request submission for async rollout."""
-        try:
-            resume_req = self.backend.get_resume_request()
-            for addr in self.addresses:
-                res = requests.post(
-                    f"http://{addr}{resume_req.endpoint}",
-                    json=resume_req.payload,
-                )
-                res.raise_for_status()
-        except NotImplementedError:
-            self.logger.warning("Backend does not support resume operation")
+        resume_req = self.backend.get_resume_request()
+        self._run_request_on_all_servers(resume_req)
 
     def pause(self):
         """Pause request submission for async rollout.
@@ -836,6 +855,40 @@ class RemoteInfEngine:
     def resume(self):
         """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
+
+    def offload(self) -> None:
+        """Offload model memory on all servers."""
+        offload_req = self.backend.get_offload_request()
+        self._run_request_on_all_servers(offload_req)
+
+    def onload(self, tags: list[str] | None = None) -> None:
+        """Onload model memory on all servers."""
+        onload_req = self.backend.get_onload_request(tags=tags)
+        self._run_request_on_all_servers(onload_req)
+
+    def _run_request_on_all_servers(self, req: HttpRequest):
+        async def _fn():
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.config.request_timeout),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            ) as session:
+                jobs = []
+                for addr in self.addresses:
+                    jobs.append(
+                        arequest_with_retry(
+                            session=session,
+                            addr=addr,
+                            endpoint=req.endpoint,
+                            payload=req.payload,
+                            method=req.method,
+                            max_retries=self.config.request_retries,
+                            timeout=self.config.request_timeout,
+                        )
+                    )
+                await asyncio.gather(*jobs)
+
+        uvloop.run(_fn())
 
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
         """Launch a local inference server."""

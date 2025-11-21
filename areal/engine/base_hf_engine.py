@@ -64,6 +64,7 @@ class BaseHFEngine(TrainEngine):
         self.own_global_group = False
         self._parallelism_group: dist.ProcessGroup
         self.mp_group: dist.ProcessGroup
+        self._cpu_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
 
         self.model_config = AutoConfig.from_pretrained(
@@ -114,6 +115,11 @@ class BaseHFEngine(TrainEngine):
         assert self.initialized
         return _get_default_group()
 
+    @property
+    def cpu_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self._cpu_group
+
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         # Patch the default timeout for process groups created by DeviceMesh
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -135,6 +141,10 @@ class BaseHFEngine(TrainEngine):
         assert mp_group is not None
         self.mp_group = mp_group
 
+        # This is needed for barrier synchronization when models are moved to CPU
+        self._cpu_group = dist.new_group(
+            timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend="gloo"
+        )
         self.logger = logging.getLogger(f"[HF Engine Rank {dist.get_rank()}]")
 
     def create_device_model(self):

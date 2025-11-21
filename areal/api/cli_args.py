@@ -1301,6 +1301,13 @@ class BaseExperimentConfig:
         metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
     )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
+    enable_offload: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to enable training offload using torch_memory_saver. "
+            "This requires setting up the environment for TMS (e.g., via LD_PRELOAD)."
+        },
+    )
     total_train_epochs: int = field(
         default=1, metadata={"help": "Total number of epochs to train the model."}
     )

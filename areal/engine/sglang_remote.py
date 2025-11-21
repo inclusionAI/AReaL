@@ -176,6 +176,21 @@ class SGLangBackend:
         """Get SGLang health check request."""
         return HttpRequest(endpoint="/health", payload={}, method="GET")
 
+    def get_offload_request(self) -> HttpRequest:
+        """Get SGLang offload request."""
+        return HttpRequest(endpoint="/release_memory_occupation", payload={})
+
+    def get_onload_request(self, tags: list[str] | None = None) -> HttpRequest:
+        """Get SGLang onload request.
+
+        Parameters:
+        ----------
+        tags: list[str], optional
+            Available tags for multi-stage resume: weights, kv_cache
+        """
+        payload = {"tags": tags} if tags is not None else {}
+        return HttpRequest(endpoint="/resume_memory_occupation", payload=payload)
+
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch SGLang server subprocess."""
         cmd = SGLangConfig.build_cmd_from_args(server_args)
@@ -306,3 +321,9 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def teardown_server(self):
         return self._engine.teardown_server()
+
+    def offload(self):
+        return self._engine.offload()
+
+    def onload(self, tags: list[str] | None = None):
+        return self._engine.onload(tags=tags)

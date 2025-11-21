@@ -9,6 +9,7 @@ cluster:
     type: nfs
     nfs_record_root: /storage/experiments/name_resolve
 seed: 1
+enable_offload: false
 total_train_epochs: 10
 total_train_steps: null
 tokenizer_path: ${actor.path}
