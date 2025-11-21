@@ -732,7 +732,6 @@ class MegatronEngine(TrainEngine):
 
             fut.result()
 
-        # Use CPU group for disk I/O synchronization (no GPU memory needed)
         dist.barrier(group=self.cpu_group)
         current_platform.synchronize()
 
