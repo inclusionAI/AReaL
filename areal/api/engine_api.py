@@ -123,6 +123,17 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @property
+    def cpu_group(self) -> dist.ProcessGroup:
+        """Get the CPU communication group of this engine.
+
+        Returns
+        -------
+        dist.ProcessGroup
+            The CPU communication group
+        """
+        raise NotImplementedError()
+
     def destroy(self):
         """Destroy the engine and release GPU memory of models."""
 
