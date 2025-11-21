@@ -140,7 +140,6 @@ class DistRolloutCoordinator:
             group=self.train_engine.context_and_model_parallel_group,
         )
 
-        # Use CPU group for final coordination (broadcast is already synchronous)
         current_platform.synchronize()
         dist.barrier(group=self.train_engine.cpu_group)
 
