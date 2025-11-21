@@ -126,13 +126,57 @@ else
     PYTHON_PIDS=$(pgrep -f "python.*torch|python.*cuda" 2>/dev/null || echo "")
     if [ -n "$PYTHON_PIDS" ]; then
         echo "WARNING: Found Python processes that might have CUDA contexts: $PYTHON_PIDS"
-        echo "Waiting 5 seconds for contexts to release..."
-        sleep 5
+        echo "Waiting 10 seconds for contexts to release..."
+        sleep 10
+    fi
+    
+    # Verify GPU is actually accessible before starting
+    echo "Verifying GPU accessibility..."
+    python3 << 'EOF'
+import torch
+import sys
+import time
+
+max_retries = 5
+retry_delay = 3
+
+for attempt in range(max_retries):
+    try:
+        if torch.cuda.is_available():
+            # Try to create a tensor on GPU 0
+            device = torch.device("cuda:0")
+            test_tensor = torch.zeros(1, device=device)
+            del test_tensor
+            torch.cuda.empty_cache()
+            print(f"GPU accessibility verified on attempt {attempt + 1}")
+            sys.exit(0)
+        else:
+            print(f"CUDA not available on attempt {attempt + 1}")
+    except Exception as e:
+        print(f"GPU accessibility check failed on attempt {attempt + 1}: {e}")
+        if attempt < max_retries - 1:
+            print(f"Waiting {retry_delay} seconds before retry...")
+            time.sleep(retry_delay)
+        else:
+            print("ERROR: GPU is not accessible after multiple attempts")
+            print("This usually means the GPU driver state is corrupted.")
+            print("Please restart the pod to reset the GPU state.")
+            sys.exit(1)
+
+sys.exit(1)
+EOF
+    
+    GPU_CHECK_EXIT=$?
+    if [ $GPU_CHECK_EXIT -ne 0 ]; then
+        echo "ERROR: GPU accessibility check failed!"
+        echo "The GPU appears to be in a corrupted state."
+        echo "Please restart the pod (Stop then Start) to reset the GPU driver state."
+        exit 1
     fi
     
     echo "Starting training..."
-    # Additional delay to ensure GPU is fully ready and any contexts are released
-    sleep 2
+    # Additional delay to ensure GPU is fully ready
+    sleep 3
 fi
 
 # Function to check if GPU is suitable for full training
