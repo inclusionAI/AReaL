@@ -379,11 +379,11 @@ def test_profiler_only_runs_on_configured_steps(tmp_path, monkeypatch):
     config.profile_steps = [3]
     tracer = perf_tracer.PerfTracer(config, rank=0)
 
-    with tracer.trace_scope("skip", args={"global_step": 2}):
+    with tracer.trace_scope("skip", enable_profiler=True, args={"global_step": 2}):
         pass
     assert counters["enter"] == 0
 
-    with tracer.trace_scope("hit", args={"global_step": 3}):
+    with tracer.trace_scope("hit", enable_profiler=True, args={"global_step": 3}):
         pass
     assert counters["enter"] == 1
 
@@ -391,15 +391,16 @@ def test_profiler_only_runs_on_configured_steps(tmp_path, monkeypatch):
 def test_profiler_request_is_skipped_when_active(tmp_path, monkeypatch):
     counters = _install_fake_profiler(monkeypatch)
     config = _make_config(tmp_path, experiment="profile", trial="nesting")
+    config.profile_steps = [0]
     tracer = perf_tracer.PerfTracer(config, rank=0)
 
-    with tracer.trace_scope("outer", enable_profiler=True):
-        with tracer.trace_scope("inner", enable_profiler=True):
+    with tracer.trace_scope("outer", enable_profiler=True, args={"global_step": 0}):
+        with tracer.trace_scope("inner", enable_profiler=True, args={"global_step": 0}):
             pass
     # Nested scope should not start a second profiler session
     assert counters["enter"] == 1
 
-    with tracer.trace_scope("after", enable_profiler=True):
+    with tracer.trace_scope("after", enable_profiler=True, args={"global_step": 0}):
         pass
     assert counters["enter"] == 2
 

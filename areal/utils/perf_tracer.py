@@ -1534,17 +1534,16 @@ class PerfTracer:
                     self._virtual_tid_map[(pid_key, tid_key)] = v_tid
 
                     # Default to generic thread name
-                    display_name = f"[Profiler Thread {tid_key}]"
-                    t_name = thread_names.get((pid_key, tid_key))
-                    if t_name:
-                        parts = t_name.strip().lower().split()
+                    t_name = f"[Profiler Thread {tid_key}]"
+                    original_t_name = thread_names.get((pid_key, tid_key))
+                    if original_t_name:
+                        parts = original_t_name.strip().lower().split()
                         if (
                             len(parts) >= 2
                             and parts[0] == "stream"
                             and parts[1].isdigit()
                         ):
-                            display_name = f"[Profiler Stream {parts[1]}]"
-                    t_name = display_name
+                            t_name = f"[Profiler Stream {parts[1]}]"
 
                     # Emit thread_name event immediately
                     new_events.append(
@@ -1677,10 +1676,9 @@ class PerfTracer:
             self._events.append(event)
 
     def _get_global_step(self, args: dict[str, Any] | None) -> int | None:
-        merged = dict(args or {})
-        if "global_step" not in merged:
-            return _current_global_step.get()
-        return merged["global_step"]
+        if args and "global_step" in args:
+            return args["global_step"]
+        return _current_global_step.get()
 
     def _should_enable_profiler(
         self,
