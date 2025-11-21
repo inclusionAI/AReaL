@@ -144,7 +144,6 @@ from areal.utils.perf_tracer import (
 )
 
 class RLVRWorkflow(RolloutWorkflow):
-    @trace_perf("rlvr_workflow.arun_episode")
     async def arun_episode(self, engine: InferenceEngine, data: dict[str, Any]):
         # WorkflowExecutor automatically sets task_id before calling this method
         # Each sample will register its own session_id
@@ -496,6 +495,31 @@ phases once they are recorded.
 The script derives the plot order from `DEFAULT_PHASE_ORDER` plus any phase names it
 finds in the trace payload, so you only need to extend the style/metric dictionaries
 when introducing new phases.
+
+## PyTorch Profiler integration
+
+`perf_tracer` can launch the PyTorch profiler for targeted steps so you capture kernel-
+and op-level data without paying the cost every iteration.
+
+### Configure profiler trigger steps
+
+- Set `PerfTracerConfig.profile_steps` to a list of global steps (0-indexed) where the
+  profiler should run. Example:
+
+  ```yaml
+  perf_tracer:
+      enabled: true
+      profile_steps: [49, 99]
+  ```
+
+- When any `trace_scope` or `atrace_scope` carries `args={"global_step": step}` and
+  `step` matches one of the configured entries, `perf_tracer` will check if profiling
+  should be triggered for this `global_step`.
+
+- Passing `enable_profiler=True` to `trace_scope`/`atrace_scope`: the scope profiles
+  **only** when *both* the flag is set and `global_step` matches one of the configured
+  `profile_steps`. Without the schedule, manual requests are ignored; without the flag,
+  scheduled steps stay dormant.
 
 ## Troubleshooting
 

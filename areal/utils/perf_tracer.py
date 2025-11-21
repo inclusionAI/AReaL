@@ -6,15 +6,19 @@ import functools
 import getpass
 import json
 import os
+import tempfile
 import threading
 import time
 import warnings
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, cast
+
+import orjson
+from torch import profiler
 
 from areal.api.cli_args import PerfTracerConfig, SessionTracerConfig
 from areal.utils import logging
@@ -26,6 +30,12 @@ _current_task_id: ContextVar[int | None] = ContextVar("task_id", default=None)
 
 # Context variable for storing session_id in async context
 _current_session_id: ContextVar[int | None] = ContextVar("session_id", default=None)
+
+# Context variable for propagating global_step into nested scopes
+_current_global_step: ContextVar[int | None] = ContextVar("global_step", default=None)
+
+# Context variable tracking whether a profiler session is active
+_profiler_active: ContextVar[bool] = ContextVar("profiler_active", default=False)
 
 # Suppress Pydantic warnings for standard dataclasses
 # Pydantic may inspect all dataclasses even when not using pydantic.dataclasses
@@ -1117,22 +1127,76 @@ class _Scope(AbstractContextManager[Any]):
         name: str,
         *,
         category: str,
+        enable_profiler: bool = False,
+        profiler_args: dict[str, Any] | None = None,
         args: dict[str, Any] | None,
     ) -> None:
         self._tracer = tracer
         self._name = name
         self._category = category
         self._args = args
+        self._global_step_token: Token | None = None
+        self._profiler_token: Token | None = None
         self._start_ns: int | None = None
 
+        self._profiler = None
+        if enable_profiler:
+            profile_kwargs = dict(profiler_args or {})
+            profile_kwargs.setdefault("record_shapes", False)
+            profile_kwargs.setdefault("with_stack", False)
+            self._profiler = profiler.profile(
+                activities=[
+                    profiler.ProfilerActivity.CPU,
+                    profiler.ProfilerActivity.CUDA,
+                ],
+                **profile_kwargs,
+            )
+
     def __enter__(self) -> _Scope:
+        step = None
+        if self._args is not None:
+            step = self._args.get("global_step")
+        if step is not None:
+            self._global_step_token = _current_global_step.set(step)
+
+        if self._profiler:
+            self._profiler_token = _profiler_active.set(True)
+            self._profiler.__enter__()
+
         self._start_ns = time.perf_counter_ns()
+
         return self
 
     def __exit__(self, exc_type, exc, exc_tb):
         if self._start_ns is None:
             return False
-        duration_ns = time.perf_counter_ns() - self._start_ns
+
+        if self._profiler:
+            self._profiler.__exit__(exc_type, exc, exc_tb)
+
+        end_ns = time.perf_counter_ns()
+
+        if self._profiler:
+            if self._profiler_token is not None:
+                _profiler_active.reset(self._profiler_token)
+                self._profiler_token = None
+
+            with tempfile.NamedTemporaryFile("w+b", suffix=".json") as fp:
+                self._profiler.export_chrome_trace(fp.name)
+                with open(fp.name, "rb") as fin:
+                    profiler_traces = orjson.loads(fin.read())
+
+            self._tracer.merge_profiler_trace(
+                profiler_traces,
+                base_time_ns=self._start_ns,
+                args=self._args,
+            )
+
+        if self._global_step_token is not None:
+            _current_global_step.reset(self._global_step_token)
+            self._global_step_token = None
+
+        duration_ns = end_ns - self._start_ns
         args = dict(self._args or {})
         if exc_type is not None:
             args.setdefault("exception", exc_type.__name__)
@@ -1159,9 +1223,18 @@ class _AsyncScope(AbstractAsyncContextManager[Any]):
         name: str,
         *,
         category: str,
+        enable_profiler: bool = False,
+        profiler_args: dict[str, Any] | None = None,
         args: dict[str, Any] | None,
     ) -> None:
-        self._scope = _Scope(tracer, name, category=category, args=args)
+        self._scope = _Scope(
+            tracer,
+            name,
+            category=category,
+            enable_profiler=enable_profiler,
+            profiler_args=profiler_args,
+            args=args,
+        )
 
     async def __aenter__(self) -> _AsyncScope:
         self._scope.__enter__()
@@ -1224,12 +1297,16 @@ class PerfTracer:
         self._origin_ns = time.perf_counter_ns()
         self._thread_meta_emitted: set[int] = set()
         self._process_meta_emitted: set[int] = set()
+        # Virtual TID management for merged traces
+        self._virtual_tid_map: dict[tuple[int, int], int] = {}
+        self._next_virtual_tid: int = -1
         self._output_path = _default_trace_path(
             config,
             rank=rank,
             subdir="perf_tracer",
         )
         self._save_interval = _normalize_save_interval(config)
+        self._profile_steps = self._normalize_profile_steps(config.profile_steps)
         self._session_tracer: SessionTracer | None = None
         self._configure_session_tracer(config, rank=rank)
 
@@ -1279,14 +1356,23 @@ class PerfTracer:
         name: str,
         *,
         category: CategoryLike = None,
+        enable_profiler: bool = False,
+        profiler_args: dict[str, Any] | None = None,
         args: dict[str, Any] | None = None,
     ) -> AbstractContextManager[Any]:
         if not self._enabled:
             return _NullContext()
+        global_step = self._get_global_step(args)
+        profiler_active = _profiler_active.get(False)
+        profiler_flag = not profiler_active and self._should_enable_profiler(
+            enable_profiler, global_step
+        )
         return _Scope(
             self,
             name,
             category=_normalize_category(category),
+            enable_profiler=profiler_flag,
+            profiler_args=profiler_args,
             args=args,
         )
 
@@ -1295,14 +1381,23 @@ class PerfTracer:
         name: str,
         *,
         category: CategoryLike = None,
+        enable_profiler: bool = False,
+        profiler_args: dict[str, Any] | None = None,
         args: dict[str, Any] | None = None,
     ) -> AbstractAsyncContextManager[Any]:
         if not self._enabled:
             return _NullContext()
+        global_step = self._get_global_step(args)
+        profiler_active = _profiler_active.get(False)
+        profiler_flag = not profiler_active and self._should_enable_profiler(
+            enable_profiler, global_step
+        )
         return _AsyncScope(
             self,
             name,
             category=_normalize_category(category),
+            enable_profiler=profiler_flag,
+            profiler_args=profiler_args,
             args=args,
         )
 
@@ -1327,6 +1422,162 @@ class PerfTracer:
                 "s": "t",
             }
         )
+
+    # ------------------------------------------------------------------
+    # Kernel trace helpers
+    # ------------------------------------------------------------------
+    def merge_profiler_trace(
+        self,
+        profiler_traces: Any,
+        base_time_ns: int,
+        *,
+        args: dict[str, Any] | None = None,
+    ) -> None:
+        """Merge PyTorch Profiler traces into the current trace stream.
+
+        This method ingests a raw PyTorch Profiler JSON trace (loaded as a dict),
+        aligns timestamps, remaps PIDs/TIDs to avoid conflicts, and merges relevant
+        events into the PerfTracer's event stream.
+
+        Key transformations:
+        1. Timestamps: Shifted by `base_time_ns` to align with PerfTracer's clock.
+        2. PIDs: All events are remapped to `self._pid` (current process).
+        3. TIDs: Mapped to unique negative integers to avoid collision with real threads.
+           - CPU threads from Profiler -> "Profiler CPU {tid}"
+           - GPU streams -> "GPU {device} Stream {stream}"
+        4. Metadata: `thread_name` events are generated for the new virtual TIDs.
+
+        Parameters
+        ----------
+        profiler_traces : Any
+            The loaded JSON object from PyTorch Profiler export.
+        base_time_ns : int
+            The start timestamp of the profiling session in nanoseconds (perf_counter).
+            Used to align Profiler's absolute timestamps with PerfTracer's relative ones.
+        args : dict[str, Any] | None
+            Optional arguments to attach to the merged events (currently unused but
+            kept for API consistency).
+        """
+        if not self._enabled:
+            return
+
+        trace_events = profiler_traces.get("traceEvents", [])
+        if not trace_events:
+            return
+
+        ts_values = [e["ts"] for e in trace_events if "ts" in e]
+        if ts_values:
+            min_ts = min(ts_values)
+            # timestamps in Chrome trace json are in microseconds
+            time_offset_us = (base_time_ns - self._origin_ns) / 1000.0 - min_ts
+        else:
+            raise RuntimeError(
+                "Profiler trace events do not contain timestamps ('ts' field)."
+            )
+
+        # First pass: collect thread names from metadata events to identify GPU streams
+        thread_names = {}
+        for event in trace_events:
+            if event.get("ph") == "M" and event.get("name") == "thread_name":
+                pid = event.get("pid")
+                tid = event.get("tid")
+                event_args = event.get("args", {})
+                name = event_args.get("name")
+                if pid is not None and tid is not None and name:
+                    try:
+                        pid_key = int(pid)
+                        tid_key = int(tid)
+                        thread_names[(pid_key, tid_key)] = name
+                    except (ValueError, TypeError):
+                        pass
+
+        new_events = []
+
+        # Metadata events to ignore from source (we generate our own or they are useless)
+        ignored_metadata = {
+            "process_name",
+            "process_sort_index",
+            "process_labels",
+            "thread_name",
+            "thread_sort_index",
+        }
+        # We also ignore "Spans", "Traces" PIDs which are internal to PyTorch Profiler
+        ignored_pids = {"Spans", "Traces", ""}
+
+        with self._lock:
+            for event in trace_events:
+                pid = event.get("pid")
+                if pid in ignored_pids:
+                    continue
+
+                # Filter out metadata we don't want
+                if event.get("ph") == "M" and event.get("name") in ignored_metadata:
+                    continue
+
+                tid = event.get("tid")
+
+                # Ensure pid/tid are hashable (int)
+                try:
+                    pid_key = int(pid) if pid is not None else -1
+                    tid_key = int(tid) if tid is not None else -1
+                except (ValueError, TypeError):
+                    continue
+
+                # Filter out events with negative PIDs (e.g. -1)
+                if pid_key < 0:
+                    continue
+
+                # Allocate virtual TID
+                if (pid_key, tid_key) not in self._virtual_tid_map:
+                    v_tid = self._next_virtual_tid
+                    self._next_virtual_tid -= 1
+                    self._virtual_tid_map[(pid_key, tid_key)] = v_tid
+
+                    # Default to generic thread name
+                    display_name = f"[Profiler Thread {tid_key}]"
+                    t_name = thread_names.get((pid_key, tid_key))
+                    if t_name:
+                        parts = t_name.strip().lower().split()
+                        if (
+                            len(parts) >= 2
+                            and parts[0] == "stream"
+                            and parts[1].isdigit()
+                        ):
+                            display_name = f"[Profiler Stream {parts[1]}]"
+                    t_name = display_name
+
+                    # Emit thread_name event immediately
+                    new_events.append(
+                        {
+                            "name": "thread_name",
+                            "ph": "M",
+                            "pid": self._pid,
+                            "tid": v_tid,
+                            "args": {"name": t_name, "rank": self._rank},
+                        }
+                    )
+
+                virtual_tid = self._virtual_tid_map[(pid_key, tid_key)]
+
+                # Create new event
+                new_event = event.copy()
+                new_event["pid"] = self._pid
+                new_event["tid"] = virtual_tid
+
+                # Adjust timestamp
+                if "ts" in new_event:
+                    new_event["ts"] = new_event["ts"] + time_offset_us
+
+                # Attach rank info
+                event_args = new_event.get("args")
+                if not isinstance(event_args, dict):
+                    event_args = {}
+                    new_event["args"] = event_args
+                event_args["rank"] = self._rank
+
+                new_events.append(new_event)
+
+            self._events.extend(new_events)
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -1395,7 +1646,7 @@ class PerfTracer:
         duration_ns: int,
         *,
         category: str,
-        args: dict[str, Any] | None,
+        args: dict[str, Any] | None = None,
     ) -> None:
         event = {
             "name": name,
@@ -1424,6 +1675,38 @@ class PerfTracer:
             args.setdefault("rank", self._rank)
         with self._lock:
             self._events.append(event)
+
+    def _get_global_step(self, args: dict[str, Any] | None) -> int | None:
+        merged = dict(args or {})
+        if "global_step" not in merged:
+            return _current_global_step.get()
+        return merged["global_step"]
+
+    def _should_enable_profiler(
+        self,
+        requested: bool,
+        global_step: int | None,
+    ) -> bool:
+        return bool(
+            requested
+            and self._profile_steps
+            and global_step is not None
+            and global_step in self._profile_steps
+        )
+
+    @staticmethod
+    def _normalize_profile_steps(steps: list[int] | None) -> frozenset[int]:
+        if not steps:
+            return frozenset()
+        normalized: set[int] = set()
+        for raw in steps:
+            try:
+                step = int(raw)
+            except (TypeError, ValueError):
+                logger.warning("PerfTracer: invalid profile_steps entry %r", raw)
+                continue
+            normalized.add(step)
+        return frozenset(normalized)
 
     def _ensure_thread_metadata(self, tid: int) -> None:
         if tid in self._thread_meta_emitted:
@@ -1543,24 +1826,40 @@ def trace_scope(
     name: str,
     *,
     category: CategoryLike = None,
+    enable_profiler: bool = False,
+    profiler_args: dict[str, Any] | None = None,
     args: dict[str, Any] | None = None,
 ):
     tracer = GLOBAL_TRACER
     if tracer is None:
         return _NullContext()
-    return tracer.trace_scope(name, category=category, args=args)
+    return tracer.trace_scope(
+        name,
+        category=category,
+        enable_profiler=enable_profiler,
+        profiler_args=profiler_args,
+        args=args,
+    )
 
 
 def atrace_scope(
     name: str,
     *,
     category: CategoryLike = None,
+    enable_profiler: bool = False,
+    profiler_args: dict[str, Any] | None = None,
     args: dict[str, Any] | None = None,
 ):
     tracer = GLOBAL_TRACER
     if tracer is None:
         return _NullContext()
-    return tracer.atrace_scope(name, category=category, args=args)
+    return tracer.atrace_scope(
+        name,
+        category=category,
+        enable_profiler=enable_profiler,
+        profiler_args=profiler_args,
+        args=args,
+    )
 
 
 def instant(

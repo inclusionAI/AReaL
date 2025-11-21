@@ -1090,6 +1090,15 @@ class PerfTracerConfig:
             )
         },
     )
+    profile_steps: list[int] | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "List of step numbers at which to capture detailed profiling traces. "
+                "If None, no detailed profiling traces are captured."
+            )
+        },
+    )
     session_tracer: SessionTracerConfig | None = field(
         default=None,
         metadata={"help": "Session tracing configuration."},

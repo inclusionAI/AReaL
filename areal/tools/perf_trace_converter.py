@@ -36,7 +36,7 @@ def _extract_rank(event: dict) -> str | int | None:
         return None
     if isinstance(rank, bool):  # guard against bool subclassing int
         return None
-    if isinstance(rank, (int, float)):
+    if isinstance(rank, int | float):
         try:
             return int(rank)
         except (TypeError, ValueError, OverflowError):
@@ -86,12 +86,33 @@ def _metadata_name_sort_key(name: object) -> int:
     return 3
 
 
-def _remap_process_and_thread_ids(events: list[dict]) -> list[dict]:
+def _tid_sort_key(value: object) -> tuple[int, object]:
+    """Sort key for TIDs: positive ints < negative ints < others."""
+    prio, val = _value_sort_key(value)
+    if prio == 1:  # int
+        if isinstance(val, int) and val < 0:
+            return (2, -val)
+        return (1, val)
+    if prio >= 2:
+        return (prio + 1, val)
+    return (prio, val)
+
+
+def _remap_process_and_thread_ids(
+    events: list[dict],
+    existing_process_names: dict[tuple[str | int, object], str] | None = None,
+    existing_thread_names: dict[tuple[str | int, object, object], str] | None = None,
+) -> list[dict]:
     """Remap pid/tid to be unique and return metadata events.
 
     This function modifies the `events` list in-place by replacing `pid` and
     `tid` values. It returns a new list of generated metadata events.
     """
+    if existing_process_names is None:
+        existing_process_names = {}
+    if existing_thread_names is None:
+        existing_thread_names = {}
+
     pid_keys: set[tuple[str | int, object]] = set()
     tid_keys: set[tuple[str | int, object, object]] = set()
 
@@ -117,8 +138,8 @@ def _remap_process_and_thread_ids(events: list[dict]) -> list[dict]:
     pid_map: dict[tuple[str | int, object], int] = {}
     pid_labels: dict[int, tuple[str | int, object]] = {}
     for new_pid, key in enumerate(sorted_pid_keys):
-        pid_map[key] = new_pid
-        pid_labels[new_pid] = key
+        pid_map[key] = new_pid + 1
+        pid_labels[new_pid + 1] = key
 
     tid_counters: dict[int, int] = {}
     tid_map: dict[tuple[str | int, object, object], int] = {}
@@ -129,14 +150,14 @@ def _remap_process_and_thread_ids(events: list[dict]) -> list[dict]:
         key=lambda item: (
             _rank_sort_key(item[0]),
             _value_sort_key(item[1]),
-            _value_sort_key(item[2]),
+            _tid_sort_key(item[2]),
         ),
     )
 
     for key in sorted_tid_keys:
         rank, original_pid, original_tid = key
         new_pid = pid_map[(rank, original_pid)]
-        next_tid = tid_counters.get(new_pid, 0)
+        next_tid = tid_counters.get(new_pid, new_pid)
         tid_counters[new_pid] = next_tid + 1
         tid_map[key] = next_tid
         tid_labels[(new_pid, next_tid)] = (rank, original_tid)
@@ -164,14 +185,17 @@ def _remap_process_and_thread_ids(events: list[dict]) -> list[dict]:
     metadata_events: list[dict] = []
     for pid, (rank, original_pid) in pid_labels.items():
         rank_text = _format_rank(rank)
+        process_name = existing_process_names.get((rank, original_pid))
+        if process_name is None:
+            process_name = f"[Rank {rank_text}, Process {original_pid}]"
+
         metadata_events.append(
             {
                 "name": "process_name",
                 "ph": "M",
                 "pid": pid,
-                "tid": 0,
                 "args": {
-                    "name": f"[Rank {rank_text}, Process {original_pid}]",
+                    "name": process_name,
                     "rank": rank,
                 },
             }
@@ -181,13 +205,19 @@ def _remap_process_and_thread_ids(events: list[dict]) -> list[dict]:
                 "name": "process_sort_index",
                 "ph": "M",
                 "pid": pid,
-                "tid": 0,
                 "args": {"sort_index": pid, "rank": rank},
             }
         )
 
     for (pid, tid), (rank, original_tid) in tid_labels.items():
+        # Retrieve the correct original_pid for this new_pid
+        _, original_pid = pid_labels[pid]
+
         rank_text = _format_rank(rank)
+        thread_name = existing_thread_names.get((rank, original_pid, original_tid))
+        if thread_name is None:
+            thread_name = f"[Thread {original_tid}]"
+
         metadata_events.append(
             {
                 "name": "thread_name",
@@ -195,7 +225,7 @@ def _remap_process_and_thread_ids(events: list[dict]) -> list[dict]:
                 "pid": pid,
                 "tid": tid,
                 "args": {
-                    "name": f"[Rank {rank_text}, Thread {original_tid}]",
+                    "name": thread_name,
                     "rank": rank,
                 },
             }
@@ -244,6 +274,9 @@ def convert_jsonl_to_chrome_trace(
     for path in sources:
         events.extend(_load_events(path))
 
+    existing_process_names: dict[tuple[str | int, object], str] = {}
+    existing_thread_names: dict[tuple[str | int, object, object], str] = {}
+
     filtered_events: list[dict] = []
     ignored_metadata = {
         "process_name",
@@ -252,13 +285,77 @@ def convert_jsonl_to_chrome_trace(
         "thread_sort_index",
     }
     for event in events:
-        if event.get("ph") == "M" and event.get("name") in ignored_metadata:
-            continue
+        rank = _extract_rank(event)
+        if event.get("ph") == "M":
+            name = event.get("name")
+            args = event.get("args", {})
+            pid = event.get("pid")
+            tid = event.get("tid")
+
+            if rank is not None and pid is not None:
+                if name == "process_name" and isinstance(args, dict):
+                    pname = args.get("name")
+                    if pname:
+                        existing_process_names[(rank, pid)] = str(pname)
+                elif (
+                    name == "thread_name" and tid is not None and isinstance(args, dict)
+                ):
+                    tname = args.get("name")
+                    if tname:
+                        existing_thread_names[(rank, pid, tid)] = str(tname)
+
+            if name in ignored_metadata:
+                continue
         filtered_events.append(event)
 
     events = filtered_events
 
-    metadata_events = _remap_process_and_thread_ids(events)
+    # Collect all unique flow IDs / correlations to remap them sequentially
+    flow_id_keys = set()
+    for event in events:
+        rank = _extract_rank(event)
+        if rank is None:
+            continue
+
+        # Collect from flow events
+        if event.get("ph") in ("s", "t", "f") and "id" in event:
+            flow_id_keys.add((rank, event["id"]))
+
+        # Collect from args.correlation
+        args = event.get("args")
+        if isinstance(args, dict) and "correlation" in args:
+            flow_id_keys.add((rank, args["correlation"]))
+
+    # Sort and create mapping
+    sorted_flow_keys = sorted(
+        flow_id_keys,
+        key=lambda item: (_rank_sort_key(item[0]), _value_sort_key(item[1])),
+    )
+
+    flow_id_map = {key: i for i, key in enumerate(sorted_flow_keys, start=1)}
+
+    # Apply mapping
+    for event in events:
+        rank = _extract_rank(event)
+        if rank is None:
+            continue
+
+        if event.get("ph") in ("s", "t", "f") and "id" in event:
+            key = (rank, event["id"])
+            if key in flow_id_map:
+                event["id"] = flow_id_map[key]
+
+        args = event.get("args")
+        if isinstance(args, dict) and "correlation" in args:
+            key = (rank, args["correlation"])
+            if key in flow_id_map:
+                args["correlation"] = flow_id_map[key]
+
+    metadata_events = _remap_process_and_thread_ids(
+        events,
+        existing_process_names=existing_process_names,
+        existing_thread_names=existing_thread_names,
+    )
 
     metadata_events.sort(
         key=lambda event: (

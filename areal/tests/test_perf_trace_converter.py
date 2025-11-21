@@ -65,14 +65,14 @@ def test_convert_single_file_basic(tmp_path: Path) -> None:
 
     thread_meta = _extract_metadata(events, "thread_name")
     assert {item["args"]["name"] for item in thread_meta} == {
-        "[Rank 0, Thread 7]",
-        "[Rank 0, Thread 8]",
+        "[Thread 7]",
+        "[Thread 8]",
     }
 
     payload_events = [event for event in events if event.get("ph") != "M"]
     assert [event["ts"] for event in payload_events] == [2, 3]
-    assert {event["pid"] for event in payload_events} == {0}
-    assert {event["tid"] for event in payload_events} == {0, 1}
+    assert {event["pid"] for event in payload_events} == {1}
+    assert {event["tid"] for event in payload_events} == {1, 2}
 
 
 def test_convert_directory_multi_rank_with_shared_ids(tmp_path: Path) -> None:
@@ -113,17 +113,19 @@ def test_convert_directory_multi_rank_with_shared_ids(tmp_path: Path) -> None:
     assert [item["args"]["rank"] for item in process_meta] == [0, 1]
 
     thread_meta = _extract_metadata(events, "thread_name")
-    assert sorted(item["args"]["name"] for item in thread_meta) == [
-        "[Rank 0, Thread 3]",
-        "[Rank 1, Thread 3]",
-    ]
+    assert {
+        (item["args"]["rank"], item["args"].get("name")) for item in thread_meta
+    } == {
+        (0, "[Thread 3]"),
+        (1, "[Thread 3]"),
+    }
 
     payload_events = [event for event in events if event.get("ph") != "M"]
     assert [event["ts"] for event in payload_events] == [4, 5]
-    assert {event["pid"] for event in payload_events} == {0, 1}
-    assert {event["tid"] for event in payload_events} == {0}
+    assert {event["pid"] for event in payload_events} == {1, 2}
+    assert {event["tid"] for event in payload_events} == {1, 2}
     by_rank_tid = {event["args"]["rank"]: event["tid"] for event in payload_events}
-    assert by_rank_tid == {0: 0, 1: 0}
+    assert by_rank_tid == {0: 1, 1: 2}
 
 
 def test_convert_glob_not_found(tmp_path: Path) -> None:
