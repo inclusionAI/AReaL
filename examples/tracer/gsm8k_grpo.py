@@ -283,8 +283,8 @@ def main(args):
                             eval_rollout.submit(item, eval_workflow)
                             cnt += 1
                     eval_rollout.wait(cnt, timeout=None)
-                dist.barrier(group=actor.cpu_group)
                 current_platform.synchronize()
+                dist.barrier(group=actor.cpu_group)
 
             evaluator.evaluate(
                 evaluate_fn,
