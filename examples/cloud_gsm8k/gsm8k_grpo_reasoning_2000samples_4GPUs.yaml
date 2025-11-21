@@ -25,8 +25,9 @@ cluster:
     type: nfs
     nfs_record_root: ./tmp/areal/name_resolve
 
-# Allocation: 1 GPU for SGLang inference, 3 GPUs for training (actor + ref)
-allocation_mode: sglang.d1t1p1+d3t1p1
+# Allocation: 1 GPU for SGLang inference, 2 GPUs for training (actor + ref)
+# Note: Using only 3 GPUs total to exclude the problematic physical GPU 0
+allocation_mode: sglang.d1t1p1+d2t1p1
 
 rollout:
   experiment_name: ${experiment_name}

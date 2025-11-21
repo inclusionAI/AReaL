@@ -2,60 +2,49 @@
 
 ## Problem
 
-When running the `reasoning_2000samples_4GPUs` config on RunPod with 4x A40 GPUs, the training failed with:
+When running the `reasoning_2000samples_4GPUs` config on RunPod with 4x A40 GPUs, the training failed consistently.
 
-```
-torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
-```
+**Initial Error:** `CUDA error: CUDA-capable device(s) is/are busy or unavailable` on SGLang initialization (GPU 0).
 
-This error occurs when SGLang tries to initialize on GPU 0, but the GPU is already busy or in an unavailable state.
+**Secondary Error:** After moving SGLang to GPU 3, the error shifted to Training Rank 2 (which landed on GPU 0).
 
 ## Root Cause
 
-1.  **Zombie GPU 0**: Physical GPU 0 on the RunPod instance appears to be in a persistent "busy" or zombie state, possibly due to Exclusive Process mode or driver issues that persist across container restarts.
-2.  **Configuration Error**: The batch size (8) was not divisible by the number of training GPUs (3), causing `ValueError: batch size(8) must be divisible by world_size(3)!`.
+**Physical GPU 0 is dead/zombie.**
+Regardless of cleanup or reordering, any process attempting to initialize a CUDA context on Physical GPU 0 fails with "Device busy or unavailable".
 
 ## Solution
 
-We implemented a comprehensive fix involving both infrastructure cleanup and configuration adjustments.
+We must exclude Physical GPU 0 entirely from the training job.
+We have 4 GPUs (3, 2, 1, 0). Since 0 is dead, we will use **3 GPUs (3, 2, 1)**.
 
-### 1. Infrastructure Fixes (in `run_training_cloud.sh`)
+### 1. Infrastructure Logic (in `run_training_cloud.sh`)
 
-*   **Aggressive Cleanup**: Automatically installs `psmisc` and `lsof` to identify and kill any process holding `/dev/nvidia*` device files.
-*   **GPU Reordering Workaround**: Detects the 4-GPU setup and applies `CUDA_VISIBLE_DEVICES=3,2,1,0`.
-    *   This maps logical device 0 (critical for SGLang) to physical GPU 3.
-    *   This moves the "busy" physical GPU 0 to logical device 3 (used by a training actor), bypassing the SGLang initialization failure.
+*   **Reordering**: We keep the `CUDA_VISIBLE_DEVICES=3,2,1,0` logic.
+    *   This exposes Physical GPUs [3, 2, 1, 0] as Logical GPUs [0, 1, 2, 3].
+*   **Selection**: The launcher will pick the first N logical GPUs required by the config.
+    *   If config needs 3 GPUs, it picks Logical 0, 1, 2.
+    *   This maps to Physical 3, 2, 1.
+    *   Physical 0 (Logical 3) remains unused.
 
 ### 2. Configuration Fixes (in `gsm8k_grpo_reasoning_2000samples_4GPUs.yaml`)
 
-*   **Batch Size Adjustment**: Changed `batch_size` from 8 to 6.
-    *   The allocation mode `sglang.d1t1p1+d3t1p1` uses 1 GPU for SGLang and 3 GPUs for training.
-    *   Data parallelism requires batch size to be divisible by the training world size (3).
-    *   6 is divisible by 3, resolving the dataloader error.
+*   **Downscale to 3 GPUs**: Changed `allocation_mode` from `sglang.d1t1p1+d3t1p1` (4 GPUs) to `sglang.d1t1p1+d2t1p1` (3 GPUs).
+    *   1 GPU for SGLang (Logical 0 -> Physical 3).
+    *   2 GPUs for Training (Logical 1, 2 -> Physical 2, 1).
+*   **Batch Size**: Kept at 6.
+    *   6 is divisible by 2 (new training world size), so no dataloader errors.
 
 ## Testing
 
-After applying these fixes:
-1.  Cleanup script runs successfully.
-2.  GPU order is reversed to avoid GPU 0.
-3.  SGLang server initializes successfully on physical GPU 3.
-4.  Training actors initialize on physical GPUs 2, 1, and 0.
-5.  Training loop starts successfully without batch size errors.
-
-## If Issue Persists
-
-If errors return:
-
-1.  **Check RunPod Container**: Ensure the container is fully stopped before restarting.
-2.  **Restart Pod**: If physical GPU 0 causes training actors to fail (e.g., NCCL errors on rank 2), the entire pod must be restarted to reset the GPU driver state.
-3.  **Manual Cleanup**: SSH into the pod and run:
-    ```bash
-    pkill -9 -f sglang
-    pkill -9 -f areal
-    nvidia-smi --gpu-reset
-    ```
+With these changes:
+1.  SGLang initializes on Physical GPU 3.
+2.  Training Rank 0 initializes on Physical GPU 2.
+3.  Training Rank 1 initializes on Physical GPU 1.
+4.  Physical GPU 0 is untouched.
+5.  Training should proceed successfully with 3 GPUs.
 
 ## Related Files
 
--   `examples/cloud_gsm8k/run_training_cloud.sh` - Training script with cleanup and reordering logic.
--   `examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml` - 4-GPU reasoning config with corrected batch size.
+-   `examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml` - Modified to use 3 GPUs.
+-   `examples/cloud_gsm8k/run_training_cloud.sh` - Handles GPU reordering.
