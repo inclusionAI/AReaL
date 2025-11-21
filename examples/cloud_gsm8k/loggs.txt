@@ -1,136 +1,290 @@
-2025-11-21T23:01:01.484360292Z ==========
-2025-11-21T23:01:01.484370375Z == CUDA ==
-2025-11-21T23:01:01.484398607Z ==========
-2025-11-21T23:01:01.487333461Z CUDA Version 12.9.1
-2025-11-21T23:01:01.488852170Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-2025-11-21T23:01:01.489857178Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
-2025-11-21T23:01:01.489859823Z By pulling and using the container, you accept the terms and conditions of this license:
-2025-11-21T23:01:01.489862117Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
-2025-11-21T23:01:01.489866223Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
-2025-11-21T23:01:01.682896023Z Writing to /root/.config/pip/pip.conf
-2025-11-21T23:01:01.884030549Z Writing to /root/.config/pip/pip.conf
-2025-11-21T23:01:01.914149775Z Cloning into 'AReaL'...
-2025-11-21T23:01:03.315827608Z Checking AReaL installation...
-2025-11-21T23:01:03.451936689Z AReaL already installed. Skipping installation.
-2025-11-21T23:01:03.451973201Z Cleaning up any leftover GPU processes...
-2025-11-21T23:01:03.452188230Z Installing cleanup tools (psmisc, lsof)...
-2025-11-21T23:01:03.559364252Z Get:2 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  InRelease [1,581 B]
-2025-11-21T23:01:04.014065049Z Get:3 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy InRelease [18.1 kB]
-2025-11-21T23:01:04.256693638Z Get:4 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy/main amd64 Packages [38.5 kB]
-2025-11-21T23:01:04.634658255Z Get:5 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  Packages [2,151 kB]
-2025-11-21T23:01:05.383233757Z Ign:1 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  InRelease
-2025-11-21T23:01:06.338177833Z Hit:7 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy InRelease
-2025-11-21T23:01:06.500051772Z Get:6 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release [496 B]
-2025-11-21T23:01:06.644335268Z Get:8 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates InRelease [128 kB]
-2025-11-21T23:01:06.877083364Z Get:9 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release.gpg [833 B]
-2025-11-21T23:01:07.525318445Z Get:10 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports InRelease [127 kB]
-2025-11-21T23:01:07.925135889Z Get:11 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security InRelease [129 kB]
-2025-11-21T23:01:08.297737435Z Get:12 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Packages [18.8 kB]
-2025-11-21T23:01:08.309849732Z Get:13 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/restricted amd64 Packages [6,214 kB]
-2025-11-21T23:01:09.651344817Z Get:14 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/multiverse amd64 Packages [69.2 kB]
-2025-11-21T23:01:09.653478913Z Get:15 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/universe amd64 Packages [1,595 kB]
-2025-11-21T23:01:09.761327406Z Get:16 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/main amd64 Packages [3,873 kB]
-2025-11-21T23:01:10.034139771Z Get:17 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/universe amd64 Packages [35.2 kB]
-2025-11-21T23:01:10.034533431Z Get:18 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/main amd64 Packages [83.9 kB]
-2025-11-21T23:01:10.036432233Z Get:19 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/multiverse amd64 Packages [60.9 kB]
-2025-11-21T23:01:10.038285422Z Get:20 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/restricted amd64 Packages [5,988 kB]
-2025-11-21T23:01:10.530216300Z Get:21 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/main amd64 Packages [3,532 kB]
-2025-11-21T23:01:10.789172606Z Get:22 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/universe amd64 Packages [1,290 kB]
-2025-11-21T23:01:11.033479118Z Fetched 25.4 MB in 7s (3,388 kB/s)
-2025-11-21T23:01:12.129185321Z Reading package lists...
-2025-11-21T23:01:12.146931347Z W: http://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64/Release.gpg: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
-2025-11-21T23:01:13.229587995Z Reading package lists...
-2025-11-21T23:01:13.437415578Z Building dependency tree...
-2025-11-21T23:01:13.437774138Z Reading state information...
-2025-11-21T23:01:13.622840883Z lsof is already the newest version (4.93.2+dfsg-1.1build2).
-2025-11-21T23:01:13.622897006Z The following NEW packages will be installed:
-2025-11-21T23:01:13.622936402Z   psmisc
-2025-11-21T23:01:15.970392897Z 0 upgraded, 1 newly installed, 0 to remove and 62 not upgraded.
-2025-11-21T23:01:15.970434315Z Need to get 119 kB of archives.
-2025-11-21T23:01:15.970440465Z After this operation, 463 kB of additional disk space will be used.
-2025-11-21T23:01:15.970446335Z Get:1 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy/main amd64 psmisc amd64 23.4-2build3 [119 kB]
-2025-11-21T23:01:16.707697255Z debconf: delaying package configuration, since apt-utils is not installed
-2025-11-21T23:01:16.735359735Z Fetched 119 kB in 3s (41.6 kB/s)
-2025-11-21T23:01:16.759837599Z Selecting previously unselected package psmisc.
-2025-11-21T23:01:16.793392020Z (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 70438 files and directories currently installed.)
-2025-11-21T23:01:16.794811884Z Preparing to unpack .../psmisc_23.4-2build3_amd64.deb ...
-2025-11-21T23:01:16.795222902Z Unpacking psmisc (23.4-2build3) ...
-2025-11-21T23:01:16.831195514Z Setting up psmisc (23.4-2build3) ...
-2025-11-21T23:01:16.835379322Z Processing triggers for man-db (2.10.2-1) ...
-2025-11-21T23:01:19.921499081Z Checking for processes holding GPU device files...
-2025-11-21T23:01:21.006074575Z Found processes holding GPU devices: 1
-2025-11-21T23:01:21.006122766Z 19
-2025-11-21T23:01:21.006129376Z 542
-2025-11-21T23:01:21.006134473Z 543
-2025-11-21T23:01:21.006139643Z Killing process 1...
-2025-11-21T23:01:21.006159446Z Killing process 542...
-2025-11-21T23:01:21.006524544Z Killing process 543...
-2025-11-21T23:01:23.009661595Z Using fuser to kill processes on GPU devices...
-2025-11-21T23:01:25.040169329Z Checking GPU...
-2025-11-21T23:01:25.073231257Z NVIDIA A40, 46068 MiB
-2025-11-21T23:01:25.095512034Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
-2025-11-21T23:01:25.095549818Z Detected 1 GPU(s)
-2025-11-21T23:01:25.095556855Z Checking GPU status...
-2025-11-21T23:01:25.118456687Z index, name, utilization.gpu [%], memory.used [MiB], compute_mode
-2025-11-21T23:01:25.119732866Z 0, NVIDIA A40, 0, 0, Default
-2025-11-21T23:01:25.158858883Z Starting training...
-2025-11-21T23:01:27.162004762Z Using REASONING FAST training configuration (20-30 minutes)
-2025-11-21T23:01:27.162049348Z Note: Trains reasoning model with XML format
-2025-11-21T23:01:27.166768557Z ==========================================
-2025-11-21T23:01:27.166775417Z Starting GRPO Training (Cloud)
-2025-11-21T23:01:27.166780937Z ==========================================
-2025-11-21T23:01:27.166785897Z Config: reasoning_fast
-2025-11-21T23:01:27.166791565Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml
-2025-11-21T23:01:27.166796778Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
-2025-11-21T23:01:27.166801550Z Experiment: gsm8k-grpo-reasoning-fast
-2025-11-21T23:01:27.166806438Z Trial: trial_20251121_230127
-2025-11-21T23:01:27.166811425Z GPU: NVIDIA A40 (46068 MB)
-2025-11-21T23:01:27.167090898Z WandB API key: e1adc5be02...
-2025-11-21T23:01:27.167121941Z ==========================================
-2025-11-21T23:01:28.188675275Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T23:01:28.188757895Z   import pynvml  # type: ignore[import]
-2025-11-21T23:01:32.454744457Z [37m20251121-23:01:32.454 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T23:01:32.454788737Z [37m20251121-23:01:32.454 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T23:01:32.454912453Z [37m20251121-23:01:32.454 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-fast/trial_20251121_230127[0m
-2025-11-21T23:01:32.579863244Z [37m20251121-23:01:32.579 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-fast, trial_name=trial_20251121_230127, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
-2025-11-21T23:01:32.588108265Z [37m20251121-23:01:32.587 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml experiment_name=gsm8k-grpo-reasoning-fast trial_name=trial_20251121_230127 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-fast/trial_20251121_230127/llm_server.log[0m
-2025-11-21T23:01:33.625088765Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T23:01:33.625110803Z   import pynvml  # type: ignore[import]
-2025-11-21T23:01:35.115488097Z [37m20251121-23:01:35.114 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T23:01:35.115817802Z [37m20251121-23:01:35.115 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T23:01:35.208014294Z [37m20251121-23:01:35.207 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.16.16.2 --port 10400 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:37338 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend fa3 --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
-2025-11-21T23:01:36.692590929Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T23:01:36.692641705Z   import pynvml  # type: ignore[import]
-2025-11-21T23:01:42.368485994Z INFO 11-21 23:01:42 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T23:01:43.565268374Z `torch_dtype` is deprecated! Use `dtype` instead!
-2025-11-21T23:01:44.703028564Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T23:01:44.703221381Z   import pynvml  # type: ignore[import]
-2025-11-21T23:01:44.723204601Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T23:01:44.723250968Z   import pynvml  # type: ignore[import]
-2025-11-21T23:01:50.384015881Z INFO 11-21 23:01:50 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T23:01:50.437142345Z INFO 11-21 23:01:50 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T23:01:51.236385496Z `torch_dtype` is deprecated! Use `dtype` instead!
-2025-11-21T23:01:51.580273355Z [2025-11-21 23:01:51] Context: self.device='cuda' self.gpu_id=0 os.environ.get('CUDA_VISIBLE_DEVICES')='0' self.tp_rank=0 self.tp_size=1
-2025-11-21T23:01:51.582354842Z [2025-11-21 23:01:51] Scheduler hit an exception: Traceback (most recent call last):
-2025-11-21T23:01:51.582367064Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 2587, in run_scheduler_process
-2025-11-21T23:01:51.582373287Z     scheduler = Scheduler(
-2025-11-21T23:01:51.582378597Z                 ^^^^^^^^^^
-2025-11-21T23:01:51.582383992Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 329, in __init__
-2025-11-21T23:01:51.582389317Z     self.tp_worker = TpWorkerClass(
-2025-11-21T23:01:51.582394257Z                      ^^^^^^^^^^^^^^
-2025-11-21T23:01:51.582399067Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker_overlap_thread.py", line 71, in __init__
-2025-11-21T23:01:51.582403925Z     self.worker = TpModelWorker(
-2025-11-21T23:01:51.582408655Z                   ^^^^^^^^^^^^^^
-2025-11-21T23:01:51.582413367Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker.py", line 93, in __init__
-2025-11-21T23:01:51.582418075Z     self.model_runner = ModelRunner(
-2025-11-21T23:01:51.582422972Z                         ^^^^^^^^^^^^
-2025-11-21T23:01:51.582428022Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 240, in __init__
-2025-11-21T23:01:51.582433030Z     min_per_gpu_memory = self.init_torch_distributed()
-2025-11-21T23:01:51.582438328Z                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-2025-11-21T23:01:51.582443008Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 597, in init_torch_distributed
-2025-11-21T23:01:51.582448210Z     torch.get_device_module(self.device).set_device(self.gpu_id)
-2025-11-21T23:01:51.582453010Z   File "/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py", line 569, in set_device
-2025-11-21T23:01:51.582457782Z     torch._C._cuda_setDevice(device)
-2025-11-21T23:01:51.582462572Z torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
-2025-11-21T23:01:51.582467370Z Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
-2025-11-21T23:01:51.583140876Z [2025-11-21 23:01:51] Received sigquit from a child process. It usually means the child failed.
+2025-11-21T23:04:32.622913734Z ==========
+2025-11-21T23:04:32.622928524Z == CUDA ==
+2025-11-21T23:04:32.622995745Z ==========
+2025-11-21T23:04:32.627765917Z CUDA Version 12.9.1
+2025-11-21T23:04:32.629762275Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-21T23:04:32.630985814Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-21T23:04:32.630988115Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-21T23:04:32.630990251Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-21T23:04:32.630994163Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-21T23:04:32.823616321Z Writing to /root/.config/pip/pip.conf
+2025-11-21T23:04:32.997225086Z Writing to /root/.config/pip/pip.conf
+2025-11-21T23:04:33.023238076Z Cloning into 'AReaL'...
+2025-11-21T23:04:34.408017132Z Checking AReaL installation...
+2025-11-21T23:04:34.547860426Z AReaL already installed. Skipping installation.
+2025-11-21T23:04:34.547923890Z Cleaning up any leftover GPU processes...
+2025-11-21T23:04:34.548227774Z Installing cleanup tools (psmisc, lsof)...
+2025-11-21T23:04:34.663887774Z Get:2 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  InRelease [1,581 B]
+2025-11-21T23:04:35.072265802Z Get:3 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy InRelease [18.1 kB]
+2025-11-21T23:04:35.288866364Z Get:4 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy/main amd64 Packages [38.5 kB]
+2025-11-21T23:04:35.413963872Z Get:5 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  Packages [2,151 kB]
+2025-11-21T23:04:36.332164613Z Ign:1 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  InRelease
+2025-11-21T23:04:36.987924856Z Get:6 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release [496 B]
+2025-11-21T23:04:36.999662500Z Get:7 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release.gpg [833 B]
+2025-11-21T23:04:37.115196851Z Hit:8 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy InRelease
+2025-11-21T23:04:37.430376825Z Get:9 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates InRelease [128 kB]
+2025-11-21T23:04:37.745133481Z Get:10 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Packages [18.8 kB]
+2025-11-21T23:04:38.333483846Z Get:11 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports InRelease [127 kB]
+2025-11-21T23:04:38.743493962Z Get:12 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security InRelease [129 kB]
+2025-11-21T23:04:39.138373072Z Get:13 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/multiverse amd64 Packages [69.2 kB]
+2025-11-21T23:04:39.211370799Z Get:14 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/universe amd64 Packages [1,595 kB]
+2025-11-21T23:04:39.991993776Z Get:15 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/main amd64 Packages [3,873 kB]
+2025-11-21T23:04:40.405997896Z Get:16 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/restricted amd64 Packages [6,214 kB]
+2025-11-21T23:04:41.209462681Z Get:17 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/universe amd64 Packages [35.2 kB]
+2025-11-21T23:04:41.210024476Z Get:18 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/main amd64 Packages [83.9 kB]
+2025-11-21T23:04:41.211610985Z Get:19 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/restricted amd64 Packages [5,988 kB]
+2025-11-21T23:04:41.725225924Z Get:20 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/multiverse amd64 Packages [60.9 kB]
+2025-11-21T23:04:41.726358489Z Get:21 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/universe amd64 Packages [1,290 kB]
+2025-11-21T23:04:41.759867100Z Get:22 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/main amd64 Packages [3,532 kB]
+2025-11-21T23:04:42.213446286Z Fetched 25.4 MB in 8s (3,352 kB/s)
+2025-11-21T23:04:43.310956521Z Reading package lists...
+2025-11-21T23:04:43.326941252Z W: http://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64/Release.gpg: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
+2025-11-21T23:04:44.426900266Z Reading package lists...
+2025-11-21T23:04:44.636019831Z Building dependency tree...
+2025-11-21T23:04:44.636295627Z Reading state information...
+2025-11-21T23:04:44.793210210Z lsof is already the newest version (4.93.2+dfsg-1.1build2).
+2025-11-21T23:04:44.793237545Z The following NEW packages will be installed:
+2025-11-21T23:04:44.793240308Z   psmisc
+2025-11-21T23:04:46.888081136Z 0 upgraded, 1 newly installed, 0 to remove and 62 not upgraded.
+2025-11-21T23:04:46.888125453Z Need to get 119 kB of archives.
+2025-11-21T23:04:46.888132030Z After this operation, 463 kB of additional disk space will be used.
+2025-11-21T23:04:46.888137313Z Get:1 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy/main amd64 psmisc amd64 23.4-2build3 [119 kB]
+2025-11-21T23:04:47.619311741Z debconf: delaying package configuration, since apt-utils is not installed
+2025-11-21T23:04:47.655343143Z Fetched 119 kB in 3s (45.9 kB/s)
+2025-11-21T23:04:47.680709174Z Selecting previously unselected package psmisc.
+2025-11-21T23:04:47.722279374Z (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 70438 files and directories currently installed.)
+2025-11-21T23:04:47.723829528Z Preparing to unpack .../psmisc_23.4-2build3_amd64.deb ...
+2025-11-21T23:04:47.724626726Z Unpacking psmisc (23.4-2build3) ...
+2025-11-21T23:04:47.769828089Z Setting up psmisc (23.4-2build3) ...
+2025-11-21T23:04:47.773931712Z Processing triggers for man-db (2.10.2-1) ...
+2025-11-21T23:04:50.890750463Z Checking for processes holding GPU device files...
+2025-11-21T23:04:51.787943455Z Found processes holding GPU devices: 1
+2025-11-21T23:04:51.788003782Z 18
+2025-11-21T23:04:51.788010602Z 541
+2025-11-21T23:04:51.788016405Z 542
+2025-11-21T23:04:51.788021716Z Killing process 1...
+2025-11-21T23:04:51.788027306Z Killing process 541...
+2025-11-21T23:04:51.788520718Z Killing process 542...
+2025-11-21T23:04:53.792692621Z Using fuser to kill processes on GPU devices...
+2025-11-21T23:04:55.827240936Z Checking GPU...
+2025-11-21T23:04:55.861519610Z NVIDIA A40, 46068 MiB
+2025-11-21T23:04:55.885291225Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-21T23:04:55.885312110Z Detected 1 GPU(s)
+2025-11-21T23:04:55.885314815Z Checking GPU status...
+2025-11-21T23:04:55.909029150Z index, name, utilization.gpu [%], memory.used [MiB], compute_mode
+2025-11-21T23:04:55.910602104Z 0, NVIDIA A40, 0, 0, Default
+2025-11-21T23:04:55.952020506Z Starting training...
+2025-11-21T23:04:57.955262261Z Using REASONING FAST training configuration (20-30 minutes)
+2025-11-21T23:04:57.955309944Z Note: Trains reasoning model with XML format
+2025-11-21T23:04:57.958507772Z ==========================================
+2025-11-21T23:04:57.958514856Z Starting GRPO Training (Cloud)
+2025-11-21T23:04:57.958520746Z ==========================================
+2025-11-21T23:04:57.958525932Z Config: reasoning_fast
+2025-11-21T23:04:57.958532143Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml
+2025-11-21T23:04:57.958537723Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
+2025-11-21T23:04:57.958542639Z Experiment: gsm8k-grpo-reasoning-fast
+2025-11-21T23:04:57.958547829Z Trial: trial_20251121_230457
+2025-11-21T23:04:57.958552919Z GPU: NVIDIA A40 (46068 MB)
+2025-11-21T23:04:57.958557729Z WandB API key: e1adc5be02...
+2025-11-21T23:04:57.958562649Z ==========================================
+2025-11-21T23:04:59.042516870Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T23:04:59.042598877Z   import pynvml  # type: ignore[import]
+2025-11-21T23:05:03.034038795Z [37m20251121-23:05:03.033 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-21T23:05:03.034080662Z [37m20251121-23:05:03.033 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T23:05:03.034263433Z [37m20251121-23:05:03.033 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-fast/trial_20251121_230457[0m
+2025-11-21T23:05:03.158816832Z [37m20251121-23:05:03.158 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-fast, trial_name=trial_20251121_230457, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-21T23:05:03.167687211Z [37m20251121-23:05:03.167 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml experiment_name=gsm8k-grpo-reasoning-fast trial_name=trial_20251121_230457 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-fast/trial_20251121_230457/llm_server.log[0m
+2025-11-21T23:05:04.318006278Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T23:05:04.318049378Z   import pynvml  # type: ignore[import]
+2025-11-21T23:05:05.812195881Z [37m20251121-23:05:05.811 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-21T23:05:05.812635102Z [37m20251121-23:05:05.811 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T23:05:05.903338464Z [37m20251121-23:05:05.902 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.16.16.2 --port 24840 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:36077 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashattn --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-21T23:05:07.457565788Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T23:05:07.457616240Z   import pynvml  # type: ignore[import]
+2025-11-21T23:05:13.133355042Z INFO 11-21 23:05:13 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T23:05:13.866210312Z usage: launch_server.py [-h] --model-path MODEL_PATH
+2025-11-21T23:05:13.866239321Z                         [--tokenizer-path TOKENIZER_PATH]
+2025-11-21T23:05:13.866242947Z                         [--tokenizer-mode {auto,slow}]
+2025-11-21T23:05:13.866258350Z                         [--tokenizer-worker-num TOKENIZER_WORKER_NUM]
+2025-11-21T23:05:13.866262640Z                         [--skip-tokenizer-init]
+2025-11-21T23:05:13.866266390Z                         [--load-format {auto,pt,safetensors,npcache,dummy,sharded_state,gguf,bitsandbytes,layered,remote}]
+2025-11-21T23:05:13.866270047Z                         [--model-loader-extra-config MODEL_LOADER_EXTRA_CONFIG]
+2025-11-21T23:05:13.866273031Z                         [--trust-remote-code]
+2025-11-21T23:05:13.866276344Z                         [--context-length CONTEXT_LENGTH] [--is-embedding]
+2025-11-21T23:05:13.866279347Z                         [--enable-multimodal] [--revision REVISION]
+2025-11-21T23:05:13.866282306Z                         [--model-impl MODEL_IMPL] [--host HOST] [--port PORT]
+2025-11-21T23:05:13.866285250Z                         [--skip-server-warmup] [--warmups WARMUPS]
+2025-11-21T23:05:13.866288235Z                         [--nccl-port NCCL_PORT]
+2025-11-21T23:05:13.866291124Z                         [--dtype {auto,half,float16,bfloat16,float,float32}]
+2025-11-21T23:05:13.866294232Z                         [--quantization {awq,fp8,gptq,marlin,gptq_marlin,awq_marlin,bitsandbytes,gguf,modelopt,modelopt_fp4,petit_nvfp4,w8a8_int8,w8a8_fp8,moe_wna16,qoq,w4afp8,mxfp4}]
+2025-11-21T23:05:13.866297872Z                         [--quantization-param-path QUANTIZATION_PARAM_PATH]
+2025-11-21T23:05:13.866301164Z                         [--kv-cache-dtype {auto,fp8_e5m2,fp8_e4m3}]
+2025-11-21T23:05:13.866304112Z                         [--mem-fraction-static MEM_FRACTION_STATIC]
+2025-11-21T23:05:13.866307027Z                         [--max-running-requests MAX_RUNNING_REQUESTS]
+2025-11-21T23:05:13.866309870Z                         [--max-queued-requests MAX_QUEUED_REQUESTS]
+2025-11-21T23:05:13.866312946Z                         [--max-total-tokens MAX_TOTAL_TOKENS]
+2025-11-21T23:05:13.866316075Z                         [--chunked-prefill-size CHUNKED_PREFILL_SIZE]
+2025-11-21T23:05:13.866319311Z                         [--max-prefill-tokens MAX_PREFILL_TOKENS]
+2025-11-21T23:05:13.866322152Z                         [--schedule-policy {lpm,random,fcfs,dfs-weight,lof}]
+2025-11-21T23:05:13.866325100Z                         [--schedule-conservativeness SCHEDULE_CONSERVATIVENESS]
+2025-11-21T23:05:13.866328015Z                         [--page-size PAGE_SIZE]
+2025-11-21T23:05:13.866330870Z                         [--hybrid-kvcache-ratio [HYBRID_KVCACHE_RATIO]]
+2025-11-21T23:05:13.866333826Z                         [--swa-full-tokens-ratio SWA_FULL_TOKENS_RATIO]
+2025-11-21T23:05:13.866338170Z                         [--disable-hybrid-swa-memory] [--device DEVICE]
+2025-11-21T23:05:13.866343315Z                         [--tensor-parallel-size TENSOR_PARALLEL_SIZE]
+2025-11-21T23:05:13.866346247Z                         [--pipeline-parallel-size PIPELINE_PARALLEL_SIZE]
+2025-11-21T23:05:13.866349155Z                         [--max-micro-batch-size MAX_MICRO_BATCH_SIZE]
+2025-11-21T23:05:13.866352084Z                         [--stream-interval STREAM_INTERVAL] [--stream-output]
+2025-11-21T23:05:13.866355011Z                         [--random-seed RANDOM_SEED]
+2025-11-21T23:05:13.866358035Z                         [--constrained-json-whitespace-pattern CONSTRAINED_JSON_WHITESPACE_PATTERN]
+2025-11-21T23:05:13.866363054Z                         [--watchdog-timeout WATCHDOG_TIMEOUT]
+2025-11-21T23:05:13.866367800Z                         [--dist-timeout DIST_TIMEOUT]
+2025-11-21T23:05:13.866374113Z                         [--download-dir DOWNLOAD_DIR]
+2025-11-21T23:05:13.866378933Z                         [--base-gpu-id BASE_GPU_ID]
+2025-11-21T23:05:13.866383640Z                         [--gpu-id-step GPU_ID_STEP] [--sleep-on-idle]
+2025-11-21T23:05:13.866388413Z                         [--log-level LOG_LEVEL]
+2025-11-21T23:05:13.866393444Z                         [--log-level-http LOG_LEVEL_HTTP] [--log-requests]
+2025-11-21T23:05:13.866398155Z                         [--log-requests-level {0,1,2,3}]
+2025-11-21T23:05:13.866403045Z                         [--crash-dump-folder CRASH_DUMP_FOLDER]
+2025-11-21T23:05:13.866407773Z                         [--show-time-cost] [--enable-metrics]
+2025-11-21T23:05:13.866419423Z                         [--enable-metrics-for-all-schedulers]
+2025-11-21T23:05:13.866424570Z                         [--bucket-time-to-first-token BUCKET_TIME_TO_FIRST_TOKEN [BUCKET_TIME_TO_FIRST_TOKEN ...]]
+2025-11-21T23:05:13.866429970Z                         [--bucket-inter-token-latency BUCKET_INTER_TOKEN_LATENCY [BUCKET_INTER_TOKEN_LATENCY ...]]
+2025-11-21T23:05:13.866434970Z                         [--bucket-e2e-request-latency BUCKET_E2E_REQUEST_LATENCY [BUCKET_E2E_REQUEST_LATENCY ...]]
+2025-11-21T23:05:13.866439857Z                         [--collect-tokens-histogram]
+2025-11-21T23:05:13.866444565Z                         [--prompt-tokens-buckets PROMPT_TOKENS_BUCKETS [PROMPT_TOKENS_BUCKETS ...]]
+2025-11-21T23:05:13.866449303Z                         [--generation-tokens-buckets GENERATION_TOKENS_BUCKETS [GENERATION_TOKENS_BUCKETS ...]]
+2025-11-21T23:05:13.866454280Z                         [--gc-warning-threshold-secs GC_WARNING_THRESHOLD_SECS]
+2025-11-21T23:05:13.866459093Z                         [--decode-log-interval DECODE_LOG_INTERVAL]
+2025-11-21T23:05:13.866463740Z                         [--enable-request-time-stats-logging]
+2025-11-21T23:05:13.866468408Z                         [--kv-events-config KV_EVENTS_CONFIG]
+2025-11-21T23:05:13.866474005Z                         [--api-key API_KEY]
+2025-11-21T23:05:13.866478985Z                         [--served-model-name SERVED_MODEL_NAME]
+2025-11-21T23:05:13.866483675Z                         [--weight-version WEIGHT_VERSION]
+2025-11-21T23:05:13.866488365Z                         [--chat-template CHAT_TEMPLATE]
+2025-11-21T23:05:13.866493195Z                         [--completion-template COMPLETION_TEMPLATE]
+2025-11-21T23:05:13.866497810Z                         [--file-storage-path FILE_STORAGE_PATH]
+2025-11-21T23:05:13.866502470Z                         [--enable-cache-report]
+2025-11-21T23:05:13.866507190Z                         [--reasoning-parser {deepseek-r1,deepseek-v3,glm45,gpt-oss,kimi,qwen3,qwen3-thinking,step3}]
+2025-11-21T23:05:13.866512321Z                         [--tool-call-parser {llama3,qwen25,mistral,deepseekv3,deepseekv31,pythonic,kimi_k2,qwen3_coder,glm45,step3,gpt-oss}]
+2025-11-21T23:05:13.866517475Z                         [--tool-server TOOL_SERVER]
+2025-11-21T23:05:13.866522261Z                         [--data-parallel-size DATA_PARALLEL_SIZE]
+2025-11-21T23:05:13.866527058Z                         [--load-balance-method {round_robin,shortest_queue,minimum_tokens}]
+2025-11-21T23:05:13.866531978Z                         [--prefill-round-robin-balance]
+2025-11-21T23:05:13.866536665Z                         [--dist-init-addr DIST_INIT_ADDR] [--nnodes NNODES]
+2025-11-21T23:05:13.866541433Z                         [--node-rank NODE_RANK]
+2025-11-21T23:05:13.866546135Z                         [--json-model-override-args JSON_MODEL_OVERRIDE_ARGS]
+2025-11-21T23:05:13.866551041Z                         [--preferred-sampling-params PREFERRED_SAMPLING_PARAMS]
+2025-11-21T23:05:13.866555781Z                         [--enable-lora] [--max-lora-rank MAX_LORA_RANK]
+2025-11-21T23:05:13.866560593Z                         [--lora-target-modules [{q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj,qkv_proj,gate_up_proj,all} ...]]
+2025-11-21T23:05:13.866565574Z                         [--lora-paths [LORA_PATHS ...]]
+2025-11-21T23:05:13.866570264Z                         [--max-loras-per-batch MAX_LORAS_PER_BATCH]
+2025-11-21T23:05:13.866574945Z                         [--max-loaded-loras MAX_LOADED_LORAS]
+2025-11-21T23:05:13.866579601Z                         [--lora-backend LORA_BACKEND]
+2025-11-21T23:05:13.866584578Z                         [--attention-backend {triton,torch_native,cutlass_mla,fa3,flashinfer,flashmla,trtllm_mla,trtllm_mha,dual_chunk_flash_attn,hybrid_linear_attn,aiter,wave,intel_amx,ascend}]
+2025-11-21T23:05:13.866590145Z                         [--prefill-attention-backend {triton,torch_native,cutlass_mla,fa3,flashinfer,flashmla,trtllm_mla,trtllm_mha,dual_chunk_flash_attn,hybrid_linear_attn,aiter,wave,intel_amx,ascend}]
+2025-11-21T23:05:13.866596485Z                         [--decode-attention-backend {triton,torch_native,cutlass_mla,fa3,flashinfer,flashmla,trtllm_mla,trtllm_mha,dual_chunk_flash_attn,hybrid_linear_attn,aiter,wave,intel_amx,ascend}]
+2025-11-21T23:05:13.866607031Z                         [--sampling-backend {flashinfer,pytorch}]
+2025-11-21T23:05:13.866611955Z                         [--grammar-backend {xgrammar,outlines,llguidance,none}]
+2025-11-21T23:05:13.866616681Z                         [--mm-attention-backend {sdpa,fa3,triton_attn}]
+2025-11-21T23:05:13.866621314Z                         [--speculative-algorithm {EAGLE,EAGLE3,NEXTN,STANDALONE}]
+2025-11-21T23:05:13.866625938Z                         [--speculative-draft-model-path SPECULATIVE_DRAFT_MODEL_PATH]
+2025-11-21T23:05:13.866630574Z                         [--speculative-draft-model-revision SPECULATIVE_DRAFT_MODEL_REVISION]
+2025-11-21T23:05:13.866635468Z                         [--speculative-num-steps SPECULATIVE_NUM_STEPS]
+2025-11-21T23:05:13.866640105Z                         [--speculative-eagle-topk SPECULATIVE_EAGLE_TOPK]
+2025-11-21T23:05:13.866644821Z                         [--speculative-num-draft-tokens SPECULATIVE_NUM_DRAFT_TOKENS]
+2025-11-21T23:05:13.866649688Z                         [--speculative-accept-threshold-single SPECULATIVE_ACCEPT_THRESHOLD_SINGLE]
+2025-11-21T23:05:13.866656478Z                         [--speculative-accept-threshold-acc SPECULATIVE_ACCEPT_THRESHOLD_ACC]
+2025-11-21T23:05:13.866661214Z                         [--speculative-token-map SPECULATIVE_TOKEN_MAP]
+2025-11-21T23:05:13.866665838Z                         [--speculative-attention-mode {prefill,decode}]
+2025-11-21T23:05:13.866670584Z                         [--expert-parallel-size EXPERT_PARALLEL_SIZE]
+2025-11-21T23:05:13.866675388Z                         [--moe-a2a-backend {none,deepep}]
+2025-11-21T23:05:13.866680268Z                         [--moe-runner-backend {auto,triton,triton_kernel,flashinfer_trtllm,flashinfer_cutlass,flashinfer_mxfp4}]
+2025-11-21T23:05:13.866685128Z                         [--flashinfer-mxfp4-moe-precision {default,bf16}]
+2025-11-21T23:05:13.866689881Z                         [--enable-flashinfer-allreduce-fusion]
+2025-11-21T23:05:13.866694521Z                         [--deepep-mode {normal,low_latency,auto}]
+2025-11-21T23:05:13.866699201Z                         [--ep-num-redundant-experts EP_NUM_REDUNDANT_EXPERTS]
+2025-11-21T23:05:13.866703885Z                         [--ep-dispatch-algorithm EP_DISPATCH_ALGORITHM]
+2025-11-21T23:05:13.866708514Z                         [--init-expert-location INIT_EXPERT_LOCATION]
+2025-11-21T23:05:13.866713405Z                         [--enable-eplb] [--eplb-algorithm EPLB_ALGORITHM]
+2025-11-21T23:05:13.867136366Z                         [--eplb-rebalance-num-iterations EPLB_REBALANCE_NUM_ITERATIONS]
+2025-11-21T23:05:13.867174025Z                         [--eplb-rebalance-layers-per-chunk EPLB_REBALANCE_LAYERS_PER_CHUNK]
+2025-11-21T23:05:13.867180995Z                         [--eplb-min-rebalancing-utilization-threshold EPLB_MIN_REBALANCING_UTILIZATION_THRESHOLD]
+2025-11-21T23:05:13.867186537Z                         [--expert-distribution-recorder-mode EXPERT_DISTRIBUTION_RECORDER_MODE]
+2025-11-21T23:05:13.867191902Z                         [--expert-distribution-recorder-buffer-size EXPERT_DISTRIBUTION_RECORDER_BUFFER_SIZE]
+2025-11-21T23:05:13.867197105Z                         [--enable-expert-distribution-metrics]
+2025-11-21T23:05:13.867202727Z                         [--deepep-config DEEPEP_CONFIG]
+2025-11-21T23:05:13.867207672Z                         [--moe-dense-tp-size MOE_DENSE_TP_SIZE]
+2025-11-21T23:05:13.867212589Z                         [--max-mamba-cache-size MAX_MAMBA_CACHE_SIZE]
+2025-11-21T23:05:13.867217607Z                         [--mamba-ssm-dtype {float32,bfloat16}]
+2025-11-21T23:05:13.867222422Z                         [--enable-hierarchical-cache]
+2025-11-21T23:05:13.867227197Z                         [--hicache-ratio HICACHE_RATIO]
+2025-11-21T23:05:13.867231959Z                         [--hicache-size HICACHE_SIZE]
+2025-11-21T23:05:13.867236842Z                         [--hicache-write-policy {write_back,write_through,write_through_selective}]
+2025-11-21T23:05:13.867241729Z                         [--hicache-io-backend {direct,kernel}]
+2025-11-21T23:05:13.867265842Z                         [--hicache-mem-layout {layer_first,page_first}]
+2025-11-21T23:05:13.867271305Z                         [--hicache-storage-backend {file,mooncake,hf3fs,nixl}]
+2025-11-21T23:05:13.867276342Z                         [--hicache-storage-prefetch-policy {best_effort,wait_complete,timeout}]
+2025-11-21T23:05:13.867281247Z                         [--hicache-storage-backend-extra-config HICACHE_STORAGE_BACKEND_EXTRA_CONFIG]
+2025-11-21T23:05:13.867286065Z                         [--enable-lmcache] [--enable-double-sparsity]
+2025-11-21T23:05:13.867290817Z                         [--ds-channel-config-path DS_CHANNEL_CONFIG_PATH]
+2025-11-21T23:05:13.867295660Z                         [--ds-heavy-channel-num DS_HEAVY_CHANNEL_NUM]
+2025-11-21T23:05:13.867300777Z                         [--ds-heavy-token-num DS_HEAVY_TOKEN_NUM]
+2025-11-21T23:05:13.867305513Z                         [--ds-heavy-channel-type DS_HEAVY_CHANNEL_TYPE]
+2025-11-21T23:05:13.867310200Z                         [--ds-sparse-decode-threshold DS_SPARSE_DECODE_THRESHOLD]
+2025-11-21T23:05:13.867315027Z                         [--cpu-offload-gb CPU_OFFLOAD_GB]
+2025-11-21T23:05:13.867319790Z                         [--offload-group-size OFFLOAD_GROUP_SIZE]
+2025-11-21T23:05:13.867326600Z                         [--offload-num-in-group OFFLOAD_NUM_IN_GROUP]
+2025-11-21T23:05:13.867331635Z                         [--offload-prefetch-step OFFLOAD_PREFETCH_STEP]
+2025-11-21T23:05:13.867336427Z                         [--offload-mode OFFLOAD_MODE] [--disable-radix-cache]
+2025-11-21T23:05:13.867341453Z                         [--cuda-graph-max-bs CUDA_GRAPH_MAX_BS]
+2025-11-21T23:05:13.867346260Z                         [--cuda-graph-bs CUDA_GRAPH_BS [CUDA_GRAPH_BS ...]]
+2025-11-21T23:05:13.867351225Z                         [--disable-cuda-graph] [--disable-cuda-graph-padding]
+2025-11-21T23:05:13.867356010Z                         [--enable-profile-cuda-graph] [--enable-cudagraph-gc]
+2025-11-21T23:05:13.867360720Z                         [--enable-nccl-nvls] [--enable-symm-mem]
+2025-11-21T23:05:13.867365557Z                         [--disable-flashinfer-cutlass-moe-fp4-allgather]
+2025-11-21T23:05:13.867370876Z                         [--enable-tokenizer-batch-encode]
+2025-11-21T23:05:13.867375773Z                         [--disable-outlines-disk-cache]
+2025-11-21T23:05:13.867380727Z                         [--disable-custom-all-reduce] [--enable-mscclpp]
+2025-11-21T23:05:13.867385556Z                         [--disable-overlap-schedule] [--enable-mixed-chunk]
+2025-11-21T23:05:13.867390320Z                         [--enable-dp-attention] [--enable-dp-lm-head]
+2025-11-21T23:05:13.867395060Z                         [--enable-two-batch-overlap]
+2025-11-21T23:05:13.867399767Z                         [--tbo-token-distribution-threshold TBO_TOKEN_DISTRIBUTION_THRESHOLD]
+2025-11-21T23:05:13.867404507Z                         [--enable-torch-compile]
+2025-11-21T23:05:13.867409933Z                         [--torch-compile-max-bs TORCH_COMPILE_MAX_BS]
+2025-11-21T23:05:13.867414717Z                         [--torchao-config TORCHAO_CONFIG]
+2025-11-21T23:05:13.867419603Z                         [--enable-nan-detection] [--enable-p2p-check]
+2025-11-21T23:05:13.867424327Z                         [--triton-attention-reduce-in-fp32]
+2025-11-21T23:05:13.867429040Z                         [--triton-attention-num-kv-splits TRITON_ATTENTION_NUM_KV_SPLITS]
+2025-11-21T23:05:13.867433737Z                         [--num-continuous-decode-steps NUM_CONTINUOUS_DECODE_STEPS]
+2025-11-21T23:05:13.867438527Z                         [--delete-ckpt-after-loading] [--enable-memory-saver]
+2025-11-21T23:05:13.867443303Z                         [--allow-auto-truncate]
+2025-11-21T23:05:13.867448087Z                         [--enable-custom-logit-processor]
+2025-11-21T23:05:13.867452817Z                         [--flashinfer-mla-disable-ragged]
+2025-11-21T23:05:13.867457667Z                         [--disable-shared-experts-fusion]
+2025-11-21T23:05:13.867462480Z                         [--disable-chunked-prefix-cache]
+2025-11-21T23:05:13.867467310Z                         [--disable-fast-image-processor]
+2025-11-21T23:05:13.867472207Z                         [--enable-return-hidden-states]
+2025-11-21T23:05:13.867483733Z                         [--scheduler-recv-interval SCHEDULER_RECV_INTERVAL]
+2025-11-21T23:05:13.867488900Z                         [--numa-node NUMA_NODE [NUMA_NODE ...]]
+2025-11-21T23:05:13.867493723Z                         [--debug-tensor-dump-output-folder DEBUG_TENSOR_DUMP_OUTPUT_FOLDER]
+2025-11-21T23:05:13.867498520Z                         [--debug-tensor-dump-input-file DEBUG_TENSOR_DUMP_INPUT_FILE]
+2025-11-21T23:05:13.867503476Z                         [--debug-tensor-dump-inject DEBUG_TENSOR_DUMP_INJECT]
+2025-11-21T23:05:13.867508360Z                         [--debug-tensor-dump-prefill-only]
+2025-11-21T23:05:13.867513167Z                         [--disaggregation-mode {null,prefill,decode}]
+2025-11-21T23:05:13.867518000Z                         [--disaggregation-transfer-backend {mooncake,nixl,ascend,fake}]
+2025-11-21T23:05:13.867523127Z                         [--disaggregation-bootstrap-port DISAGGREGATION_BOOTSTRAP_PORT]
+2025-11-21T23:05:13.867528093Z                         [--disaggregation-decode-tp DISAGGREGATION_DECODE_TP]
+2025-11-21T23:05:13.867532953Z                         [--disaggregation-decode-dp DISAGGREGATION_DECODE_DP]
+2025-11-21T23:05:13.867537700Z                         [--disaggregation-prefill-pp DISAGGREGATION_PREFILL_PP]
+2025-11-21T23:05:13.867542550Z                         [--disaggregation-ib-device DISAGGREGATION_IB_DEVICE]
+2025-11-21T23:05:13.867547353Z                         [--num-reserved-decode-tokens NUM_RESERVED_DECODE_TOKENS]
+2025-11-21T23:05:13.867552007Z                         [--custom-weight-loader [CUSTOM_WEIGHT_LOADER ...]]
+2025-11-21T23:05:13.867556723Z                         [--weight-loader-disable-mmap] [--enable-pdmux]
+2025-11-21T23:05:13.867561426Z                         [--sm-group-num SM_GROUP_NUM] [--enable-ep-moe]
+2025-11-21T23:05:13.867566143Z                         [--enable-deepep-moe]
+2025-11-21T23:05:13.867571237Z                         [--enable-flashinfer-cutlass-moe]
+2025-11-21T23:05:13.867576017Z                         [--enable-flashinfer-trtllm-moe]
+2025-11-21T23:05:13.867581017Z                         [--enable-triton-kernel-moe]
+2025-11-21T23:05:13.867585910Z                         [--enable-flashinfer-mxfp4-moe]
+2025-11-21T23:05:13.867590928Z launch_server.py: error: argument --attention-backend: invalid choice: 'flashattn' (choose from triton, torch_native, cutlass_mla, fa3, flashinfer, flashmla, trtllm_mla, trtllm_mha, dual_chunk_flash_attn, hybrid_linear_attn, aiter, wave, intel_amx, ascend)

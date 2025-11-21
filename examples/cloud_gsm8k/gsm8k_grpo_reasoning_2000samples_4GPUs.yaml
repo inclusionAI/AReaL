@@ -110,7 +110,7 @@ sglang:
   max_running_requests: null
   context_length: 4096
   mem_fraction_static: 0.6  # Reduced for A40 to leave room for inference
-  attention_backend: flashattn  # Use FlashAttention 2 (more stable on A40s than fa3 or flashinfer)
+  attention_backend: triton  # Use Triton backend (most stable on A40s)
 
 # datasets - Use reasoning variant by adding "-reasoning" to path
 train_dataset:
