@@ -5,6 +5,7 @@ experiment_name: gsm8k-grpo
 trial_name: trial0
 
 seed: 1
+enable_offload: false
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 

@@ -2,6 +2,7 @@ experiment_name: gsm8k-sft
 trial_name: trial0
 
 seed: 1
+enable_offload: false
 total_train_epochs: 1
 tokenizer_path: ${model.path}
 

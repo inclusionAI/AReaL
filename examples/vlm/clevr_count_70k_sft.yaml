@@ -2,6 +2,7 @@ experiment_name: clevr_count_70k-sft
 trial_name: trial0
 
 seed: 1
+enable_offload: false
 total_train_epochs: 3
 tokenizer_path: ${model.path}
 
