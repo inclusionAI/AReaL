@@ -80,6 +80,46 @@ python3 -m areal.launcher.local "$TRAIN_SCRIPT" \
     experiment_name="$EXPERIMENT_NAME" \
     trial_name="$TRIAL_NAME"
 
+TRAIN_EXIT_CODE=$?
+
+if [ $TRAIN_EXIT_CODE -eq 0 ]; then
+    echo ""
+    echo "=========================================="
+    echo "Training completed successfully. Running quick validation..."
+    echo "=========================================="
+    
+    # Find latest checkpoint
+    # Note: In Docker, user is usually 'root'
+    CHECKPOINT_BASE="./outputs/grpo/checkpoints/root/${EXPERIMENT_NAME}/${TRIAL_NAME}/default"
+    
+    if [ -d "$CHECKPOINT_BASE" ]; then
+        # Get latest checkpoint directory (sort by time descending)
+        LATEST_CHECKPOINT=$(ls -td "$CHECKPOINT_BASE"/*/ | head -1)
+        
+        if [ -n "$LATEST_CHECKPOINT" ]; then
+            echo "Found latest checkpoint: $LATEST_CHECKPOINT"
+            
+            # Determine test script based on experiment name or config
+            if [[ "$EXPERIMENT_NAME" == *"reasoning"* ]] || [[ "$CONFIG_FILE" == *"reasoning"* ]]; then
+                echo "Detected reasoning model. Running test_reasoning_model.py (30 samples)..."
+                python3 examples/docker_gsm8k/test_reasoning_model.py \
+                    --model-path "$LATEST_CHECKPOINT" \
+                    --max-samples 30 \
+                    --max-new-tokens 1024
+            else
+                echo "Running standard test_trained_model.py (30 samples)..."
+                python3 examples/docker_gsm8k/test_trained_model.py \
+                    --config "$CONFIG_FILE" \
+                    --max-samples 30
+            fi
+        else
+            echo "WARNING: No checkpoint subdirectories found in $CHECKPOINT_BASE"
+        fi
+    else
+        echo "WARNING: Checkpoint directory not found: $CHECKPOINT_BASE"
+    fi
+fi
+
 echo ""
 echo "=========================================="
 echo "Training session completed or stopped."
