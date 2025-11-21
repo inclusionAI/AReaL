@@ -1,5 +1,6 @@
 import torch
 from vllm.logger import init_logger
+from vllm.lora.request import LoRARequest
 from vllm.model_executor.model_loader import get_model_loader
 
 from areal.platforms import current_platform
@@ -33,6 +34,39 @@ class VLLMWorkerExtension:
             return True, "Success"
         except Exception as e:
             error_msg = f"failed to upload weights! {e}"
+            logger.error(error_msg)
+            return False, error_msg
+
+    def update_weights_lora(
+        self,
+        lora_model_path: str,
+        lora_name: str,
+        lora_int_id: int,
+        base_model_name: str,
+    ):
+        logger.info(
+            f"start lora update weights, lora_model_path-{lora_model_path}, lora_name-{lora_name}, lora_int_id-{lora_int_id}, base_model_name-{base_model_name}",
+            flush=True,
+        )
+        try:
+            # load lora weight
+            self.model_runner.lora_manager.remove_adapter(lora_int_id)
+            # list_of_adapters = self.model_runner.lora_manager.list_adapters()
+            lora_request = LoRARequest(
+                lora_name=lora_name,
+                lora_int_id=lora_int_id,
+                lora_path=lora_model_path,
+                base_model_name=base_model_name,
+            )
+            logger.info(f"Reloading lora weights with request {lora_request}")
+            self.model_runner.add_lora(lora_request)
+
+            self.sync()
+            torch.distributed.barrier()
+            current_platform.synchronize()
+            return True, "Success"
+        except Exception as e:
+            error_msg = f"failed to upload lora weights! {e}"
             logger.error(error_msg)
             return False, error_msg
 

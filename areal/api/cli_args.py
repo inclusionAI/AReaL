@@ -722,6 +722,8 @@ class vLLMConfig:
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
+    enable_lora: bool = False
+    lora_modules: str = ""
 
     @staticmethod
     def build_args(
@@ -746,6 +748,17 @@ class vLLMConfig:
             args["port"] = port
         if host is not None:
             args["host"] = host
+        # handle lora modules separately
+        lm = args.get("lora_modules")
+        if lm:
+            if isinstance(lm, (list, tuple)):
+                args["lora_modules"] = [
+                    json.dumps(json.loads(s), separators=(",", ":")) for s in lm
+                ]
+            elif isinstance(lm, str):
+                args["lora_modules"] = [
+                    json.dumps(json.loads(lm), separators=(",", ":"))
+                ]
         return args
 
     @staticmethod
@@ -1014,6 +1027,10 @@ class InferenceEngineConfig:
             "help": "The scheduling strategy of this TrainEngine, either separation or colocation. "
             "Currently only used by the RolloutController."
         },
+    )
+    use_lora: bool = field(
+        default=False,
+        metadata={"help": "Whether to use LoRA. Should be same as actors LORA option."},
     )
 
     def __post_init__(self):

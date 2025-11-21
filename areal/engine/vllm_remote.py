@@ -33,8 +33,6 @@ class VLLMBackend:
         self, req: ModelRequest, with_lora: bool
     ) -> HttpRequest:
         """Build vLLM generation request."""
-        if with_lora:
-            raise NotImplementedError("vLLM does not support LoRA training.")
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
 
@@ -50,7 +48,8 @@ class VLLMBackend:
             "logprobs": 0,
             "stream": False,
         }
-
+        if with_lora and len(gconfig.lora_name) > 0:
+            payload["model"] = gconfig.lora_name
         return HttpRequest(endpoint="/v1/completions", payload=payload)
 
     def parse_generation_response(
@@ -81,17 +80,29 @@ class VLLMBackend:
         self, meta: WeightUpdateMeta, lora_initialized: bool
     ) -> WeightUpdateRequests:
         """Build vLLM disk weight update requests."""
-        # vLLM uses a single endpoint for disk updates
-        if lora_initialized:
-            raise NotImplementedError("vLLM does not support updating LoRA weights.")
-        return WeightUpdateRequests(
-            requests=[
-                HttpRequest(
-                    endpoint="/areal_update_weights",
-                    payload={"model_path": str(meta.path)},
-                )
-            ]
-        )
+        if lora_initialized and meta.use_lora:
+            return WeightUpdateRequests(
+                requests=[
+                    HttpRequest(
+                        endpoint="/areal_update_weights_lora",
+                        payload={
+                            "lora_model_path": str(meta.path),
+                            "lora_name": str(meta.lora_name),
+                            "lora_int_id": meta.lora_int_id,
+                            "base_model_name": str(meta.base_model_name),
+                        },
+                    )
+                ]
+            )
+        else:
+            return WeightUpdateRequests(
+                requests=[
+                    HttpRequest(
+                        endpoint="/areal_update_weights",
+                        payload={"model_path": str(meta.path)},
+                    )
+                ]
+            )
 
     def build_distributed_weight_update_requests(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
@@ -210,6 +221,8 @@ class RemotevLLMEngine(InferenceEngine):
         self.config = config
         # Pure composition - create internal engine with vLLM backend
         self._engine = RemoteInfEngine(config, VLLMBackend())
+        # lora already initialized when use_lora=true during init, by design, for vLLM
+        self._engine.lora_initialized = config.use_lora
 
     def initialize(
         self,
