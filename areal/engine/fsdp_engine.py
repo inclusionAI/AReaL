@@ -261,7 +261,7 @@ class FSDPEngine(BaseHFEngine):
             if processor is not None:
                 processor.save_pretrained(path)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
     def _load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
@@ -401,7 +401,7 @@ class FSDPEngine(BaseHFEngine):
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
@@ -431,13 +431,13 @@ class FSDPEngine(BaseHFEngine):
         if named_tensors:
             self._update_bucket_weights_from_distributed(meta, named_tensors)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         if dist.get_rank() == 0:
             self.rollout_engine.continue_generation()
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     @trace_perf("fsdp_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
@@ -461,8 +461,8 @@ class FSDPEngine(BaseHFEngine):
 
             fut.result()
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
@@ -498,8 +498,8 @@ class FSDPEngine(BaseHFEngine):
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""

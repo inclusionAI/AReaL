@@ -254,7 +254,7 @@ class BaseHFEngine(TrainEngine):
         )
         state_dict = self.optimizer.state_dict()
         torch.save(state_dict, shard_path)
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
     def load_optimizer_state(self, path: str):
         # Load FSDP sharded state dict
@@ -266,7 +266,7 @@ class BaseHFEngine(TrainEngine):
         )
         optimizer_state_dict = torch.load(shard_path, weights_only=False)
         self.optimizer.load_state_dict(optimizer_state_dict)
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
     def step_lr_scheduler(self):
         assert self.lr_scheduler is not None
