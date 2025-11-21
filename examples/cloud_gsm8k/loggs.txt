@@ -1,136 +1,136 @@
-2025-11-21T22:51:17.807614645Z ==========
-2025-11-21T22:51:17.807617289Z == CUDA ==
-2025-11-21T22:51:17.807618745Z ==========
-2025-11-21T22:51:17.811409753Z CUDA Version 12.9.1
-2025-11-21T22:51:17.812641463Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-2025-11-21T22:51:17.814137802Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
-2025-11-21T22:51:17.814143428Z By pulling and using the container, you accept the terms and conditions of this license:
-2025-11-21T22:51:17.814147281Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
-2025-11-21T22:51:17.814154941Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
-2025-11-21T22:51:18.007950869Z Writing to /root/.config/pip/pip.conf
-2025-11-21T22:51:18.208760821Z Writing to /root/.config/pip/pip.conf
-2025-11-21T22:51:18.234973457Z Cloning into 'AReaL'...
-2025-11-21T22:51:20.001800511Z Checking AReaL installation...
-2025-11-21T22:51:20.140884783Z AReaL already installed. Skipping installation.
-2025-11-21T22:51:20.140950813Z Cleaning up any leftover GPU processes...
-2025-11-21T22:51:20.141325011Z Installing cleanup tools (psmisc, lsof)...
-2025-11-21T22:51:20.255196927Z Get:2 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  InRelease [1,581 B]
-2025-11-21T22:51:20.698601707Z Get:3 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy InRelease [18.1 kB]
-2025-11-21T22:51:20.936993717Z Get:4 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy/main amd64 Packages [38.5 kB]
-2025-11-21T22:51:21.138060911Z Get:5 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  Packages [2,151 kB]
-2025-11-21T22:51:22.025978170Z Ign:1 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  InRelease
-2025-11-21T22:51:22.034093237Z Get:6 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release [496 B]
-2025-11-21T22:51:22.038577632Z Get:7 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release.gpg [833 B]
-2025-11-21T22:51:22.251133834Z Get:8 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Packages [18.8 kB]
-2025-11-21T22:51:22.561848468Z Hit:9 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy InRelease
-2025-11-21T22:51:22.880990835Z Get:10 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates InRelease [128 kB]
-2025-11-21T22:51:23.777700685Z Get:11 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports InRelease [127 kB]
-2025-11-21T22:51:24.192330726Z Get:12 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security InRelease [129 kB]
-2025-11-21T22:51:24.602292012Z Get:13 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/main amd64 Packages [3,873 kB]
-2025-11-21T22:51:25.768388765Z Get:14 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/multiverse amd64 Packages [69.2 kB]
-2025-11-21T22:51:25.772213898Z Get:15 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/universe amd64 Packages [1,595 kB]
-2025-11-21T22:51:25.890664854Z Get:16 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/restricted amd64 Packages [6,214 kB]
-2025-11-21T22:51:26.395692796Z Get:17 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/universe amd64 Packages [35.2 kB]
-2025-11-21T22:51:26.396638055Z Get:18 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/main amd64 Packages [83.9 kB]
-2025-11-21T22:51:26.398738831Z Get:19 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/multiverse amd64 Packages [60.9 kB]
-2025-11-21T22:51:26.400573725Z Get:20 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/universe amd64 Packages [1,290 kB]
-2025-11-21T22:51:26.544674017Z Get:21 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/main amd64 Packages [3,532 kB]
-2025-11-21T22:51:26.815369477Z Get:22 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/restricted amd64 Packages [5,988 kB]
-2025-11-21T22:51:27.625376682Z Fetched 25.4 MB in 7s (3,434 kB/s)
-2025-11-21T22:51:28.872193079Z Reading package lists...
-2025-11-21T22:51:28.896963432Z W: http://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64/Release.gpg: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
-2025-11-21T22:51:30.109654938Z Reading package lists...
-2025-11-21T22:51:30.320508027Z Building dependency tree...
-2025-11-21T22:51:30.321133780Z Reading state information...
-2025-11-21T22:51:30.489273621Z lsof is already the newest version (4.93.2+dfsg-1.1build2).
-2025-11-21T22:51:30.489315776Z The following NEW packages will be installed:
-2025-11-21T22:51:30.489321709Z   psmisc
-2025-11-21T22:51:32.841875060Z 0 upgraded, 1 newly installed, 0 to remove and 62 not upgraded.
-2025-11-21T22:51:32.841937813Z Need to get 119 kB of archives.
-2025-11-21T22:51:32.841947203Z After this operation, 463 kB of additional disk space will be used.
-2025-11-21T22:51:32.841953759Z Get:1 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy/main amd64 psmisc amd64 23.4-2build3 [119 kB]
-2025-11-21T22:51:33.553477093Z debconf: delaying package configuration, since apt-utils is not installed
-2025-11-21T22:51:33.578129289Z Fetched 119 kB in 3s (41.8 kB/s)
-2025-11-21T22:51:33.599994345Z Selecting previously unselected package psmisc.
-2025-11-21T22:51:33.633719591Z (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 70438 files and directories currently installed.)
-2025-11-21T22:51:33.635140249Z Preparing to unpack .../psmisc_23.4-2build3_amd64.deb ...
-2025-11-21T22:51:33.635866187Z Unpacking psmisc (23.4-2build3) ...
-2025-11-21T22:51:33.677437846Z Setting up psmisc (23.4-2build3) ...
-2025-11-21T22:51:33.682896374Z Processing triggers for man-db (2.10.2-1) ...
-2025-11-21T22:51:36.775424204Z Checking for processes holding GPU device files...
-2025-11-21T22:51:37.461069038Z Found processes holding GPU devices: 1
-2025-11-21T22:51:37.461112901Z 20
-2025-11-21T22:51:37.461119374Z 555
-2025-11-21T22:51:37.461124467Z 556
-2025-11-21T22:51:37.461129801Z Killing process 1...
-2025-11-21T22:51:37.461150088Z Killing process 555...
-2025-11-21T22:51:37.461685108Z Killing process 556...
-2025-11-21T22:51:39.464381316Z Using fuser to kill processes on GPU devices...
-2025-11-21T22:51:41.486030966Z Checking GPU...
-2025-11-21T22:51:41.513404666Z NVIDIA A40, 46068 MiB
-2025-11-21T22:51:41.538051487Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
-2025-11-21T22:51:41.538091125Z Detected 1 GPU(s)
-2025-11-21T22:51:41.538097642Z Checking GPU status...
-2025-11-21T22:51:41.558437517Z index, name, utilization.gpu [%], memory.used [MiB], compute_mode
-2025-11-21T22:51:41.559359816Z 0, NVIDIA A40, 0, 0, Default
-2025-11-21T22:51:41.597121896Z Starting training...
-2025-11-21T22:51:43.599546746Z Using REASONING FAST training configuration (20-30 minutes)
-2025-11-21T22:51:43.599595802Z Note: Trains reasoning model with XML format
-2025-11-21T22:51:43.602806834Z ==========================================
-2025-11-21T22:51:43.602810915Z Starting GRPO Training (Cloud)
-2025-11-21T22:51:43.602813737Z ==========================================
-2025-11-21T22:51:43.602816886Z Config: reasoning_fast
-2025-11-21T22:51:43.602820479Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml
-2025-11-21T22:51:43.602823021Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
-2025-11-21T22:51:43.602826120Z Experiment: gsm8k-grpo-reasoning-fast
-2025-11-21T22:51:43.602829181Z Trial: trial_20251121_225143
-2025-11-21T22:51:43.602831834Z GPU: NVIDIA A40 (46068 MB)
-2025-11-21T22:51:43.602834626Z WandB API key: e1adc5be02...
-2025-11-21T22:51:43.602837414Z ==========================================
-2025-11-21T22:51:44.544978215Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T22:51:44.545042722Z   import pynvml  # type: ignore[import]
-2025-11-21T22:51:48.655622822Z [37m20251121-22:51:48.655 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T22:51:48.655665275Z [37m20251121-22:51:48.655 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T22:51:48.655960893Z [37m20251121-22:51:48.655 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-fast/trial_20251121_225143[0m
-2025-11-21T22:51:48.782720623Z [37m20251121-22:51:48.782 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-fast, trial_name=trial_20251121_225143, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
-2025-11-21T22:51:48.794634510Z [37m20251121-22:51:48.794 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml experiment_name=gsm8k-grpo-reasoning-fast trial_name=trial_20251121_225143 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-fast/trial_20251121_225143/llm_server.log[0m
-2025-11-21T22:51:49.825546428Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T22:51:49.825609178Z   import pynvml  # type: ignore[import]
-2025-11-21T22:51:51.316932537Z [37m20251121-22:51:51.316 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T22:51:51.317210747Z [37m20251121-22:51:51.316 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T22:51:51.409486348Z [37m20251121-22:51:51.408 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.16.16.2 --port 17309 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:25701 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashinfer --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
-2025-11-21T22:51:52.871321025Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T22:51:52.871369124Z   import pynvml  # type: ignore[import]
-2025-11-21T22:51:58.567822772Z INFO 11-21 22:51:58 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T22:51:59.783456047Z `torch_dtype` is deprecated! Use `dtype` instead!
-2025-11-21T22:52:00.962057213Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T22:52:00.962122994Z   import pynvml  # type: ignore[import]
-2025-11-21T22:52:01.028571841Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T22:52:01.028609504Z   import pynvml  # type: ignore[import]
-2025-11-21T22:52:06.320846308Z INFO 11-21 22:52:06 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T22:52:06.595715104Z INFO 11-21 22:52:06 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T22:52:07.099162125Z `torch_dtype` is deprecated! Use `dtype` instead!
-2025-11-21T22:52:07.430638510Z [2025-11-21 22:52:07] Context: self.device='cuda' self.gpu_id=0 os.environ.get('CUDA_VISIBLE_DEVICES')='0' self.tp_rank=0 self.tp_size=1
-2025-11-21T22:52:07.432515459Z [2025-11-21 22:52:07] Scheduler hit an exception: Traceback (most recent call last):
-2025-11-21T22:52:07.432528325Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 2587, in run_scheduler_process
-2025-11-21T22:52:07.432534705Z     scheduler = Scheduler(
-2025-11-21T22:52:07.432545658Z                 ^^^^^^^^^^
-2025-11-21T22:52:07.432550790Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 329, in __init__
-2025-11-21T22:52:07.432555825Z     self.tp_worker = TpWorkerClass(
-2025-11-21T22:52:07.432560690Z                      ^^^^^^^^^^^^^^
-2025-11-21T22:52:07.432565580Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker_overlap_thread.py", line 71, in __init__
-2025-11-21T22:52:07.432570542Z     self.worker = TpModelWorker(
-2025-11-21T22:52:07.432575445Z                   ^^^^^^^^^^^^^^
-2025-11-21T22:52:07.432580415Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker.py", line 93, in __init__
-2025-11-21T22:52:07.432585292Z     self.model_runner = ModelRunner(
-2025-11-21T22:52:07.432590215Z                         ^^^^^^^^^^^^
-2025-11-21T22:52:07.432595180Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 240, in __init__
-2025-11-21T22:52:07.432600175Z     min_per_gpu_memory = self.init_torch_distributed()
-2025-11-21T22:52:07.432605368Z                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-2025-11-21T22:52:07.432610143Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 597, in init_torch_distributed
-2025-11-21T22:52:07.432615743Z     torch.get_device_module(self.device).set_device(self.gpu_id)
-2025-11-21T22:52:07.432620683Z   File "/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py", line 569, in set_device
-2025-11-21T22:52:07.432625533Z     torch._C._cuda_setDevice(device)
-2025-11-21T22:52:07.432630415Z torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
-2025-11-21T22:52:07.432635393Z Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
-2025-11-21T22:52:07.433238684Z [2025-11-21 22:52:07] Received sigquit from a child process. It usually means the child failed.
+2025-11-21T23:01:01.484360292Z ==========
+2025-11-21T23:01:01.484370375Z == CUDA ==
+2025-11-21T23:01:01.484398607Z ==========
+2025-11-21T23:01:01.487333461Z CUDA Version 12.9.1
+2025-11-21T23:01:01.488852170Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-21T23:01:01.489857178Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-21T23:01:01.489859823Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-21T23:01:01.489862117Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-21T23:01:01.489866223Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-21T23:01:01.682896023Z Writing to /root/.config/pip/pip.conf
+2025-11-21T23:01:01.884030549Z Writing to /root/.config/pip/pip.conf
+2025-11-21T23:01:01.914149775Z Cloning into 'AReaL'...
+2025-11-21T23:01:03.315827608Z Checking AReaL installation...
+2025-11-21T23:01:03.451936689Z AReaL already installed. Skipping installation.
+2025-11-21T23:01:03.451973201Z Cleaning up any leftover GPU processes...
+2025-11-21T23:01:03.452188230Z Installing cleanup tools (psmisc, lsof)...
+2025-11-21T23:01:03.559364252Z Get:2 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  InRelease [1,581 B]
+2025-11-21T23:01:04.014065049Z Get:3 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy InRelease [18.1 kB]
+2025-11-21T23:01:04.256693638Z Get:4 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy/main amd64 Packages [38.5 kB]
+2025-11-21T23:01:04.634658255Z Get:5 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  Packages [2,151 kB]
+2025-11-21T23:01:05.383233757Z Ign:1 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  InRelease
+2025-11-21T23:01:06.338177833Z Hit:7 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy InRelease
+2025-11-21T23:01:06.500051772Z Get:6 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release [496 B]
+2025-11-21T23:01:06.644335268Z Get:8 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates InRelease [128 kB]
+2025-11-21T23:01:06.877083364Z Get:9 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release.gpg [833 B]
+2025-11-21T23:01:07.525318445Z Get:10 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports InRelease [127 kB]
+2025-11-21T23:01:07.925135889Z Get:11 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security InRelease [129 kB]
+2025-11-21T23:01:08.297737435Z Get:12 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Packages [18.8 kB]
+2025-11-21T23:01:08.309849732Z Get:13 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/restricted amd64 Packages [6,214 kB]
+2025-11-21T23:01:09.651344817Z Get:14 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/multiverse amd64 Packages [69.2 kB]
+2025-11-21T23:01:09.653478913Z Get:15 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/universe amd64 Packages [1,595 kB]
+2025-11-21T23:01:09.761327406Z Get:16 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/main amd64 Packages [3,873 kB]
+2025-11-21T23:01:10.034139771Z Get:17 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/universe amd64 Packages [35.2 kB]
+2025-11-21T23:01:10.034533431Z Get:18 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/main amd64 Packages [83.9 kB]
+2025-11-21T23:01:10.036432233Z Get:19 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/multiverse amd64 Packages [60.9 kB]
+2025-11-21T23:01:10.038285422Z Get:20 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/restricted amd64 Packages [5,988 kB]
+2025-11-21T23:01:10.530216300Z Get:21 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/main amd64 Packages [3,532 kB]
+2025-11-21T23:01:10.789172606Z Get:22 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/universe amd64 Packages [1,290 kB]
+2025-11-21T23:01:11.033479118Z Fetched 25.4 MB in 7s (3,388 kB/s)
+2025-11-21T23:01:12.129185321Z Reading package lists...
+2025-11-21T23:01:12.146931347Z W: http://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64/Release.gpg: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
+2025-11-21T23:01:13.229587995Z Reading package lists...
+2025-11-21T23:01:13.437415578Z Building dependency tree...
+2025-11-21T23:01:13.437774138Z Reading state information...
+2025-11-21T23:01:13.622840883Z lsof is already the newest version (4.93.2+dfsg-1.1build2).
+2025-11-21T23:01:13.622897006Z The following NEW packages will be installed:
+2025-11-21T23:01:13.622936402Z   psmisc
+2025-11-21T23:01:15.970392897Z 0 upgraded, 1 newly installed, 0 to remove and 62 not upgraded.
+2025-11-21T23:01:15.970434315Z Need to get 119 kB of archives.
+2025-11-21T23:01:15.970440465Z After this operation, 463 kB of additional disk space will be used.
+2025-11-21T23:01:15.970446335Z Get:1 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy/main amd64 psmisc amd64 23.4-2build3 [119 kB]
+2025-11-21T23:01:16.707697255Z debconf: delaying package configuration, since apt-utils is not installed
+2025-11-21T23:01:16.735359735Z Fetched 119 kB in 3s (41.6 kB/s)
+2025-11-21T23:01:16.759837599Z Selecting previously unselected package psmisc.
+2025-11-21T23:01:16.793392020Z (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 70438 files and directories currently installed.)
+2025-11-21T23:01:16.794811884Z Preparing to unpack .../psmisc_23.4-2build3_amd64.deb ...
+2025-11-21T23:01:16.795222902Z Unpacking psmisc (23.4-2build3) ...
+2025-11-21T23:01:16.831195514Z Setting up psmisc (23.4-2build3) ...
+2025-11-21T23:01:16.835379322Z Processing triggers for man-db (2.10.2-1) ...
+2025-11-21T23:01:19.921499081Z Checking for processes holding GPU device files...
+2025-11-21T23:01:21.006074575Z Found processes holding GPU devices: 1
+2025-11-21T23:01:21.006122766Z 19
+2025-11-21T23:01:21.006129376Z 542
+2025-11-21T23:01:21.006134473Z 543
+2025-11-21T23:01:21.006139643Z Killing process 1...
+2025-11-21T23:01:21.006159446Z Killing process 542...
+2025-11-21T23:01:21.006524544Z Killing process 543...
+2025-11-21T23:01:23.009661595Z Using fuser to kill processes on GPU devices...
+2025-11-21T23:01:25.040169329Z Checking GPU...
+2025-11-21T23:01:25.073231257Z NVIDIA A40, 46068 MiB
+2025-11-21T23:01:25.095512034Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-21T23:01:25.095549818Z Detected 1 GPU(s)
+2025-11-21T23:01:25.095556855Z Checking GPU status...
+2025-11-21T23:01:25.118456687Z index, name, utilization.gpu [%], memory.used [MiB], compute_mode
+2025-11-21T23:01:25.119732866Z 0, NVIDIA A40, 0, 0, Default
+2025-11-21T23:01:25.158858883Z Starting training...
+2025-11-21T23:01:27.162004762Z Using REASONING FAST training configuration (20-30 minutes)
+2025-11-21T23:01:27.162049348Z Note: Trains reasoning model with XML format
+2025-11-21T23:01:27.166768557Z ==========================================
+2025-11-21T23:01:27.166775417Z Starting GRPO Training (Cloud)
+2025-11-21T23:01:27.166780937Z ==========================================
+2025-11-21T23:01:27.166785897Z Config: reasoning_fast
+2025-11-21T23:01:27.166791565Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml
+2025-11-21T23:01:27.166796778Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
+2025-11-21T23:01:27.166801550Z Experiment: gsm8k-grpo-reasoning-fast
+2025-11-21T23:01:27.166806438Z Trial: trial_20251121_230127
+2025-11-21T23:01:27.166811425Z GPU: NVIDIA A40 (46068 MB)
+2025-11-21T23:01:27.167090898Z WandB API key: e1adc5be02...
+2025-11-21T23:01:27.167121941Z ==========================================
+2025-11-21T23:01:28.188675275Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T23:01:28.188757895Z   import pynvml  # type: ignore[import]
+2025-11-21T23:01:32.454744457Z [37m20251121-23:01:32.454 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-21T23:01:32.454788737Z [37m20251121-23:01:32.454 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T23:01:32.454912453Z [37m20251121-23:01:32.454 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-fast/trial_20251121_230127[0m
+2025-11-21T23:01:32.579863244Z [37m20251121-23:01:32.579 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-fast, trial_name=trial_20251121_230127, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-21T23:01:32.588108265Z [37m20251121-23:01:32.587 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml experiment_name=gsm8k-grpo-reasoning-fast trial_name=trial_20251121_230127 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-fast/trial_20251121_230127/llm_server.log[0m
+2025-11-21T23:01:33.625088765Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T23:01:33.625110803Z   import pynvml  # type: ignore[import]
+2025-11-21T23:01:35.115488097Z [37m20251121-23:01:35.114 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-21T23:01:35.115817802Z [37m20251121-23:01:35.115 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T23:01:35.208014294Z [37m20251121-23:01:35.207 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.16.16.2 --port 10400 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:37338 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend fa3 --context-length 4096 --mem-fraction-static 0.8 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-21T23:01:36.692590929Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T23:01:36.692641705Z   import pynvml  # type: ignore[import]
+2025-11-21T23:01:42.368485994Z INFO 11-21 23:01:42 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T23:01:43.565268374Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-21T23:01:44.703028564Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T23:01:44.703221381Z   import pynvml  # type: ignore[import]
+2025-11-21T23:01:44.723204601Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T23:01:44.723250968Z   import pynvml  # type: ignore[import]
+2025-11-21T23:01:50.384015881Z INFO 11-21 23:01:50 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T23:01:50.437142345Z INFO 11-21 23:01:50 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T23:01:51.236385496Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-21T23:01:51.580273355Z [2025-11-21 23:01:51] Context: self.device='cuda' self.gpu_id=0 os.environ.get('CUDA_VISIBLE_DEVICES')='0' self.tp_rank=0 self.tp_size=1
+2025-11-21T23:01:51.582354842Z [2025-11-21 23:01:51] Scheduler hit an exception: Traceback (most recent call last):
+2025-11-21T23:01:51.582367064Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 2587, in run_scheduler_process
+2025-11-21T23:01:51.582373287Z     scheduler = Scheduler(
+2025-11-21T23:01:51.582378597Z                 ^^^^^^^^^^
+2025-11-21T23:01:51.582383992Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 329, in __init__
+2025-11-21T23:01:51.582389317Z     self.tp_worker = TpWorkerClass(
+2025-11-21T23:01:51.582394257Z                      ^^^^^^^^^^^^^^
+2025-11-21T23:01:51.582399067Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker_overlap_thread.py", line 71, in __init__
+2025-11-21T23:01:51.582403925Z     self.worker = TpModelWorker(
+2025-11-21T23:01:51.582408655Z                   ^^^^^^^^^^^^^^
+2025-11-21T23:01:51.582413367Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker.py", line 93, in __init__
+2025-11-21T23:01:51.582418075Z     self.model_runner = ModelRunner(
+2025-11-21T23:01:51.582422972Z                         ^^^^^^^^^^^^
+2025-11-21T23:01:51.582428022Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 240, in __init__
+2025-11-21T23:01:51.582433030Z     min_per_gpu_memory = self.init_torch_distributed()
+2025-11-21T23:01:51.582438328Z                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-21T23:01:51.582443008Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 597, in init_torch_distributed
+2025-11-21T23:01:51.582448210Z     torch.get_device_module(self.device).set_device(self.gpu_id)
+2025-11-21T23:01:51.582453010Z   File "/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py", line 569, in set_device
+2025-11-21T23:01:51.582457782Z     torch._C._cuda_setDevice(device)
+2025-11-21T23:01:51.582462572Z torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
+2025-11-21T23:01:51.582467370Z Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+2025-11-21T23:01:51.583140876Z [2025-11-21 23:01:51] Received sigquit from a child process. It usually means the child failed.
