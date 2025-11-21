@@ -78,30 +78,19 @@ After applying this fix, the training should:
 - The script checks GPU utilization and waits if GPUs are busy
 - GPU reset may require root privileges, so errors are ignored
 
-## Updated Fix (v2)
+## Updated Fix (v3)
 
-After the initial fix didn't fully resolve the issue, we've made additional improvements:
+The previous fixes were insufficient because `nvidia-smi` wasn't reporting the zombie processes holding the GPU. We've updated the script to:
 
-1. **Removed GPU Reset**: The `nvidia-smi --gpu-reset` command requires root privileges and was causing warnings. Removed it.
+1. **Install Cleanup Tools**: Automatically installs `psmisc` (for `fuser`) and `lsof` if missing.
+2. **Aggressive Device Cleanup**: Uses `lsof /dev/nvidia*` and `fuser -k -9 /dev/nvidia*` to identify and kill *any* process holding a file handle to the GPU devices, regardless of whether it's a compute process.
+3. **Detailed Logging**: Logs `compute_mode` and other GPU details to help debug "busy" errors (Exclusive Process mode often causes this).
 
-2. **Better Process Detection**: Now uses `nvidia-smi --query-compute-apps` to find processes actually using the GPU, not just Python processes.
+## Fix Summary
 
-3. **Removed GPU Test**: The PyTorch GPU accessibility test was creating a CUDA context that interfered with SGLang initialization. Removed it.
-
-4. **Better Diagnostics**: Added checks for GPU utilization, memory usage, and active processes.
-
-5. **CUDA Context Cleanup**: Added checks for Python processes that might have CUDA contexts open, with delays to allow contexts to release.
-
-6. **CUDA Debugging**: Added `CUDA_LAUNCH_BLOCKING=1` and `TORCH_USE_CUDA_DSA=1` for better error messages.
-
-## Key Insight
-
-The GPU accessibility test was passing (PyTorch could see the GPU), but SGLang was still failing. This is because:
-- The test creates a CUDA context that doesn't get properly cleaned up
-- SGLang needs exclusive access to the GPU when initializing distributed training
-- CUDA contexts can persist even after Python processes exit
-
-The fix removes the GPU test and adds delays to ensure any CUDA contexts are fully released before SGLang starts.
+1. Removed the GPU accessibility test — it created a CUDA context that interfered with SGLang initialization.
+2. Added CUDA context cleanup — checks for Python processes that might have CUDA contexts open.
+3. Added delays — allows time for CUDA contexts to release before SGLang starts.
 
 ## If Issue Persists
 

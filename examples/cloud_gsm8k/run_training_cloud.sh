@@ -49,40 +49,52 @@ fi
 
 # Clean up any leftover processes that might be using the GPU
 echo "Cleaning up any leftover GPU processes..."
+
+# Install cleanup tools if missing
+if ! command -v fuser &> /dev/null || ! command -v lsof &> /dev/null; then
+    echo "Installing cleanup tools (psmisc, lsof)..."
+    apt-get update && apt-get install -y psmisc lsof || echo "WARNING: Failed to install cleanup tools"
+fi
+
 # Kill any Python processes that might be holding the GPU
 pkill -9 -f "sglang" 2>/dev/null || true
 pkill -9 -f "areal.launcher" 2>/dev/null || true
 pkill -9 -f "torchrun" 2>/dev/null || true
 pkill -9 -f "python.*gsm8k_grpo" 2>/dev/null || true
+pkill -9 -f "ray" 2>/dev/null || true
+
 # Wait a moment for processes to terminate
 sleep 3
-# Additional cleanup: kill any processes using CUDA devices
+
+# Aggressive cleanup: kill any processes holding /dev/nvidia* open
+echo "Checking for processes holding GPU device files..."
+if command -v lsof &> /dev/null; then
+    # Find processes using nvidia devices
+    GPU_PIDS=$(lsof /dev/nvidia* 2>/dev/null | grep -v "PID" | awk '{print $2}' | sort -u)
+    if [ -n "$GPU_PIDS" ]; then
+        echo "Found processes holding GPU devices: $GPU_PIDS"
+        for pid in $GPU_PIDS; do
+            # Don't kill ourself
+            if [ "$pid" != "$$" ]; then
+                echo "Killing process $pid..."
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        done
+        sleep 2
+    fi
+fi
+
 if command -v fuser &> /dev/null; then
+    echo "Using fuser to kill processes on GPU devices..."
     for gpu_id in /dev/nvidia*; do
         if [ -e "$gpu_id" ]; then
-            fuser -k "$gpu_id" 2>/dev/null || true
+            fuser -k -9 "$gpu_id" 2>/dev/null || true
         fi
     done
     sleep 2
 fi
-# Check for processes still using GPU and kill them more aggressively
-echo "Checking for processes still using GPU..."
-GPU_PROCESSES=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null || echo "")
-if [ -n "$GPU_PROCESSES" ]; then
-    echo "Found processes using GPU: $GPU_PROCESSES"
-    for pid in $GPU_PROCESSES; do
-        if [ -n "$pid" ] && [ "$pid" != "pid" ]; then
-            echo "Killing process $pid..."
-            kill -9 "$pid" 2>/dev/null || true
-        fi
-    done
-    sleep 3
-fi
-# Don't try GPU reset - it requires root and causes warnings
-# Instead, verify GPU is accessible by checking nvidia-smi
-sleep 1
 
-# Get GPU information
+# Get GPU information and check status
 echo "Checking GPU..."
 GPU_INFO=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null)
 if [ -z "$GPU_INFO" ]; then
@@ -102,35 +114,12 @@ else
     
     # Check GPU utilization and memory usage
     echo "Checking GPU status..."
-    GPU_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo "")
-    GPU_MEM_USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null || echo "")
-    GPU_PROCESSES=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -v "^$" | wc -l || echo "0")
+    nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,compute_mode --format=csv,nounits || true
     
-    if [ -n "$GPU_UTIL" ]; then
-        GPU_IDX=0
-        for util in $GPU_UTIL; do
-            if [ "$util" -gt 10 ]; then
-                echo "WARNING: GPU $GPU_IDX shows ${util}% utilization"
-            fi
-            GPU_IDX=$((GPU_IDX + 1))
-        done
+    # Warn if we are in Exclusive Process mode (which makes "busy" errors more likely)
+    if nvidia-smi --query-gpu=compute_mode --format=csv,noheader | grep -i "Exclusive_Process" > /dev/null; then
+        echo "WARNING: GPUs are in Exclusive Process mode. Any zombie process will block access."
     fi
-    
-    if [ "$GPU_PROCESSES" -gt 0 ]; then
-        echo "WARNING: Found $GPU_PROCESSES process(es) still using GPU"
-        echo "Waiting 5 seconds for cleanup..."
-        sleep 5
-        # Check again
-        GPU_PROCESSES_AFTER=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -v "^$" | wc -l || echo "0")
-        if [ "$GPU_PROCESSES_AFTER" -gt 0 ]; then
-            echo "ERROR: GPU still has $GPU_PROCESSES_AFTER process(es) using it. This may cause training to fail."
-            echo "Consider stopping the pod and restarting it to fully reset GPU state."
-        fi
-    fi
-    
-    # Don't test GPU with PyTorch - it creates a CUDA context that can interfere with SGLang
-    # Instead, just verify nvidia-smi works (which we already did above)
-    echo "GPU check complete."
     
     # Final check: ensure no Python processes are holding CUDA contexts
     # This is important because CUDA contexts can persist even after processes exit
@@ -288,6 +277,15 @@ echo ""
 # Set CUDA environment variables for better error reporting
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_USE_CUDA_DSA=1
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+
+# Try to reverse GPU order to avoid potentially bad GPU 0
+# This maps visible devices 0,1,2,3 to physical GPUs 3,2,1,0
+# If physical GPU 0 is the zombie, this moves it to the last device
+if [ "$GPU_COUNT" -eq 4 ]; then
+    echo "Reversing GPU order to avoid potential issues with GPU 0..."
+    export CUDA_VISIBLE_DEVICES=3,2,1,0
+fi
 
 # Run training
 python3 -m areal.launcher.local "$TRAIN_SCRIPT" \

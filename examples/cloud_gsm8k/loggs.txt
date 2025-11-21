@@ -1,87 +1,87 @@
-2025-11-21T20:22:31.023878575Z ==========
-2025-11-21T20:22:31.023941969Z == CUDA ==
-2025-11-21T20:22:31.023969499Z ==========
-2025-11-21T20:22:31.028105939Z CUDA Version 12.9.1
-2025-11-21T20:22:31.029382949Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-2025-11-21T20:22:31.030392097Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
-2025-11-21T20:22:31.030398622Z By pulling and using the container, you accept the terms and conditions of this license:
-2025-11-21T20:22:31.030401918Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
-2025-11-21T20:22:31.030411646Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
-2025-11-21T20:22:31.225505700Z Writing to /root/.config/pip/pip.conf
-2025-11-21T20:22:31.427233404Z Writing to /root/.config/pip/pip.conf
-2025-11-21T20:22:31.457274940Z Cloning into 'AReaL'...
-2025-11-21T20:22:33.128080981Z Checking AReaL installation...
-2025-11-21T20:22:33.281021172Z AReaL already installed. Skipping installation.
-2025-11-21T20:22:33.281072038Z Cleaning up any leftover GPU processes...
-2025-11-21T20:22:36.301521096Z Checking for processes still using GPU...
-2025-11-21T20:22:37.360964080Z Checking GPU...
-2025-11-21T20:22:37.415272151Z NVIDIA A40, 46068 MiB
-2025-11-21T20:22:37.415292810Z NVIDIA A40, 46068 MiB
-2025-11-21T20:22:37.415295306Z NVIDIA A40, 46068 MiB
-2025-11-21T20:22:37.415297251Z NVIDIA A40, 46068 MiB
-2025-11-21T20:22:37.436396148Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
-2025-11-21T20:22:37.436432361Z Detected 4 GPU(s)
-2025-11-21T20:22:37.436442171Z Checking GPU status...
-2025-11-21T20:22:37.599168292Z Testing GPU accessibility...
-2025-11-21T20:22:39.650113856Z GPU accessible: True
-2025-11-21T20:22:40.098815771Z Using REASONING 2000 SAMPLES 4 GPUs training configuration
-2025-11-21T20:22:40.098862743Z Note: Trains reasoning model with XML format (2000 samples, 4x A40 GPUs)
-2025-11-21T20:22:40.098868975Z GPU count: 4 (required: 4)
-2025-11-21T20:22:40.101189544Z ==========================================
-2025-11-21T20:22:40.101245958Z Starting GRPO Training (Cloud)
-2025-11-21T20:22:40.101272998Z ==========================================
-2025-11-21T20:22:40.101278224Z Config: reasoning_2000samples_4GPUs
-2025-11-21T20:22:40.101283328Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml
-2025-11-21T20:22:40.101293558Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
-2025-11-21T20:22:40.101298891Z Experiment: gsm8k-grpo-reasoning-4gpu-2000samples
-2025-11-21T20:22:40.101350041Z Trial: trial_20251121_202240
-2025-11-21T20:22:40.101375471Z GPU: NVIDIA A40 NVIDIA A40 NVIDIA A40 NVIDIA A40 (46068 MB)
-2025-11-21T20:22:40.101399784Z WandB API key: e1adc5be02...
-2025-11-21T20:22:40.101404889Z ==========================================
-2025-11-21T20:22:40.987099689Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:22:40.987149211Z   import pynvml  # type: ignore[import]
-2025-11-21T20:22:45.632662305Z [37m20251121-20:22:45.632 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T20:22:45.632686099Z [37m20251121-20:22:45.632 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T20:22:45.633074309Z [37m20251121-20:22:45.632 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-4gpu-2000samples/trial_20251121_202240[0m
-2025-11-21T20:22:45.758656161Z [37m20251121-20:22:45.758 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-4gpu-2000samples, trial_name=trial_20251121_202240, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
-2025-11-21T20:22:45.768456928Z [37m20251121-20:22:45.768 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml experiment_name=gsm8k-grpo-reasoning-4gpu-2000samples trial_name=trial_20251121_202240 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-4gpu-2000samples/trial_20251121_202240/llm_server.log[0m
-2025-11-21T20:22:46.653853834Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:22:46.653878815Z   import pynvml  # type: ignore[import]
-2025-11-21T20:22:48.230801854Z [37m20251121-20:22:48.230 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
-2025-11-21T20:22:48.230842734Z [37m20251121-20:22:48.230 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
-2025-11-21T20:22:48.324514671Z [37m20251121-20:22:48.323 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.16.16.2 --port 12653 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:18049 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashinfer --context-length 4096 --mem-fraction-static 0.6 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
-2025-11-21T20:22:49.694401524Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:22:49.694451524Z   import pynvml  # type: ignore[import]
-2025-11-21T20:22:55.525444325Z INFO 11-21 20:22:55 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T20:22:56.728465636Z `torch_dtype` is deprecated! Use `dtype` instead!
-2025-11-21T20:22:57.843670557Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:22:57.843697306Z   import pynvml  # type: ignore[import]
-2025-11-21T20:22:57.848669587Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
-2025-11-21T20:22:57.848682524Z   import pynvml  # type: ignore[import]
-2025-11-21T20:23:03.311029179Z INFO 11-21 20:23:03 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T20:23:03.473495082Z INFO 11-21 20:23:03 [__init__.py:216] Automatically detected platform cuda.
-2025-11-21T20:23:04.156630507Z `torch_dtype` is deprecated! Use `dtype` instead!
-2025-11-21T20:23:04.489878730Z [2025-11-21 20:23:04] Context: self.device='cuda' self.gpu_id=0 os.environ.get('CUDA_VISIBLE_DEVICES')='0' self.tp_rank=0 self.tp_size=1
-2025-11-21T20:23:04.492053653Z [2025-11-21 20:23:04] Scheduler hit an exception: Traceback (most recent call last):
-2025-11-21T20:23:04.492090601Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 2587, in run_scheduler_process
-2025-11-21T20:23:04.492097603Z     scheduler = Scheduler(
-2025-11-21T20:23:04.492103313Z                 ^^^^^^^^^^
-2025-11-21T20:23:04.492108416Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 329, in __init__
-2025-11-21T20:23:04.492118626Z     self.tp_worker = TpWorkerClass(
-2025-11-21T20:23:04.492124083Z                      ^^^^^^^^^^^^^^
-2025-11-21T20:23:04.492128939Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker_overlap_thread.py", line 71, in __init__
-2025-11-21T20:23:04.492134056Z     self.worker = TpModelWorker(
-2025-11-21T20:23:04.492138852Z                   ^^^^^^^^^^^^^^
-2025-11-21T20:23:04.492143796Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker.py", line 93, in __init__
-2025-11-21T20:23:04.492148682Z     self.model_runner = ModelRunner(
-2025-11-21T20:23:04.492153572Z                         ^^^^^^^^^^^^
-2025-11-21T20:23:04.492158309Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 240, in __init__
-2025-11-21T20:23:04.492163313Z     min_per_gpu_memory = self.init_torch_distributed()
-2025-11-21T20:23:04.492168389Z                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-2025-11-21T20:23:04.492173163Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 597, in init_torch_distributed
-2025-11-21T20:23:04.492178132Z     torch.get_device_module(self.device).set_device(self.gpu_id)
-2025-11-21T20:23:04.492183396Z   File "/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py", line 569, in set_device
-2025-11-21T20:23:04.492188662Z     torch._C._cuda_setDevice(device)
-2025-11-21T20:23:04.492193539Z torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
-2025-11-21T20:23:04.492198452Z Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
-2025-11-21T20:23:04.492950692Z [2025-11-21 20:23:04] Received sigquit from a child process. It usually means the child failed.
+2025-11-21T20:26:11.886408728Z ==========
+2025-11-21T20:26:11.886428193Z == CUDA ==
+2025-11-21T20:26:11.886431320Z ==========
+2025-11-21T20:26:11.893078493Z CUDA Version 12.9.1
+2025-11-21T20:26:11.894778207Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-21T20:26:11.898848153Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-21T20:26:11.898854540Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-21T20:26:11.898859597Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-21T20:26:11.898868797Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-21T20:26:12.123388386Z Writing to /root/.config/pip/pip.conf
+2025-11-21T20:26:12.361865565Z Writing to /root/.config/pip/pip.conf
+2025-11-21T20:26:12.402859859Z Cloning into 'AReaL'...
+2025-11-21T20:26:14.279070480Z Checking AReaL installation...
+2025-11-21T20:26:14.426663194Z AReaL already installed. Skipping installation.
+2025-11-21T20:26:14.426710440Z Cleaning up any leftover GPU processes...
+2025-11-21T20:26:17.446199034Z Checking for processes still using GPU...
+2025-11-21T20:26:18.512882520Z Checking GPU...
+2025-11-21T20:26:18.567891148Z NVIDIA A40, 46068 MiB
+2025-11-21T20:26:18.567920845Z NVIDIA A40, 46068 MiB
+2025-11-21T20:26:18.567923113Z NVIDIA A40, 46068 MiB
+2025-11-21T20:26:18.567925185Z NVIDIA A40, 46068 MiB
+2025-11-21T20:26:18.589876101Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-21T20:26:18.589934604Z Detected 4 GPU(s)
+2025-11-21T20:26:18.589943184Z Checking GPU status...
+2025-11-21T20:26:18.753487503Z GPU check complete.
+2025-11-21T20:26:18.758529819Z Starting training...
+2025-11-21T20:26:20.763195106Z Using REASONING 2000 SAMPLES 4 GPUs training configuration
+2025-11-21T20:26:20.763231180Z Note: Trains reasoning model with XML format (2000 samples, 4x A40 GPUs)
+2025-11-21T20:26:20.763237057Z GPU count: 4 (required: 4)
+2025-11-21T20:26:20.767079969Z ==========================================
+2025-11-21T20:26:20.767098112Z Starting GRPO Training (Cloud)
+2025-11-21T20:26:20.767106572Z ==========================================
+2025-11-21T20:26:20.767111695Z Config: reasoning_2000samples_4GPUs
+2025-11-21T20:26:20.767128295Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml
+2025-11-21T20:26:20.767164633Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
+2025-11-21T20:26:20.767169953Z Experiment: gsm8k-grpo-reasoning-4gpu-2000samples
+2025-11-21T20:26:20.767191610Z Trial: trial_20251121_202620
+2025-11-21T20:26:20.767225986Z GPU: NVIDIA A40 NVIDIA A40 NVIDIA A40 NVIDIA A40 (46068 MB)
+2025-11-21T20:26:20.767320436Z WandB API key: e1adc5be02...
+2025-11-21T20:26:20.767340580Z ==========================================
+2025-11-21T20:26:21.654666542Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T20:26:21.654714576Z   import pynvml  # type: ignore[import]
+2025-11-21T20:26:25.982589514Z [37m20251121-20:26:25.982 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-21T20:26:25.982629394Z [37m20251121-20:26:25.982 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T20:26:25.982827231Z [37m20251121-20:26:25.982 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-4gpu-2000samples/trial_20251121_202620[0m
+2025-11-21T20:26:26.107540512Z [37m20251121-20:26:26.107 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-4gpu-2000samples, trial_name=trial_20251121_202620, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-21T20:26:26.115889917Z [37m20251121-20:26:26.115 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_2000samples_4GPUs.yaml experiment_name=gsm8k-grpo-reasoning-4gpu-2000samples trial_name=trial_20251121_202620 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-4gpu-2000samples/trial_20251121_202620/llm_server.log[0m
+2025-11-21T20:26:27.041410795Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T20:26:27.041454383Z   import pynvml  # type: ignore[import]
+2025-11-21T20:26:28.632032250Z [37m20251121-20:26:28.631 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-21T20:26:28.632073480Z [37m20251121-20:26:28.631 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-21T20:26:28.724326363Z [37m20251121-20:26:28.723 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.16.16.2 --port 14907 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:18450 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend flashinfer --context-length 4096 --mem-fraction-static 0.6 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-21T20:26:30.026037834Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T20:26:30.026079961Z   import pynvml  # type: ignore[import]
+2025-11-21T20:26:36.286187976Z INFO 11-21 20:26:36 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T20:26:37.432522954Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-21T20:26:38.364497823Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T20:26:38.364519376Z   import pynvml  # type: ignore[import]
+2025-11-21T20:26:38.462230599Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-21T20:26:38.462279136Z   import pynvml  # type: ignore[import]
+2025-11-21T20:26:43.800551468Z INFO 11-21 20:26:43 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T20:26:44.069084186Z INFO 11-21 20:26:44 [__init__.py:216] Automatically detected platform cuda.
+2025-11-21T20:26:44.951495311Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-21T20:26:45.295548384Z [2025-11-21 20:26:45] Context: self.device='cuda' self.gpu_id=0 os.environ.get('CUDA_VISIBLE_DEVICES')='0' self.tp_rank=0 self.tp_size=1
+2025-11-21T20:26:45.297031303Z [2025-11-21 20:26:45] Scheduler hit an exception: Traceback (most recent call last):
+2025-11-21T20:26:45.297066051Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 2587, in run_scheduler_process
+2025-11-21T20:26:45.297072538Z     scheduler = Scheduler(
+2025-11-21T20:26:45.297077888Z                 ^^^^^^^^^^
+2025-11-21T20:26:45.297082758Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py", line 329, in __init__
+2025-11-21T20:26:45.297087751Z     self.tp_worker = TpWorkerClass(
+2025-11-21T20:26:45.297097918Z                      ^^^^^^^^^^^^^^
+2025-11-21T20:26:45.297103008Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker_overlap_thread.py", line 71, in __init__
+2025-11-21T20:26:45.297107971Z     self.worker = TpModelWorker(
+2025-11-21T20:26:45.297112904Z                   ^^^^^^^^^^^^^^
+2025-11-21T20:26:45.297117726Z   File "/sgl-workspace/sglang/python/sglang/srt/managers/tp_worker.py", line 93, in __init__
+2025-11-21T20:26:45.297122428Z     self.model_runner = ModelRunner(
+2025-11-21T20:26:45.297127311Z                         ^^^^^^^^^^^^
+2025-11-21T20:26:45.297132058Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 240, in __init__
+2025-11-21T20:26:45.297137324Z     min_per_gpu_memory = self.init_torch_distributed()
+2025-11-21T20:26:45.297142741Z                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-21T20:26:45.297149194Z   File "/sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py", line 597, in init_torch_distributed
+2025-11-21T20:26:45.297154878Z     torch.get_device_module(self.device).set_device(self.gpu_id)
+2025-11-21T20:26:45.297159997Z   File "/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py", line 569, in set_device
+2025-11-21T20:26:45.297164764Z     torch._C._cuda_setDevice(device)
+2025-11-21T20:26:45.297169544Z torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
+2025-11-21T20:26:45.297174201Z Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+2025-11-21T20:26:45.297860948Z [2025-11-21 20:26:45] Received sigquit from a child process. It usually means the child failed.
