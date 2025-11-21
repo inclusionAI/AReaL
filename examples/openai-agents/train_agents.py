@@ -208,9 +208,6 @@ def main(args):
         current_platform.synchronize()
         dist.barrier(group=actor.cpu_group)
 
-        current_platform.synchronize()
-        dist.barrier(group=actor.cpu_group)
-
         # Upload statistics to the logger (e.g., wandb)
         stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
         stats_logger.commit(epoch, step, global_step, stats)
