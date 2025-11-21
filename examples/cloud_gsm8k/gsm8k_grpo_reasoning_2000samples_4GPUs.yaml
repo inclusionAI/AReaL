@@ -113,7 +113,7 @@ sglang:
 
 # datasets - Use reasoning variant by adding "-reasoning" to path
 train_dataset:
-  batch_size: 8  # Optimized for multi-GPU
+  batch_size: 6  # Divisible by 3 (training world size)
   shuffle: true
   pin_memory: true
   num_workers: 0
@@ -122,7 +122,7 @@ train_dataset:
   max_length: 2048  # Increased to accommodate reasoning chains
 
 valid_dataset:
-  batch_size: 8
+  batch_size: 6
   shuffle: true
   pin_memory: true
   num_workers: 0
