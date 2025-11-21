@@ -78,22 +78,48 @@ After applying this fix, the training should:
 - The script checks GPU utilization and waits if GPUs are busy
 - GPU reset may require root privileges, so errors are ignored
 
+## Updated Fix (v2)
+
+After the initial fix didn't fully resolve the issue, we've made additional improvements:
+
+1. **Removed GPU Reset**: The `nvidia-smi --gpu-reset` command requires root privileges and was causing warnings. Removed it.
+
+2. **Better Process Detection**: Now uses `nvidia-smi --query-compute-apps` to find processes actually using the GPU, not just Python processes.
+
+3. **GPU Accessibility Test**: Added a PyTorch test to verify GPU is accessible before starting training.
+
+4. **Better Diagnostics**: Added checks for GPU utilization, memory usage, and active processes.
+
+5. **CUDA Debugging**: Added `CUDA_LAUNCH_BLOCKING=1` and `TORCH_USE_CUDA_DSA=1` for better error messages.
+
 ## If Issue Persists
 
 If the error still occurs after this fix:
 
-1. **Check RunPod Container**: Ensure the container is fully stopped before restarting
-2. **Manual Cleanup**: SSH into the pod and manually kill processes:
+1. **Check RunPod Container**: Ensure the container is fully stopped before restarting. The GPU driver state may not reset properly on container restart.
+
+2. **Manual Cleanup**: SSH into the pod and manually check/kill processes:
    ```bash
+   # Check what's using the GPU
+   nvidia-smi --query-compute-apps=pid,process_name --format=csv
+   
+   # Kill any processes
    pkill -9 -f sglang
    pkill -9 -f areal
-   nvidia-smi --gpu-reset
-   ```
-3. **Check GPU Status**: Verify GPUs are available:
-   ```bash
+   
+   # Check GPU status
    nvidia-smi
    ```
-4. **Try Different GPU**: If GPU 0 is consistently problematic, you may need to modify the allocation mode or launcher to use a different GPU
+
+3. **Restart Pod**: If GPU 0 is consistently problematic, try stopping and restarting the entire pod (not just the container) to fully reset GPU driver state.
+
+4. **Check Allocation Mode**: The current config uses `sglang.d1t1p1+d3t1p1` which allocates GPU 0 to SGLang. If GPU 0 is problematic, you may need to:
+   - Stop the pod completely and restart it
+   - Or modify the allocation mode (though this is complex and not recommended)
+
+5. **RunPod-Specific Issue**: This might be a RunPod-specific issue where GPU state isn't properly reset between container restarts. Consider:
+   - Using a different GPU instance type
+   - Contacting RunPod support if the issue persists
 
 ## Related Files
 

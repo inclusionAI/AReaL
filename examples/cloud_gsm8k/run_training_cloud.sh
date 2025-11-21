@@ -63,11 +63,24 @@ if command -v fuser &> /dev/null; then
             fuser -k "$gpu_id" 2>/dev/null || true
         fi
     done
-    sleep 1
+    sleep 2
 fi
-# Try to reset GPU state (may require root, so ignore errors)
-nvidia-smi --gpu-reset -i 0 2>/dev/null || nvidia-smi --gpu-reset 2>/dev/null || true
-sleep 2
+# Check for processes still using GPU and kill them more aggressively
+echo "Checking for processes still using GPU..."
+GPU_PROCESSES=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null || echo "")
+if [ -n "$GPU_PROCESSES" ]; then
+    echo "Found processes using GPU: $GPU_PROCESSES"
+    for pid in $GPU_PROCESSES; do
+        if [ -n "$pid" ] && [ "$pid" != "pid" ]; then
+            echo "Killing process $pid..."
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+    sleep 3
+fi
+# Don't try GPU reset - it requires root and causes warnings
+# Instead, verify GPU is accessible by checking nvidia-smi
+sleep 1
 
 # Get GPU information
 echo "Checking GPU..."
@@ -87,19 +100,39 @@ else
     echo "Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management"
     echo "Detected $GPU_COUNT GPU(s)"
     
-    # Check GPU utilization - warn if GPUs are busy
-    echo "Checking GPU utilization..."
+    # Check GPU utilization and memory usage
+    echo "Checking GPU status..."
     GPU_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo "")
+    GPU_MEM_USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null || echo "")
+    GPU_PROCESSES=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -v "^$" | wc -l || echo "0")
+    
     if [ -n "$GPU_UTIL" ]; then
+        GPU_IDX=0
         for util in $GPU_UTIL; do
-            if [ "$util" -gt 5 ]; then
-                echo "WARNING: GPU shows ${util}% utilization - may be busy from previous run"
-                echo "Waiting 5 seconds for GPU to become available..."
-                sleep 5
-                break
+            if [ "$util" -gt 10 ]; then
+                echo "WARNING: GPU $GPU_IDX shows ${util}% utilization"
             fi
+            GPU_IDX=$((GPU_IDX + 1))
         done
     fi
+    
+    if [ "$GPU_PROCESSES" -gt 0 ]; then
+        echo "WARNING: Found $GPU_PROCESSES process(es) still using GPU"
+        echo "Waiting 5 seconds for cleanup..."
+        sleep 5
+        # Check again
+        GPU_PROCESSES_AFTER=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -v "^$" | wc -l || echo "0")
+        if [ "$GPU_PROCESSES_AFTER" -gt 0 ]; then
+            echo "ERROR: GPU still has $GPU_PROCESSES_AFTER process(es) using it. This may cause training to fail."
+            echo "Consider stopping the pod and restarting it to fully reset GPU state."
+        fi
+    fi
+    
+    # Test GPU accessibility with a simple CUDA call
+    echo "Testing GPU accessibility..."
+    python3 -c "import torch; torch.cuda.init(); print(f'GPU accessible: {torch.cuda.is_available()}')" 2>/dev/null || {
+        echo "WARNING: Could not test GPU accessibility with PyTorch"
+    }
 fi
 
 # Function to check if GPU is suitable for full training
@@ -240,6 +273,10 @@ echo "GPU: $GPU_NAME ($GPU_MEMORY MB)"
 echo "WandB API key: ${WANDB_API_KEY:0:10}..." 
 echo "=========================================="
 echo ""
+
+# Set CUDA environment variables for better error reporting
+export CUDA_LAUNCH_BLOCKING=1
+export TORCH_USE_CUDA_DSA=1
 
 # Run training
 python3 -m areal.launcher.local "$TRAIN_SCRIPT" \
