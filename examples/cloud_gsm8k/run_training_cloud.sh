@@ -9,6 +9,9 @@
 #   - 1hour: 1-hour training (500 samples, 2 epochs) [default]
 #   - 3hour: 3-hour training (1000 samples, 3 epochs)
 #   - full: Full training (all samples, 5 epochs) - REQUIRES H200/H100/A100-80GB or equivalent
+#   - reasoning_fast: Reasoning model fast training (20-30 min, 200 samples, 1 epoch)
+#   - reasoning_1hour: Reasoning model 1-hour training (500 samples, 2 epochs)
+#   - reasoning_3hour: Reasoning model 3-hour training (1000 samples, 3 epochs)
 #
 # All configs use memory-optimized settings that work on all GPUs.
 
@@ -124,9 +127,30 @@ case "$CONFIG_NAME" in
         echo "GPU: $GPU_NAME ($GPU_MEMORY MB) - suitable for full training"
         echo "Estimated time: ~5 days"
         ;;
+    reasoning_fast)
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-reasoning-fast"
+        echo "Using REASONING FAST training configuration (20-30 minutes)"
+        echo "Note: Trains reasoning model with XML format"
+        ;;
+    reasoning_1hour)
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_reasoning_1hour.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-reasoning-1hour"
+        echo "Using REASONING 1-HOUR training configuration (~1-2 hours)"
+        echo "Note: Trains reasoning model with XML format (500 samples)"
+        ;;
+    reasoning_3hour)
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_reasoning_3hour.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-reasoning-3hour"
+        echo "Using REASONING 3-HOUR training configuration (~3-4 hours)"
+        echo "Note: Trains reasoning model with XML format (1000 samples)"
+        ;;
     *)
         echo "ERROR: Unknown config name: $CONFIG_NAME"
-        echo "Valid options: fast, 1hour, 3hour, full"
+        echo "Valid options: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour"
         exit 1
         ;;
 esac
@@ -166,11 +190,50 @@ python3 -m areal.launcher.local "$TRAIN_SCRIPT" \
     experiment_name="$EXPERIMENT_NAME" \
     trial_name="$TRIAL_NAME"
 
+TRAINING_EXIT_CODE=$?
+
 echo ""
 echo "=========================================="
-echo "Training completed!"
+if [ $TRAINING_EXIT_CODE -eq 0 ]; then
+    echo "✅ Training completed successfully!"
+else
+    echo "⚠️  Training exited with code: $TRAINING_EXIT_CODE"
+fi
 echo "=========================================="
 echo "Checkpoints: outputs/grpo/checkpoints/$EXPERIMENT_NAME/$TRIAL_NAME"
 echo "Logs: outputs/grpo/logs/root/$EXPERIMENT_NAME/$TRIAL_NAME"
 echo "WandB: https://wandb.ai (project: gsm8k-grpo-local)"
 echo "=========================================="
+
+# Create completion marker to prevent re-running
+# This is critical to prevent RunPod from wasting money by re-running the script
+if [ $TRAINING_EXIT_CODE -eq 0 ]; then
+    COMPLETION_MARKER="/workspace/outputs/training_completed_$(date +%Y%m%d_%H%M%S).marker"
+    echo "Training completed successfully at $(date)" > "$COMPLETION_MARKER"
+    echo "Experiment: $EXPERIMENT_NAME" >> "$COMPLETION_MARKER"
+    echo "Trial: $TRIAL_NAME" >> "$COMPLETION_MARKER"
+    echo "Config: $CONFIG_NAME" >> "$COMPLETION_MARKER"
+    echo ""
+    echo "✅ Created completion marker: $COMPLETION_MARKER"
+    echo "   This prevents the script from re-running if the container restarts."
+fi
+
+echo ""
+echo "=========================================="
+echo "⚠️  IMPORTANT: Stop the pod to save costs!"
+echo "=========================================="
+echo "Training has finished. To prevent wasting money:"
+echo ""
+echo "1. Go to RunPod dashboard: https://www.runpod.io/console/pods"
+echo "2. Find your pod and click 'Stop'"
+echo ""
+echo "Your checkpoints are safe in the network volume!"
+echo "They will persist even after the pod stops."
+echo ""
+echo "If the pod auto-restarts, the completion marker will"
+echo "prevent the training script from running again."
+echo "=========================================="
+echo ""
+
+# Exit with the training exit code
+exit $TRAINING_EXIT_CODE

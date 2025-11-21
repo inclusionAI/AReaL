@@ -58,6 +58,12 @@ RunPod is the most economical cloud GPU platform. This complete guide covers eve
    bash -c "set -e && pip config set global.index-url https://pypi.org/simple && pip config set global.extra-index-url '' && cd /workspace && if [ -d AReaL/.git ]; then cd AReaL && git fetch origin && git checkout -B DL4Math origin/DL4Math 2>/dev/null || git checkout -B DL4Math origin/DL4Math 2>/dev/null || (cd .. && rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git); else rm -rf AReaL && git clone -b DL4Math https://github.com/nexthybrid/AReaL.git; fi && cd /workspace/AReaL && (python3 -c 'import areal' 2>/dev/null || pip install -e .) && export WANDB_API_KEY=\$WANDB_API_KEY && bash examples/cloud_gsm8k/run_training_cloud.sh 1hour"
    ```
    
+   **⚠️ CRITICAL: Disable Auto-Restart!**
+   - In pod settings, set **"Restart Policy"** to **"Never"** or **"On Failure Only"**
+   - This prevents RunPod from re-running the script after training completes
+   - Without this, the container will restart and waste money!
+   - See `RUNPOD_STOP_BEHAVIOR.md` for detailed explanation
+   
    **⚠️ Important**: 
    - **Smart git handling**: If AReaL exists and is a valid git repo, it updates with `git fetch` and `git checkout` (preserves code during container restarts). Only removes/clones if invalid or missing. This prevents deleting code during training.
    - **Smart installation**: Only installs AReaL if not already installed (`python3 -c 'import areal'` check). This prevents re-installing dependencies on every pod restart or login session.
@@ -240,9 +246,20 @@ gsutil -m cp -r /workspace/outputs gs://your-bucket/areal-outputs/
 
 ## Step 9: Stop Pod (Save Costs!)
 
-**Important**: Stop pod when done to avoid charges!
+**⚠️ CRITICAL**: RunPod will **automatically restart** containers when they exit by default. This means after training completes, the container exits, RunPod restarts it, and the script runs again - **wasting money!**
 
-**Before stopping, verify checkpoints are saved:**
+### Step 9.1: Disable Auto-Restart (MUST DO!)
+
+**Before deploying pod:**
+1. In pod/template settings, find **"Restart Policy"** or **"Auto-Restart"**
+2. Set it to **"Never"** or **"On Failure Only"**
+3. This prevents the container from restarting when training completes
+
+**Why this is critical:**
+- Without this, container restarts after training → Script runs again → Wastes money!
+- With this, container exits after training → Pod stops → No charges!
+
+### Step 9.2: Verify Checkpoints Before Stopping
 
 ```bash
 # Inside pod, verify checkpoints exist on the volume
@@ -258,11 +275,27 @@ ls -lh /workspace/outputs/grpo/checkpoints/
 #           └── ...
 ```
 
-1. **Go to "Pods"** in RunPod dashboard
-2. **Click "Stop"** on your pod
-3. **Or enable auto-shutdown** in pod settings
+### Step 9.3: Stop Pod After Training
+
+**After training completes:**
+1. **Go to "Pods"** in RunPod dashboard: https://www.runpod.io/console/pods
+2. **Find your pod** (should show "Running" status)
+3. **Click "Stop"** button
+4. **Confirm** the stop action
 
 **✅ Your checkpoints are safe in the network volume!** They will persist even after the pod stops.
+
+### Step 9.4: Completion Marker Protection
+
+The training script includes **completion marker** protection:
+- **At start**: Checks for completion markers → If found, exits immediately (prevents re-running)
+- **At end**: Creates completion marker → Marks training as complete
+
+**If container restarts** (despite disabling auto-restart):
+- Script checks for marker → Found → Exits immediately
+- No training runs → No money wasted!
+
+**See `RUNPOD_STOP_BEHAVIOR.md` for detailed explanation of container lifecycle and protection mechanisms.**
 
 ## Step 10: Resuming Training from Checkpoint
 

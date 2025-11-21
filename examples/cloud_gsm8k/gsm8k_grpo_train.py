@@ -17,6 +17,7 @@ Config parameters:
 import os
 import sys
 import logging
+import getpass
 from copy import deepcopy
 
 import torch.distributed as dist
@@ -47,6 +48,10 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
 
 def main(args):
+    # Store args and script_dir for later use in testing
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    original_args = args.copy() if isinstance(args, list) else args
+    
     # Extract custom training parameters from YAML before config validation
     # These parameters are not part of GRPOConfig, so we read them directly from YAML
     import argparse
@@ -66,6 +71,7 @@ def main(args):
     if not config_file.is_absolute():
         # Make it absolute relative to current working directory
         config_file = Path.cwd() / config_file
+    config_file_str = str(config_file)  # Store for later use
     raw_yaml = OmegaConf.load(config_file)
     
     # Extract custom training parameters
@@ -416,6 +422,95 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
+    
+    # Run test on full validation dataset after training completes
+    if actor.is_data_parallel_head():
+        print(f"\n{'='*80}")
+        print("Training completed! Running test on full validation dataset...")
+        print(f"{'='*80}\n")
+        
+        # Find the latest checkpoint
+        checkpoint_dir = os.path.join(
+            config.cluster.fileroot,
+            "checkpoints",
+            getpass.getuser(),
+            config.experiment_name,
+            config.trial_name,
+            "default"
+        )
+        
+        # Get the latest checkpoint (by modification time)
+        if os.path.exists(checkpoint_dir):
+            checkpoints = [d for d in os.listdir(checkpoint_dir) if os.path.isdir(os.path.join(checkpoint_dir, d))]
+            if checkpoints:
+                # Sort by modification time, get the latest
+                checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
+                latest_checkpoint = os.path.join(checkpoint_dir, checkpoints[0])
+                
+                print(f"Using checkpoint: {latest_checkpoint}")
+                
+                # Determine if this is a reasoning model
+                is_reasoning = "reasoning" in config.experiment_name.lower() or "reasoning" in config.train_dataset.path.lower()
+                
+                if is_reasoning:
+                    # Use reasoning test script
+                    test_script = os.path.join(script_dir, "test_reasoning_model_cloud.py")
+                    test_cmd = [
+                        sys.executable,
+                        test_script,
+                        "--model-path", latest_checkpoint,
+                        "--all",  # Test on full validation dataset
+                        "--max-new-tokens", "1024",  # Increased for reasoning chains
+                    ]
+                else:
+                    # Use regular test script (requires config file)
+                    test_script = os.path.join(script_dir, "test_trained_model_cloud.py")
+                    # Find config file from original args
+                    config_file_for_test = None
+                    if isinstance(original_args, list):
+                        try:
+                            config_idx = original_args.index("--config")
+                            if config_idx + 1 < len(original_args):
+                                config_file_for_test = original_args[config_idx + 1]
+                        except ValueError:
+                            pass
+                    
+                    if config_file_for_test:
+                        test_cmd = [
+                            sys.executable,
+                            test_script,
+                            "--config", config_file_for_test,
+                            "--all",  # Test on full validation dataset
+                        ]
+                    else:
+                        print("⚠️  Regular model testing requires config file.")
+                        print(f"   Run manually: python {test_script} --config <config_file> --all")
+                        return
+                
+                try:
+                    import subprocess
+                    result = subprocess.run(test_cmd, check=False, capture_output=False)
+                    if result.returncode == 0:
+                        print(f"\n{'='*80}")
+                        print("✅ Test completed successfully!")
+                        print(f"{'='*80}\n")
+                    else:
+                        print(f"\n{'='*80}")
+                        print(f"⚠️  Test completed with exit code {result.returncode}")
+                        print(f"{'='*80}\n")
+                except Exception as e:
+                    print(f"\n{'='*80}")
+                    print(f"⚠️  Failed to run test: {e}")
+                    print(f"   You can run the test manually with:")
+                    if is_reasoning:
+                        print(f"   python {test_script} --model-path {latest_checkpoint} --all")
+                    else:
+                        print(f"   python {test_script} --config <config_file> --all")
+                    print(f"{'='*80}\n")
+            else:
+                print(f"⚠️  No checkpoints found in {checkpoint_dir}")
+        else:
+            print(f"⚠️  Checkpoint directory not found: {checkpoint_dir}")
 
 
 if __name__ == "__main__":
