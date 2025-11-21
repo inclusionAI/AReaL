@@ -128,11 +128,22 @@ else
         fi
     fi
     
-    # Test GPU accessibility with a simple CUDA call
-    echo "Testing GPU accessibility..."
-    python3 -c "import torch; torch.cuda.init(); print(f'GPU accessible: {torch.cuda.is_available()}')" 2>/dev/null || {
-        echo "WARNING: Could not test GPU accessibility with PyTorch"
-    }
+    # Don't test GPU with PyTorch - it creates a CUDA context that can interfere with SGLang
+    # Instead, just verify nvidia-smi works (which we already did above)
+    echo "GPU check complete."
+    
+    # Final check: ensure no Python processes are holding CUDA contexts
+    # This is important because CUDA contexts can persist even after processes exit
+    PYTHON_PIDS=$(pgrep -f "python.*torch|python.*cuda" 2>/dev/null || echo "")
+    if [ -n "$PYTHON_PIDS" ]; then
+        echo "WARNING: Found Python processes that might have CUDA contexts: $PYTHON_PIDS"
+        echo "Waiting 5 seconds for contexts to release..."
+        sleep 5
+    fi
+    
+    echo "Starting training..."
+    # Additional delay to ensure GPU is fully ready and any contexts are released
+    sleep 2
 fi
 
 # Function to check if GPU is suitable for full training

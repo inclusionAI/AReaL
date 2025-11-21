@@ -86,11 +86,22 @@ After the initial fix didn't fully resolve the issue, we've made additional impr
 
 2. **Better Process Detection**: Now uses `nvidia-smi --query-compute-apps` to find processes actually using the GPU, not just Python processes.
 
-3. **GPU Accessibility Test**: Added a PyTorch test to verify GPU is accessible before starting training.
+3. **Removed GPU Test**: The PyTorch GPU accessibility test was creating a CUDA context that interfered with SGLang initialization. Removed it.
 
 4. **Better Diagnostics**: Added checks for GPU utilization, memory usage, and active processes.
 
-5. **CUDA Debugging**: Added `CUDA_LAUNCH_BLOCKING=1` and `TORCH_USE_CUDA_DSA=1` for better error messages.
+5. **CUDA Context Cleanup**: Added checks for Python processes that might have CUDA contexts open, with delays to allow contexts to release.
+
+6. **CUDA Debugging**: Added `CUDA_LAUNCH_BLOCKING=1` and `TORCH_USE_CUDA_DSA=1` for better error messages.
+
+## Key Insight
+
+The GPU accessibility test was passing (PyTorch could see the GPU), but SGLang was still failing. This is because:
+- The test creates a CUDA context that doesn't get properly cleaned up
+- SGLang needs exclusive access to the GPU when initializing distributed training
+- CUDA contexts can persist even after Python processes exit
+
+The fix removes the GPU test and adds delays to ensure any CUDA contexts are fully released before SGLang starts.
 
 ## If Issue Persists
 
