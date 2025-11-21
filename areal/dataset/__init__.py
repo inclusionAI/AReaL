@@ -48,11 +48,11 @@ def _get_custom_dataset(
                 **kwargs,
             )
         else:
-        from .gsm8k import get_gsm8k_rl_dataset
+            from .gsm8k import get_gsm8k_rl_dataset
 
-        return get_gsm8k_rl_dataset(
-            path=path,
-            split=split,
+            return get_gsm8k_rl_dataset(
+                path=path,
+                split=split,
             tokenizer=tokenizer,
             max_length=max_length,
             **kwargs,
