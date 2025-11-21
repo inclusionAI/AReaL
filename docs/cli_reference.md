@@ -820,6 +820,7 @@ Configuration for perf tracer emission.
 | `fileroot`        | string                                                  | **Required** | -                                                                                                                           |
 | `enabled`         | boolean                                                 | `False`      | Explicitly enable or disable perf tracing. Set to true to capture perf traces.                                              |
 | `save_interval`   | integer                                                 | `1`          | Flush trace events to disk every N calls to save(step=...). A value of 1 writes on every step; values \<= 0 fall back to 1. |
+| `profile_steps`   | list of integer \| None                                 | `None`       | List of step numbers at which to capture detailed profiling traces. If None, no detailed profiling traces are captured.     |
 | `session_tracer`  | [`SessionTracerConfig`](section-session-tracer) \| None | `None`       | Session tracing configuration.                                                                                              |
 
 (section-scheduler)=

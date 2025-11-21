@@ -70,6 +70,39 @@ def _load_trace_events(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def _install_fake_profiler(monkeypatch) -> dict[str, int]:
+    counters = {"enter": 0, "exit": 0}
+
+    class _FakeProfiler:
+        def __enter__(self):
+            counters["enter"] += 1
+            return self
+
+        def __exit__(self, exc_type, exc, exc_tb):
+            counters["exit"] += 1
+            return False
+
+        def export_chrome_trace(self, path: str) -> None:
+            payload = {
+                "traceEvents": [
+                    {
+                        "ts": 0,
+                        "pid": 0,
+                        "tid": 0,
+                        "ph": "X",
+                        "name": "fake",
+                        "args": {},
+                    }
+                ]
+            }
+            Path(path).write_text(json.dumps(payload))
+
+    monkeypatch.setattr(
+        perf_tracer.profiler, "profile", lambda *a, **k: _FakeProfiler()
+    )
+    return counters
+
+
 @pytest.fixture(autouse=True)
 def clean_global_tracer():
     perf_tracer.reset()
@@ -338,6 +371,38 @@ def test_perf_tracer_respects_save_interval(tmp_path):
     events = _load_trace_events(trace_path)
     names = {evt["name"] for evt in events if evt.get("ph") != "M"}
     assert {"mark-3", "mark-4"}.issubset(names)
+
+
+def test_profiler_only_runs_on_configured_steps(tmp_path, monkeypatch):
+    counters = _install_fake_profiler(monkeypatch)
+    config = _make_config(tmp_path, experiment="profile", trial="steps")
+    config.profile_steps = [3]
+    tracer = perf_tracer.PerfTracer(config, rank=0)
+
+    with tracer.trace_scope("skip", enable_profiler=True, args={"global_step": 2}):
+        pass
+    assert counters["enter"] == 0
+
+    with tracer.trace_scope("hit", enable_profiler=True, args={"global_step": 3}):
+        pass
+    assert counters["enter"] == 1
+
+
+def test_profiler_request_is_skipped_when_active(tmp_path, monkeypatch):
+    counters = _install_fake_profiler(monkeypatch)
+    config = _make_config(tmp_path, experiment="profile", trial="nesting")
+    config.profile_steps = [0]
+    tracer = perf_tracer.PerfTracer(config, rank=0)
+
+    with tracer.trace_scope("outer", enable_profiler=True, args={"global_step": 0}):
+        with tracer.trace_scope("inner", enable_profiler=True, args={"global_step": 0}):
+            pass
+    # Nested scope should not start a second profiler session
+    assert counters["enter"] == 1
+
+    with tracer.trace_scope("after", enable_profiler=True, args={"global_step": 0}):
+        pass
+    assert counters["enter"] == 2
 
 
 def test_session_tracer_configuration(tmp_path):
