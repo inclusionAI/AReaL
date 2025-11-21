@@ -509,7 +509,7 @@ def ray_main(config, run_id: int = 0):
             launcher.stop_all(force=True)
             raise e
 
-    if config.launcher.offload:
+    if config.enable_offload:
         tms_env_vars = get_tms_env_vars()
     else:
         tms_env_vars = {}
