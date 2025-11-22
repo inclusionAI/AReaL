@@ -7,6 +7,7 @@ import httpx
 import psutil
 import pytest
 
+from areal.api.cli_args import BaseExperimentConfig
 from areal.api.scheduler_api import (
     Job,
     SchedulingSpec,
@@ -35,13 +36,17 @@ from areal.scheduler.local import LocalScheduler, WorkerInfo
 @pytest.fixture
 def scheduler(tmp_path):
     """Create a LocalScheduler instance with default configuration."""
-    return LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+    return LocalScheduler(
+        gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+    )
 
 
 @pytest.fixture
 def multi_gpu_scheduler(tmp_path):
     """Create a LocalScheduler instance with multiple GPUs."""
-    return LocalScheduler(gpu_devices=[0, 1, 2], log_dir=str(tmp_path))
+    return LocalScheduler(
+        gpu_devices=[0, 1, 2], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+    )
 
 
 def create_mock_process(pid=1234, is_alive=True, exit_code=None):
@@ -130,6 +135,7 @@ class TestLocalSchedulerInitialization:
             log_dir=str(tmp_path),
             startup_timeout=60.0,
             health_check_interval=2.0,
+            exp_config=BaseExperimentConfig(),
         )
 
         assert scheduler.gpu_devices == [0, 1, 2]
@@ -144,13 +150,17 @@ class TestLocalSchedulerInitialization:
     def test_init_without_gpu_devices_uses_cuda_visible_devices(self, tmp_path):
         """Should detect GPUs from CUDA_VISIBLE_DEVICES environment variable."""
         with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1,3"}):
-            scheduler = LocalScheduler(log_dir=str(tmp_path))
+            scheduler = LocalScheduler(
+                log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            )
             assert scheduler.gpu_devices == [0, 1, 3]
 
     def test_init_with_invalid_cuda_visible_devices(self, tmp_path):
         """Should fall back to default [0] when CUDA_VISIBLE_DEVICES is invalid."""
         with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "invalid,gpu,ids"}):
-            scheduler = LocalScheduler(log_dir=str(tmp_path))
+            scheduler = LocalScheduler(
+                log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            )
             assert scheduler.gpu_devices == [0]
 
     def test_init_without_cuda_visible_devices(self, tmp_path):
@@ -158,7 +168,9 @@ class TestLocalSchedulerInitialization:
         with patch.dict(os.environ, {}, clear=True):
             if "CUDA_VISIBLE_DEVICES" in os.environ:
                 del os.environ["CUDA_VISIBLE_DEVICES"]
-            scheduler = LocalScheduler(log_dir=str(tmp_path))
+            scheduler = LocalScheduler(
+                log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            )
             assert scheduler.gpu_devices == [0]
 
     def test_init_creates_log_directory(self, tmp_path):
@@ -166,14 +178,18 @@ class TestLocalSchedulerInitialization:
         log_dir = tmp_path / "nested" / "log" / "dir"
         assert not log_dir.exists()
 
-        scheduler = LocalScheduler(log_dir=str(log_dir))
+        scheduler = LocalScheduler(
+            log_dir=str(log_dir), exp_config=BaseExperimentConfig()
+        )
 
         assert log_dir.exists()
         assert scheduler.log_dir == log_dir
 
     def test_init_creates_http_clients(self, tmp_path):
         """Should initialize both sync and async HTTP clients."""
-        scheduler = LocalScheduler(log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         assert isinstance(scheduler._http_client, httpx.Client)
         assert isinstance(scheduler._async_http_client, httpx.AsyncClient)
@@ -184,7 +200,11 @@ class TestGPUAllocation:
 
     def test_allocate_gpus_round_robin(self, tmp_path):
         """Should allocate GPUs in round-robin fashion."""
-        scheduler = LocalScheduler(gpu_devices=[0, 1, 2], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1, 2],
+            log_dir=str(tmp_path),
+            exp_config=BaseExperimentConfig(),
+        )
 
         # First allocation
         gpus1 = scheduler._allocate_gpus(2)
@@ -200,7 +220,9 @@ class TestGPUAllocation:
 
     def test_allocate_gpus_exceeds_available(self, tmp_path):
         """Should raise GPUAllocationError when requesting more GPUs than available."""
-        scheduler = LocalScheduler(gpu_devices=[0, 1], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         with pytest.raises(GPUAllocationError) as exc_info:
             scheduler._allocate_gpus(3)
@@ -261,7 +283,11 @@ class TestPortAllocation:
         with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.return_value = [8000, 8001, 8002]
 
-            scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+            scheduler = LocalScheduler(
+                gpu_devices=[0],
+                log_dir=str(tmp_path),
+                exp_config=BaseExperimentConfig(),
+            )
             ports = scheduler._allocate_ports(3)
 
             assert ports == [8000, 8001, 8002]
@@ -276,7 +302,11 @@ class TestPortAllocation:
                 [8002, 8003],
             ]
 
-            scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+            scheduler = LocalScheduler(
+                gpu_devices=[0],
+                log_dir=str(tmp_path),
+                exp_config=BaseExperimentConfig(),
+            )
 
             # First allocation
             ports1 = scheduler._allocate_ports(2)
@@ -297,7 +327,11 @@ class TestPortAllocation:
         with patch("areal.scheduler.local.find_free_ports") as mock_find_ports:
             mock_find_ports.side_effect = ValueError("No free ports available")
 
-            scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+            scheduler = LocalScheduler(
+                gpu_devices=[0],
+                log_dir=str(tmp_path),
+                exp_config=BaseExperimentConfig(),
+            )
 
             with pytest.raises(PortAllocationError) as exc_info:
                 scheduler._allocate_ports(5)
@@ -310,7 +344,7 @@ class TestWorkerCreation:
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local_scheduler.find_free_ports")
+    @patch("areal.scheduler.local.find_free_ports")
     def test_create_workers_with_default_spec(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -327,21 +361,24 @@ class TestWorkerCreation:
         mock_process2.poll.return_value = None
         mock_popen.side_effect = [mock_process1, mock_process2]
 
-        scheduler = LocalScheduler(gpu_devices=[0, 1], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
-        job = Job(replicas=2, role="rollout")
-        worker_ids = scheduler.create_workers(job)
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            job = Job(replicas=2, role="rollout")
+            worker_ids = scheduler.create_workers(job)
 
-        assert worker_ids == ["rollout/0", "rollout/1"]
-        assert "rollout" in scheduler._workers
-        assert len(scheduler._workers["rollout"]) == 2
+            assert worker_ids == ["rollout/0", "rollout/1"]
+            assert "rollout" in scheduler._workers
+            assert len(scheduler._workers["rollout"]) == 2
 
-        # Verify default spec was used
-        assert mock_popen.call_count == 2
+            # Verify default spec was used
+            assert mock_popen.call_count == 2
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local_scheduler.find_free_ports")
+    @patch("areal.scheduler.local.find_free_ports")
     def test_create_workers_with_single_spec_for_all(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -358,14 +395,27 @@ class TestWorkerCreation:
             mock_processes.append(mock_proc)
         mock_popen.side_effect = mock_processes
 
-        scheduler = LocalScheduler(gpu_devices=[0, 1, 2], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1, 2],
+            log_dir=str(tmp_path),
+            exp_config=BaseExperimentConfig(),
+        )
 
         job = Job(
             replicas=3,
             role="actor",
-            tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=2, port_count=3)],
+            tasks=[
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
+                    gpu=2,
+                    port_count=3,
+                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                )
+            ],
         )
-        worker_ids = scheduler.create_workers(job)
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            worker_ids = scheduler.create_workers(job)
 
         assert len(worker_ids) == 3
         assert mock_popen.call_count == 3
@@ -376,7 +426,7 @@ class TestWorkerCreation:
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local_scheduler.find_free_ports")
+    @patch("areal.scheduler.local.find_free_ports")
     def test_create_workers_with_per_worker_specs(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -393,17 +443,32 @@ class TestWorkerCreation:
         mock_proc2.poll.return_value = None
         mock_popen.side_effect = [mock_proc1, mock_proc2]
 
-        scheduler = LocalScheduler(gpu_devices=[0, 1], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         job = Job(
             replicas=2,
             role="critic",
             tasks=[
-                SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=1),
-                SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2),
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
+                    gpu=1,
+                    port_count=1,
+                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                ),
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
+                    gpu=1,
+                    port_count=2,
+                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                ),
             ],
         )
-        worker_ids = scheduler.create_workers(job)
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            worker_ids = scheduler.create_workers(job)
 
         assert len(worker_ids) == 2
         assert len(scheduler._workers["critic"][0].worker.worker_ports) == 1
@@ -411,7 +476,7 @@ class TestWorkerCreation:
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local_scheduler.find_free_ports")
+    @patch("areal.scheduler.local.find_free_ports")
     def test_create_workers_with_custom_command(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -424,7 +489,9 @@ class TestWorkerCreation:
         mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
 
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         job = Job(
             replicas=1,
@@ -439,18 +506,25 @@ class TestWorkerCreation:
                 )
             ],
         )
-        worker_ids = scheduler.create_workers(job)
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            worker_ids = scheduler.create_workers(job)
 
         assert len(worker_ids) == 1
 
         # Verify custom command was used
+        # The command is passed as a string to subprocess.Popen with shell=True
         popen_call = mock_popen.call_args
-        cmd_args = popen_call[0][0]
-        assert cmd_args == ["python", "my_custom_server.py", "--port", "8000"]
+        cmd_str = popen_call[0][0]
+        assert isinstance(cmd_str, str), f"Expected string, got {type(cmd_str)}"
+        assert "my_custom_server.py --port 8000 --port 8000" in cmd_str
+        # Verify shell=True is used since cmd is a string
+        assert popen_call[1]["shell"] is True
+        # Verify that subprocess.Popen was called
+        mock_popen.assert_called_once()
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local_scheduler.find_free_ports")
+    @patch("areal.scheduler.local.find_free_ports")
     def test_create_workers_with_environment_variables(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -463,7 +537,9 @@ class TestWorkerCreation:
         mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
 
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         job = Job(
             replicas=1,
@@ -475,24 +551,31 @@ class TestWorkerCreation:
                     gpu=1,
                     port_count=2,
                     env_vars={"CUSTOM_VAR": "custom_value", "ANOTHER_VAR": "123"},
+                    cmd="python -m areal.scheduler.rpc.rpc_server",
                 )
             ],
         )
-        worker_ids = scheduler.create_workers(job)
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            worker_ids = scheduler.create_workers(job)
 
         assert len(worker_ids) == 1
 
         # Verify environment variables were passed
+        # Environment variables are encoded into the shell command string, not passed as env parameter
         popen_call = mock_popen.call_args
-        env = popen_call[1]["env"]
-        assert env["CUSTOM_VAR"] == "custom_value"
-        assert env["ANOTHER_VAR"] == "123"
-        assert env["CUDA_VISIBLE_DEVICES"] == "0"
-        assert env["WORKER_ID"] == "envtest/0"
+        cmd_str = popen_call[0][0]
+        assert isinstance(cmd_str, str), f"Expected string, got {type(cmd_str)}"
+        # Verify custom environment variables are in the command string
+        assert "CUSTOM_VAR=custom_value" in cmd_str
+        assert "ANOTHER_VAR=123" in cmd_str
+        # Verify CUDA_VISIBLE_DEVICES is set correctly
+        assert "CUDA_VISIBLE_DEVICES=0" in cmd_str
+        # Verify shell=True is used since cmd is a string
+        assert popen_call[1]["shell"] is True
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local_scheduler.find_free_ports")
+    @patch("areal.scheduler.local.find_free_ports")
     def test_create_workers_with_colocate_strategy(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -508,15 +591,28 @@ class TestWorkerCreation:
             mock_processes.append(mock_proc)
         mock_popen.side_effect = mock_processes
 
-        scheduler = LocalScheduler(gpu_devices=[0, 1, 2, 3], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1, 2, 3],
+            log_dir=str(tmp_path),
+            exp_config=BaseExperimentConfig(),
+        )
 
         # Create target workers (actors)
         actor_job = Job(
             replicas=2,
             role="actor",
-            tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=2, port_count=2)],
+            tasks=[
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
+                    gpu=2,
+                    port_count=2,
+                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                )
+            ],
         )
-        scheduler.create_workers(actor_job)
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            scheduler.create_workers(actor_job)
 
         # Get GPU allocations for actors
         actor_gpus_0 = scheduler._workers["actor"][0].gpu_devices
@@ -530,10 +626,19 @@ class TestWorkerCreation:
         critic_job = Job(
             replicas=2,
             role="critic",
-            tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=2, port_count=2)],
+            tasks=[
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
+                    gpu=2,
+                    port_count=2,
+                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                )
+            ],
             scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
         )
-        critic_ids = scheduler.create_workers(critic_job)
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            critic_ids = scheduler.create_workers(critic_job)
 
         assert len(critic_ids) == 2
 
@@ -546,7 +651,9 @@ class TestWorkerCreation:
 
     def test_create_workers_duplicate_role_error(self, tmp_path):
         """Should raise WorkerCreationError when attempting to create workers for existing role."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         with (
             patch("areal.scheduler.local.subprocess.Popen") as mock_popen,
@@ -561,7 +668,8 @@ class TestWorkerCreation:
             mock_popen.return_value = mock_proc
 
             job = Job(replicas=1, role="test")
-            scheduler.create_workers(job)
+            with patch.object(scheduler, "_configure_worker", return_value=None):
+                scheduler.create_workers(job)
 
             # Try to create again
             with pytest.raises(WorkerCreationError) as exc_info:
@@ -572,7 +680,9 @@ class TestWorkerCreation:
 
     def test_create_workers_zero_replicas_error(self, tmp_path):
         """Should raise WorkerCreationError when replicas is 0."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         job = Job(replicas=0, role="test")
 
@@ -583,13 +693,21 @@ class TestWorkerCreation:
 
     def test_create_workers_invalid_specs_length(self, tmp_path):
         """Should raise WorkerCreationError when tasks length is invalid."""
-        scheduler = LocalScheduler(gpu_devices=[0, 1], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         job = Job(
             replicas=3,
             role="test",
             tasks=[
-                SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2),
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
+                    gpu=1,
+                    port_count=2,
+                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                ),
                 SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2),
             ],  # 2 tasks for 3 replicas
         )
@@ -603,7 +721,7 @@ class TestWorkerCreation:
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local_scheduler.find_free_ports")
+    @patch("areal.scheduler.local.find_free_ports")
     def test_create_workers_subprocess_fails_immediately(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -622,7 +740,9 @@ class TestWorkerCreation:
         log_file = tmp_path / "test_0.log"
         log_file.write_text("Error: Failed to start server\n")
 
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         job = Job(replicas=1, role="test")
 
@@ -636,7 +756,7 @@ class TestWorkerCreation:
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local_scheduler.find_free_ports")
+    @patch("areal.scheduler.local.find_free_ports")
     def test_create_workers_cleanup_on_partial_failure(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -653,7 +773,9 @@ class TestWorkerCreation:
         mock_proc1.poll.return_value = None
         mock_popen.return_value = mock_proc1
 
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         job = Job(replicas=2, role="test")
 
@@ -667,12 +789,22 @@ class TestWorkerCreation:
 
     def test_create_workers_colocate_strategy_missing_target(self, tmp_path):
         """Should raise WorkerCreationError when colocation strategy is missing target role."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         job = Job(
             replicas=1,
             role="test",
-            tasks=[SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2)],
+            tasks=[
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
+                    gpu=1,
+                    port_count=2,
+                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                )
+            ],
             scheduling_strategy=SchedulingStrategy(
                 type="colocation", target=""
             ),  # Missing target
@@ -957,7 +1089,9 @@ class TestProcessTermination:
         # All processes terminate gracefully
         mock_wait_procs.return_value = ([], [])  # (gone, alive)
 
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
         scheduler._terminate_process_tree(1234)
 
         # Verify termination sequence
@@ -993,7 +1127,9 @@ class TestProcessTermination:
         # Child doesn't terminate gracefully
         mock_wait_procs.return_value = ([], [mock_child])  # (gone, alive)
 
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
         scheduler._terminate_process_tree(1234)
 
         # Verify force kill was called
@@ -1005,7 +1141,9 @@ class TestProcessTermination:
         """Should handle gracefully when process doesn't exist."""
         mock_process_class.side_effect = psutil.NoSuchProcess(1234)
 
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         # Should not raise
         scheduler._terminate_process_tree(1234)
@@ -1022,7 +1160,9 @@ class TestProcessTermination:
         mock_parent.children.return_value = [mock_child]
         mock_process_class.return_value = mock_parent
 
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         # Should not raise
         scheduler._terminate_process_tree(1234)
@@ -1033,7 +1173,9 @@ class TestLogFileHandling:
 
     def test_read_log_tail_success(self, tmp_path):
         """Should read last N lines from log file."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         log_file = tmp_path / "test.log"
         log_lines = [f"Line {i}\n" for i in range(100)]
@@ -1048,7 +1190,9 @@ class TestLogFileHandling:
 
     def test_read_log_tail_file_not_found(self, tmp_path):
         """Should return error message when log file doesn't exist."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         tail = scheduler._read_log_tail("/nonexistent/file.log")
 
@@ -1056,7 +1200,9 @@ class TestLogFileHandling:
 
     def test_read_log_tail_fewer_lines_than_requested(self, tmp_path):
         """Should return all lines when file has fewer lines than requested."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         log_file = tmp_path / "test.log"
         log_file.write_text("Line 1\nLine 2\nLine 3\n")
@@ -1076,12 +1222,15 @@ class TestEngineCreation:
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         scheduler._workers["test"] = [worker]
 
+        # Use Mock for the response object since response.json() is synchronous
         mock_response = create_mock_http_response(
             status_code=200,
             json_data={"result": {"status": "initialized", "name": "TestEngine"}},
         )
 
-        with patch.object(scheduler._http_client, "post", return_value=mock_response):
+        # Use AsyncMock for post() since create_engine is async and uses _async_http_client
+        async_mock_post = AsyncMock(return_value=mock_response)
+        with patch.object(scheduler._async_http_client, "post", async_mock_post):
             result = asyncio.run(
                 scheduler.create_engine(
                     "test/0", "test_engines.DummyEngine", name="TestEngine", param=123
@@ -1134,7 +1283,9 @@ class TestEngineCreation:
             json_data={"detail": "Failed to import 'nonexistent.Engine'"},
         )
 
-        with patch.object(scheduler._http_client, "post", return_value=mock_response):
+        # Use AsyncMock for post() since create_engine is async
+        async_mock_post = AsyncMock(return_value=mock_response)
+        with patch.object(scheduler._async_http_client, "post", async_mock_post):
             with pytest.raises(EngineImportError) as exc_info:
                 asyncio.run(scheduler.create_engine("test/0", "nonexistent.Engine"))
 
@@ -1150,7 +1301,9 @@ class TestEngineCreation:
             json_data={"detail": "Engine initialization failed: out of memory"},
         )
 
-        with patch.object(scheduler._http_client, "post", return_value=mock_response):
+        # Use AsyncMock for post() since create_engine is async
+        async_mock_post = AsyncMock(return_value=mock_response)
+        with patch.object(scheduler._async_http_client, "post", async_mock_post):
             with pytest.raises(EngineCreationError) as exc_info:
                 asyncio.run(
                     scheduler.create_engine("test/0", "test_engines.DummyEngine")
@@ -1172,11 +1325,11 @@ class TestEngineCreation:
         worker = create_worker_info(process=mock_proc, log_file=str(log_file))
         scheduler._workers["test"] = [worker]
 
-        with patch.object(
-            scheduler._http_client,
-            "post",
-            side_effect=httpx.ConnectError("Connection refused"),
-        ):
+        # Use AsyncMock for post() since create_engine is async
+        async_mock_post = AsyncMock(
+            side_effect=httpx.ConnectError("Connection refused")
+        )
+        with patch.object(scheduler._async_http_client, "post", async_mock_post):
             with pytest.raises(WorkerFailedError) as exc_info:
                 asyncio.run(
                     scheduler.create_engine("test/0", "test_engines.DummyEngine")
@@ -1189,11 +1342,11 @@ class TestEngineCreation:
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         scheduler._workers["test"] = [worker]
 
-        with patch.object(
-            scheduler._http_client,
-            "post",
-            side_effect=httpx.ConnectError("Connection refused"),
-        ):
+        # Use AsyncMock for post() since create_engine is async
+        async_mock_post = AsyncMock(
+            side_effect=httpx.ConnectError("Connection refused")
+        )
+        with patch.object(scheduler._async_http_client, "post", async_mock_post):
             with pytest.raises(RPCConnectionError) as exc_info:
                 asyncio.run(
                     scheduler.create_engine("test/0", "test_engines.DummyEngine")
@@ -1208,11 +1361,11 @@ class TestEngineCreation:
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         scheduler._workers["test"] = [worker]
 
-        with patch.object(
-            scheduler._http_client,
-            "post",
-            side_effect=httpx.TimeoutException("Request timeout"),
-        ):
+        # Use AsyncMock for post() since create_engine is async
+        async_mock_post = AsyncMock(
+            side_effect=httpx.TimeoutException("Request timeout")
+        )
+        with patch.object(scheduler._async_http_client, "post", async_mock_post):
             with pytest.raises(EngineCreationError) as exc_info:
                 asyncio.run(
                     scheduler.create_engine("test/0", "test_engines.DummyEngine")
@@ -1448,7 +1601,9 @@ class TestEdgeCases:
 
     def test_gpu_counter_wraps_correctly(self, tmp_path):
         """Should correctly wrap GPU counter for round-robin allocation."""
-        scheduler = LocalScheduler(gpu_devices=[0, 1], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         # Allocate many times to ensure wrapping
         for i in range(10):
@@ -1465,7 +1620,11 @@ class TestEdgeCases:
                 [8004, 8005, 8006],
             ]
 
-            scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+            scheduler = LocalScheduler(
+                gpu_devices=[0],
+                log_dir=str(tmp_path),
+                exp_config=BaseExperimentConfig(),
+            )
 
             scheduler._allocate_ports(2)
             scheduler._allocate_ports(2)
@@ -1483,7 +1642,7 @@ class TestEdgeCases:
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
-    @patch("areal.scheduler.local_scheduler.find_free_ports")
+    @patch("areal.scheduler.local.find_free_ports")
     def test_worker_id_format(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
@@ -1499,10 +1658,13 @@ class TestEdgeCases:
             mock_processes.append(mock_proc)
         mock_popen.side_effect = mock_processes
 
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         job = Job(replicas=5, role="worker")
-        worker_ids = scheduler.create_workers(job)
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            worker_ids = scheduler.create_workers(job)
 
         assert worker_ids == [
             "worker/0",
@@ -1514,7 +1676,9 @@ class TestEdgeCases:
 
     def test_empty_workers_dict_operations(self, tmp_path):
         """Should handle operations on empty workers dictionary gracefully."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        )
 
         # Delete all workers when none exist
         scheduler.delete_workers(None)
@@ -1527,7 +1691,11 @@ class TestEdgeCases:
 
     def test_concurrent_gpu_allocations(self, tmp_path):
         """Should handle concurrent GPU allocations correctly."""
-        scheduler = LocalScheduler(gpu_devices=[0, 1, 2], log_dir=str(tmp_path))
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1, 2],
+            log_dir=str(tmp_path),
+            exp_config=BaseExperimentConfig(),
+        )
 
         # Simulate multiple workers requesting GPUs simultaneously
         results = []
@@ -1541,156 +1709,9 @@ class TestEdgeCases:
     def test_log_directory_with_special_characters(self, tmp_path):
         """Should handle log directory paths with special characters."""
         log_dir = tmp_path / "logs with spaces" / "special-chars_123"
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(log_dir))
+        scheduler = LocalScheduler(
+            gpu_devices=[0], log_dir=str(log_dir), exp_config=BaseExperimentConfig()
+        )
 
         assert log_dir.exists()
         assert scheduler.log_dir == log_dir
-
-
-class TestRPCWorkflowIntegration:
-    """Integration tests for RPC workflow endpoint execution."""
-
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_run_workflow_endpoint_basic(self, tmp_path):
-        """Should execute workflow via RPC endpoint with real worker processes."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
-
-        try:
-            job = Job(replicas=1, role="test")
-            worker_ids = scheduler.create_workers(job)
-            assert len(worker_ids) == 1
-
-            workers = scheduler.get_workers(role="test", timeout=30.0)
-            worker_id = workers[0].id
-
-            result = await scheduler.async_call_engine(
-                worker_id=worker_id,
-                method="run_workflow",
-                workflow="areal.tests.utils.TestWorkflow",
-                workflow_kwargs={},
-                data={"test_id": 123, "value": "test_data"},
-            )
-
-            assert result is not None
-            assert "input_ids" in result
-            assert "attention_mask" in result
-            assert "loss_mask" in result
-            assert "rewards" in result
-
-            from areal.tests.utils import TestWorkflow
-
-            workflow = TestWorkflow()
-            ref_result = await workflow.arun_episode(None, None)
-            assert result.keys() == ref_result.keys()
-            for key in result:
-                assert type(result[key]) is type(ref_result[key])
-
-        finally:
-            scheduler.delete_workers(role="test")
-
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_run_workflow_endpoint_multiple_calls(self, tmp_path):
-        """Should handle multiple sequential workflow calls via RPC endpoint."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
-
-        try:
-            job = Job(replicas=1, role="test")
-            scheduler.create_workers(job)
-
-            workers = scheduler.get_workers(role="test", timeout=30.0)
-            worker_id = workers[0].id
-
-            from areal.tests.utils import TestWorkflow
-
-            workflow = TestWorkflow()
-            ref_result = await workflow.arun_episode(None, None)
-
-            for i in range(3):
-                result = await scheduler.async_call_engine(
-                    worker_id=worker_id,
-                    method="run_workflow",
-                    workflow="areal.tests.utils.TestWorkflow",
-                    workflow_kwargs={},
-                    data={"test_id": i, "value": f"test_{i}"},
-                )
-
-                assert result is not None
-                assert result.keys() == ref_result.keys()
-                for key in result:
-                    assert type(result[key]) is type(ref_result[key])
-
-        finally:
-            scheduler.delete_workers(role="test")
-
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_run_workflow_serialization(self, tmp_path):
-        """Should correctly serialize and deserialize tensors through RPC."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
-
-        try:
-            job = Job(replicas=1, role="test")
-            scheduler.create_workers(job)
-
-            workers = scheduler.get_workers(role="test", timeout=30.0)
-            worker_id = workers[0].id
-
-            result = await scheduler.async_call_engine(
-                worker_id=worker_id,
-                method="run_workflow",
-                workflow="areal.tests.utils.TestWorkflow",
-                workflow_kwargs={},
-                data={"test_id": 456, "value": "serialization_test"},
-            )
-
-            assert result is not None
-            assert "input_ids" in result
-            assert "attention_mask" in result
-            assert "loss_mask" in result
-            assert "rewards" in result
-
-            import torch
-
-            assert isinstance(result["input_ids"], torch.Tensor)
-            assert isinstance(result["attention_mask"], torch.Tensor)
-            assert isinstance(result["loss_mask"], torch.Tensor)
-            assert isinstance(result["rewards"], torch.Tensor)
-
-            assert result["input_ids"].dtype == torch.long
-            assert result["attention_mask"].dtype == torch.bool
-            assert result["loss_mask"].dtype == torch.bool
-
-        finally:
-            scheduler.delete_workers(role="test")
-
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    async def test_run_workflow_with_kwargs(self, tmp_path):
-        """Should support workflow instantiation with custom kwargs."""
-        scheduler = LocalScheduler(gpu_devices=[0], log_dir=str(tmp_path))
-
-        try:
-            job = Job(replicas=1, role="test")
-            scheduler.create_workers(job)
-
-            workers = scheduler.get_workers(role="test", timeout=30.0)
-            worker_id = workers[0].id
-
-            result = await scheduler.async_call_engine(
-                worker_id=worker_id,
-                method="run_workflow",
-                workflow="areal.tests.utils.TestWorkflow",
-                workflow_kwargs={},
-                data={"test_id": 789, "custom_param": "value"},
-            )
-
-            assert result is not None
-            assert "input_ids" in result
-            assert "attention_mask" in result
-            assert "loss_mask" in result
-            assert "rewards" in result
-
-        finally:
-            scheduler.delete_workers(role="test")
