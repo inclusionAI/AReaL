@@ -1,5 +1,6 @@
 """Local scheduler for managing worker subprocesses on a single GPU node."""
 
+import asyncio
 import getpass
 import os
 import shlex
@@ -384,6 +385,7 @@ class LocalScheduler(Scheduler):
 
                 cmd = shlex.split(scheduling.cmd)
                 # Append --port argument to command
+                # User's command should not include port arguments and that the scheduler will provide it
                 cmd.extend(["--port", str(ports[0])])
 
                 logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
@@ -713,6 +715,8 @@ class LocalScheduler(Scheduler):
         except psutil.NoSuchProcess:
             # Process already gone
             pass
+        except psutil.Error as e:
+            logger.warning(f"Error terminating process tree {pid}: {e}", exc_info=True)
         except Exception:
             import traceback
 
@@ -1030,7 +1034,6 @@ class LocalScheduler(Scheduler):
                     f"(attempt {attempt}/{max_retries}): {last_error}. "
                     f"Retrying in {delay:.1f}s..."
                 )
-                import asyncio
 
                 await asyncio.sleep(delay)
 
