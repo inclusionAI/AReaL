@@ -862,7 +862,7 @@ Configuration class: SchedulingSpec
 | `port_count` | integer        | `2`          | Number of ports to expose                                                |
 | `image`      | string         | `""`         | Docker/Singularity container image to use                                |
 | `type`       | string         | `"worker"`   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine`         |
-| `env_vars`   | `dict`         | **Required** | Environment variables for the container                                  |
+| `env_vars`   | `dict`         | `{}`         | Environment variables for the container                                  |
 | `cmd`        | string \| None | `None`       | Command to execute inside the container. Defaults to AReaL's RPC server. |
 | `nodelist`   | string \| None | `None`       | -                                                                        |
 | `exclude`    | string \| None | `None`       | -                                                                        |
