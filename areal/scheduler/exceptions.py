@@ -4,8 +4,6 @@
 class SchedulerError(Exception):
     """Base exception for all scheduler-related errors."""
 
-    pass
-
 
 class WorkerCreationError(SchedulerError):
     """Raised when worker creation fails during subprocess spawn or initialization."""
