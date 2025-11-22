@@ -383,9 +383,15 @@ class LocalScheduler(Scheduler):
                         "'python -m areal.scheduler.rpc.rpc_server' in your config.",
                     )
 
+                # User's command should not include port arguments and that the scheduler will provide it
+                if "--port" in scheduling.cmd:
+                    raise WorkerCreationError(
+                        role,
+                        "Custom command should not include --port argument",
+                        "The scheduler automatically allocates and provides the port.",
+                    )
                 cmd = shlex.split(scheduling.cmd)
                 # Append --port argument to command
-                # User's command should not include port arguments and that the scheduler will provide it
                 cmd.extend(["--port", str(ports[0])])
 
                 logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
@@ -721,7 +727,7 @@ class LocalScheduler(Scheduler):
             import traceback
 
             logger.warning(
-                f"Error terminating process tree {pid}: {traceback.print_exec()}"
+                f"Error terminating process tree {pid}: {traceback.format_exc()}"
             )
 
     def _read_log_tail(self, log_file: str, lines: int = 50) -> str:

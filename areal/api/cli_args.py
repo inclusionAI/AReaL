@@ -510,7 +510,6 @@ class TrainEngineConfig:
             )
 
 
-
 @dataclass
 class PPOActorConfig(TrainEngineConfig):
     """Configuration for PPO actor model, a subclass of a TrainEngine."""
@@ -1010,7 +1009,6 @@ class InferenceEngineConfig:
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
             )
-
 
 
 @dataclass
