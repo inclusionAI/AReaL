@@ -151,8 +151,16 @@ class TestBatchMemory:
 
     def test_concat(self):
         """Test concat static method."""
-        data1 = {"input_ids": torch.tensor([[1, 2]]), "seqlen": torch.tensor([2])}
-        data2 = {"input_ids": torch.tensor([[3, 4]]), "seqlen": torch.tensor([2])}
+        data1 = {
+            "input_ids": torch.tensor([[1, 2]]),
+            "seqlen": torch.tensor([2]),
+            "attention_mask": torch.ones(1, 2, dtype=torch.bool),
+        }
+        data2 = {
+            "input_ids": torch.tensor([[3, 4]]),
+            "seqlen": torch.tensor([2]),
+            "attention_mask": torch.ones(1, 2, dtype=torch.bool),
+        }
 
         batch1 = DistributedBatchMemory.from_dict(data1)
         batch2 = DistributedBatchMemory.from_dict(data2)
@@ -434,19 +442,25 @@ class TestRollout:
 
     def test_concat_with_prompt_task_type(self, prompt_task_data):
         """Test concat static method with prompt and task_type data."""
-        # Split into three parts
+        # For concat_padded_tensors, we need tensor data
+        # Convert list data to tensor-based format
         data_parts = [prompt_task_data[:4], prompt_task_data[4:8], prompt_task_data[8:]]
-        batches = [DistributedBatchMemory.from_list(part) for part in data_parts]
+        batches = []
+        for part in data_parts:
+            # Create tensor-based data instead of list-based
+            batch_data = {
+                "input_ids": torch.randint(0, 100, (len(part), 10)),
+                "attention_mask": torch.ones(len(part), 10, dtype=torch.bool),
+                "task_ids": torch.arange(len(part)),
+            }
+            batch = DistributedBatchMemory.from_dict(batch_data)
+            batches.append(batch)
 
         concatenated = DistributedBatchMemory.concat(batches)
 
         assert len(concatenated) == 12
-        assert concatenated.dataset["prompt"] == [
-            item["prompt"] for item in prompt_task_data
-        ]
-        assert concatenated.dataset["task_type"] == [
-            item["task_type"] for item in prompt_task_data
-        ]
+        assert "input_ids" in concatenated.dataset
+        assert "attention_mask" in concatenated.dataset
 
     def test_getitem_with_prompt_task_type(self, prompt_task_data):
         """Test __getitem__ for indexing and key access with prompt and task_type data."""
@@ -769,28 +783,36 @@ class TestScalarAndListSupport:
 
     def test_concat_scalar(self):
         """Test concat static method with scalar data."""
-        data1 = {"labels": [1], "scores": [0.1]}
-        data2 = {"labels": [2], "scores": [0.2]}
+        data1 = {
+            "labels": torch.tensor([1]),
+            "scores": torch.tensor([0.1]),
+            "attention_mask": torch.ones(1, 5, dtype=torch.bool),
+        }
+        data2 = {
+            "labels": torch.tensor([2]),
+            "scores": torch.tensor([0.2]),
+            "attention_mask": torch.ones(1, 5, dtype=torch.bool),
+        }
 
         batch1 = DistributedBatchMemory.from_dict(data1)
         batch2 = DistributedBatchMemory.from_dict(data2)
 
         concatenated = DistributedBatchMemory.concat([batch1, batch2])
         assert len(concatenated) == 2
-        assert concatenated.dataset["labels"] == [1, 2]
-        assert concatenated.dataset["scores"] == [0.1, 0.2]
+        assert torch.equal(concatenated.dataset["labels"], torch.tensor([1, 2]))
+        assert torch.allclose(concatenated.dataset["scores"], torch.tensor([0.1, 0.2]))
 
     def test_concat_mixed(self):
         """Test concat static method with mixed types."""
         data1 = {
             "input_ids": torch.tensor([[1, 2]]),
-            "labels": [1],
-            "metadata": "batch1",
+            "labels": torch.tensor([1]),
+            "attention_mask": torch.ones(1, 2, dtype=torch.bool),
         }
         data2 = {
             "input_ids": torch.tensor([[3, 4]]),
-            "labels": [0],
-            "metadata": "batch2",
+            "labels": torch.tensor([0]),
+            "attention_mask": torch.ones(1, 2, dtype=torch.bool),
         }
 
         batch1 = DistributedBatchMemory.from_dict(data1)
@@ -798,7 +820,7 @@ class TestScalarAndListSupport:
 
         concatenated = DistributedBatchMemory.concat([batch1, batch2])
         assert len(concatenated) == 2
-        assert concatenated.dataset["labels"] == [1, 0]
+        assert torch.equal(concatenated.dataset["labels"], torch.tensor([1, 0]))
 
     def test_getitem_scalar(self, scalar_data):
         """Test __getitem__ for indexing and key access with scalar data."""
@@ -987,18 +1009,34 @@ class TestScalarAndListSupport:
         data1 = {"sequences": [[1, 2], [3, 4]], "labels": [1, 0]}
         data2 = {"sequences": [[5, 6], [7, 8]], "labels": [1, 0]}
 
-        batch1 = DistributedBatchMemory.from_dict(data1)
-        batch2 = DistributedBatchMemory.from_dict(data2)
+        batch1_union = DistributedBatchMemory.from_dict(data1)
+        batch2_union = DistributedBatchMemory.from_dict(data2)
 
-        merged = batch1.union(batch2)
+        merged = batch1_union.union(batch2_union)
         assert len(merged) == 4
         assert merged["sequences"] == [[1, 2], [3, 4], [5, 6], [7, 8]]
         assert merged["labels"] == [1, 0, 1, 0]
 
-        # Test concat operation
+        # Test concat operation with tensor data
+        data1_concat = {
+            "input_ids": torch.tensor([[1, 2], [3, 4]]),
+            "labels": torch.tensor([1, 0]),
+            "attention_mask": torch.ones(2, 2, dtype=torch.bool),
+        }
+        data2_concat = {
+            "input_ids": torch.tensor([[5, 6], [7, 8]]),
+            "labels": torch.tensor([1, 0]),
+            "attention_mask": torch.ones(2, 2, dtype=torch.bool),
+        }
+
+        batch1 = DistributedBatchMemory.from_dict(data1_concat)
+        batch2 = DistributedBatchMemory.from_dict(data2_concat)
+
         concatenated = DistributedBatchMemory.concat([batch1, batch2])
         assert len(concatenated) == 4
-        assert concatenated["sequences"] == [[1, 2], [3, 4], [5, 6], [7, 8]]
+        assert torch.equal(
+            concatenated["input_ids"], torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]])
+        )
 
         # Test pickle serialization/deserialization
         # Create fresh instance for pickle test
@@ -1367,28 +1405,36 @@ class TestBatchUtilsScalar:
 
     def test_concat_scalar(self):
         """Test concat static method with scalar data."""
-        data1 = {"labels": [1], "scores": [0.1]}
-        data2 = {"labels": [2], "scores": [0.2]}
+        data1 = {
+            "labels": torch.tensor([1]),
+            "scores": torch.tensor([0.1]),
+            "attention_mask": torch.ones(1, 5, dtype=torch.bool),
+        }
+        data2 = {
+            "labels": torch.tensor([2]),
+            "scores": torch.tensor([0.2]),
+            "attention_mask": torch.ones(1, 5, dtype=torch.bool),
+        }
 
         batch1 = DistributedBatchMemory.from_dict(data1)
         batch2 = DistributedBatchMemory.from_dict(data2)
 
         concatenated = DistributedBatchMemory.concat([batch1, batch2])
         assert len(concatenated) == 2
-        assert concatenated.dataset["labels"] == [1, 2]
-        assert concatenated.dataset["scores"] == [0.1, 0.2]
+        assert torch.equal(concatenated.dataset["labels"], torch.tensor([1, 2]))
+        assert torch.allclose(concatenated.dataset["scores"], torch.tensor([0.1, 0.2]))
 
     def test_concat_mixed(self):
         """Test concat static method with mixed types."""
         data1 = {
             "input_ids": torch.tensor([[1, 2]]),
-            "labels": [1],
-            "metadata": "batch1",
+            "labels": torch.tensor([1]),
+            "attention_mask": torch.ones(1, 2, dtype=torch.bool),
         }
         data2 = {
             "input_ids": torch.tensor([[3, 4]]),
-            "labels": [0],
-            "metadata": "batch2",
+            "labels": torch.tensor([0]),
+            "attention_mask": torch.ones(1, 2, dtype=torch.bool),
         }
 
         batch1 = DistributedBatchMemory.from_dict(data1)
@@ -1396,7 +1442,7 @@ class TestBatchUtilsScalar:
 
         concatenated = DistributedBatchMemory.concat([batch1, batch2])
         assert len(concatenated) == 2
-        assert concatenated.dataset["labels"] == [1, 0]
+        assert torch.equal(concatenated.dataset["labels"], torch.tensor([1, 0]))
 
     def test_getitem_scalar(self, scalar_data):
         """Test __getitem__ for indexing and key access with scalar data."""
@@ -1585,18 +1631,34 @@ class TestBatchUtilsScalar:
         data1 = {"sequences": [[1, 2], [3, 4]], "labels": [1, 0]}
         data2 = {"sequences": [[5, 6], [7, 8]], "labels": [1, 0]}
 
-        batch1 = DistributedBatchMemory.from_dict(data1)
-        batch2 = DistributedBatchMemory.from_dict(data2)
+        batch1_union = DistributedBatchMemory.from_dict(data1)
+        batch2_union = DistributedBatchMemory.from_dict(data2)
 
-        merged = batch1.union(batch2)
+        merged = batch1_union.union(batch2_union)
         assert len(merged) == 4
         assert merged["sequences"] == [[1, 2], [3, 4], [5, 6], [7, 8]]
         assert merged["labels"] == [1, 0, 1, 0]
 
-        # Test concat operation
+        # Test concat operation with tensor data
+        data1_concat = {
+            "input_ids": torch.tensor([[1, 2], [3, 4]]),
+            "labels": torch.tensor([1, 0]),
+            "attention_mask": torch.ones(2, 2, dtype=torch.bool),
+        }
+        data2_concat = {
+            "input_ids": torch.tensor([[5, 6], [7, 8]]),
+            "labels": torch.tensor([1, 0]),
+            "attention_mask": torch.ones(2, 2, dtype=torch.bool),
+        }
+
+        batch1 = DistributedBatchMemory.from_dict(data1_concat)
+        batch2 = DistributedBatchMemory.from_dict(data2_concat)
+
         concatenated = DistributedBatchMemory.concat([batch1, batch2])
         assert len(concatenated) == 4
-        assert concatenated["sequences"] == [[1, 2], [3, 4], [5, 6], [7, 8]]
+        assert torch.equal(
+            concatenated["input_ids"], torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]])
+        )
 
         # Test pickle serialization/deserialization
         # Create fresh instance for pickle test

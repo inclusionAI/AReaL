@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import os
 import uuid
 from collections.abc import Callable
@@ -51,7 +52,7 @@ class RLVRWorkflow(RolloutWorkflow):
         self,
         reward_fn: Callable[..., Any],
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
@@ -135,6 +136,24 @@ class RLVRWorkflow(RolloutWorkflow):
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, torch.Tensor]:
+        # NOTE: tokenizer and reward_fn are not jsonifiable for remote execution,
+        # so we need to load it eagerly during execution.
+        if isinstance(self.tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            tokenizer = load_hf_tokenizer(self.tokenizer)
+            if tokenizer.pad_token_id not in self.gconfig.stop_token_ids:
+                self.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
+            if tokenizer.eos_token_id not in self.gconfig.stop_token_ids:
+                self.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
+            self.tokenizer = tokenizer
+
+        if isinstance(self.reward_fn, str):
+            module_path, fname = self.reward_fn.rsplit(".", 1)
+            module = importlib.import_module(module_path)
+            self.reward_fn = getattr(module, fname)
+            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
+
         input_ids = self.get_input_ids_fn(
             self.data_extract_prompt_fn(data),
             self.tokenizer,
