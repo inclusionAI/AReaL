@@ -243,7 +243,15 @@ class LocalScheduler(Scheduler):
         """
         if not schedulings:
             # Default spec: 1 CPU, 1024 MB mem, 1 GPU, 2 ports
-            return [SchedulingSpec(cpu=1, mem=1024, gpu=1, port_count=2)] * num_workers
+            return [
+                SchedulingSpec(
+                    cpu=1,
+                    mem=1024,
+                    gpu=1,
+                    port_count=2,
+                    cmd="python -m areal.scheduler.rpc.rpc_server",
+                )
+            ] * num_workers
 
         # If a single spec is provided, use it for all workers
         if len(schedulings) == 1:
@@ -457,69 +465,7 @@ class LocalScheduler(Scheduler):
 
         # Send HTTP request to configure workers
         for worker_rank, worker_info in enumerate(workers):
-            while not self._is_worker_ready(worker_info):
-                time.sleep(0.1)
-            worker_id = worker_info.worker.id
-            port = int(worker_info.worker.worker_ports[0])
-            url = f"http://{worker_info.worker.ip}:{port}/configure"
-
-            try:
-                response = self._http_client.post(
-                    url,
-                    content=orjson.dumps(
-                        serialize_value(
-                            dict(
-                                config=self.exp_config,
-                                role=worker_info.role,
-                                rank=worker_rank,
-                            )
-                        )
-                    ),
-                    headers={"Content-Type": "application/json"},
-                    timeout=300.0,
-                )
-
-                if response.status_code == 200:
-                    logger.info(f"Configuration successfully on worker '{worker_id}'")
-                    continue
-                elif response.status_code == 400:
-                    # Import error or bad request
-                    error_detail = response.json().get("detail", "Unknown error")
-                    raise WorkerConfigurationError(worker_id, error_detail, str(400))
-                elif response.status_code == 500:
-                    # Engine initialization failed
-                    error_detail = response.json().get("detail", "Unknown error")
-                    raise WorkerConfigurationError(worker_id, error_detail, str(500))
-                else:
-                    raise WorkerConfigurationError(
-                        worker_id,
-                        f"Unexpected status code: {response.status_code}",
-                        str(response.status_code),
-                    )
-
-            except httpx.ConnectError as e:
-                # Check if worker died
-                if worker_info.process.poll() is not None:
-                    stderr = self._read_log_tail(worker_info.log_file)
-                    raise WorkerFailedError(
-                        worker_id, worker_info.process.returncode, stderr
-                    ) from e
-                raise RPCConnectionError(
-                    worker_id, worker_info.worker.ip, port, str(e)
-                ) from e
-
-            except httpx.TimeoutException as e:
-                raise WorkerConfigurationError(
-                    worker_id, f"Request timed out: {e}"
-                ) from e
-
-            except WorkerConfigurationError:
-                raise
-
-            except Exception as e:
-                raise WorkerConfigurationError(
-                    worker_id, f"Unexpected error: {str(e)}"
-                ) from e
+            self._configure_worker(worker_info, worker_rank)
 
         return worker_ids
 
@@ -593,6 +539,83 @@ class LocalScheduler(Scheduler):
             return response.status_code == 200
         except Exception:
             return False
+
+    def _configure_worker(self, worker_info: WorkerInfo, worker_rank: int):
+        """
+        Configure a worker by sending HTTP request to its configure endpoint.
+
+        Args:
+            worker_info: WorkerInfo object containing worker details
+            worker_rank: Rank/index of the worker in the worker group
+
+        Raises:
+            WorkerConfigurationError: If configuration fails
+            WorkerFailedError: If worker process has died
+            RPCConnectionError: If connection to worker fails
+        """
+        # Wait for worker to be ready
+        while not self._is_worker_ready(worker_info):
+            time.sleep(0.1)
+
+        worker_id = worker_info.worker.id
+        port = int(worker_info.worker.worker_ports[0])
+        url = f"http://{worker_info.worker.ip}:{port}/configure"
+
+        try:
+            response = self._http_client.post(
+                url,
+                content=orjson.dumps(
+                    serialize_value(
+                        dict(
+                            config=self.exp_config,
+                            role=worker_info.role,
+                            rank=worker_rank,
+                        )
+                    )
+                ),
+                headers={"Content-Type": "application/json"},
+                timeout=300.0,
+            )
+
+            if response.status_code == 200:
+                logger.info(f"Configuration successfully on worker '{worker_id}'")
+                return
+            elif response.status_code == 400:
+                # Import error or bad request
+                error_detail = response.json().get("detail", "Unknown error")
+                raise WorkerConfigurationError(worker_id, error_detail, str(400))
+            elif response.status_code == 500:
+                # Engine initialization failed
+                error_detail = response.json().get("detail", "Unknown error")
+                raise WorkerConfigurationError(worker_id, error_detail, str(500))
+            else:
+                raise WorkerConfigurationError(
+                    worker_id,
+                    f"Unexpected status code: {response.status_code}",
+                    str(response.status_code),
+                )
+
+        except httpx.ConnectError as e:
+            # Check if worker died
+            if worker_info.process.poll() is not None:
+                stderr = self._read_log_tail(worker_info.log_file)
+                raise WorkerFailedError(
+                    worker_id, worker_info.process.returncode, stderr
+                ) from e
+            raise RPCConnectionError(
+                worker_id, worker_info.worker.ip, port, str(e)
+            ) from e
+
+        except httpx.TimeoutException as e:
+            raise WorkerConfigurationError(worker_id, f"Request timed out: {e}") from e
+
+        except WorkerConfigurationError:
+            raise
+
+        except Exception as e:
+            raise WorkerConfigurationError(
+                worker_id, f"Unexpected error: {str(e)}"
+            ) from e
 
     def _check_worker_health(self, role: str):
         """
@@ -946,12 +969,7 @@ class LocalScheduler(Scheduler):
 
         # Route to different endpoint based on method
         port = int(worker_info.worker.worker_ports[0])
-        if method == "run_workflow":
-            # Special routing for workflow execution
-            url = f"http://{worker_info.worker.ip}:{port}/run_workflow"
-            # Serialize kwargs for workflow execution
-            payload = serialize_value(kwargs)
-        elif method == "export_stats":
+        if method == "export_stats":
             url = f"http://{worker_info.worker.ip}:{port}/export_stats"
             payload = None
         else:
