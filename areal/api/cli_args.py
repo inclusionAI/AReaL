@@ -373,6 +373,7 @@ class MegatronEngineConfig:
     distribute_saved_activations: bool | None = None
     recompute_modules: list[str] | None = None
 
+
 @dataclass
 class SchedulingStrategy:
     type: str = field(
@@ -403,7 +404,6 @@ class SchedulingSpec:
         default_factory=dict,
         metadata={"help": "Environment variables for the container"},
     )
-    # cmd
     cmd: str | None = field(
         default=None,
         metadata={
@@ -499,6 +499,7 @@ class TrainEngineConfig:
             "if 2 specs provided, first one is for worker, second one is for engine."
         },
     )
+
     def __post_init__(self):
         """Validate scheduling_spec length."""
         if len(self.scheduling_spec) not in (1, 2):
@@ -506,6 +507,7 @@ class TrainEngineConfig:
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
             )
+
     scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
 
 
@@ -1007,7 +1009,9 @@ class InferenceEngineConfig:
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
             )
+
     scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
+
 
 @dataclass
 class _Timer:

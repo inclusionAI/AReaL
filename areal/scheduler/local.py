@@ -126,7 +126,6 @@ class LocalScheduler(Scheduler):
         self._allocated_ports = set()
 
         # HTTP clients for RPC communication
-        # FIXME: httpx may encounter "all connection attempts failed error"
         self._http_client = httpx.Client(timeout=3600.0)  # Sync client - 1 hour timeout
         self._async_http_client = httpx.AsyncClient(timeout=3600.0)  # Async client
 
@@ -138,7 +137,7 @@ class LocalScheduler(Scheduler):
     def _detect_gpus(self) -> list[int]:
         """Detect available GPU devices."""
         cuda_visible = os.environ.get(current_platform.device_control_env_var)
-        if cuda_visible:
+        if current_platform.device_control_env_var and cuda_visible:
             try:
                 return [int(x) for x in cuda_visible.split(",")]
             except ValueError:
