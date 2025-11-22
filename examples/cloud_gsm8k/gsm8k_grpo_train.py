@@ -423,11 +423,17 @@ def main(args):
         ref.destroy()
     actor.destroy()
     
-    # Run test on full validation dataset after training completes
+    # Run test on first 50 samples after training completes
+    # Test both baseline model and trained model
     if actor.is_data_parallel_head():
         print(f"\n{'='*80}")
-        print("Training completed! Running test on full validation dataset...")
+        print("Training completed! Running tests on first 50 samples...")
+        print(f"Testing both BASELINE and TRAINED models for comparison")
         print(f"{'='*80}\n")
+        
+        # Get baseline model path (original model before training)
+        baseline_model_path = config.actor.path
+        print(f"Baseline model: {baseline_model_path}")
         
         # Find the latest checkpoint
         checkpoint_dir = os.path.join(
@@ -439,6 +445,10 @@ def main(args):
             "default"
         )
         
+        # Get max_new_tokens from config (align with training)
+        max_new_tokens = str(config.gconfig.max_new_tokens)
+        print(f"Using max_new_tokens: {max_new_tokens} (from training config)")
+        
         # Get the latest checkpoint (by modification time)
         if os.path.exists(checkpoint_dir):
             checkpoints = [d for d in os.listdir(checkpoint_dir) if os.path.isdir(os.path.join(checkpoint_dir, d))]
@@ -447,23 +457,44 @@ def main(args):
                 checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
                 latest_checkpoint = os.path.join(checkpoint_dir, checkpoints[0])
                 
-                print(f"Using checkpoint: {latest_checkpoint}")
+                print(f"Trained model checkpoint: {latest_checkpoint}")
                 
                 # Determine if this is a reasoning model
                 is_reasoning = "reasoning" in config.experiment_name.lower() or "reasoning" in config.train_dataset.path.lower()
                 
+                # Save logs to network volume (persists after pod stops)
+                test_log_dir = os.path.join(config.cluster.fileroot, "test_logs")
+                
                 if is_reasoning:
                     # Use reasoning test script
                     test_script = os.path.join(script_dir, "test_reasoning_model_cloud.py")
-                    # Save logs to network volume (persists after pod stops)
-                    test_log_dir = os.path.join(config.cluster.fileroot, "test_logs")
-                    test_cmd = [
+                    
+                    # Test baseline model first
+                    print(f"\n{'='*80}")
+                    print("Testing BASELINE model...")
+                    print(f"{'='*80}\n")
+                    baseline_cmd = [
+                        sys.executable,
+                        test_script,
+                        "--model-path", baseline_model_path,
+                        "--max-samples", "50",
+                        "--max-new-tokens", max_new_tokens,  # Use config value
+                        "--log-dir", test_log_dir,
+                        "--model-name", "BASELINE",
+                    ]
+                    
+                    # Test trained model
+                    print(f"\n{'='*80}")
+                    print("Testing TRAINED model...")
+                    print(f"{'='*80}\n")
+                    trained_cmd = [
                         sys.executable,
                         test_script,
                         "--model-path", latest_checkpoint,
-                        "--all",  # Test on full validation dataset
-                        "--max-new-tokens", "1024",  # Increased for reasoning chains
-                        "--log-dir", test_log_dir,  # Save to network volume
+                        "--max-samples", "50",
+                        "--max-new-tokens", max_new_tokens,  # Use config value
+                        "--log-dir", test_log_dir,
+                        "--model-name", "TRAINED",
                     ]
                 else:
                     # Use regular test script (requires config file)
@@ -480,36 +511,71 @@ def main(args):
                     
                     if config_file_for_test:
                         # Note: test_trained_model_cloud.py automatically saves logs to network volume
-                        test_cmd = [
+                        # Set environment variable to limit test samples to 50
+                        test_env = os.environ.copy()
+                        test_env["MAX_TEST_SAMPLES"] = "50"
+                        
+                        # For regular models, we need to test baseline by temporarily changing the model path
+                        # This is more complex, so we'll just test the trained model for now
+                        # TODO: Add baseline testing for regular models
+                        print("⚠️  Note: Baseline testing for regular models requires manual testing.")
+                        print(f"   To test baseline: Change config actor.path to {baseline_model_path} and run test script")
+                        
+                        trained_cmd = [
                             sys.executable,
                             test_script,
                             "--config", config_file_for_test,
-                            "--all",  # Test on full validation dataset
                         ]
+                        baseline_cmd = None  # Skip baseline for regular models (too complex)
                     else:
                         print("⚠️  Regular model testing requires config file.")
-                        print(f"   Run manually: python {test_script} --config <config_file> --all")
+                        print(f"   Run manually: python {test_script} --config <config_file>")
                         return
                 
                 try:
                     import subprocess
-                    result = subprocess.run(test_cmd, check=False, capture_output=False)
-                    if result.returncode == 0:
+                    
+                    # Test baseline model
+                    if baseline_cmd is not None:
                         print(f"\n{'='*80}")
-                        print("✅ Test completed successfully!")
+                        print("Testing BASELINE model...")
+                        print(f"{'='*80}\n")
+                        if 'test_env' in locals():
+                            baseline_result = subprocess.run(baseline_cmd, check=False, capture_output=False, env=test_env)
+                        else:
+                            baseline_result = subprocess.run(baseline_cmd, check=False, capture_output=False)
+                        
+                        if baseline_result.returncode == 0:
+                            print(f"\n✅ Baseline test completed successfully!")
+                        else:
+                            print(f"\n⚠️  Baseline test exited with code {baseline_result.returncode}")
+                    
+                    # Test trained model
+                    print(f"\n{'='*80}")
+                    print("Testing TRAINED model...")
+                    print(f"{'='*80}\n")
+                    if 'test_env' in locals():
+                        trained_result = subprocess.run(trained_cmd, check=False, capture_output=False, env=test_env)
+                    else:
+                        trained_result = subprocess.run(trained_cmd, check=False, capture_output=False)
+                    
+                    if trained_result.returncode == 0:
+                        print(f"\n{'='*80}")
+                        print("✅ All tests completed successfully!")
                         print(f"{'='*80}\n")
                     else:
                         print(f"\n{'='*80}")
-                        print(f"⚠️  Test completed with exit code {result.returncode}")
+                        print(f"⚠️  Trained model test exited with code {trained_result.returncode}")
                         print(f"{'='*80}\n")
                 except Exception as e:
                     print(f"\n{'='*80}")
                     print(f"⚠️  Failed to run test: {e}")
                     print(f"   You can run the test manually with:")
                     if is_reasoning:
-                        print(f"   python {test_script} --model-path {latest_checkpoint} --all")
+                        print(f"   Baseline: python {test_script} --model-path {baseline_model_path} --max-samples 50 --max-new-tokens {max_new_tokens} --model-name BASELINE")
+                        print(f"   Trained:  python {test_script} --model-path {latest_checkpoint} --max-samples 50 --max-new-tokens {max_new_tokens} --model-name TRAINED")
                     else:
-                        print(f"   python {test_script} --config <config_file> --all")
+                        print(f"   MAX_TEST_SAMPLES=50 python {test_script} --config <config_file>")
                     print(f"{'='*80}\n")
             else:
                 print(f"⚠️  No checkpoints found in {checkpoint_dir}")

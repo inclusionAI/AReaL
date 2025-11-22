@@ -363,6 +363,9 @@ if [ $TRAINING_EXIT_CODE -eq 0 ]; then
     echo ""
     echo "✅ Created completion marker: $COMPLETION_MARKER"
     echo "   This prevents the script from re-running if the container restarts."
+    echo ""
+    echo "Note: Testing is automatically handled by the training script."
+    echo "      It will test the first 50 samples after training completes."
 fi
 
 echo ""

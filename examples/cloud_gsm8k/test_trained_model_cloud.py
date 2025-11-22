@@ -108,6 +108,9 @@ def main(args):
 
     _log(f"Evaluating on {len(valid_dataset)} test samples...")
     _log(f"Using model from: {config.rollout.experiment_name}/{config.rollout.trial_name}")
+    _log(f"Max new tokens: {config.gconfig.max_new_tokens}")
+    _log(f"Generated responses will be saved to: {workflow.dump_dir}")
+    _log(f"Note: Individual responses are saved to dump directory. Check files there for full question/response pairs.")
 
     # Run evaluation.
     cnt = 0
