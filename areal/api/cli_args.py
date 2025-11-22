@@ -495,7 +495,7 @@ class TrainEngineConfig:
         ),
         metadata={
             "help": "train engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
-            "if 1 spec provided, it's used for both worker and engine, engine is embeded in the worker"
+            "if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; "
             "if 2 specs provided, first one is for worker, second one is for engine."
         },
     )
