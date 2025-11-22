@@ -29,7 +29,7 @@ allocation_mode: sglang.d1p1t1+d1p1t1
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 32
+  max_concurrent_rollouts: 16  # Reduced from 32 to save memory
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
@@ -48,10 +48,10 @@ actor:
   path: Qwen/Qwen2.5-0.5B-Instruct
   init_from_scratch: false
   disable_dropout: true
-  gradient_checkpointing: false
+  gradient_checkpointing: true  # Enable to save memory
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 5120
+    max_tokens_per_mb: 2048  # Reduced from 5120 to save memory
   optimizer:
     type: adam
     lr: 1.70e-5
@@ -91,7 +91,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 5120
+    max_tokens_per_mb: 2048  # Reduced from 5120 to save memory
   optimizer: null
   backend: fsdp
 
@@ -103,12 +103,12 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 4096
-  mem_fraction_static: 0.8
+  mem_fraction_static: 0.6  # Reduced from 0.8 to leave more memory for training
   attention_backend: triton  # Use Triton backend (most stable on A40s)
 
 # datasets - Use reasoning variant by adding "-reasoning" to path
 train_dataset:
-  batch_size: 8
+  batch_size: 4  # Reduced from 8 to save memory
   shuffle: true
   pin_memory: true
   num_workers: 0
@@ -117,7 +117,7 @@ train_dataset:
   max_length: 2048  # Increased to accommodate reasoning chains
 
 valid_dataset:
-  batch_size: 8
+  batch_size: 4  # Reduced from 8 to save memory
   shuffle: true
   pin_memory: true
   num_workers: 0
