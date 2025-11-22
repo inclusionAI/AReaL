@@ -1001,6 +1001,7 @@ class InferenceEngineConfig:
             "if 2 specs provided, first one is for worker, second one is for engine."
         },
     )
+    scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
 
     def __post_init__(self):
         """Validate scheduling_spec length."""
@@ -1010,7 +1011,6 @@ class InferenceEngineConfig:
                 f"got {len(self.scheduling_spec)}"
             )
 
-    scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
 
 
 @dataclass
