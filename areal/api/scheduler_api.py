@@ -4,6 +4,7 @@ from typing import Any
 
 from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
 
+
 @dataclass
 class Worker:
     """
@@ -12,7 +13,8 @@ class Worker:
     Attributes:
         id: Unique identifier for the worker (e.g., "rollout/0", "actor/1").
         ip: IP address where the worker is running.
-        ports: List of port numbers (as strings) allocated to this worker for RPC communication.
+        worker_ports: List of port numbers (as strings) allocated to this worker for worker communication.
+        engine_ports: List of port numbers (as strings) allocated to this worker for engine communication.
     """
 
     id: str
@@ -47,7 +49,7 @@ class Scheduler(abc.ABC):
         Create and start worker processes for a specific role.
 
         Args:
-            scheduler_config: Configuration specifying replicas, resources, and scheduling strategy.
+            job: Job configuration specifying replicas, resources, and scheduling strategy.
             *args: Additional positional arguments (implementation-specific).
             **kwargs: Additional keyword arguments (implementation-specific).
 
