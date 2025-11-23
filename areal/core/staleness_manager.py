@@ -5,8 +5,14 @@ and staleness constraints for asynchronous rollout generation in RL training.
 """
 
 from threading import Lock
+from typing import Protocol
 
 from areal.api.io_struct import RolloutStat
+
+
+class VersionProvider(Protocol):
+    def get_version(self) -> int:
+        raise NotImplementedError()
 
 
 class StalenessManager:
@@ -29,6 +35,7 @@ class StalenessManager:
 
     def __init__(
         self,
+        version_provider: VersionProvider,
         max_concurrent_rollouts: int,
         consumer_batch_size: int,
         max_staleness: int,
@@ -44,6 +51,7 @@ class StalenessManager:
         max_staleness : int
             Maximum allowed offpolicyness (version difference) for rollouts
         """
+        self.version_provider = version_provider
         self.max_concurrent_rollouts = max_concurrent_rollouts
         self.consumer_batch_size = consumer_batch_size
         self.max_staleness = max_staleness
@@ -62,7 +70,7 @@ class StalenessManager:
         """
         return (self.max_staleness + 1) * self.consumer_batch_size
 
-    def get_capacity(self, current_version: int) -> int:
+    def get_capacity(self) -> int:
         """Calculate available capacity for new rollouts.
 
         This method considers both concurrency limits and staleness constraints
@@ -95,6 +103,7 @@ class StalenessManager:
         the maximum allowed staleness.
         """
         with self.lock:
+            current_version = self.version_provider.get_version()
             # Calculate concurrency-based capacity
             max_concurrent_rollouts = max(1, self.max_concurrent_rollouts)
             concurrency_capacity = max_concurrent_rollouts - self.rollout_stat.running
