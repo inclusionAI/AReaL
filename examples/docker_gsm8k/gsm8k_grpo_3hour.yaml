@@ -9,7 +9,7 @@ trial_name: trial0
 max_train_samples: 1000  # Limit dataset to 1000 samples for ~3 hour training
 training_mode: "3-HOUR"
 circuit_breaker_enabled: true
-circuit_breaker_threshold: 10
+circuit_breaker_threshold: 50
 
 seed: 1
 total_train_epochs: 3  # 3 epochs for better convergence

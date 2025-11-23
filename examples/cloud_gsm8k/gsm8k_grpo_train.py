@@ -12,7 +12,7 @@ Config parameters:
     - max_train_samples: Limit dataset size (None for full dataset)
     - training_mode: Display name for training mode (e.g., "FAST", "1-HOUR", "3-HOUR", "FULL")
     - circuit_breaker_enabled: Enable circuit breaker for zero-reward detection (default: True)
-    - circuit_breaker_threshold: Number of consecutive zero rewards before stopping (default: 10)
+    - circuit_breaker_threshold: Number of consecutive zero rewards before stopping (default: 50)
 """
 import os
 import sys
@@ -80,7 +80,7 @@ def main(args):
         max_train_samples = int(max_train_samples)
     training_mode = raw_yaml.get("training_mode", "TRAINING")
     circuit_breaker_enabled = raw_yaml.get("circuit_breaker_enabled", True)
-    circuit_breaker_threshold = int(raw_yaml.get("circuit_breaker_threshold", 10))
+    circuit_breaker_threshold = int(raw_yaml.get("circuit_breaker_threshold", 50))
     
     # Remove custom fields from config to avoid validation errors
     # Use OmegaConf/Hydra delete syntax (~key) to remove keys

@@ -5,7 +5,7 @@ trial_name: trial0
 max_train_samples: null  # Use full dataset (no limiting)
 training_mode: "FULL"
 circuit_breaker_enabled: true
-circuit_breaker_threshold: 10
+circuit_breaker_threshold: 50
 
 seed: 1
 total_train_epochs: 5

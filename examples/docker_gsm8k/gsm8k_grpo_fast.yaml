@@ -9,7 +9,7 @@ trial_name: trial0
 max_train_samples: 200  # Limit dataset to 200 samples for fast iteration
 training_mode: "FAST"
 circuit_breaker_enabled: true
-circuit_breaker_threshold: 10
+circuit_breaker_threshold: 50
 
 seed: 1
 total_train_epochs: 1  # Reduced from 5 to 1

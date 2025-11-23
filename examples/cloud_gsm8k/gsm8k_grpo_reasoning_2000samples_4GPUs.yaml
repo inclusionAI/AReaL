@@ -10,7 +10,7 @@ trial_name: trial0
 max_train_samples: 2000  # 2000 samples for multi-GPU training
 training_mode: "REASONING-2000-SAMPLES-4GPUS"
 circuit_breaker_enabled: true
-circuit_breaker_threshold: 10
+circuit_breaker_threshold: 50
 
 seed: 1
 total_train_epochs: 3  # 3 epochs for better convergence
