@@ -130,4 +130,3 @@ echo "  bash $0"
 echo ""
 echo "The training will automatically resume from the last checkpoint."
 echo ""
-
