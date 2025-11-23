@@ -1,5 +1,3 @@
-"""Local scheduler for managing worker subprocesses on a single GPU node."""
-
 import asyncio
 import getpass
 import os
@@ -44,53 +42,35 @@ logger = logging.getLogger("LocalScheduler")
 
 @dataclass
 class WorkerInfo:
-    """Internal tracking information for a worker process."""
-
-    worker: Worker  # Public Worker object with id, ip, ports
-    process: subprocess.Popen  # The subprocess handle
-    role: str  # Worker role (e.g., "rollout", "actor", "critic")
-    gpu_devices: list[int]  # Allocated GPU device IDs
-    created_at: float  # Timestamp when worker was created
-    log_file: str  # Path to stderr log file
-    env_vars: dict[str, str] = field(default_factory=dict)  # Environment variables
+    worker: Worker
+    process: subprocess.Popen
+    role: str
+    gpu_devices: list[int]
+    created_at: float
+    log_file: str
+    env_vars: dict[str, str] = field(default_factory=dict)
 
 
 class LocalScheduler(Scheduler):
-    """
-    Local scheduler that manages worker subprocesses on a single GPU node.
+    """Local scheduler that manages worker subprocesses on a single GPU node.
 
     This scheduler spawns worker processes running RPC servers and manages their lifecycle.
-    It supports different worker types (rollout, actor, critic) through a unified interface.
-
-    Features:
-    - Dynamic port allocation
-    - Round-robin GPU assignment
-    - Process health monitoring
-    - Comprehensive error handling
-    - Graceful cleanup
+    It supports different worker types through a unified interface with dynamic port allocation,
+    round-robin GPU assignment, process health monitoring, and graceful cleanup.
     """
 
     def __init__(
         self,
         gpu_devices: list[int] | None = None,
-        exp_config: BaseExperimentConfig | None = None,
-        fileroot: str | None = None,
-        experiment_name: str | None = None,
-        trial_name: str | None = None,
-        cluster_name: str | None = None,
         log_dir: str | None = None,
         startup_timeout: float = 30.0,
         health_check_interval: float = 1.0,
+        *,
+        fileroot: str | None = None,
+        experiment_name: str | None = None,
+        trial_name: str | None = None,
+        exp_config: BaseExperimentConfig | None = None,
     ):
-        """
-        Initialize the local scheduler.
-
-        Args:
-            gpu_devices: List of GPU device IDs to use. If None, uses CUDA_VISIBLE_DEVICES or all GPUs.
-            log_dir: Directory for worker log files
-            startup_timeout: Maximum time to wait for worker startup (seconds)
-            health_check_interval: Interval for health checks (seconds)
-        """
         self.gpu_devices = gpu_devices or self._detect_gpus()
         if log_dir is not None:
             self.log_dir = Path(log_dir)
@@ -108,27 +88,17 @@ class LocalScheduler(Scheduler):
                 / experiment_name
                 / trial_name
             )
-        self.cluster_name = cluster_name or exp_config.cluster.cluster_name
         self.exp_config = exp_config
 
         self.startup_timeout = startup_timeout
         self.health_check_interval = health_check_interval
 
-        # Create log directory
         self.log_dir.mkdir(parents=True, exist_ok=True)
-
-        # Track workers by worker_key
         self._workers: dict[str, list[WorkerInfo]] = {}
-
-        # GPU allocation counter for round-robin
         self._gpu_counter = 0
-
-        # Track all allocated ports
         self._allocated_ports = set()
-
-        # HTTP clients for RPC communication
-        self._http_client = httpx.Client(timeout=3600.0)  # Sync client - 1 hour timeout
-        self._async_http_client = httpx.AsyncClient(timeout=3600.0)  # Async client
+        self._http_client = httpx.Client(timeout=3600.0)
+        self._async_http_client = httpx.AsyncClient(timeout=3600.0)
 
         logger.info(
             f"LocalScheduler initialized with GPU devices: {self.gpu_devices}, "
@@ -136,7 +106,6 @@ class LocalScheduler(Scheduler):
         )
 
     def _detect_gpus(self) -> list[int]:
-        """Detect available GPU devices."""
         cuda_visible = os.environ.get(current_platform.device_control_env_var)
         if current_platform.device_control_env_var and cuda_visible:
             try:
@@ -146,22 +115,9 @@ class LocalScheduler(Scheduler):
                     f"Invalid {current_platform.device_control_env_var}: {cuda_visible}, using default [0]"
                 )
                 return [0]
-        # Default to single GPU
         return [0]
 
     def _allocate_gpus(self, num_gpus: int) -> list[int]:
-        """
-        Allocate GPUs using round-robin strategy.
-
-        Args:
-            num_gpus: Number of GPUs to allocate
-
-        Returns:
-            List of GPU device IDs
-
-        Raises:
-            GPUAllocationError: If not enough GPUs available
-        """
         if num_gpus > len(self.gpu_devices):
             raise GPUAllocationError(
                 f"Requested {num_gpus} GPUs but only {len(self.gpu_devices)} available"
@@ -176,20 +132,6 @@ class LocalScheduler(Scheduler):
         return allocated
 
     def _get_colocated_gpus(self, target_role: str, worker_idx: int) -> list[int]:
-        """
-        Get GPU allocation from another role for colocation.
-
-        Args:
-            target_role: The role to colocate with
-            worker_idx: Index of the worker to get GPUs from
-
-        Returns:
-            List of GPU device IDs used by the target worker
-
-        Raises:
-            WorkerNotFoundError: If target role doesn't exist
-            ValueError: If worker index is out of range
-        """
         if target_role not in self._workers:
             raise WorkerNotFoundError(
                 f"Cannot colocate with role '{target_role}' - role not found"
@@ -204,20 +146,7 @@ class LocalScheduler(Scheduler):
         return target_workers[worker_idx].gpu_devices
 
     def _allocate_ports(self, count: int) -> list[int]:
-        """
-        Allocate free ports.
-
-        Args:
-            count: Number of ports to allocate
-
-        Returns:
-            List of allocated port numbers
-
-        Raises:
-            PortAllocationError: If port allocation fails
-        """
         try:
-            # Pass a copy of allocated_ports to avoid reference issues
             ports = find_free_ports(count, exclude_ports=set(self._allocated_ports))
             self._allocated_ports.update(ports)
             return ports
@@ -227,22 +156,7 @@ class LocalScheduler(Scheduler):
     def _prepare_worker_specs(
         self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
     ) -> list[SchedulingSpec]:
-        """
-        Prepare worker specs for a given number of workers.
-
-        Args:
-            role: Worker role name
-            num_workers: Number of workers to create
-            schedulings: Optional list of scheduling specs
-
-        Returns:
-            List of SchedulingSpec objects (one per worker)
-
-        Raises:
-            WorkerCreationError: If schedulings configuration is invalid
-        """
         if not schedulings:
-            # Default spec: 1 CPU, 1024 MB mem, 1 GPU, 2 ports
             return [
                 SchedulingSpec(
                     cpu=1,
@@ -253,15 +167,12 @@ class LocalScheduler(Scheduler):
                 )
             ] * num_workers
 
-        # If a single spec is provided, use it for all workers
         if len(schedulings) == 1:
             return [schedulings[0]] * num_workers
 
-        # If per-worker specs, validate length matches
         if len(schedulings) == num_workers:
             return schedulings
 
-        # Invalid configuration
         raise WorkerCreationError(
             role,
             "Invalid configuration",
@@ -269,21 +180,30 @@ class LocalScheduler(Scheduler):
         )
 
     def create_workers(self, job: Job, *args, **kwargs) -> list[str]:
-        """
-        Create worker subprocesses.
+        """Create worker subprocesses.
 
-        Args:
-            job: Job configuration with role, replicas, tasks, and scheduling strategy
-            *args: Additional arguments passed to worker command
-            **kwargs: Additional keyword arguments
+        Parameters
+        ----------
+        job : Job
+            Job configuration with role, replicas, tasks, and scheduling strategy
+        *args
+            Additional arguments passed to worker command
+        **kwargs
+            Additional keyword arguments
 
-        Returns:
+        Returns
+        -------
+        list[str]
             List of worker IDs created (e.g., ["rollout/0", "rollout/1"])
 
-        Raises:
-            WorkerCreationError: If worker creation fails
-            GPUAllocationError: If GPU allocation fails
-            PortAllocationError: If port allocation fails
+        Raises
+        ------
+        WorkerCreationError
+            If worker creation fails
+        GPUAllocationError
+            If GPU allocation fails
+        PortAllocationError
+            If port allocation fails
         """
         role = job.role
         if role in self._workers:
@@ -293,17 +213,14 @@ class LocalScheduler(Scheduler):
                 f"Use delete_workers('{role}') first to remove existing workers",
             )
 
-        # Extract configuration
         num_workers = job.replicas
         if num_workers == 0:
             raise WorkerCreationError(
                 role, "Invalid configuration", "replicas must be greater than 0"
             )
 
-        # Prepare worker specs
         schedulings = self._prepare_worker_specs(role, num_workers, job.tasks)
 
-        # Determine scheduling strategy
         strategy = job.scheduling_strategy
         if strategy is None:
             strategy_type = "separation"
@@ -324,9 +241,7 @@ class LocalScheduler(Scheduler):
                 worker_id = f"{role}/{idx}"
                 scheduling = schedulings[idx]
 
-                # Allocate resources based on strategy
                 try:
-                    # GPU allocation
                     if strategy_type == "colocation":
                         if not colocate_role:
                             raise WorkerCreationError(
@@ -351,29 +266,24 @@ class LocalScheduler(Scheduler):
                     WorkerNotFoundError,
                     ValueError,
                 ) as e:
-                    # Clean up partially created workers
                     self._cleanup_workers(workers)
                     raise WorkerCreationError(
                         role, f"Resource allocation failed for worker {idx}", str(e)
                     ) from e
 
-                # Prepare environment
                 env = get_env_vars(
-                    self.cluster_name,
+                    "",
                     ",".join([f"{k}={v}" for k, v in scheduling.env_vars.items()]),
                 )
                 env[current_platform.device_control_env_var] = ",".join(
                     map(str, gpu_devices)
                 )
 
-                # Merge user-provided environment variables from scheduling
                 if scheduling.env_vars:
                     env.update(scheduling.env_vars)
 
-                # Prepare log file
                 log_file = self.log_dir / f"{worker_id.replace('/', '_')}.log"
 
-                # Build command to start RPC server
                 if not scheduling.cmd:
                     self._cleanup_workers(workers)
                     raise WorkerCreationError(
@@ -383,7 +293,6 @@ class LocalScheduler(Scheduler):
                         "'python -m areal.scheduler.rpc.rpc_server' in your config.",
                     )
 
-                # User's command should not include port arguments and that the scheduler will provide it
                 if "--port" in scheduling.cmd:
                     raise WorkerCreationError(
                         role,
@@ -391,7 +300,6 @@ class LocalScheduler(Scheduler):
                         "The scheduler automatically allocates and provides the port.",
                     )
                 cmd = shlex.split(scheduling.cmd)
-                # Append --port argument to command
                 cmd.extend(["--port", str(ports[0])])
 
                 logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
@@ -404,7 +312,6 @@ class LocalScheduler(Scheduler):
                     + " ".join(cmd)
                 )
                 cmd = f"{cmd} 2>&1 | tee -a {log_file}"
-                # Spawn subprocess
                 try:
                     process = subprocess.Popen(
                         cmd,
@@ -420,8 +327,7 @@ class LocalScheduler(Scheduler):
                         str(e),
                     ) from e
 
-                # Check if process started successfully
-                time.sleep(0.1)  # Brief delay to catch immediate failures
+                time.sleep(0.1)
                 if process.poll() is not None:
                     stderr = self._read_log_tail(log_file)
                     self._cleanup_workers(workers)
@@ -431,7 +337,6 @@ class LocalScheduler(Scheduler):
                         stderr,
                     )
 
-                # Create worker info
                 worker = Worker(
                     id=worker_id,
                     ip=gethostip(),
@@ -456,7 +361,6 @@ class LocalScheduler(Scheduler):
                     f"GPUs: {gpu_devices}, ports: {ports})"
                 )
 
-            # Store workers
             self._workers[role] = workers
 
             logger.info(
@@ -464,33 +368,39 @@ class LocalScheduler(Scheduler):
             )
 
         except Exception as e:
-            # Clean up any workers created before the failure
             self._cleanup_workers(workers)
             if isinstance(e, SchedulerError):
                 raise
             raise WorkerCreationError(role, "Unexpected error", str(e)) from e
 
-        # Send HTTP request to configure workers
         for worker_rank, worker_info in enumerate(workers):
             self._configure_worker(worker_info, worker_rank)
 
         return worker_ids
 
     def get_workers(self, role: str, timeout: float | None = None) -> list[Worker]:
-        """
-        Get workers and wait for them to be ready.
+        """Get workers and wait for them to be ready.
 
-        Args:
-            role: Worker role name
-            timeout: Maximum time to wait for workers to be ready (None = use default)
+        Parameters
+        ----------
+        role : str
+            Worker role name
+        timeout : float, optional
+            Maximum time to wait for workers to be ready (None = use default)
 
-        Returns:
+        Returns
+        -------
+        list[Worker]
             List of Worker objects
 
-        Raises:
-            WorkerNotFoundError: If role doesn't exist
-            WorkerFailedError: If any worker process failed
-            WorkerTimeoutError: If timeout exceeded waiting for workers
+        Raises
+        ------
+        WorkerNotFoundError
+            If role doesn't exist
+        WorkerFailedError
+            If any worker process failed
+        WorkerTimeoutError
+            If timeout exceeded waiting for workers
         """
         if role not in self._workers:
             raise WorkerNotFoundError(role)
@@ -498,10 +408,8 @@ class LocalScheduler(Scheduler):
         workers = self._workers[role]
         timeout = timeout if timeout is not None else self.startup_timeout
 
-        # First check that all processes are still alive
         self._check_worker_health(role)
 
-        # Wait for RPC servers to be ready
         start_time = time.time()
         ready_workers = set()
 
@@ -516,7 +424,6 @@ class LocalScheduler(Scheduler):
                 if worker_info.worker.id in ready_workers:
                     continue
 
-                # Check if process is still alive
                 if worker_info.process.poll() is not None:
                     stderr = self._read_log_tail(worker_info.log_file)
                     raise WorkerFailedError(
@@ -525,7 +432,6 @@ class LocalScheduler(Scheduler):
                         stderr,
                     )
 
-                # Check if RPC server is ready
                 if self._is_worker_ready(worker_info):
                     ready_workers.add(worker_info.worker.id)
                     logger.debug(f"Worker {worker_info.worker.id} is ready")
@@ -537,7 +443,6 @@ class LocalScheduler(Scheduler):
         return [w.worker for w in workers]
 
     def _is_worker_ready(self, worker_info: WorkerInfo) -> bool:
-        """Check if worker's RPC server is ready via HTTP health check."""
         port = int(worker_info.worker.worker_ports[0])
         url = f"http://{worker_info.worker.ip}:{port}/health"
 
@@ -548,19 +453,6 @@ class LocalScheduler(Scheduler):
             return False
 
     def _configure_worker(self, worker_info: WorkerInfo, worker_rank: int):
-        """
-        Configure a worker by sending HTTP request to its configure endpoint.
-
-        Args:
-            worker_info: WorkerInfo object containing worker details
-            worker_rank: Rank/index of the worker in the worker group
-
-        Raises:
-            WorkerConfigurationError: If configuration fails
-            WorkerFailedError: If worker process has died
-            RPCConnectionError: If connection to worker fails
-        """
-        # Wait for worker to be ready
         while not self._is_worker_ready(worker_info):
             time.sleep(0.1)
 
@@ -588,11 +480,9 @@ class LocalScheduler(Scheduler):
                 logger.info(f"Configuration successfully on worker '{worker_id}'")
                 return
             elif response.status_code == 400:
-                # Import error or bad request
                 error_detail = response.json().get("detail", "Unknown error")
                 raise WorkerConfigurationError(worker_id, error_detail, str(400))
             elif response.status_code == 500:
-                # Engine initialization failed
                 error_detail = response.json().get("detail", "Unknown error")
                 raise WorkerConfigurationError(worker_id, error_detail, str(500))
             else:
@@ -603,7 +493,6 @@ class LocalScheduler(Scheduler):
                 )
 
         except httpx.ConnectError as e:
-            # Check if worker died
             if worker_info.process.poll() is not None:
                 stderr = self._read_log_tail(worker_info.log_file)
                 raise WorkerFailedError(
@@ -625,12 +514,6 @@ class LocalScheduler(Scheduler):
             ) from e
 
     def _check_worker_health(self, role: str):
-        """
-        Check health of all workers in a group.
-
-        Raises:
-            WorkerFailedError: If any worker has failed
-        """
         if role not in self._workers:
             return
 
@@ -645,11 +528,12 @@ class LocalScheduler(Scheduler):
                 )
 
     def delete_workers(self, role: str | None = None):
-        """
-        Delete workers and clean up resources.
+        """Delete workers and clean up resources.
 
-        Args:
-            role: Specific worker role to delete, or None to delete all
+        Parameters
+        ----------
+        role : str, optional
+            Specific worker role to delete, or None to delete all
         """
         if role is None:
             # Delete all workers
@@ -667,20 +551,16 @@ class LocalScheduler(Scheduler):
 
         self._cleanup_workers(workers)
 
-        # Remove from tracking
         del self._workers[role]
 
         logger.info(f"Successfully deleted workers for role '{role}'")
 
     def _cleanup_workers(self, workers: list[WorkerInfo]):
-        """Clean up worker processes and resources."""
         for worker_info in workers:
             try:
-                # Release ports
                 for port_str in worker_info.worker.worker_ports:
                     self._allocated_ports.discard(int(port_str))
 
-                # Terminate process tree
                 self._terminate_process_tree(worker_info.process.pid)
 
                 logger.debug(f"Cleaned up worker {worker_info.worker.id}")
@@ -691,7 +571,6 @@ class LocalScheduler(Scheduler):
                 )
 
     def _terminate_process_tree(self, pid: int):
-        """Terminate a process and all its children."""
         try:
             parent = psutil.Process(pid)
             children = parent.children(recursive=True)
@@ -731,7 +610,6 @@ class LocalScheduler(Scheduler):
             )
 
     def _read_log_tail(self, log_file: str, lines: int = 50) -> str:
-        """Read the last N lines from a log file."""
         try:
             with open(log_file) as f:
                 all_lines = f.readlines()
@@ -746,25 +624,35 @@ class LocalScheduler(Scheduler):
         *args,
         **kwargs,
     ) -> Any:
-        """
-        Create an engine instance on a remote worker.
+        """Create an engine instance on a remote worker.
 
         The engine parameter is a string import path (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
         that will be dynamically imported and instantiated on the worker.
 
-        Args:
-            worker_id: Worker ID in format "role/index"
-            engine: Import path to the engine class (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
-            *args: Initialization arguments
-            **kwargs: Initialization keyword arguments
+        Parameters
+        ----------
+        worker_id : str
+            Worker ID in format "role/index"
+        engine : str
+            Import path to the engine class (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
+        *args
+            Initialization arguments
+        **kwargs
+            Initialization keyword arguments
 
-        Returns:
+        Returns
+        -------
+        Any
             Result from engine initialization
 
-        Raises:
-            WorkerNotFoundError: If worker doesn't exist
-            WorkerFailedError: If worker process has failed
-            EngineCreationError: If engine creation fails
+        Raises
+        ------
+        WorkerNotFoundError
+            If worker doesn't exist
+        WorkerFailedError
+            If worker process has failed
+        EngineCreationError
+            If engine creation fails
         """
         # Verify worker exists and is alive
         worker_info = self._verify_worker_alive(worker_id)
@@ -820,7 +708,6 @@ class LocalScheduler(Scheduler):
                 )
 
         except httpx.ConnectError as e:
-            # Check if worker died
             if worker_info.process.poll() is not None:
                 stderr = self._read_log_tail(worker_info.log_file)
                 raise WorkerFailedError(
@@ -848,24 +735,36 @@ class LocalScheduler(Scheduler):
         retry_delay: float = 1.0,
         **kwargs,
     ) -> Any:
-        """
-        Call a method on an engine.
+        """Call a method on an engine.
 
-        Args:
-            worker_id: Worker ID in format "role/index"
-            method: Method name to call
-            *args: Method arguments
-            max_retries: Maximum number of retry attempts
-            retry_delay: Initial delay between retries (exponential backoff)
-            **kwargs: Method keyword arguments
+        Parameters
+        ----------
+        worker_id : str
+            Worker ID in format "role/index"
+        method : str
+            Method name to call
+        *args
+            Method arguments
+        max_retries : int, optional
+            Maximum number of retry attempts, by default 3
+        retry_delay : float, optional
+            Initial delay between retries (exponential backoff), by default 1.0
+        **kwargs
+            Method keyword arguments
 
-        Returns:
+        Returns
+        -------
+        Any
             Result from method call
 
-        Raises:
-            WorkerNotFoundError: If worker doesn't exist
-            WorkerFailedError: If worker process has failed
-            EngineCallError: If method call fails
+        Raises
+        ------
+        WorkerNotFoundError
+            If worker doesn't exist
+        WorkerFailedError
+            If worker process has failed
+        EngineCallError
+            If method call fails
         """
         # Get worker info (initial verification)
         worker_info = self._find_worker_by_id(worker_id)
@@ -952,24 +851,36 @@ class LocalScheduler(Scheduler):
         retry_delay: float = 1.0,
         **kwargs,
     ) -> Any:
-        """
-        Async version of call_engine for calling engine methods asynchronously.
+        """Async version of call_engine for calling engine methods asynchronously.
 
-        Args:
-            worker_id: Worker ID in format "role/index"
-            method: Method name to call
-            *args: Method arguments
-            max_retries: Maximum number of retry attempts
-            retry_delay: Initial delay between retries (exponential backoff)
-            **kwargs: Method keyword arguments
+        Parameters
+        ----------
+        worker_id : str
+            Worker ID in format "role/index"
+        method : str
+            Method name to call
+        *args
+            Method arguments
+        max_retries : int, optional
+            Maximum number of retry attempts, by default 3
+        retry_delay : float, optional
+            Initial delay between retries (exponential backoff), by default 1.0
+        **kwargs
+            Method keyword arguments
 
-        Returns:
+        Returns
+        -------
+        Any
             Result from method call
 
-        Raises:
-            WorkerNotFoundError: If worker doesn't exist
-            WorkerFailedError: If worker process has failed
-            EngineCallError: If method call fails
+        Raises
+        ------
+        WorkerNotFoundError
+            If worker doesn't exist
+        WorkerFailedError
+            If worker process has failed
+        EngineCallError
+            If method call fails
         """
         # Get worker info (initial verification)
         worker_info = self._find_worker_by_id(worker_id)
@@ -1052,7 +963,6 @@ class LocalScheduler(Scheduler):
         )
 
     def _find_worker_by_id(self, worker_id: str) -> WorkerInfo | None:
-        """Find a worker by its ID."""
         for workers in self._workers.values():
             for worker_info in workers:
                 if worker_info.worker.id == worker_id:
@@ -1060,19 +970,6 @@ class LocalScheduler(Scheduler):
         return None
 
     def _verify_worker_alive(self, worker_id: str) -> WorkerInfo:
-        """
-        Verify a worker exists and is alive.
-
-        Args:
-            worker_id: Worker ID to verify
-
-        Returns:
-            WorkerInfo object
-
-        Raises:
-            WorkerNotFoundError: If worker doesn't exist
-            WorkerFailedError: If worker process has failed
-        """
         worker_info = self._find_worker_by_id(worker_id)
         if worker_info is None:
             raise WorkerNotFoundError(worker_id)
@@ -1091,21 +988,6 @@ class LocalScheduler(Scheduler):
     def _handle_call_response(
         self, response, worker_id: str, method: str, attempt: int
     ):
-        """
-        Handle HTTP response from engine call.
-
-        Args:
-            response: HTTP response object
-            worker_id: Worker ID
-            method: Method name being called
-            attempt: Current retry attempt number
-
-        Returns:
-            Tuple of (result, should_retry, error_message)
-            - result: The result from the call if successful, None otherwise
-            - should_retry: Whether to retry the request
-            - error_message: Error message if failed, None if successful
-        """
         if response.status_code == 200:
             result = response.json().get("result")
             # Deserialize result (convert SerializedTensor dicts back to tensors)
@@ -1129,21 +1011,6 @@ class LocalScheduler(Scheduler):
     def _handle_call_exception(
         self, e: Exception, worker_info: WorkerInfo, worker_id: str
     ) -> str:
-        """
-        Handle exceptions during engine calls and return error message.
-
-        Args:
-            e: The exception that occurred
-            worker_info: Worker information
-            worker_id: Worker ID
-
-        Returns:
-            Error message string
-
-        Raises:
-            WorkerFailedError: If worker has died
-            EngineCallError: If non-retryable error
-        """
         if isinstance(e, httpx.ConnectError):
             # Check if worker died
             if worker_info.process.poll() is not None:
@@ -1162,7 +1029,6 @@ class LocalScheduler(Scheduler):
             return f"Unexpected error: {e}"
 
     def __del__(self):
-        """Cleanup on deletion."""
         try:
             self.delete_workers()
         except Exception:
