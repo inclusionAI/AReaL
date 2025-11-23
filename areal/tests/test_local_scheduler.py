@@ -1,11 +1,13 @@
 import asyncio
+import gc
 import os
 import time
 from unittest.mock import AsyncMock, Mock, call, patch
 
-import httpx
+import aiohttp
 import psutil
 import pytest
+import requests
 
 from areal.api.cli_args import BaseExperimentConfig
 from areal.api.scheduler_api import (
@@ -191,8 +193,7 @@ class TestLocalSchedulerInitialization:
             log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
         )
 
-        assert isinstance(scheduler._http_client, httpx.Client)
-        assert isinstance(scheduler._async_http_client, httpx.AsyncClient)
+        assert isinstance(scheduler._http_client, requests.Session)
 
 
 class TestGPUAllocation:
@@ -502,7 +503,7 @@ class TestWorkerCreation:
                     mem=1024,
                     gpu=1,
                     port_count=2,
-                    cmd="python my_custom_server.py --port 8000",
+                    cmd="python my_custom_server.py",
                 )
             ],
         )
@@ -516,7 +517,7 @@ class TestWorkerCreation:
         popen_call = mock_popen.call_args
         cmd_str = popen_call[0][0]
         assert isinstance(cmd_str, str), f"Expected string, got {type(cmd_str)}"
-        assert "my_custom_server.py --port 8000 --port 8000" in cmd_str
+        assert "my_custom_server.py --port 8000" in cmd_str
         # Verify shell=True is used since cmd is a string
         assert popen_call[1]["shell"] is True
         # Verify that subprocess.Popen was called
@@ -934,7 +935,7 @@ class TestWorkerHealthCheck:
         with patch.object(
             scheduler._http_client,
             "get",
-            side_effect=httpx.ConnectError("Connection refused"),
+            side_effect=requests.exceptions.ConnectionError("Connection refused"),
         ):
             assert scheduler._is_worker_ready(worker_info) is False
 
@@ -1078,13 +1079,24 @@ class TestProcessTermination:
         self, mock_wait_procs, mock_process_class, tmp_path
     ):
         """Should gracefully terminate process tree."""
+        # Force garbage collection to clean up any lingering schedulers from previous tests
+        gc.collect()
+
         # Mock parent process
         mock_parent = Mock()
         mock_child1 = Mock()
         mock_child2 = Mock()
 
         mock_parent.children.return_value = [mock_child1, mock_child2]
-        mock_process_class.return_value = mock_parent
+
+        # Return mock_parent only when called with pid=1234, otherwise raise NoSuchProcess
+        # This prevents interference from __del__ cleanup of previous test's schedulers
+        def process_side_effect(pid):
+            if pid == 1234:
+                return mock_parent
+            raise psutil.NoSuchProcess(pid)
+
+        mock_process_class.side_effect = process_side_effect
 
         # All processes terminate gracefully
         mock_wait_procs.return_value = ([], [])  # (gone, alive)
@@ -1092,17 +1104,27 @@ class TestProcessTermination:
         scheduler = LocalScheduler(
             gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
         )
-        scheduler._terminate_process_tree(1234)
+        try:
+            # Reset mock call counts to ignore any calls from previous tests' cleanup
+            mock_child1.reset_mock()
+            mock_child2.reset_mock()
+            mock_parent.reset_mock()
 
-        # Verify termination sequence
-        mock_child1.terminate.assert_called_once()
-        mock_child2.terminate.assert_called_once()
-        mock_parent.terminate.assert_called_once()
+            scheduler._terminate_process_tree(1234)
 
-        # Should not call kill since all terminated gracefully
-        mock_child1.kill.assert_not_called()
-        mock_child2.kill.assert_not_called()
-        mock_parent.kill.assert_not_called()
+            # Verify termination sequence
+            mock_child1.terminate.assert_called_once()
+            mock_child2.terminate.assert_called_once()
+            mock_parent.terminate.assert_called_once()
+
+            # Should not call kill since all terminated gracefully
+            mock_child1.kill.assert_not_called()
+            mock_child2.kill.assert_not_called()
+            mock_parent.kill.assert_not_called()
+        finally:
+            # Explicitly clean up to prevent destructor from interfering with other tests
+            del scheduler
+            gc.collect()
 
     @patch("areal.scheduler.local.psutil.Process")
     @patch("areal.scheduler.local.psutil.wait_procs")
@@ -1110,6 +1132,9 @@ class TestProcessTermination:
         self, mock_wait_procs, mock_process_class, tmp_path
     ):
         """Should force kill processes that don't terminate gracefully."""
+        # Force garbage collection to clean up any lingering schedulers from previous tests
+        gc.collect()
+
         mock_parent = Mock()
         mock_child = Mock()
 
@@ -1130,42 +1155,70 @@ class TestProcessTermination:
         scheduler = LocalScheduler(
             gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
         )
-        scheduler._terminate_process_tree(1234)
+        try:
+            # Reset mock call counts to ignore any calls from previous tests' cleanup
+            mock_child.reset_mock()
+            mock_parent.reset_mock()
 
-        # Verify force kill was called
-        mock_child.terminate.assert_called_once()
-        mock_child.kill.assert_called_once()
+            scheduler._terminate_process_tree(1234)
+
+            # Verify force kill was called
+            mock_child.terminate.assert_called_once()
+            mock_child.kill.assert_called_once()
+        finally:
+            # Explicitly clean up to prevent destructor from interfering with other tests
+            del scheduler
+            gc.collect()
 
     @patch("areal.scheduler.local.psutil.Process")
     def test_terminate_process_tree_no_such_process(self, mock_process_class, tmp_path):
         """Should handle gracefully when process doesn't exist."""
+        # Force garbage collection to clean up any lingering schedulers from previous tests
+        gc.collect()
+
         mock_process_class.side_effect = psutil.NoSuchProcess(1234)
 
         scheduler = LocalScheduler(
             gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
         )
-
-        # Should not raise
-        scheduler._terminate_process_tree(1234)
+        try:
+            # Should not raise
+            scheduler._terminate_process_tree(1234)
+        finally:
+            del scheduler
+            gc.collect()
 
     @patch("areal.scheduler.local.psutil.Process")
     def test_terminate_process_tree_handles_child_no_such_process(
         self, mock_process_class, tmp_path
     ):
         """Should handle when child process disappears during termination."""
+        # Force garbage collection to clean up any lingering schedulers from previous tests
+        gc.collect()
+
         mock_parent = Mock()
         mock_child = Mock()
         mock_child.terminate.side_effect = psutil.NoSuchProcess(1235)
 
         mock_parent.children.return_value = [mock_child]
-        mock_process_class.return_value = mock_parent
+
+        # Return mock_parent only when called with pid=1234, otherwise raise NoSuchProcess
+        def process_side_effect(pid):
+            if pid == 1234:
+                return mock_parent
+            raise psutil.NoSuchProcess(pid)
+
+        mock_process_class.side_effect = process_side_effect
 
         scheduler = LocalScheduler(
             gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
         )
-
-        # Should not raise
-        scheduler._terminate_process_tree(1234)
+        try:
+            # Should not raise
+            scheduler._terminate_process_tree(1234)
+        finally:
+            del scheduler
+            gc.collect()
 
 
 class TestLogFileHandling:
@@ -1222,15 +1275,23 @@ class TestEngineCreation:
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         scheduler._workers["test"] = [worker]
 
-        # Use Mock for the response object since response.json() is synchronous
-        mock_response = create_mock_http_response(
-            status_code=200,
-            json_data={"result": {"status": "initialized", "name": "TestEngine"}},
+        # Mock aiohttp.ClientSession and response
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={"result": {"status": "initialized", "name": "TestEngine"}}
         )
+        mock_response.__aenter__.return_value = mock_response
+        mock_response.__aexit__.return_value = None
 
-        # Use AsyncMock for post() since create_engine is async and uses _async_http_client
-        async_mock_post = AsyncMock(return_value=mock_response)
-        with patch.object(scheduler._async_http_client, "post", async_mock_post):
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__.return_value = None
+        mock_session.post = Mock(return_value=mock_response)
+
+        with patch(
+            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+        ):
             result = asyncio.run(
                 scheduler.create_engine(
                     "test/0", "test_engines.DummyEngine", name="TestEngine", param=123
@@ -1278,14 +1339,23 @@ class TestEngineCreation:
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         scheduler._workers["test"] = [worker]
 
-        mock_response = create_mock_http_response(
-            status_code=400,
-            json_data={"detail": "Failed to import 'nonexistent.Engine'"},
+        # Mock aiohttp.ClientSession and response
+        mock_response = AsyncMock()
+        mock_response.status = 400
+        mock_response.json = AsyncMock(
+            return_value={"detail": "Failed to import 'nonexistent.Engine'"}
         )
+        mock_response.__aenter__.return_value = mock_response
+        mock_response.__aexit__.return_value = None
 
-        # Use AsyncMock for post() since create_engine is async
-        async_mock_post = AsyncMock(return_value=mock_response)
-        with patch.object(scheduler._async_http_client, "post", async_mock_post):
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__.return_value = None
+        mock_session.post = Mock(return_value=mock_response)
+
+        with patch(
+            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+        ):
             with pytest.raises(EngineImportError) as exc_info:
                 asyncio.run(scheduler.create_engine("test/0", "nonexistent.Engine"))
 
@@ -1296,14 +1366,23 @@ class TestEngineCreation:
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         scheduler._workers["test"] = [worker]
 
-        mock_response = create_mock_http_response(
-            status_code=500,
-            json_data={"detail": "Engine initialization failed: out of memory"},
+        # Mock aiohttp.ClientSession and response
+        mock_response = AsyncMock()
+        mock_response.status = 500
+        mock_response.json = AsyncMock(
+            return_value={"detail": "Engine initialization failed: out of memory"}
         )
+        mock_response.__aenter__.return_value = mock_response
+        mock_response.__aexit__.return_value = None
 
-        # Use AsyncMock for post() since create_engine is async
-        async_mock_post = AsyncMock(return_value=mock_response)
-        with patch.object(scheduler._async_http_client, "post", async_mock_post):
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__.return_value = None
+        mock_session.post = Mock(return_value=mock_response)
+
+        with patch(
+            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+        ):
             with pytest.raises(EngineCreationError) as exc_info:
                 asyncio.run(
                     scheduler.create_engine("test/0", "test_engines.DummyEngine")
@@ -1325,11 +1404,17 @@ class TestEngineCreation:
         worker = create_worker_info(process=mock_proc, log_file=str(log_file))
         scheduler._workers["test"] = [worker]
 
-        # Use AsyncMock for post() since create_engine is async
-        async_mock_post = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
+        # Mock aiohttp.ClientSession to raise connection error
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__.return_value = None
+        mock_session.post = Mock(
+            side_effect=aiohttp.ClientConnectionError("Connection refused")
         )
-        with patch.object(scheduler._async_http_client, "post", async_mock_post):
+
+        with patch(
+            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+        ):
             with pytest.raises(WorkerFailedError) as exc_info:
                 asyncio.run(
                     scheduler.create_engine("test/0", "test_engines.DummyEngine")
@@ -1342,11 +1427,17 @@ class TestEngineCreation:
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         scheduler._workers["test"] = [worker]
 
-        # Use AsyncMock for post() since create_engine is async
-        async_mock_post = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
+        # Mock aiohttp.ClientSession to raise connection error
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__.return_value = None
+        mock_session.post = Mock(
+            side_effect=aiohttp.ClientConnectionError("Connection refused")
         )
-        with patch.object(scheduler._async_http_client, "post", async_mock_post):
+
+        with patch(
+            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+        ):
             with pytest.raises(RPCConnectionError) as exc_info:
                 asyncio.run(
                     scheduler.create_engine("test/0", "test_engines.DummyEngine")
@@ -1361,11 +1452,15 @@ class TestEngineCreation:
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         scheduler._workers["test"] = [worker]
 
-        # Use AsyncMock for post() since create_engine is async
-        async_mock_post = AsyncMock(
-            side_effect=httpx.TimeoutException("Request timeout")
-        )
-        with patch.object(scheduler._async_http_client, "post", async_mock_post):
+        # Mock aiohttp.ClientSession to raise timeout error
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__.return_value = None
+        mock_session.post = Mock(side_effect=asyncio.TimeoutError("Request timeout"))
+
+        with patch(
+            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+        ):
             with pytest.raises(EngineCreationError) as exc_info:
                 asyncio.run(
                     scheduler.create_engine("test/0", "test_engines.DummyEngine")
@@ -1488,14 +1583,21 @@ class TestEngineMethodCalls:
         worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         scheduler._workers["test"] = [worker]
 
-        # Use Mock instead of AsyncMock for the response object
-        mock_response = create_mock_http_response(
-            status_code=200, json_data={"result": 42}
-        )
+        # Mock aiohttp.ClientSession and response
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={"result": 42})
+        mock_response.__aenter__.return_value = mock_response
+        mock_response.__aexit__.return_value = None
 
-        # But AsyncMock for post() since it's an async method
-        async_mock_post = AsyncMock(return_value=mock_response)
-        with patch.object(scheduler._async_http_client, "post", async_mock_post):
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__.return_value = None
+        mock_session.post = Mock(return_value=mock_response)
+
+        with patch(
+            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+        ):
             result = asyncio.run(
                 scheduler.async_call_engine("test/0", "compute", arg1=10, arg2=20)
             )
@@ -1513,15 +1615,26 @@ class TestEngineMethodCalls:
         scheduler._workers["test"] = [worker]
 
         # First call returns 503, second call succeeds
-        # Use Mock (not AsyncMock) for response objects since response.json() is synchronous
-        mock_response_503 = create_mock_http_response(status_code=503)
-        mock_response_200 = create_mock_http_response(
-            status_code=200, json_data={"result": "success"}
-        )
+        # Mock aiohttp.ClientSession and responses
+        mock_response_503 = AsyncMock()
+        mock_response_503.status = 503
+        mock_response_503.__aenter__.return_value = mock_response_503
+        mock_response_503.__aexit__.return_value = None
 
-        # AsyncMock for post() since it's an async method
-        async_mock_post = AsyncMock(side_effect=[mock_response_503, mock_response_200])
-        with patch.object(scheduler._async_http_client, "post", async_mock_post):
+        mock_response_200 = AsyncMock()
+        mock_response_200.status = 200
+        mock_response_200.json = AsyncMock(return_value={"result": "success"})
+        mock_response_200.__aenter__.return_value = mock_response_200
+        mock_response_200.__aexit__.return_value = None
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__.return_value = None
+        mock_session.post = Mock(side_effect=[mock_response_503, mock_response_200])
+
+        with patch(
+            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+        ):
             with patch("asyncio.sleep") as mock_async_sleep:
                 result = asyncio.run(
                     scheduler.async_call_engine("test/0", "method", max_retries=3)

@@ -9,9 +9,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import httpx
+import aiohttp
 import orjson
 import psutil
+import requests
 
 from areal.api.cli_args import BaseExperimentConfig
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
@@ -32,6 +33,7 @@ from areal.scheduler.exceptions import (
 )
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging
+from areal.utils.http import get_default_connector
 from areal.utils.launcher import (
     get_env_vars,
 )
@@ -97,8 +99,7 @@ class LocalScheduler(Scheduler):
         self._workers: dict[str, list[WorkerInfo]] = {}
         self._gpu_counter = 0
         self._allocated_ports = set()
-        self._http_client = httpx.Client(timeout=3600.0)
-        self._async_http_client = httpx.AsyncClient(timeout=3600.0)
+        self._http_client = requests.Session()
 
         logger.info(
             f"LocalScheduler initialized with GPU devices: {self.gpu_devices}, "
@@ -463,7 +464,7 @@ class LocalScheduler(Scheduler):
         try:
             response = self._http_client.post(
                 url,
-                content=orjson.dumps(
+                data=orjson.dumps(
                     serialize_value(
                         dict(
                             config=self.exp_config,
@@ -492,7 +493,7 @@ class LocalScheduler(Scheduler):
                     str(response.status_code),
                 )
 
-        except httpx.ConnectError as e:
+        except requests.exceptions.ConnectionError as e:
             if worker_info.process.poll() is not None:
                 stderr = self._read_log_tail(worker_info.log_file)
                 raise WorkerFailedError(
@@ -502,7 +503,7 @@ class LocalScheduler(Scheduler):
                 worker_id, worker_info.worker.ip, port, str(e)
             ) from e
 
-        except httpx.TimeoutException as e:
+        except requests.exceptions.Timeout as e:
             raise WorkerConfigurationError(worker_id, f"Request timed out: {e}") from e
 
         except WorkerConfigurationError:
@@ -678,36 +679,46 @@ class LocalScheduler(Scheduler):
         try:
             logger.info(f"Creating engine '{engine}' on worker '{worker_id}'")
 
-            response = await self._async_http_client.post(
-                url,
-                content=orjson.dumps(payload),
-                headers={"Content-Type": "application/json"},
-                timeout=300.0,
-            )
+            timeout = aiohttp.ClientTimeout(total=300.0)
+            async with aiohttp.ClientSession(
+                timeout=timeout,
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            ) as session:
+                async with session.post(
+                    url,
+                    data=orjson.dumps(payload),
+                    headers={"Content-Type": "application/json"},
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        logger.info(
+                            f"Engine created successfully on worker '{worker_id}'"
+                        )
+                        return result.get("result")
+                    elif response.status == 400:
+                        # Import error or bad request
+                        error_detail = (await response.json()).get(
+                            "detail", "Unknown error"
+                        )
+                        if "Failed to import" in error_detail:
+                            raise EngineImportError(engine, error_detail)
+                        else:
+                            raise EngineCreationError(worker_id, error_detail, 400)
+                    elif response.status == 500:
+                        # Engine initialization failed
+                        error_detail = (await response.json()).get(
+                            "detail", "Unknown error"
+                        )
+                        raise EngineCreationError(worker_id, error_detail, 500)
+                    else:
+                        raise EngineCreationError(
+                            worker_id,
+                            f"Unexpected status code: {response.status}",
+                            response.status,
+                        )
 
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(f"Engine created successfully on worker '{worker_id}'")
-                return result.get("result")
-            elif response.status_code == 400:
-                # Import error or bad request
-                error_detail = response.json().get("detail", "Unknown error")
-                if "Failed to import" in error_detail:
-                    raise EngineImportError(engine, error_detail)
-                else:
-                    raise EngineCreationError(worker_id, error_detail, 400)
-            elif response.status_code == 500:
-                # Engine initialization failed
-                error_detail = response.json().get("detail", "Unknown error")
-                raise EngineCreationError(worker_id, error_detail, 500)
-            else:
-                raise EngineCreationError(
-                    worker_id,
-                    f"Unexpected status code: {response.status_code}",
-                    response.status_code,
-                )
-
-        except httpx.ConnectError as e:
+        except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:
             if worker_info.process.poll() is not None:
                 stderr = self._read_log_tail(worker_info.log_file)
                 raise WorkerFailedError(
@@ -717,7 +728,7 @@ class LocalScheduler(Scheduler):
                 worker_id, worker_info.worker.ip, port, str(e)
             ) from e
 
-        except httpx.TimeoutException as e:
+        except asyncio.TimeoutError as e:
             raise EngineCreationError(worker_id, f"Request timed out: {e}") from e
 
         except (EngineCreationError, EngineImportError, RPCConnectionError):
@@ -921,27 +932,67 @@ class LocalScheduler(Scheduler):
                     f"Async calling method '{method}' on worker '{worker_id}' (attempt {attempt})"
                 )
 
-                response = await self._async_http_client.post(
-                    url,
-                    content=orjson.dumps(payload),
-                    headers={"Content-Type": "application/json"},
-                    timeout=7200.0,  # 2 hours for long-running operations
-                )
+                timeout = aiohttp.ClientTimeout(total=7200.0)
+                async with aiohttp.ClientSession(
+                    timeout=timeout,
+                    read_bufsize=1024 * 1024 * 10,
+                    connector=get_default_connector(),
+                ) as session:
+                    async with session.post(
+                        url,
+                        data=orjson.dumps(payload),
+                        headers={"Content-Type": "application/json"},
+                    ) as response:
+                        # Handle response inline since aiohttp json() is async
+                        if response.status == 200:
+                            result_data = (await response.json()).get("result")
+                            deserialized_result = deserialize_value(result_data)
+                            if attempt > 1:
+                                logger.info(
+                                    f"Method '{method}' succeeded on worker '{worker_id}' "
+                                    f"after {attempt} attempts"
+                                )
+                            return deserialized_result
+                        elif response.status == 400:
+                            # Bad request (e.g., method doesn't exist) - don't retry
+                            error_detail = (await response.json()).get(
+                                "detail", "Unknown error"
+                            )
+                            raise EngineCallError(
+                                worker_id, method, error_detail, attempt
+                            )
+                        elif response.status == 500:
+                            # Engine method failed - don't retry
+                            error_detail = (await response.json()).get(
+                                "detail", "Unknown error"
+                            )
+                            raise EngineCallError(
+                                worker_id, method, error_detail, attempt
+                            )
+                        elif response.status == 503:
+                            # Service unavailable - retry
+                            last_error = "Service unavailable"
+                        else:
+                            # Other errors - retry
+                            response_text = await response.text()
+                            last_error = f"HTTP {response.status}: {response_text}"
 
-                result, should_retry, error_msg = self._handle_call_response(
-                    response, worker_id, method, attempt
-                )
-                if not should_retry:
-                    if attempt > 1:
-                        logger.info(
-                            f"Method '{method}' succeeded on worker '{worker_id}' "
-                            f"after {attempt} attempts"
-                        )
-                    return result
-                last_error = error_msg
-
+            except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:
+                # Check if worker died
+                if worker_info.process.poll() is not None:
+                    stderr = self._read_log_tail(worker_info.log_file)
+                    raise WorkerFailedError(
+                        worker_id,
+                        worker_info.process.returncode,
+                        stderr,
+                    ) from e
+                last_error = f"Connection error: {e}"
+            except asyncio.TimeoutError as e:
+                last_error = f"Timeout: {e}"
+            except EngineCallError:
+                raise
             except Exception as e:
-                last_error = self._handle_call_exception(e, worker_info, worker_id)
+                last_error = f"Unexpected error: {e}"
 
             # Retry with exponential backoff
             if attempt < max_retries:
@@ -1011,7 +1062,7 @@ class LocalScheduler(Scheduler):
     def _handle_call_exception(
         self, e: Exception, worker_info: WorkerInfo, worker_id: str
     ) -> str:
-        if isinstance(e, httpx.ConnectError):
+        if isinstance(e, requests.exceptions.ConnectionError):
             # Check if worker died
             if worker_info.process.poll() is not None:
                 stderr = self._read_log_tail(worker_info.log_file)
@@ -1021,7 +1072,7 @@ class LocalScheduler(Scheduler):
                     stderr,
                 ) from e
             return f"Connection error: {e}"
-        elif isinstance(e, httpx.TimeoutException):
+        elif isinstance(e, requests.exceptions.Timeout):
             return f"Timeout: {e}"
         elif isinstance(e, EngineCallError):
             raise
@@ -1035,20 +1086,5 @@ class LocalScheduler(Scheduler):
             pass
         try:
             self._http_client.close()
-        except Exception:
-            pass
-        try:
-            import asyncio
-
-            # Close async client if event loop is available
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.create_task(self._async_http_client.aclose())
-                else:
-                    loop.run_until_complete(self._async_http_client.aclose())
-            except RuntimeError:
-                # No event loop, sync close
-                pass
         except Exception:
             pass
