@@ -896,7 +896,7 @@ class WorkflowExecutor:
         # Shuffle for randomness (helps with data diversity)
         random.shuffle(results)
 
-        return [r.data.trajectory for r in results]
+        return [r.data.trajectory if r.data is not None else None for r in results]
 
     @trace_perf("workflow_executor.rollout_batch", category="scheduler")
     def rollout_batch(
