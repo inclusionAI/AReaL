@@ -44,7 +44,7 @@ def get_gsm8k_rl_dataset(
                 + "\nPlease put your final answer within \\boxed{}.",
             }
         ]
-        return {"messages": messages}
+        return {"messages": messages, "answer": sample["answer"]}
 
     dataset = dataset.map(process).remove_columns(["question"])
 
@@ -102,7 +102,7 @@ def get_gsm8k_reasoning_rl_dataset(
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": sample["question"]}
         ]
-        return {"messages": messages}
+        return {"messages": messages, "answer": sample["answer"]}
 
     dataset = dataset.map(process).remove_columns(["question"])
 
