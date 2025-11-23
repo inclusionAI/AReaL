@@ -162,7 +162,7 @@ def test_reasoning_model(
         is_correct = False
         parser_error = None
         try:
-            parser_result = process_results([generated_text], correct_answer)[0]
+            parser_result, extracted_answers = process_results(generated_text, correct_answer)
             is_correct = bool(parser_result)
         except Exception as e:
             parser_error = str(e)
