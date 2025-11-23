@@ -1033,14 +1033,13 @@ class WorkflowExecutor:
         """
 
         def task_input_generator():
-            # Resolve workflow and should_accept once
+            resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
             for data in cycle_dataloader(dataloader):
                 for item in data:
+                    # Resolve workflow for each submission to allow
+                    # resource separation if a type or string is provided.
                     resolved_workflow = self._resolve_workflow(
                         workflow, workflow_kwargs
-                    )
-                    resolved_should_accept_fn = self._resolve_should_accept_fn(
-                        should_accept_fn
                     )
                     yield _RolloutTaskInput(
                         data=item,
