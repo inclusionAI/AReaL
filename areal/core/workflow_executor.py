@@ -1,6 +1,5 @@
 from __future__ import annotations  # noqa
 
-import queue
 import random
 import threading
 import time
@@ -245,6 +244,18 @@ TResult = TypeVar("TResult")
 
 
 class BatchTaskDispatcher(Generic[TInput, TResult]):
+    """Generic dispatcher for asynchronous task execution with staleness control.
+
+    Manages background threads for task submission and result collection.
+    Uses producer-consumer pattern with AsyncTaskRunner for async execution.
+
+    Architecture:
+    - Producer thread: Submits tasks from _pending_inputs to AsyncTaskRunner
+      based on staleness capacity
+    - Consumer thread: Collects results from AsyncTaskRunner to _pending_results
+    - Main thread: submit_task_input() enqueues, wait_results() polls results
+    """
+
     def __init__(
         self,
         max_queue_size: int,
@@ -252,7 +263,6 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         staleness_manager: StalenessManager,
         enable_tracing: bool = False,
     ):
-        self.enable_tracing = enable_tracing
         self.runner = AsyncTaskRunner(
             max_queue_size=max_queue_size,
             enable_tracing=enable_tracing,
@@ -550,13 +560,20 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                 results.append(res[0])
                 if cnt >= batch_size:
                     break
-            except (TimeoutError, queue.Full):
+            except TimeoutError:
                 pass
 
         return results
 
 
 class WorkflowExecutor:
+    """Executor for asynchronous workflow-based rollout generation.
+
+    Orchestrates workflow execution with AReaL-specific features including
+    staleness management, trajectory validation, and result filtering.
+    Delegates task dispatching to BatchTaskDispatcher.
+    """
+
     def __init__(
         self,
         config: InferenceEngineConfig,
@@ -587,8 +604,8 @@ class WorkflowExecutor:
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start background threads.
 
-        Initializes StalenessManager (if needed), AsyncTaskRunner, and starts
-        producer (_commit_loop) and consumer (_fetch_loop) threads.
+        Creates and initializes BatchTaskDispatcher with StalenessManager.
+        The dispatcher starts producer and consumer threads for async execution.
 
         Parameters
         ----------
@@ -650,8 +667,8 @@ class WorkflowExecutor:
     def destroy(self):
         """Shutdown the workflow executor and clean up resources.
 
-        Signals shutdown, waits for threads to exit (5s timeout each),
-        flushes perf tracer, and destroys AsyncTaskRunner.
+        Destroys the dispatcher (which stops background threads and AsyncTaskRunner),
+        then flushes the performance tracer.
         """
         # Stop background threads and shutdown the async task runner
         if self.dispatcher is not None:
@@ -955,10 +972,10 @@ class WorkflowExecutor:
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
     ) -> list[dict[str, Any] | None]:
-        """Wait for the completion of `count` workflows from _pending_results deque.
+        """Wait for the completion of `count` workflows.
 
-        Polls _pending_results (populated by consumer thread), sorts by create_time,
-        shuffles, and returns concatenated batch tensors.
+        Returns a list of trajectory dictionaries (or None for rejected rollouts).
+        Results are sorted by creation time and shuffled for diversity.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for parameters.
         """

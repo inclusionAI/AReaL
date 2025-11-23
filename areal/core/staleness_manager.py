@@ -25,6 +25,8 @@ class StalenessManager:
 
     Parameters
     ----------
+    version_provider : VersionProvider
+        Provider for current model version (e.g., InferenceEngine)
     max_concurrent_rollouts : int
         Maximum number of concurrent rollouts allowed
     consumer_batch_size : int
@@ -44,6 +46,8 @@ class StalenessManager:
 
         Parameters
         ----------
+        version_provider : VersionProvider
+            Provider for current model version (e.g., InferenceEngine)
         max_concurrent_rollouts : int
             Maximum number of concurrent rollouts allowed
         consumer_batch_size : int
@@ -73,20 +77,8 @@ class StalenessManager:
     def get_capacity(self) -> int:
         """Calculate available capacity for new rollouts.
 
-        This method considers both concurrency limits and staleness constraints
-        to determine how many new rollouts can be accepted.
-
-        The capacity calculation ensures:
-        1. The number of running rollouts doesn't exceed max_concurrent_rollouts
-        2. Samples don't become too stale by limiting based on:
-           - current_version: The current model version
-           - max_staleness: Maximum allowed version difference
-           - consumer_batch_size: Expected batch size for training
-
-        Parameters
-        ----------
-        current_version : int
-            The current version of the model weights
+        Considers both concurrency limits and staleness constraints.
+        Obtains current model version from version_provider.
 
         Returns
         -------
