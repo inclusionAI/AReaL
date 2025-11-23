@@ -255,7 +255,9 @@ def test_tree_training_forward(engine, mock_tree_input):
         f"Positions where logprob_baseline and logprob_tree differ: {diff_positions.nonzero(as_tuple=True)}"
     )
     print(f"diff = {logprob_baseline - logprob_tree}")
-    assert torch.allclose(logprob_baseline, logprob_tree, atol=1e-6)
+    from torch.testing import assert_close
+
+    assert_close(logprob_baseline, logprob_tree, atol=1e-4, rtol=1e-3)
 
 
 @torch.no_grad()

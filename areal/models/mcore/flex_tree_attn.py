@@ -6,7 +6,7 @@ from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import Tensor
-from torch.nn.attention.flex_attention import flex_attention
+from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
 
 class MegatronFlexTreeAttention(MegatronModule):
@@ -61,22 +61,36 @@ class MegatronFlexTreeAttention(MegatronModule):
             else {}
         )
         qkv_format = packed_seq_kwargs.get("qkv_format", self.qkv_format)
-        if qkv_format != "tbd":
+        if qkv_format != "sbhd":
             raise NotImplementedError(
-                f"TEDotProductAttention only supports 'tbd' qkv_format, got {qkv_format}"
+                f"TEDotProductAttention only supports 'sbhd' qkv_format, got {qkv_format}"
             )
 
-        q = query.transpose(0, 1).unsqueeze(0)
-        k = key.transpose(0, 1).unsqueeze(0)
-        v = value.transpose(0, 1).unsqueeze(0)
+        # [b, h, s, d]
+        q = query.permute(1, 2, 0, 3)
+        k = key.permute(1, 2, 0, 3)
+        v = value.permute(1, 2, 0, 3)
+
+        def mask_mod(batch_idx, head_idx, q_idx, k_idx):
+            is_causal = k_idx <= q_idx
+            return is_causal & attention_mask[k_idx, q_idx]
+
+        # FIXME: avoid creating block mask here
+        block_mask = create_block_mask(
+            mask_mod,
+            B=None,
+            H=None,
+            Q_LEN=q.shape[2],
+            KV_LEN=k.shape[2],
+        )
 
         out = flex_attention(
             q,
             k,
             v,
             scale=self.softmax_scale,
-            block_mask=attention_mask,
+            block_mask=block_mask,
             enable_gqa=q.shape[1] != k.shape[1],
         )
 
-        return out.squeeze(0).transpose(0, 1)
+        return out.permute(2, 0, 1, 3).view(query.shape[0], query.shape[1], -1)

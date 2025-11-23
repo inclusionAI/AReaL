@@ -971,10 +971,9 @@ class MegatronEngine(TrainEngine):
 
         with trace_scope("megatron_engine.train_batch.prepare_mb_list"):
             if self.enable_tree_training:
-                mb_list = self.prepare_tree_mb_list(input_)
+                mb_list = self.prepare_tree_mb_list(input_).to(self.device)
             else:
-                mb_list = self.prepare_mb_list(input_)
-        mb_list = mb_list.to(self.device)
+                mb_list = self.prepare_mb_list(input_).to(self.device)
 
         total_loss_weight = (
             torch.stack([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
@@ -1171,15 +1170,14 @@ class MegatronEngine(TrainEngine):
         # Assume input_ is identical across context and model parallel group
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         if self.enable_tree_training:
-            mb_list = self.prepare_tree_mb_list(input_)
+            mb_list = self.prepare_tree_mb_list(input_).to(self.device)
         else:
             mb_list = self.prepare_mb_list(input_)
-        mb_list = mb_list.to(self.device)
+        mb_list = mb_list.to(self.device).to(self.device)
 
         # NOTE: Move tensors to correct device, since dist.broadcast_object_list does not
         # ensure the device of tensors in the object list
         cu_seqlens: torch.Tensor = cu_seqlens.to(self.device)
-        mb_list: MicroBatchList = mb_list.to(self.device)
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
@@ -1202,7 +1200,7 @@ class MegatronEngine(TrainEngine):
                 return loss, {"output": output}
 
             if self.enable_tree_training:
-                orig_input = mb_list.mbs[forward_step_count]
+                orig_input = mb_list.raw_mbs[forward_step_count]
                 from_tree_indices = mb_list.from_tree_indices[forward_step_count]
                 output = model_with_tree_attention_forward(model, batch)
                 forward_step_counts[model_vp_stage] += 1

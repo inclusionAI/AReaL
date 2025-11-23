@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -18,18 +18,53 @@ from areal.utils.data import (
     MicroBatchSpec,
     amend_position_ids,
     pack_tensor_dict,
+    tensor_container_to,
 )
 from areal.utils.perf_tracer import trace_perf, trace_scope
 
 logger = logging.getLogger("Tree Training")
 
 
+# FIXME: clean up this data structure, we can do to/from tree indexing in megatron engine
 @dataclass
 class TreeMicroBatchList(MicroBatchList):
-    n_tree_tokens: list[int]
-    n_total_tokens: list[int]
-    from_tree_indices: list[list[int]]
-    to_tree_indices: list[list[int]]
+    raw_mbs: list[dict[str, Any]] = field(default_factory=list)
+    n_tree_tokens: list[int] = field(default_factory=list)
+    n_total_tokens: list[int] = field(default_factory=list)
+    from_tree_indices: list[list[int]] = field(default_factory=list)
+    to_tree_indices: list[list[int]] = field(default_factory=list)
+
+    def to(self, *args, **kwargs):
+        mbs = [tensor_container_to(mb, *args, **kwargs) for mb in self.mbs]
+        data = tensor_container_to(self.data, *args, **kwargs)
+        padded_mbs = None
+        if self.padded_mbs is not None:
+            padded_mbs = [
+                tensor_container_to(mb, *args, **kwargs) for mb in self.padded_mbs
+            ]
+        old_cu_seqlens_list = None
+        if self.old_cu_seqlens_list is not None:
+            old_cu_seqlens_list = [
+                t.to(*args, **kwargs) for t in self.old_cu_seqlens_list
+            ]
+        return TreeMicroBatchList(
+            data=data,
+            raw_mbs=self.raw_mbs,
+            mb_spec=self.mb_spec,
+            mbs=mbs,
+            forward_indices=self.forward_indices,
+            backward_indices=self.backward_indices,
+            group_lens=self.group_lens,
+            padded_mbs=padded_mbs,
+            padding_lengths=self.padding_lengths,
+            padded_to_lengths=self.padded_to_lengths,
+            old_cu_seqlens_list=old_cu_seqlens_list,
+            align_to_lengths=self.align_to_lengths,
+            n_tree_tokens=self.n_tree_tokens,
+            n_total_tokens=self.n_total_tokens,
+            from_tree_indices=self.from_tree_indices,
+            to_tree_indices=self.to_tree_indices,
+        )
 
 
 @dataclass
@@ -145,6 +180,7 @@ def build_tree_input(data: dict[str, Any], max_tokens_per_tree: int):
     trees = greedy_build_tree(sequences, max_tokens_per_tree=max_tokens_per_tree)
 
     processed_data = []
+    raw_mb_data = []
     offset = 0
     for tree in trees:
         mb = {k: v[offset : offset + tree.batch_size] for k, v in data.items()}
@@ -152,8 +188,9 @@ def build_tree_input(data: dict[str, Any], max_tokens_per_tree: int):
         mb = amend_position_ids(mb)
         with trace_scope("tree_training.build_tree_input.packing"):
             packed_mb = pack_tensor_dict(mb)
+            raw_mb_data.append(packed_mb)
             tree_mb = {
-                k: v[tree.from_tree_indices]
+                k: v[tree.to_tree_indices]
                 for k, v in packed_mb.items()
                 if k not in {"cu_seqlens", "max_seqlen"}
             }
@@ -164,6 +201,8 @@ def build_tree_input(data: dict[str, Any], max_tokens_per_tree: int):
         processed_data.append(tree_mb)
     return TreeMicroBatchList(
         data=data,
+        mbs=processed_data,
+        raw_mbs=raw_mb_data,
         mb_spec=MicroBatchSpec(n_mbs=1, max_tokens_per_mb=max_tokens_per_tree),
         forward_indices=list(range(total_batch_size)),
         backward_indices=list(range(total_batch_size)),
@@ -192,11 +231,12 @@ def patch_bridge_for_tree_training():
                 logger.info(f"Skipping patch module: {layer_spec.module}")
                 continue
             submodules: TransformerLayerSubmodules = layer_spec.submodules
-            self_attn_spec = submodules.self_attetion
+            self_attn_spec = submodules.self_attention
             if self_attn_spec.module is not SelfAttention:
                 logger.info(f"Skipping patch module: {self_attn_spec.module}")
                 continue
             self_attn_spec.submodules.core_attention = MegatronFlexTreeAttention
+        return spec
 
     LLMBridge._get_transformer_layer_spec = _patched_getter
 
