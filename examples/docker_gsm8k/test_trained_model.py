@@ -168,7 +168,7 @@ def test_model(
         is_correct = False
         parser_error = None
         try:
-            parser_result, extracted_answers = process_results(generated_text, correct_answer)
+            parser_result, extracted_answers = process_results(correct_answer, generated_text)
             is_correct = bool(parser_result)
         except Exception as e:
             parser_error = str(e)

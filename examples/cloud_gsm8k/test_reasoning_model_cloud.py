@@ -158,10 +158,10 @@ def test_reasoning_model(
             ]
         else:
             # Trained: Use XML reasoning system prompt (matching training format)
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": question}
-            ]
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": question}
+        ]
         
         # Tokenize
         inputs = tokenizer.apply_chat_template(
@@ -192,7 +192,7 @@ def test_reasoning_model(
         is_correct = False
         parser_error = None
         try:
-            parser_result, extracted_answers = process_results(generated_text, correct_answer)
+            parser_result, extracted_answers = process_results(correct_answer, generated_text)
             is_correct = bool(parser_result)
         except Exception as e:
             parser_error = str(e)
@@ -217,8 +217,8 @@ def test_reasoning_model(
         _log(f"\nGenerated Response:\n{generated_text}")
         _log(f"\nCorrect Answer:\n{correct_answer}")
         _log(f"\nResult: {'✅ CORRECT' if is_correct else '❌ INCORRECT'}")
-        if parser_error:
-            _log(f"Parser Error: {parser_error}")
+            if parser_error:
+                _log(f"Parser Error: {parser_error}")
         _log(f"{'='*80}")
         
         # Log progress every 10 samples or for first/last

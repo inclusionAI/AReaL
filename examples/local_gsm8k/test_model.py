@@ -139,7 +139,7 @@ def test_model(
         else:
             stop_reason = "unknown"
 
-        parser_result, extracted_answers = process_results(generated_text, correct_answer)
+        parser_result, extracted_answers = process_results(correct_answer, generated_text)
         gt_extracted, sol_extracted = [parse_digits(ans) for ans in extracted_answers]
 
         is_correct = bool(parser_result)
