@@ -666,6 +666,8 @@ class LocalScheduler(Scheduler):
             )
 
         # Build JSON payload with serialized args and kwargs
+        # Note: rank, world_size, master_addr, master_port may be in kwargs
+        # They will be extracted by RPC server and set as env vars
         payload = {
             "engine": engine,
             "init_args": serialize_value(list(args)),

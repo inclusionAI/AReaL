@@ -1,4 +1,5 @@
 import argparse
+import os
 import traceback
 from concurrent.futures import Future
 
@@ -78,7 +79,13 @@ def create_engine():
     {
         "engine": "areal.engine.ppo.actor.FSDPPPOActor",  # Import path
         "init_args": [...],  # Positional arguments
-        "init_kwargs": {...}  # Keyword arguments
+        "init_kwargs": {
+            "config": ...,  # Engine config
+            "rank": 0,  # Optional: worker rank for distributed training (will be popped)
+            "world_size": 1,  # Optional: total number of workers (will be popped)
+            "master_addr": "localhost",  # Optional: master address (will be popped)
+            "master_port": 29500  # Optional: master port (will be popped)
+        }
     }
     """
     global _engine
@@ -95,6 +102,33 @@ def create_engine():
 
         if not engine_path:
             return jsonify({"error": "Missing 'engine' field in request"}), 400
+
+        # Pop distributed training parameters from init_kwargs and set as environment variables
+        # These should not be passed to engine.__init__
+        rank = init_kwargs.pop("rank", None)
+        if rank is not None:
+            os.environ["RANK"] = str(rank)
+            logger.info(f"Set RANK={rank}")
+
+        world_size = init_kwargs.pop("world_size", None)
+        if world_size is not None:
+            os.environ["WORLD_SIZE"] = str(world_size)
+            logger.info(f"Set WORLD_SIZE={world_size}")
+
+        master_addr = init_kwargs.pop("master_addr", None)
+        if master_addr is not None:
+            os.environ["MASTER_ADDR"] = master_addr
+            logger.info(f"Set MASTER_ADDR={master_addr}")
+
+        master_port = init_kwargs.pop("master_port", None)
+        if master_port is not None:
+            os.environ["MASTER_PORT"] = str(master_port)
+            logger.info(f"Set MASTER_PORT={master_port}")
+
+        # Set LOCAL_RANK to 0 (one GPU per process)
+        if rank is not None:
+            os.environ["LOCAL_RANK"] = "0"
+            logger.info("Set LOCAL_RANK=0")
 
         # Dynamic import
         try:
