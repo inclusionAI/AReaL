@@ -771,7 +771,7 @@ def symbolic_equal(a, b):
 def process_results(answer, solution):
 
     try:
-        extracted_answer = extract_answer(answer, "math", use_last_number=False)
+        extracted_answer = extract_answer(answer, "math", use_last_number=True)
         extracted_solution = extract_answer(solution, "math", use_last_number=True)
 
         # if extract_answer.strip() == "":
