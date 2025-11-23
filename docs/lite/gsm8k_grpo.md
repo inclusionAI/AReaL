@@ -418,7 +418,7 @@ def prepare_batch(
             res = self.wait(count=1, timeout=1)
             if not res or res[0] is None:
                 continue
-            assert len(res) == 1 and res[0] is not None
+            assert len(res) == 1
             cnt += 1
             results.append(res[0])
             if cnt >= dataloader.batch_size:
