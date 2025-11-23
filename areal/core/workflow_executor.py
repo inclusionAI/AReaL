@@ -531,7 +531,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             cap_queue = self.runner.max_queue_size - (
                 self.runner.get_input_queue_size() + batch_size
             )
-            capacity = max(cap_staleness, cap_queue)
+            capacity = min(cap_staleness, cap_queue)
             if capacity > 0:
                 if self.enable_tracing:
                     perf_tracer.instant(
