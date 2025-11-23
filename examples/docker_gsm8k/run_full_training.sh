@@ -101,16 +101,35 @@ if [ $TRAIN_EXIT_CODE -eq 0 ]; then
             
             # Determine test script based on experiment name or config
             if [[ "$EXPERIMENT_NAME" == *"reasoning"* ]] || [[ "$CONFIG_FILE" == *"reasoning"* ]]; then
-                echo "Detected reasoning model. Running test_reasoning_model.py (30 samples)..."
+                echo "Detected reasoning model."
+                echo "------------------------------------------"
+                echo "Testing BASELINE model (Qwen/Qwen2.5-0.5B-Instruct) - 50 samples..."
+                python3 examples/docker_gsm8k/test_reasoning_model.py \
+                    --model-path "Qwen/Qwen2.5-0.5B-Instruct" \
+                    --max-samples 50 \
+                    --max-new-tokens 1024 \
+                    --model-name "Baseline"
+
+                echo "------------------------------------------"
+                echo "Testing TRAINED model - 50 samples..."
                 python3 examples/docker_gsm8k/test_reasoning_model.py \
                     --model-path "$LATEST_CHECKPOINT" \
-                    --max-samples 30 \
-                    --max-new-tokens 1024
+                    --max-samples 50 \
+                    --max-new-tokens 1024 \
+                    --model-name "Trained"
             else
-                echo "Running standard test_trained_model.py (30 samples)..."
+                echo "Running standard validation (Base vs Trained Model)"
+                echo "------------------------------------------"
+                echo "Testing BASELINE model (Qwen/Qwen2.5-0.5B-Instruct) - 50 samples..."
                 python3 examples/docker_gsm8k/test_trained_model.py \
-                    --config "$CONFIG_FILE" \
-                    --max-samples 30
+                    --model-path "Qwen/Qwen2.5-0.5B-Instruct" \
+                    --max-samples 50
+
+                echo "------------------------------------------"
+                echo "Testing TRAINED model - 50 samples..."
+                python3 examples/docker_gsm8k/test_trained_model.py \
+                    --model-path "$LATEST_CHECKPOINT" \
+                    --max-samples 50
             fi
         else
             echo "WARNING: No checkpoint subdirectories found in $CHECKPOINT_BASE"

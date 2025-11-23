@@ -63,6 +63,7 @@ def test_reasoning_model(
     log_dir: str | None = None,
     test_all: bool = False,
     temperature: float = 0.0,
+    model_name: str = "Model",
 ):
     """Test the reasoning model on GSM8K samples using XML reasoning format."""
     
@@ -79,7 +80,7 @@ def test_reasoning_model(
             lf.write(msg + "\n")
     
     _log(f"\n{'='*60}")
-    _log(f"Testing REASONING model: {model_path}")
+    _log(f"Testing {model_name} REASONING model: {model_path}")
     _log(f"Log file: {log_path}")
     _log(f"{'='*60}\n")
     
@@ -249,6 +250,12 @@ def main():
         default=None,
         help="Directory to write timestamped log files",
     )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default="Model",
+        help="Name for logging (e.g., 'Baseline' or 'Trained')",
+    )
     
     args = parser.parse_args()
     
@@ -261,6 +268,7 @@ def main():
         log_dir=args.log_dir,
         test_all=test_all,
         temperature=args.temperature,
+        model_name=args.model_name,
     )
 
 

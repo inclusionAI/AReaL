@@ -85,3 +85,20 @@ echo "=========================================="
 echo "Model saved to: $OUTPUT_DIR"
 echo "=========================================="
 
+# Run comparison test (Base vs Trained)
+echo ""
+echo "=========================================="
+echo "Running model comparison (Base vs Trained) - 50 samples"
+echo "=========================================="
+
+python examples/local_gsm8k/test_model.py \
+    --compare \
+    --base-model "$MODEL" \
+    --trained-model "$OUTPUT_DIR" \
+    --max-samples 50
+
+echo ""
+echo "=========================================="
+echo "Process completed!"
+echo "=========================================="
+

@@ -364,8 +364,55 @@ if [ $TRAINING_EXIT_CODE -eq 0 ]; then
     echo "✅ Created completion marker: $COMPLETION_MARKER"
     echo "   This prevents the script from re-running if the container restarts."
     echo ""
-    echo "Note: Testing is automatically handled by the training script."
-    echo "      It will test the first 50 samples after training completes."
+    
+    # Run validation on Base and Trained models
+    echo "=========================================="
+    echo "Running validation (Base vs Trained Model)"
+    echo "=========================================="
+    
+    CHECKPOINT_BASE="/workspace/outputs/grpo/checkpoints/root/${EXPERIMENT_NAME}/${TRIAL_NAME}/default"
+    if [ -d "$CHECKPOINT_BASE" ]; then
+        LATEST_CHECKPOINT=$(ls -td "$CHECKPOINT_BASE"/*/ | head -1)
+        if [ -n "$LATEST_CHECKPOINT" ]; then
+            echo "Found latest checkpoint: $LATEST_CHECKPOINT"
+            
+            if [[ "$EXPERIMENT_NAME" == *"reasoning"* ]]; then
+                echo "Detected reasoning model."
+                echo "------------------------------------------"
+                echo "Testing BASELINE model (Qwen/Qwen2.5-0.5B-Instruct) - 50 samples..."
+                python3 examples/cloud_gsm8k/test_reasoning_model_cloud.py \
+                    --model-path "Qwen/Qwen2.5-0.5B-Instruct" \
+                    --max-samples 50 \
+                    --max-new-tokens 1024 \
+                    --model-name "Baseline"
+
+                echo "------------------------------------------"
+                echo "Testing TRAINED model - 50 samples..."
+                python3 examples/cloud_gsm8k/test_reasoning_model_cloud.py \
+                    --model-path "$LATEST_CHECKPOINT" \
+                    --max-samples 50 \
+                    --max-new-tokens 1024 \
+                    --model-name "Trained"
+            else
+                echo "Running standard validation (Base vs Trained Model)"
+                echo "------------------------------------------"
+                echo "Testing BASELINE model (Qwen/Qwen2.5-0.5B-Instruct) - 50 samples..."
+                python3 examples/docker_gsm8k/test_trained_model.py \
+                    --model-path "Qwen/Qwen2.5-0.5B-Instruct" \
+                    --max-samples 50 \
+                    --log-dir "/workspace/outputs/grpo/test_logs"
+                
+                echo "------------------------------------------"
+                echo "Testing TRAINED model - 50 samples..."
+                python3 examples/docker_gsm8k/test_trained_model.py \
+                    --model-path "$LATEST_CHECKPOINT" \
+                    --max-samples 50 \
+                    --log-dir "/workspace/outputs/grpo/test_logs"
+            fi
+        fi
+    else
+         echo "WARNING: Checkpoint directory not found: $CHECKPOINT_BASE"
+    fi
 fi
 
 echo ""
