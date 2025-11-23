@@ -115,7 +115,21 @@ def test_reasoning_model(
         num_samples = min(max_samples, len(dataset))
         _log(f"Testing on {num_samples} samples (out of {len(dataset)} total)")
     
-    # System prompt matching training format
+    # Determine if this is a baseline model (not trained with XML format)
+    # Baseline models should be tested WITHOUT the XML system prompt for fair comparison
+    is_baseline = (
+        "BASELINE" in model_name.upper() or 
+        "baseline" in model_name.lower() or
+        (not os.path.isdir(model_path) and "/" in model_path)  # HuggingFace model identifier
+    )
+    
+    if is_baseline:
+        _log(f"⚠️  Detected BASELINE model - testing WITHOUT XML system prompt for fair comparison")
+        _log(f"   (Baseline models were not trained with XML reasoning format)")
+    else:
+        _log(f"✓ Testing TRAINED model - using XML reasoning format (matching training)")
+    
+    # System prompt matching training format (only for trained models)
     SYSTEM_PROMPT = """Respond in the following format:
 <reasoning>
 [Your step-by-step reasoning process here]
@@ -131,11 +145,23 @@ def test_reasoning_model(
         question = sample["question"]
         correct_answer = sample["answer"]
         
-        # Format prompt with reasoning system prompt (matching training format)
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": question}
-        ]
+        # Process correct_answer: convert #### to \boxed{} format (matching local_gsm8k/test_model.py)
+        hashes_idx = correct_answer.find("#### ")
+        if hashes_idx != -1:
+            correct_answer = correct_answer[:hashes_idx] + "\\boxed{" + correct_answer[hashes_idx + 5 :] + "}"
+        
+        # Format prompt: baseline models get simple format, trained models get XML system prompt
+        if is_baseline:
+            # Baseline: Use simple format (no system prompt) - matches local_gsm8k/test_model.py
+            messages = [
+                {"role": "user", "content": f"{question}\n"}
+            ]
+        else:
+            # Trained: Use XML reasoning system prompt (matching training format)
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": question}
+            ]
         
         # Tokenize
         inputs = tokenizer.apply_chat_template(
