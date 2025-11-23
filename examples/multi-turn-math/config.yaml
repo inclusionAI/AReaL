@@ -149,3 +149,13 @@ launcher:
   inference_server_mem_per_gpu: 32768
   trainer_cpus_per_gpu: 4
   trainer_mem_per_gpu: 32768
+
+perf_tracer:
+  enabled: true
+  experiment_name: ${experiment_name}  # Reuse top-level metadata
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}        # Shared filesystem path
+  save_interval: 1                     # Write traces every step
+  session_tracer:
+    enabled: false                      # Track per-session lifecycle
+    flush_threshold: 100               # Buffer 100 sessions before flushing

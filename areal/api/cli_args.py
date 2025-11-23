@@ -371,6 +371,9 @@ class MegatronEngineConfig:
     distribute_saved_activations: bool | None = None
     recompute_modules: list[str] | None = None
 
+    # Experimental tree training options
+    enable_tree_training: bool = False
+
 
 @dataclass
 class TrainEngineConfig:

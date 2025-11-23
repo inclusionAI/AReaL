@@ -11,6 +11,7 @@ from transformers import AutoTokenizer
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     MegatronEngineConfig,
+    MicroBatchSpec,
     OptimizerConfig,
     TrainEngineConfig,
 )
@@ -59,6 +60,83 @@ def mock_input(
     )
 
 
+@pytest.fixture(scope="module")
+def mock_tree_input(
+    batch_size=5,
+    tree_tokens=30,
+    total_tokens=60,
+    device=current_platform.device_type,
+):
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if total_tokens < tree_tokens:
+        raise ValueError("total_tokens must be >= tree_tokens")
+    if total_tokens < batch_size:
+        raise ValueError(
+            "total_tokens must be >= batch_size to allocate at least one token per sequence"
+        )
+
+    device = device if isinstance(device, torch.device) else torch.device(device)
+    lengths = [tree_tokens]
+    remaining_tokens = total_tokens - tree_tokens
+    remaining_slots = batch_size - 1
+
+    if remaining_slots:
+        if remaining_tokens < remaining_slots:
+            raise ValueError("Not enough tokens available for the requested batch size")
+        for index in range(remaining_slots):
+            slots_left = remaining_slots - index - 1
+            max_assignable = min(tree_tokens, remaining_tokens - slots_left)
+            share = max(1, min(max_assignable, remaining_tokens // (slots_left + 1)))
+            lengths.append(share)
+            remaining_tokens -= share
+        if remaining_tokens != 0:
+            lengths[-1] += remaining_tokens
+            remaining_tokens = 0
+    else:
+        if total_tokens != tree_tokens:
+            raise ValueError("total_tokens must equal tree_tokens when batch_size is 1")
+
+    lengths = [int(lengh) for lengh in lengths]
+    if sum(lengths) != total_tokens:
+        raise RuntimeError("Token length allocation mismatch")
+
+    base_tokens = torch.arange(1, tree_tokens + 1, dtype=torch.long, device=device)
+    max_len = max(lengths)
+    input_ids = torch.full((batch_size, max_len), 0, dtype=torch.long, device=device)
+    attention_mask = torch.zeros((batch_size, max_len), dtype=torch.bool, device=device)
+
+    sequences = []
+    for idx, length in enumerate(lengths):
+        seq_tokens = base_tokens[:length]
+        input_ids[idx, :length] = seq_tokens
+        attention_mask[idx, :length] = True
+        sequences.append(seq_tokens.tolist())
+
+    def _count_unique_nodes(seqs: list[list[int]]) -> int:
+        root: dict[int, dict] = {}
+        count = 0
+        for seq in seqs:
+            node = root
+            for token in seq:
+                if token not in node:
+                    node[token] = {}
+                    count += 1
+                node = node[token]
+        return count
+
+    unique_nodes = _count_unique_nodes(sequences)
+    if unique_nodes != tree_tokens:
+        raise RuntimeError(
+            f"Constructed tree has {unique_nodes} tokens, expected {tree_tokens}"
+        )
+
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+    }
+
+
 def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
     """Mock loss function for testing."""
     return torch.mean(logits)
@@ -81,8 +159,11 @@ def engine():
         experiment_name="test",
         trial_name="test",
         path=MODEL_PATH,
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
         optimizer=OptimizerConfig(),
-        megatron=MegatronEngineConfig(),
+        megatron=MegatronEngineConfig(
+            use_deterministic_algorithms=True,
+        ),
     )
     alloc_mode = AllocationMode.from_str("d1p1t1")
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
@@ -113,6 +194,76 @@ def test_simple_train(engine, mock_input):
     )
     engine.step_lr_scheduler()
     logger.info(f"Train done, result={train_result}")
+
+
+# def test_tree_training_forward(engine, mock_tree_input):
+#     for k, v in mock_tree_input.items():
+#         print(f"mock_tree_input[{k}].shape={v.shape}, dtype={v.dtype} v=\n{v}")
+
+#     def calc_logprobs_tree_training(logits, input_data):
+#         input_ids = input_data["input_ids"]
+#         sequence_ids = input_data["sequence_ids"]
+#         seq_id_to_tree_indices = input_data["seq_id_to_tree_indices"]
+#         logprobs = packed_tree_gather_logprobs(
+#             logits, input_ids, sequence_ids, seq_id_to_tree_indices, 1.0
+#         )
+#         return logprobs
+
+#     def calc_logprobs(logits, input_data):
+#         labels = input_data.get(
+#             "rolled_input_ids",
+#             torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
+#         )
+#         logprobs = gather_logprobs(logits, labels, 1.0)
+#         return logprobs
+
+#     engine.eval()
+#     logprob_baseline = engine.forward(
+#         input_=mock_tree_input,
+#         post_hook=calc_logprobs,
+#         aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
+#     )
+#     config = TrainEngineConfig(
+#         experiment_name="test",
+#         trial_name="test",
+#         path=MODEL_PATH,
+#         mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
+#         optimizer=OptimizerConfig(),
+#         megatron=MegatronEngineConfig(
+#             enable_tree_training=True, use_deterministic_algorithms=True
+#         ),
+#     )
+#     tree_engine = MegatronEngine(config)
+#     alloc_mode = AllocationMode.from_str("d1p1t1")
+#     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
+#     tree_engine.create_process_group(alloc_mode.train)
+#     tree_engine.initialize(
+#         addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train
+#     )
+#     tree_engine.eval()
+#     logprob_tree = tree_engine.forward(
+#         input_=mock_tree_input,
+#         post_hook=calc_logprobs_tree_training,
+#         aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
+#     )
+
+#     print(f"logprob_baseline={logprob_baseline}")
+#     print(f"logprob_tree={logprob_tree}")
+#     # print where logprob baseline and logprob_tree are zeros
+#     print(
+#         f"logprob_baseline == 0 at positions: {(logprob_baseline == 0).nonzero(as_tuple=True)}"
+#     )
+#     print(
+#         f"logprob_tree == 0 at positions: {(logprob_tree == 0).nonzero(as_tuple=True)}"
+#     )
+
+#     # print where logprob_baseline and logprob_tree differ
+#     diff_positions = (logprob_baseline - logprob_tree).abs() > 1e-6
+#     print(
+#         f"Positions where logprob_baseline and logprob_tree differ: {diff_positions.nonzero(as_tuple=True)}"
+#     )
+#     print(f"diff = {logprob_baseline - logprob_tree}")
+#     assert torch.allclose(logprob_baseline, logprob_tree, atol=1e-6)
 
 
 @torch.no_grad()

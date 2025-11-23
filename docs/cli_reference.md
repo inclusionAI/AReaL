@@ -801,6 +801,7 @@ Refer to Megatron-LM documentation for implementation details.
 | `recompute_num_layers`                     | integer \| None                                                      | `1`          | -                                                                                                                   |
 | `distribute_saved_activations`             | boolean \| None                                                      | `None`       | -                                                                                                                   |
 | `recompute_modules`                        | list of string \| None                                               | `None`       | -                                                                                                                   |
+| `enable_tree_training`                     | boolean                                                              | `False`      | -                                                                                                                   |
 
 (section-perf-tracer)=
 

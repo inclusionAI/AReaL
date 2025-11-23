@@ -65,6 +65,11 @@ from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 from areal.utils.perf_tracer import trace_perf, trace_scope
+from areal.utils.tree_training import (
+    build_tree_input,
+    model_with_tree_attention_forward,
+    patch_bridge_for_tree_training,
+)
 
 
 class _MegatronModelList(list):
@@ -113,6 +118,7 @@ class MegatronEngine(TrainEngine):
         self.checkpointer = None
         self.seed = 0
         self.own_global_group = False
+        self.enable_tree_training = config.megatron.enable_tree_training
 
     def initialize(
         self,
@@ -138,6 +144,8 @@ class MegatronEngine(TrainEngine):
             f"update_weight_group_{mpu.get_pipeline_model_parallel_rank()}"
         )
         self.engine_lock = DistributedLock("train_engine_lock")
+        if self.enable_tree_training:
+            patch_bridge_for_tree_training()
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
         self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
@@ -159,7 +167,6 @@ class MegatronEngine(TrainEngine):
         self.hf_config, self.tf_config = make_hf_and_mcore_config(
             self.config.path, dtype=self.dtype, bridge=self.bridge
         )
-        # TODO: configure for VPP
         self.tf_config = configure_pipeline_layer_splits(
             self.parallel_strategy, self.hf_config, self.tf_config
         )
@@ -856,6 +863,34 @@ class MegatronEngine(TrainEngine):
             max_workers=None,
         )
 
+    def prepare_tree_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
+        # TODO: 1. Group and pack data into a token tree and attention masks for model input
+        # In the first step we only use a naive greedy packing strategy to make sure the
+        # tree size does not exceed max_tokens_per_mb
+        # 2. Correction on position ids for token trees
+
+        pp_size = self.parallel_strategy.pipeline_parallel_size
+        cp_size = self.parallel_strategy.context_parallel_size
+        tp_size = self.parallel_strategy.tensor_parallel_size
+
+        # TODO: fix this, pad for context parallelism
+        assert cp_size == 1
+        assert tp_size == 1
+
+        mb_list = build_tree_input(
+            input_, max_tokens_per_tree=self.config.mb_spec.max_tokens_per_mb
+        )
+        self.logger.info(
+            f"#trees: {len(mb_list.mbs)}, tree #tokens: {mb_list.n_tree_tokens}."
+        )
+        # currently, we take a token tree as a micro-batch for concept proof
+        # TODO: batch multiple token trees into a micro-batch
+        if len(mb_list.mbs) < 2 * pp_size:
+            self.logger.warning(
+                "Number of token trees less than 2 * pp_size, may cause large pipeline bubbles."
+            )
+        return mb_list
+
     def prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
         input_ = amend_position_ids(input_)
@@ -933,7 +968,12 @@ class MegatronEngine(TrainEngine):
         for model in self.model:
             model.zero_grad_buffer()
         # Assume input_ is identical across context and model parallel group
-        mb_list = self.prepare_mb_list(input_)
+
+        with trace_scope("megatron_engine.train_batch.prepare_mb_list"):
+            if self.enable_tree_training:
+                mb_list = self.prepare_tree_mb_list(input_)
+            else:
+                mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
         total_loss_weight = (
@@ -955,6 +995,33 @@ class MegatronEngine(TrainEngine):
             batch = next(batch_iter)
             model_vp_stage = getattr(model, "vp_stage", 0)
             forward_step_count = forward_step_counts[model_vp_stage]
+
+            def _scaled_loss_fn(input_, output):
+                loss = loss_fn(output, input_)
+                loss_scale = loss_weight_fn(input_) / total_loss_weight
+                # Megatron will average gradients across DP ranks.
+                # If we normalize loss across micro batches of all DP ranks,
+                # we should revert the effect of gradient averaging in megatron
+                # to make sure loss from each token is scaled properly.
+                loss_scale *= mpu.get_data_parallel_world_size()
+                loss_scale *= self.optimizer.get_loss_scale().item()
+                loss *= loss_scale
+                return loss, {}
+
+            if self.enable_tree_training:
+                # TODO: Three choices strategies for gradient correction:
+                # 1. unpack output logits to flattened sequences for loss calculation,
+                # which might consume too much GPU memory.
+                # 2. change loss_fn to unpack logprobs from a tree structure to flattened sequences.
+                # 3. scale gradients directly, which is ugly.
+                # Try option 2 first for simplicity.
+                orig_input = mb_list.mbs[forward_step_count]
+                from_tree_indices = mb_list.from_tree_indices[forward_step_count]
+                output = model_with_tree_attention_forward(model, batch)
+                output = output[from_tree_indices]
+                forward_step_counts[model_vp_stage] += 1
+                return output, functools.partial(_scaled_loss_fn, orig_input)
+
             padding_length = mb_list.padding_lengths[forward_step_count]
             orig_input = mb_list.mbs[forward_step_count]
             cu_seqlens = batch["cu_seqlens"]
@@ -972,18 +1039,6 @@ class MegatronEngine(TrainEngine):
                     cu_seqlens=cu_seqlens,
                     old_cu_seqlens=old_cu_seqlens,
                 )
-
-            def _scaled_loss_fn(input_, output):
-                loss = loss_fn(output, input_)
-                loss_scale = loss_weight_fn(input_) / total_loss_weight
-                # Megatron will average gradients across DP ranks.
-                # If we normalize loss across micro batches of all DP ranks,
-                # we should revert the effect of gradient averaging in megatron
-                # to make sure loss from each token is scaled properly.
-                loss_scale *= mpu.get_data_parallel_world_size()
-                loss_scale *= self.optimizer.get_loss_scale().item()
-                loss *= loss_scale
-                return loss, {}
 
             return output, functools.partial(_scaled_loss_fn, orig_input)
 
@@ -1007,11 +1062,16 @@ class MegatronEngine(TrainEngine):
             update_successful, grad_norm, _ = self.optimizer.step()
         current_lr = self.optimizer.param_groups[0]["lr"]
 
-        return dict(
+        stats = dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
             lr=current_lr,
         )
+        if self.enable_tree_training:
+            stats["n_distinct_tree_tokens"] = sum(mb_list.n_tree_tokens) / sum(
+                mb_list.n_total_tokens
+            )
+        return stats
 
     @trace_perf("megatron_engine.eval_batch", category="compute")
     @torch.no_grad()
@@ -1021,6 +1081,10 @@ class MegatronEngine(TrainEngine):
         loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
+        # TODO: do not modify eval_batch for tree training now, only useful in SFT.
+        assert self.enable_tree_training is False, (
+            "Tree training eval_batch not implemented yet."
+        )
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
         mb_list = self.prepare_mb_list(input_)
@@ -1106,7 +1170,10 @@ class MegatronEngine(TrainEngine):
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
-        mb_list = self.prepare_mb_list(input_)
+        if self.enable_tree_training:
+            mb_list = self.prepare_tree_mb_list(input_)
+        else:
+            mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
         # NOTE: Move tensors to correct device, since dist.broadcast_object_list does not
@@ -1127,6 +1194,20 @@ class MegatronEngine(TrainEngine):
             batch = next(batch_iter)
             model_vp_stage = getattr(model, "vp_stage", 0)
             forward_step_count = forward_step_counts[model_vp_stage]
+
+            def _post_process_fn(input_, output):
+                loss = torch.tensor(1.0, device=output.device)
+                if post_hook is not None:
+                    output = post_hook(output, input_)
+                return loss, {"output": output}
+
+            if self.enable_tree_training:
+                orig_input = mb_list.mbs[forward_step_count]
+                from_tree_indices = mb_list.from_tree_indices[forward_step_count]
+                output = model_with_tree_attention_forward(model, batch)
+                forward_step_counts[model_vp_stage] += 1
+                output = output[from_tree_indices]
+                return output, functools.partial(_post_process_fn, orig_input)
             padding_length = mb_list.padding_lengths[forward_step_count]
             orig_input = mb_list.mbs[forward_step_count]
             cu_seqlens = batch["cu_seqlens"]
@@ -1144,12 +1225,6 @@ class MegatronEngine(TrainEngine):
                     cu_seqlens=cu_seqlens,
                     old_cu_seqlens=old_cu_seqlens,
                 )
-
-            def _post_process_fn(input_, output):
-                loss = torch.tensor(1.0, device=output.device)
-                if post_hook is not None:
-                    output = post_hook(output, input_)
-                return loss, {"output": output}
 
             return output, functools.partial(_post_process_fn, orig_input)
 
