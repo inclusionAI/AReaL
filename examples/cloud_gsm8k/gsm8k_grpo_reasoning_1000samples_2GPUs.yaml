@@ -162,7 +162,7 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: disabled  # Set to 'online' and provide WANDB_API_KEY to enable WandB logging
+    mode: online  # WandB logging enabled - requires WANDB_API_KEY environment variable
     wandb_api_key: ${oc.env:WANDB_API_KEY,""}
     project: gsm8k-grpo-reasoning-cloud
 
