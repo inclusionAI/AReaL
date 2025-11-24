@@ -103,6 +103,21 @@ def _to_sequence_list(data: dict[str, Any]):
 def greedy_build_tree(
     sequences: list[list[int]], max_tokens_per_tree: int
 ) -> list[TokenTree]:
+    # Input validation
+    if max_tokens_per_tree <= 0:
+        raise ValueError(
+            f"max_tokens_per_tree must be positive, got {max_tokens_per_tree}"
+        )
+
+    # Check if any sequence is too long to fit
+    for i, seq in enumerate(sequences):
+        if len(seq) > max_tokens_per_tree:
+            raise ValueError(
+                f"Sequence at index {i} has {len(seq)} tokens, "
+                f"which exceeds max_tokens_per_tree={max_tokens_per_tree}. "
+                f"All sequences must fit within max_tokens_per_tree."
+            )
+
     batch_idx = 0
 
     def _build_mb_tree():
@@ -130,6 +145,16 @@ def greedy_build_tree(
             batch_size += 1
             if batch_idx >= len(sequences):
                 break
+
+        # Handle edge case: if no sequences fit in this tree, we have a problem
+        # This should not happen after input validation, but check anyway
+        if batch_size == 0 and batch_idx < len(sequences):
+            raise RuntimeError(
+                f"Failed to fit sequence at index {batch_idx} "
+                f"(length {len(sequences[batch_idx])}) into a tree with "
+                f"max_tokens_per_tree={max_tokens_per_tree}. This should not happen "
+                f"after input validation."
+            )
 
         # Create attention mask by DFS
         with trace_scope("tree_training.greedy_build_tree.build_attention_mask"):
