@@ -12,7 +12,8 @@
 #   - reasoning_fast: Reasoning model fast training (20-30 min, 200 samples, 1 epoch)
 #   - reasoning_1hour: Reasoning model 1-hour training (500 samples, 2 epochs)
 #   - reasoning_3hour: Reasoning model 3-hour training (1000 samples, 3 epochs)
-#   - reasoning_2000samples_4GPUs: Reasoning model with 2000 samples using 4x A40 GPUs
+#   - reasoning_1000samples_2GPUs: Reasoning model with 1000 samples using 2x A40 GPUs
+#   - reasoning_2000samples_4GPUs: Reasoning model with 2000 samples using 4x A40 GPUs (uses 3 GPUs)
 #
 # All configs use memory-optimized settings that work on all GPUs.
 
@@ -265,6 +266,23 @@ case "$CONFIG_NAME" in
         echo "Using REASONING 3-HOUR training configuration (~3-4 hours)"
         echo "Note: Trains reasoning model with XML format (1000 samples)"
         ;;
+    reasoning_1000samples_2GPUs)
+        # Check GPU count
+        if [ -z "$GPU_COUNT" ] || [ "$GPU_COUNT" -lt 2 ]; then
+            echo "ERROR: This config requires 2 GPUs"
+            echo "Detected: $GPU_COUNT GPU(s)"
+            echo ""
+            echo "This config is optimized for 2x A40 GPUs (48GB each)"
+            echo "Please use a pod with 2 GPUs or use a different config"
+            exit 1
+        fi
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_reasoning_1000samples_2GPUs.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-reasoning-2gpu-1000samples"
+        echo "Using REASONING 1000 SAMPLES 2 GPUs training configuration"
+        echo "Note: Trains reasoning model with XML format (1000 samples, 2x A40 GPUs)"
+        echo "GPU count: $GPU_COUNT (required: 2)"
+        ;;
     reasoning_2000samples_4GPUs)
         # Check GPU count
         if [ -z "$GPU_COUNT" ] || [ "$GPU_COUNT" -lt 4 ]; then
@@ -284,7 +302,7 @@ case "$CONFIG_NAME" in
         ;;
     *)
         echo "ERROR: Unknown config name: $CONFIG_NAME"
-        echo "Valid options: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_2000samples_4GPUs"
+        echo "Valid options: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_1000samples_2GPUs, reasoning_2000samples_4GPUs"
         exit 1
         ;;
 esac
