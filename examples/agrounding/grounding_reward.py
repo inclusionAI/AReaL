@@ -1,6 +1,6 @@
 import math
 import re
-import numpy as np  
+import numpy as np
 import json, random
 from typing import Any, List, Sequence, Tuple, Union
 
@@ -10,6 +10,7 @@ Box = Tuple[Number, Number, Number, Number]  # (x1, y1, x2, y2)
 BOX_RE = re.compile(r"<box>\s*\[(.*?)\]\s*</box>", flags=re.IGNORECASE | re.DOTALL)
 INT_RE = re.compile(r"-?\d+")
 _NUM_RE = re.compile(r'[-+]?\d*\.?\d+')
+_NUM_FULL_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 _ANSWER_RE = re.compile(r'<answer>(.*?)</answer>', flags=re.S | re.I)
 
 def extract_box_from_text(s: str) -> List[float]:
@@ -33,12 +34,11 @@ def extract_box_from_text(s: str) -> List[float]:
 
         vals: List[float] = []
         for v in nums[:4]:
-            try:
-                x = float(v)
-            except Exception:
+            if not _NUM_FULL_RE.match(v.strip()):
                 return []
+            x = float(v)
             if not math.isfinite(x):
-                return [] 
+                return []
             vals.append(x)
         
         x1, y1, x2, y2 = vals
@@ -128,52 +128,54 @@ def _has_consecutive_repeats(tokens, min_run: int = 7) -> bool:
     return False
 
 
-# TODO: align with VisionRLVRWorkflow signature, acquire ground truth, etc. from task_data
 def compute_score(
-    solution_str: Any,
-    ground_truth: Any,
-    extra_info: Any = None,
-    **kwargs,
+    prompt: Any,
+    completions: Any,
+    prompt_ids: Any,
+    completion_ids: Any,
+    **task_data,
 ):
     """
     Compute IoU between predicted and ground-truth bounding boxes (single example).
 
     Inputs:
-      - ground_truth: list[int] of 4 coords
-      - solution_str: str containing the coords (e.g., "<box>[x1,y1,x2,y2]</box>")
+      - completions: str containing the coords (e.g., "<box>[x1,y1,x2,y2]</box>")
+      - task_data: should provide ground truth box and image size (height/width)
 
     Returns:
       - float IoU for the single example.
     """
-    # Select phase (train/eval) to allow different reward configs
-    split = None
-    if isinstance(extra_info, dict):
-        split = extra_info.get("split", None)
+    extra_info = task_data["extra_info"]
+    reward_model = task_data["reward_model"] 
+
+    split = extra_info["split"]
     is_test = split == "test"
-
-    # Resolve reward_type per phase, fallback to global reward_type
-    reward_type = kwargs.get("reward_type")
-
+    
+    reward_type = Any
     if is_test:
-        reward_type ="eval"
+        reward_type = "eval"
 
+    alpha = Any
+    iou_threshold = Any
 
-    alpha = kwargs.get("alpha", None)
-    iou_threshold = kwargs.get("threshold", None)
     if alpha is None or iou_threshold is None or reward_type is None:
         raise ValueError("Missing required parameters: reward_type, alpha, threshold.")
+    
+    gt_box_raw = reward_model["ground_truth"]
+    width = extra_info["width"]
+    height = extra_info["height"]
+    
+    if gt_box_raw is None:
+        raise ValueError("Missing ground truth bounding box in task_data.")
+    if width is None or height is None:
+        raise ValueError("Height and width must be provided in task_data for scaling bounding boxes.")
 
-    pb = extract_box_from_text(solution_str)
-    if len(pb) != 4 or not isinstance(ground_truth, (list, tuple)) or len(ground_truth) != 4:
-        return 0.0
-    # Use provided scale_bbox (bbox, width, height)
-    if isinstance(extra_info, dict) and ("height" in extra_info and "width" in extra_info):
-        h = extra_info["height"]
-        w = extra_info["width"]
-        pred_box = scale_bbox(pb, w, h)
-        gt_box = scale_bbox(ground_truth, w, h)
-    else:
-        raise ValueError("Height and width must be provided in extra_info for scaling bounding boxes.")
+    pb = extract_box_from_text(completions)
+
+    w = float(width)
+    h = float(height)
+    pred_box = scale_bbox(pb, w, h)
+    gt_box = scale_bbox(gt_box_raw, w, h)
     iou_val = float(_iou(to_box_tuple(pred_box), to_box_tuple(gt_box)))
     if reward_type == "mix":
         pass_val = 1.0 if iou_val >= iou_threshold else 0.0
@@ -183,7 +185,7 @@ def compute_score(
     elif reward_type == "penalty":
         pass_val = 1.0 if iou_val >= iou_threshold else 0.0
         base = alpha * pass_val + (1.0 - alpha) * iou_val
-        toks = _to_tokens(solution_str)
+        toks = _to_tokens(completions)
         len_pen = _length_penalty_tokens(
             toks,
             max_tokens=512,
@@ -202,21 +204,21 @@ def compute_score(
     else:
         raise ValueError("Unknown reward_type. Use 'mix', 'sigmoid', or 'raw'.")
     if random.random() < 0.001:
-            case = {
-                "split": split,
-                "reward_type": reward_type,
-                "alpha": alpha,
-                "threshold": iou_threshold,
-                "image_size": {"w": w, "h": h},
-                "solution_str": solution_str,
-                "pb": list(pb),
-                "ground_truth": list(ground_truth),
-                "pred_box": list(pred_box),
-                "gt_box": list(gt_box),
-                "iou": iou_val,
-                "reward": reward,
-            }
-            print("[CASE]", json.dumps(case, ensure_ascii=False))
+        case = {
+            "split": split,
+            "reward_type": reward_type,
+            "alpha": alpha,
+            "threshold": iou_threshold,
+            "image_size": {"w": w, "h": h},
+            "solution_str": completions,
+            "pb": list(pb),
+            "ground_truth": list(gt_box_raw),
+            "pred_box": list(pred_box),
+            "gt_box": list(gt_box),
+            "iou": iou_val,
+            "reward": reward,
+        }
+        print("[CASE]", json.dumps(case, ensure_ascii=False))
 
     return reward
 
