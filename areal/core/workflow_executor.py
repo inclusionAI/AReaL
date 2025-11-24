@@ -843,7 +843,7 @@ class WorkflowExecutor:
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any] | None]:
         """Wait for the completion of `count` workflows from _pending_results deque.
 
         Polls _pending_results (populated by consumer thread), sorts by create_time,
@@ -874,7 +874,7 @@ class WorkflowExecutor:
                     f"only received {len(self._pending_results)}"
                 )
             else:
-                return {}
+                return []
 
         # Log and trace
         if self.config.enable_rollout_tracing:
@@ -896,9 +896,7 @@ class WorkflowExecutor:
         # Shuffle for randomness (helps with data diversity)
         random.shuffle(results)
 
-        # Concatenate into batch tensor format
-        trajectories = [r.data.trajectory for r in results if r.data is not None]
-        return concat_padded_tensors(trajectories)
+        return [r.data.trajectory if r.data is not None else None for r in results]
 
     @trace_perf("workflow_executor.rollout_batch", category="scheduler")
     def rollout_batch(
@@ -926,7 +924,9 @@ class WorkflowExecutor:
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
             )
-        return self.wait(count=len(data))
+        results = self.wait(count=len(data))
+        # Concatenate into batch tensor format
+        return concat_padded_tensors([r for r in results if r is not None])
 
     @trace_perf("workflow_executor.prepare_batch", category="scheduler")
     def prepare_batch(
@@ -971,10 +971,11 @@ class WorkflowExecutor:
                     )
             try:
                 res = self.wait(count=1, timeout=1)
-                if not res:
+                if not res or res[0] is None:
                     continue
+                assert len(res) == 1
                 cnt += 1
-                results.append(res)
+                results.append(res[0])
                 if cnt >= dataloader.batch_size:
                     break
             except (TimeoutError, queue.Full):

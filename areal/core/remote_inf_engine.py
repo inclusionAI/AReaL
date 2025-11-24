@@ -744,7 +744,7 @@ class RemoteInfEngine:
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any] | None]:
         """Wait for a specified number of requests to complete.
 
         Parameters
@@ -758,8 +758,9 @@ class RemoteInfEngine:
 
         Returns
         -------
-        Dict[str, Any]
-            A concatenated batch of trajectories, or an empty dict if timeout exceeded and raise_timeout is False
+        list[dict[str, Any] | None]
+            A list of trajectory dictionaries. Each element may be None for rejected trajectories.
+            Returns an empty list if timeout exceeded and raise_timeout is False.
         """
         return self.workflow_executor.wait(
             count, timeout=timeout, raise_timeout=raise_timeout

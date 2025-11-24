@@ -511,7 +511,7 @@ class InferenceEngine(abc.ABC):
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any] | None]:
         """Wait for a specified number of requests to complete, with a timeout.
 
         Should be used together with preceding `submit`.
@@ -524,12 +524,12 @@ class InferenceEngine(abc.ABC):
             Timeout in seconds. Exceeding the timeout will raise a `TimeoutError`, by default None
         raise_timeout : bool, optional
             Whether to raise a `TimeoutError` when the timeout is exceeded,
-            otherwise return an empty dict, by default True
+            otherwise return an empty list, by default True
 
         Returns
         -------
-        Dict[str, Any]
-            A concatenated batch of trajectories
+        list[dict[str, Any] | None]
+            A list of trajectory dictionaries. Each element may be None for rejected trajectories.
 
         Raises
         ------
