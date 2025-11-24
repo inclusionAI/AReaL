@@ -1,0 +1,324 @@
+experiment_name: mini-model-rebased
+trial_name: on-policy
+allocation_mode: "sglang[rollout]:d8t4p1+megatron[actor]:d8t1p4"
+seed: 42
+total_train_epochs: 10
+total_train_steps: 1145
+weight_update_type: "astate"
+enable_colocate_mode: false
+async_training: false
+
+tool_call_parser: "qwen25"
+agent_process_pool_size: 128
+agent_module_path: "examples.experimental.proxy.math_agent"
+export_style: "concat"
+
+storage_prefix: "/storage/openpsi"
+
+tokenizer_path: "/storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/hf_ckpts/28869_kz"
+train_dataset:
+  path: "/storage/dataset/nlp/areal/moe_lite_math_0527_merge_train_areal.jsonl"
+  shuffle: true
+  max_length: 1024
+  batch_size: 64
+  type: "rl"
+
+scheduler:
+  endpoint: "http://asystem-scheduler.asystem-my001-swift.svc:8081"
+  functioncall_service_domain: "http://110.75.237.19:8080"
+  reward_model_path: "/storage/jiulin.jl/Skywork-Reward-V2-Qwen3-8B"
+  reward_model_service_url: "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify"
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: "${storage_prefix}/experiments"
+  wandb:
+    mode: "online"
+    wandb_base_url: "https://slurm.alipay.com"
+    wandb_api_key: "local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe"
+  tensorboard:
+    path: "/home/admin/logs/tfevent/asystem"
+
+gconfig:
+  n_samples: 8
+  min_new_tokens: 0
+  # NOTE!!
+  # Due to the limitations of sglang, max_new_tokens + max_prompt_len must be less than the model's context_len (set in the model's config.json),
+  # and cannot be equal to it. See https://github.com/sgl-project/sglang/blob/f98366604b23e331422bf3c62d4e7410ae4fab87/python/sglang/srt/managers/tokenizer_manager.py#L638C9-L638C11
+  max_new_tokens: 15360
+  max_tokens: 16383
+  greedy: false
+  temperature: 1.0
+  top_k: 1000000
+  top_p: 1.0
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  model_path: ${tokenizer_path}
+  storage_path: "${storage_prefix}/checkpoints"
+  seed: ${seed}
+  max_concurrent_rollouts: 64
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
+  engine_config:
+    attention_backend: "triton"
+    disable_custom_all_reduce: true
+    enable_metrics: true
+    mem_fraction_static: 0.7
+    triton_attention_num_kv_splits: 16
+    tokenizer_mode: "auto"
+    load_format: "auto"
+    is_embedding: false
+    kv_cache_dtype: "auto"
+    max_prefill_tokens: 32768
+    schedule_policy: "fcfs"
+    schedule_conservativeness: 1.0
+    disable_cuda_graph: false
+    disable_radix_cache: true
+    disable_cuda_graph_padding: false
+    enable_nccl_nvls: false
+    disable_outlines_disk_cache: false
+    disable_overlap_schedule: false
+    enable_mixed_chunk: false
+    enable_dp_attention: false
+    enable_ep_moe: false
+    enable_torch_compile: false
+    torch_compile_max_bs: 32
+    triton_attention_reduce_in_fp32: false
+    cuda_graph_bs: [ 1, 2, 4, 8, 16, 32, 64, 128, 256, 384, 512 ]
+    num_continuous_decode_steps: 1
+    enable_nan_detection: false
+    allow_auto_truncate: false
+    enable_p2p_check: false
+    enable_memory_saver: false
+    chunked_prefill_size: null
+    context_length: null
+    cpu_offload_gb: 0
+    dp_size: 1
+    dtype: "auto"
+    sampling_backend: "pytorch"
+    log_level: "info"
+    log_level_http: null
+    log_requests: false
+    log_requests_level: 0
+    max_running_requests: null
+    show_time_cost: false
+  scheduling_specs:
+    - type: worker
+      image: /storage/openpsi/images/areal-from-gcp-20251124.sif
+      env_vars:
+        TAU2_DATA_DIR: /storage/openpsi/codes/puzhen.pz/tau2-bench/data
+        TAU2_USER_LLM_API_BASE: http://10.10.131.125:2345
+        TAU2_USER_LLM_API_KEY: empty
+        TAU2_USER_LLM: openai/smart-llm
+    - type: engine
+      gpu: 1
+      # you can customize environment variables here
+      env_vars:
+        # if use ling max v2, need to specify USE_MAX_V2 = 1
+        USE_MAX_V2: 1
+      image: /storage/openpsi/images/hybrid-engine-13680179-20251015181317.sif
+
+actor: &actor_ref
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  hybrid_engine:
+    group_size: ${gconfig.n_samples}
+    train_bs_n_seqs: ${train_dataset.batch_size}
+    max_tokens_per_mb: 16384
+    wrap_policy:
+      n_minibatches: 1
+      kl_ctl: 0.0
+      recompute_logp: false
+      adv_norm: false
+      discount: 1.0
+      gae_lambda: 1.0
+      eps_clip: 0.2
+      clip_ratio_low: 0.2
+      clip_ratio_high: 0.28
+      c_clip: null
+      value_eps_clip: 0.2
+      max_reward_clip: 5.0
+      disable_value: true
+      early_stop_kl: null
+      early_stop_imp_ratio: null
+      adaptive_kl_ctl: false
+      adaptive_kl_target: 6
+      adaptive_kl_horizon: 10000
+      enable_save: true
+      value_norm: true
+      value_norm_type: "exp"
+      value_norm_beta: 0.99995
+      value_norm_eps: 1e-5
+      group_size: 8
+      generation_size: null
+      mask_no_eos_with_zero: false
+      group_adv_norm: true
+      mask_too_long: false
+      use_dense_reward: false
+      reward_delta: true
+      token_normalize_scope: "global"
+      sample_reuse: 1
+      temperature: 1.0
+      reward_output_scaling: 0.5
+      reward_output_bias: -1.0
+    remote_megatron_config:
+      adam_beta1: 0.9
+      adam_beta2: 0.999
+      adam_eps: 1.0e-08
+      adaptive_layer_bias_update_strategy: sqrt
+      add_bias_linear: false
+      add_position_embedding: true
+      apply_rope_fusion: true
+      async_save: false
+      attention_backend: "flash"
+      attention_dropout: 0.0
+      attention_softmax_in_fp32: true
+      auto_detect_ckpt_format: true
+      bf16: true
+      clip_grad: 1.0
+      context_parallel_size: 1
+      cp_comm_type: "p2p"
+      cross_entropy_loss_fusion: false
+      distributed_backend: "nccl"
+      distributed_timeout_minutes: 600
+      enable_one_logger: false
+      expert_model_parallel_size: 8
+      ffn_hidden_size: 5120
+      first_k_dense_replace: 1
+      global_batch_size: 512
+      gradient_accumulation_fusion: true
+      group_query_attention: true
+      hidden_dropout: 0.0
+      hidden_size: 2048
+      init_method_std: 0.006
+      load: /storage/xukuan.xk/repos/antnlp/personal/pretrained_models/ring-moe-v2-sft-general700w_longcot200w_0725/iter_0028869
+      log_loss_scale_to_tensorboard: false
+      log_num_zeros_in_grad: true
+      log_params_norm: true
+      log_throughput: true
+      log_timers_to_tensorboard: true
+      log_validation_ppl_to_tensorboard: true
+      lr: 3.0e-06
+      lr_decay_style: constant
+      lr_warmup_iters: 10
+      make_vocab_size_divisible_by: 128
+      masked_softmax_fusion: true
+      max_position_embeddings: 16384
+      micro_batch_size: 1
+      moe_ffn_hidden_size: 512
+      moe_grouped_gemm: true
+      moe_layer_freq:
+        - 0
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+        - 1
+      moe_per_layer_logging: true
+      moe_permute_fusion: true
+      moe_router_bias_update_rate: 0.00
+      moe_router_dtype: fp32
+      moe_router_enable_expert_bias: true
+      moe_router_group_topk: 4
+      moe_router_num_groups: 8
+      moe_router_score_function: sigmoid
+      moe_router_topk: 8
+      moe_router_topk_scaling_factor: 2.5
+      moe_shared_expert_intermediate_size: 512
+      moe_shared_expert_overlap: true
+      moe_token_dispatcher_type: alltoall
+      norm_epsilon: 1.0e-06
+      normalization: "RMSNorm"
+      num_attention_heads: 16
+      num_experts: 256
+      num_layers: 20
+      num_query_groups: 4
+      optim_normhead_fwd_alltoall: true
+      optimizer: "adam"
+      overlap_grad_reduce: true
+      overlap_p2p_comm: true
+      overlap_param_gather: false
+      pipeline_model_parallel_size: 4
+      position_embedding_type: "rope"
+      qk_layernorm: true
+      recompute_granularity: "full"
+      recompute_method: "uniform"
+      recompute_num_layers: 5
+      rotary_base: 600000
+      rotary_percent: 0.5
+      save: /mnt/asystem-s3/common/users/senlin.zsl/experiments/2025-07-19_14-32-43/experiments/models/mcore_ckpt_32/asystem_moe_mini
+      save_interval: 1
+      seed: 42
+      seq_length: 16384
+      sequence_parallel: true
+      skip_casting_dtype_for_param_pattern: '^expert_bias$|.+\.expert_bias$'
+      swiglu: true
+      tensor_model_parallel_size: 1
+      tensorboard_log_interval: 1
+      tokenizer_model: ${tokenizer_path}
+      tokenizer_type: "HuggingFaceTokenizer"
+      train_iters: 100000
+      transformer_xl: false
+      unidirectional: true
+      untie_embeddings_and_output_weights: true
+      use_distributed_optimizer: true
+      use_flash_attn: true
+      use_init_chunk: true
+      use_mcore_models: true
+      use_norm_head: false
+      use_pack_lazy_loader: true
+      use_random_logits: true
+      use_rotary_position_embeddings: true
+      vocab_size: 157184
+      weight_decay: 0.01
+    loss_configs:
+      kl_ctl: 0.0
+  scheduling_specs:
+    - type: worker
+      image: /storage/openpsi/images/areal-from-gcp-20251124.sif
+      env_vars:
+        TAU2_DATA_DIR: /storage/openpsi/codes/puzhen.pz/tau2-bench/data
+        TAU2_USER_LLM_API_BASE: http://10.10.131.125:2345
+        TAU2_USER_LLM_API_KEY: empty
+        TAU2_USER_LLM: openai/smart-llm
+    - type: engine
+      gpu: 1
+      # you can customize environment variables here
+      env_vars:
+        # if not set CUDA_LAUNCH_BLOCKING = 1, megatron engine will hang in train phase
+        CUDA_LAUNCH_BLOCKING: 1
+        # if use ling max v2, need to specify USE_MAX_V2 = 1
+        USE_MAX_V2: 1
+      image: /storage/openpsi/images/hybrid-engine-13680179-20251015181317.sif
+
+ref:
+  <<: *actor_ref
+
+recover:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  recover_meta_info_path: ${storage_prefix}/experiments/recover/root/${experiment_name}/${trial_name}/metas/latest_checkpoint/recover_info.pkl
+  enable_recover: true
+  latest_disable_save_hf: true
+  periodic_disable_save_hf: false
+  latest_save_interval: 1
+  periodic_save_interval: 2
+  fileroot: "${storage_prefix}/experiments"

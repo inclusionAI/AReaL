@@ -7,7 +7,7 @@ from openai.types.chat import ChatCompletion
 from openai.types.responses.response import Response
 from openai.types.responses.response_input_param import ResponseInputParam
 
-from areal.api.io_struct import ModelResponse
+from areal.api.io_struct import LLMResponse, ModelResponse
 from areal.utils import logging
 
 logger = logging.getLogger("InteractionWithTokenLogpReward")
@@ -18,7 +18,7 @@ class InteractionWithTokenLogpReward:
     """Internal structure to store completions/responses with their rewards."""
 
     # Common
-    model_response: ModelResponse
+    model_response: ModelResponse | LLMResponse
     reward: float | None = None
     parent: InteractionWithTokenLogpReward | None = None
     chat_template_type: str = "hf"

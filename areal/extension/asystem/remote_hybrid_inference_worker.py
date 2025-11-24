@@ -309,7 +309,7 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
         assert len(req.input_ids) < gconfig.max_tokens
 
-        max_new_tokens = gconfig.max_tokens - len(req.input_ids)
+        max_new_tokens = gconfig.max_new_tokens
         assert max_new_tokens > 0
 
         if gconfig.n_samples != 1:
@@ -363,15 +363,25 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             and len(accumulated_output_tokens) < max_new_tokens
         ):
             # loop until the generation is complete
-            response = await arequest_with_retry(
-                session=self.session,
-                addr=server_addr,
-                endpoint="/async_generate_sequences",
-                payload=payload,
-                method="POST",
-                max_retries=3,
-                timeout=self.config.request_timeout,
-            )
+            # Create a new session for this request to avoid event loop issues
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=self.config.request_timeout,
+                    sock_connect=self.config.request_timeout,
+                    connect=self.config.request_timeout,
+                ),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            ) as request_session:
+                response = await arequest_with_retry(
+                    session=request_session,
+                    addr=server_addr,
+                    endpoint="/async_generate_sequences",
+                    payload=payload,
+                    method="POST",
+                    max_retries=3,
+                    timeout=self.config.request_timeout,
+                )
             result = response["result"]
 
             # Parse response

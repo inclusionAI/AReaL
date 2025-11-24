@@ -79,8 +79,5 @@ log_to_both_files `uname -a`
 #systemctl stop nanovisor
 systemctl stop nanovisor
 
-singularity --debug exec --pid --nv --no-home --writable-tmpfs --bind /storage:/storage "${IMAGE}" bash -c "cd ${REAL_PACKAGE_PATH}; ${WORKER_COMMAND}" 2>&1 | tee -a ${WORKER_LOG_FILE} | tee -a ${WORKER_ANTLOGS_LOG_FILE} | grep --line-buffered -F "monitor_logger" >> ${LOCAL_WORKER_MONITOR_LOG_FILE}
-
-
-
+singularity --debug exec --pid --nv --no-home --writable-tmpfs --bind /storage:/storage "${IMAGE}" bash -c "pip uninstall -q -y huggingface-hub && pip install -q huggingface-hub==0.34.0 tensordict==0.10.0 gymnasium; cd ${REAL_PACKAGE_PATH}; ${WORKER_COMMAND}" 2>&1 | tee -a ${WORKER_LOG_FILE} | tee -a ${WORKER_ANTLOGS_LOG_FILE} | grep --line-buffered -F "monitor_logger" >> ${LOCAL_WORKER_MONITOR_LOG_FILE}
 

@@ -120,9 +120,9 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
             max_workers=process_pool_executor_size
         )
         self.gconfig = gconfig
-        assert (
-            run_agent_return_reward_path is not None
-        ), "run_agent_return_reward_path must not be None"
+        assert run_agent_return_reward_path is not None, (
+            "run_agent_return_reward_path must not be None"
+        )
         self.run_agent_return_reward = import_from_string(
             ".".join([run_agent_return_reward_path, "run_agent_return_reward"]),
         )
@@ -167,7 +167,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
 
         if self.dump_dir is not None:
             for session_id, completion in completions.items():
-                version = completion.model_response.output_versions[-1]
+                version = completion.model_response.output_version
 
                 dump_path = os.path.join(self.dump_dir, str(version))
                 await aiofiles.os.makedirs(dump_path, exist_ok=True)

@@ -7,7 +7,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from datasets import load_dataset
+from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from realhf.api.core.data_api import load_hf_tokenizer
@@ -44,6 +44,25 @@ def clear_dir(path):
                 shutil.rmtree(file_path)
 
 
+def load_dataset(path: str) -> Dataset:
+    try:
+        train_dataset = Dataset.load_from_disk(path)
+        logger.info(f"Loaded dataset from disk: {path}")
+        return train_dataset
+    except Exception:
+        logger.warning(f"Failed to load dataset from disk: {path}")
+        from datasets import load_dataset
+
+        if path.endswith(".json") or path.endswith(".jsonl"):
+            logger.info(f"Loading dataset from local file: {path}")
+            ## load local json/jsonl file
+            return load_dataset("json", data_files=path, split="train")
+
+        logger.info(f"Loading dataset from Hugging Face: {path}")
+        ## load gaia2 dataset
+        return load_dataset(path, "search", split="validation")
+
+
 @dataclass
 class ProxyAgentConfig(GRPOConfig):
     tool_call_parser: str = field(
@@ -67,6 +86,13 @@ class ProxyAgentConfig(GRPOConfig):
 
 
 def main(args):
+    try:
+        from loguru import logger as tau2_logger
+
+        tau2_logger.remove()
+    except ImportError:
+        pass
+
     config, _ = load_expr_config(args, ProxyAgentConfig)
     config: ProxyAgentConfig
 
@@ -129,13 +155,7 @@ def main(args):
         allocate_mode = AllocationMode.from_str(allocation_mode)
 
         tokenizer = load_hf_tokenizer(config.tokenizer_path)
-        dataset = load_dataset("json", data_files=config.train_dataset.path)
-
-        train_dataset = dataset["train"]
-        train_dataset = train_dataset.filter(
-            lambda x: len(tokenizer.encode(x["prompt"]))
-            <= config.train_dataset.max_length
-        )
+        train_dataset = load_dataset(path=config.train_dataset.path)
 
         dataloader = StatefulDataLoader(
             train_dataset,
@@ -420,7 +440,9 @@ def main(args):
                         "rollout batch reward summary: %s",
                         summarize_rewards(batch["rewards"]),
                     )
-                    with (stats_tracker.record_timing("notify_rollout_end_event"),):
+                    with (
+                        stats_tracker.record_timing("notify_rollout_end_event"),
+                    ):
                         logger.info(
                             f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}"
                         )
@@ -448,7 +470,9 @@ def main(args):
                         stats_tracker.record_timing("train_step"),
                         stats_tracker.scope("train"),
                     ):
-                        with (stats_tracker.record_timing("notify_train_start_event"),):
+                        with (
+                            stats_tracker.record_timing("notify_train_start_event"),
+                        ):
                             logger.info(
                                 f"start to notify_train_start_event, step: {step}, epoch: {epoch}"
                             )
@@ -457,7 +481,9 @@ def main(args):
                                 f"notify_train_start_event succeeded, step: {step}, epoch: {epoch}"
                             )
 
-                        with (stats_tracker.record_timing("train_distributed_batch"),):
+                        with (
+                            stats_tracker.record_timing("train_distributed_batch"),
+                        ):
                             logger.info(f"start to train, step: {step}, epoch: {epoch}")
                             actor.train_batch(
                                 batch,
@@ -515,7 +541,9 @@ def main(args):
                                     f"[Trainer] periodic_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
                                 )
 
-                        with (stats_tracker.record_timing("notify_train_end_event"),):
+                        with (
+                            stats_tracker.record_timing("notify_train_end_event"),
+                        ):
                             logger.info(
                                 f"start to notify_train_end_event, step: {step}, epoch: {epoch}"
                             )
