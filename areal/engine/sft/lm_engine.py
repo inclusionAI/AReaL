@@ -16,9 +16,7 @@ class LMEngine:
 
     def train_lm(self, data: dict[str, Any]):
         self.engine.train()
-        with (
-            stats_tracker.scope("sft"),
-        ):
+        with (stats_tracker.scope("sft"),):
             return self.engine.train_batch(
                 input_=data,
                 loss_fn=compute_packed_sft_loss,

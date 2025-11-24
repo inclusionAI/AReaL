@@ -5,6 +5,7 @@ import pprint
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 from datasets import load_dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -43,9 +44,31 @@ def clear_dir(path):
                 shutil.rmtree(file_path)
 
 
+@dataclass
+class ProxyAgentConfig(GRPOConfig):
+    tool_call_parser: str = field(
+        default="qwen25",
+    )
+
+    agent_process_pool_size: int = field(
+        default=256,
+        metadata={"help": "Number of parallel processes for running agents."},
+    )
+
+    agent_module_path: str = field(
+        default="examples.any_agents.agent.math.math_agent",
+        metadata={"help": "Module path for the agent definition."},
+    )
+
+    export_style: str = field(
+        default="concat",
+        metadata={"help": "Export style for the proxy server."},
+    )
+
+
 def main(args):
-    config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
+    config, _ = load_expr_config(args, ProxyAgentConfig)
+    config: ProxyAgentConfig
 
     config.gconfig.max_tokens = (
         config.gconfig.max_new_tokens + config.train_dataset.max_length
@@ -349,29 +372,39 @@ def main(args):
                             logger.info(
                                 f"start to rollout, step: {step}, epoch: {epoch}"
                             )
+                            workflow_kwargs = dict(
+                                gconfig=config.gconfig,
+                                tokenizer=config.tokenizer_path,
+                                tool_call_parser=config.tool_call_parser,
+                                chat_template_type=(
+                                    "concat"
+                                    if config.export_style == "concat"
+                                    else "hf"
+                                ),
+                                run_agent_return_reward_path=config.agent_module_path,
+                                process_pool_executor_size=config.agent_process_pool_size,
+                                dump_dir=os.path.join(
+                                    StatsLogger.get_log_path(config.stats_logger),
+                                    "generated",
+                                ),
+                                rollout_stat_scope="rollout",
+                                export_style=(
+                                    "concat"
+                                    if config.export_style == "concat"
+                                    else "hf"
+                                ),
+                            )
                             if config.async_training:
                                 batch = rollout.prepare_batch(
                                     dataloader,
-                                    workflow_path="areal.extension.asystem.workflow.rlvr.RLVRWorkflow",
-                                    workflow_kwargs=dict(
-                                        reward_fn="areal.extension.asystem.math_reward.reward_fn",
-                                        gconfig=config.gconfig,
-                                        tokenizer=config.tokenizer_path,
-                                        exp_name=config.experiment_name,
-                                        trial_name=config.trial_name,
-                                    ),
+                                    workflow_path="areal.extension.asystem.workflow.proxy.ProxyRLVRWorkflow",
+                                    workflow_kwargs=workflow_kwargs,
                                 )
                             else:
                                 batch = rollout.rollout_batch(
                                     next(data_generator),
-                                    workflow_path="areal.extension.asystem.workflow.rlvr.RLVRWorkflow",
-                                    workflow_kwargs=dict(
-                                        reward_fn="areal.extension.asystem.math_reward.reward_fn",
-                                        gconfig=config.gconfig,
-                                        tokenizer=config.tokenizer_path,
-                                        exp_name=config.experiment_name,
-                                        trial_name=config.trial_name,
-                                    ),
+                                    workflow_path="areal.extension.asystem.workflow.proxy.ProxyRLVRWorkflow",
+                                    workflow_kwargs=workflow_kwargs,
                                 )
 
                     # with (

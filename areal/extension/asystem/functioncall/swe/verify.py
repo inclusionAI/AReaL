@@ -105,9 +105,7 @@ async def swe_verify(
 
 
 if __name__ == "__main__":
-    data_list = load_jsonl(
-        "areal/extension/asystem/functioncall/swe/swe-dataset.jsonl"
-    )
+    data_list = load_jsonl("areal/extension/asystem/functioncall/swe/swe-dataset.jsonl")
     id2info = defaultdict(dict)
     for item in data_list:
         id2info[item["query_id"]] = item

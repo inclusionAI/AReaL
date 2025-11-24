@@ -176,9 +176,9 @@ async def general_verify(id2info, responses: list[str], query_ids: list) -> list
 
         rewards = [res["embedding"][0] for res in api_responses]
 
-        assert len(rewards) == len(prompts), (
-            f"Expected {len(prompts)} general rewards, but got {len(rewards)}."
-        )
+        assert len(rewards) == len(
+            prompts
+        ), f"Expected {len(prompts)} general rewards, but got {len(rewards)}."
 
         logger.info(
             f"general reward call finished, request count: {len(prompts)}, result count: {rewards}"

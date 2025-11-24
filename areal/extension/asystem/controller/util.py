@@ -34,9 +34,7 @@ def execute_parallel_tasks(workers, scheduler, method_name, *args):
         If any worker fails to execute the task
     """
     tasks = [
-        scheduler.async_call_engine(
-            worker.id, method_name, *args, _should_bcast=False
-        )
+        scheduler.async_call_engine(worker.id, method_name, *args, _should_bcast=False)
         for worker in workers
     ]
 
@@ -45,7 +43,9 @@ def execute_parallel_tasks(workers, scheduler, method_name, *args):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=False))
+            result = loop.run_until_complete(
+                asyncio.gather(*tasks, return_exceptions=False)
+            )
             return result
         finally:
             try:

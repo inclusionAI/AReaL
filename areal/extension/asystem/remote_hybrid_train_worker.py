@@ -722,9 +722,9 @@ class RemoteHybridTrainWorker(TrainEngine):
 
         ### Logging code starts. ###
         with stats_tracker.scope("grpo_actor"):
-            assert task_ids.shape == reward_score.shape, (
-                f"task_ids ({task_ids.shape}) and reward_score ({reward_score.shape}) must have the same shape"
-            )
+            assert (
+                task_ids.shape == reward_score.shape
+            ), f"task_ids ({task_ids.shape}) and reward_score ({reward_score.shape}) must have the same shape"
 
             task_denominators = {
                 f"{task}_n_seqs": (task_ids == idx).bool()

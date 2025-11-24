@@ -335,7 +335,9 @@ class RolloutController:
 
         # Choose worker via round-robin
         worker = self._choose_worker()
-        self.logger.info(f"Submit rollout to worker {worker.id}, task_input: {task_input}")
+        self.logger.info(
+            f"Submit rollout to worker {worker.id}, task_input: {task_input}"
+        )
         self.scheduler.call_engine(
             worker.id,
             "submit",
@@ -402,7 +404,9 @@ class RolloutController:
             # Check capacity before submitting
             capacity = self.get_capacity()
             # Submit pending tasks
-            self.logger.info(f"Capacity: {capacity}, pending inputs: {len(self._pending_inputs)}")
+            self.logger.info(
+                f"Capacity: {capacity}, pending inputs: {len(self._pending_inputs)}"
+            )
             for _ in range(capacity):
                 if len(self._pending_inputs) == 0:
                     break
