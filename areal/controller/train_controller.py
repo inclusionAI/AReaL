@@ -249,11 +249,12 @@ class TrainController:
 
     def _dispatch_inputs(self, *args, **kwargs):
         # Find and split DistributedBatch arguments
+        rebalance = kwargs.pop("rebalance", True)
         split_args = []
         for arg in args:
             if isinstance(arg, DistributedBatch):
                 # Split across DP groups
-                split_args.append(self._align_batches_with_dp(arg, rebalance=True))
+                split_args.append(self._align_batches_with_dp(arg, rebalance=rebalance))
             else:
                 # Replicate to all DP heads
                 split_args.append([arg] * self.parallel_strategy.dp_size)
@@ -261,7 +262,7 @@ class TrainController:
         split_kwargs = {}
         for k, v in kwargs.items():
             if isinstance(v, DistributedBatch):
-                split_kwargs[k] = self._align_batches_with_dp(v, rebalance=True)
+                split_kwargs[k] = self._align_batches_with_dp(v, rebalance=rebalance)
             else:
                 split_kwargs[k] = [v] * self.parallel_strategy.dp_size
         return split_args, split_kwargs
@@ -633,7 +634,7 @@ class TrainController:
             gradient norm, etc.
         """
         return self._custom_function_call(
-            "train_batch", input_, loss_fn, loss_weight_fn
+            "train_batch", input_, loss_fn, loss_weight_fn, rebalance=True
         )
 
     def eval_batch(

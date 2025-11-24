@@ -59,6 +59,14 @@ class SerializedTensor(BaseModel):
         # Move to CPU for serialization (detach to avoid gradient tracking)
         cpu_tensor = tensor.detach().cpu()
 
+        # Handle dtypes that NumPy doesn't support directly (e.g., BFloat16)
+        # Convert to float32 for serialization, but preserve original dtype in metadata
+        original_dtype = cpu_tensor.dtype
+        if original_dtype == torch.bfloat16:
+            # Convert BFloat16 to float32 for NumPy compatibility
+            # Float32 can represent all BFloat16 values without precision loss
+            cpu_tensor = cpu_tensor.to(torch.float32)
+
         # Convert to bytes and encode as base64
         buffer = cpu_tensor.numpy().tobytes()
         data_b64 = base64.b64encode(buffer).decode("utf-8")
@@ -119,6 +127,7 @@ class SerializedTensor(BaseModel):
             torch.float32: np.float32,
             torch.float64: np.float64,
             torch.float16: np.float16,
+            torch.bfloat16: np.float32,  # BFloat16 is serialized as float32 to avoid precision loss
             torch.int32: np.int32,
             torch.int64: np.int64,
             torch.int16: np.int16,

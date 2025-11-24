@@ -878,6 +878,7 @@ class RemoteHybridTrainWorker(TrainEngine):
                 "sequence_sample": flat_input,
                 "micro_batch_spec": mb_spec,
             }
+
             data = serialize_and_compress(payload)
             logger.info("send compute_logprobs request to megatron worker....")
             response = requests.post(

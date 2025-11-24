@@ -207,12 +207,16 @@ def main(args):
             logger.info("initializing trainer controller and rollout controller")
             actor.initialize(
                 role="actor",
-                alloc_mode=allocation_mode,
+                parallel_strategy=allocation_mode["actor"].parallel,
                 ft_spec=ft_spec,
                 group_size=config.gconfig.n_samples,
                 enable_colocate_mode=config.enable_colocate_mode,
             )
-            rollout.initialize(role="rollout", alloc_mode=allocation_mode)
+            rollout.initialize(
+                role="rollout",
+                alloc_mode=allocation_mode,
+                enable_colocate_mode=config.enable_colocate_mode,
+            )
 
         if config.enable_colocate_mode:
             logger.info(
@@ -229,8 +233,10 @@ def main(args):
                         executor.submit(
                             ref.initialize,
                             role="ref",
-                            alloc_mode=allocation_mode,
+                            parallel_strategy=allocation_mode["ref"].parallel,
+                            group_size=config.gconfig.n_samples,
                             ft_spec=ft_spec,
+                            enable_colocate_mode=config.enable_colocate_mode,
                         )
                     )
 
@@ -244,11 +250,10 @@ def main(args):
                     executor.submit(
                         actor.initialize,
                         role="actor",
-                        alloc_mode=allocation_mode,
+                        parallel_strategy=allocation_mode["actor"].parallel,
                         ft_spec=ft_spec,
                         group_size=config.gconfig.n_samples,
                         enable_colocate_mode=config.enable_colocate_mode,
-                        storage_prefix=config.storage_prefix,
                     ),
                     executor.submit(
                         rollout.initialize,
@@ -262,8 +267,10 @@ def main(args):
                         executor.submit(
                             ref.initialize,
                             role="ref",
-                            alloc_mode=allocation_mode,
+                            parallel_strategy=allocation_mode["ref"].parallel,
                             ft_spec=ft_spec,
+                            group_size=config.gconfig.n_samples,
+                            enable_colocate_mode=config.enable_colocate_mode,
                         )
                     )
 

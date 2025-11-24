@@ -11,9 +11,9 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from areal.api.alloc_mode import ParallelStrategy
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import (
-    AllocationMode,
     FinetuneSpec,
     SaveLoadMeta,
     WeightUpdateMeta,
@@ -57,7 +57,7 @@ class TrainController(BaseTrainController):
     def initialize(
         self,
         role: str,
-        alloc_mode: AllocationMode,
+        parallel_strategy: ParallelStrategy,
         ft_spec: FinetuneSpec,
         **kwargs,
     ):
@@ -70,8 +70,8 @@ class TrainController(BaseTrainController):
         ----------
         role : str
             Role identifier for the workers
-        alloc_mode : AllocationMode
-            Allocation mode configuration for distributed setup
+        parallel_strategy : ParallelStrategy
+            mode configuration for distributed setup
         ft_spec : FinetuneSpec
             Finetune specification for model initialization
         **kwargs
@@ -80,20 +80,18 @@ class TrainController(BaseTrainController):
         self.logger = logging.getLogger("[TrainController]")
 
         # Store configuration
-        self.parallel_strategy = alloc_mode.train
+        self.parallel_strategy = parallel_strategy
         self._worker_role = role
-        self.alloc_mode = alloc_mode
-        self.world_size = self.alloc_mode.train.world_size
-        self.dp_size = self.alloc_mode.train.dp_size
-        self.tp_size = self.alloc_mode.train.tp_size
-        self.pp_size = self.alloc_mode.train.pp_size
+        self.world_size = self.parallel_strategy.world_size
+        self.dp_size = self.parallel_strategy.dp_size
+        self.tp_size = self.parallel_strategy.tp_size
+        self.pp_size = self.parallel_strategy.pp_size
         self.group_size = kwargs.get("group_size")
         self.enable_colocate_mode = kwargs.get("enable_colocate_mode")
-        self.storage_prefix = kwargs.get("storage_prefix")
 
         # Create job for scheduler
         job = Job(
-            replicas=alloc_mode.train.world_size,
+            replicas=parallel_strategy.world_size,
             tasks=list(self.config.scheduling_specs),
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
@@ -167,7 +165,7 @@ class TrainController(BaseTrainController):
             RemoteMegatronInitConfig(
                 server_addrs=server_addrs,
                 global_rank=index,
-                world_size=self.alloc_mode.train.world_size,
+                world_size=self.parallel_strategy.world_size,
                 enable_colocate_mode=enable_colocate_mode,
             )
             for index, worker in enumerate(self.workers)
@@ -180,7 +178,9 @@ class TrainController(BaseTrainController):
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         self.logger.info("start to train_batch")
-        results = self._custom_function_call("train_batch", input_, _should_bcast=False)
+        results = self._custom_function_call(
+            "train_batch", input_, rebalance=True, _should_bcast=False
+        )
         for worker_result in results:  # TODO: Get the last pp_rank data from each dp
             if len(worker_result) > 1:
                 for minibatch in worker_result:
@@ -193,35 +193,28 @@ class TrainController(BaseTrainController):
     def compute_logp(self, input_: DistributedBatch) -> Tensor:
         """Update the model with a batch of data and a loss function."""
         logger.info("start to compute_logp")
-        with (
-            stats_tracker.record_timing("compute_logp_data_split"),
-        ):
-            batches = input_.chunk(self.dp_size)
-            tasks = [
-                self.scheduler.async_call_engine(
-                    worker.id,
-                    "compute_logprobs",
-                    batches[self.rank_info[index]["dp_rank"]],
-                    _should_bcast=False,
-                )
-                for index, worker in enumerate(self.workers)
-            ]
-
         try:
-            results = asyncio.run(asyncio.gather(*tasks, return_exceptions=False))
+            worker_results = self._custom_function_call(
+                "compute_logprobs", input_, rebalance=False, _should_bcast=False
+            )
         except KeyboardInterrupt:
             raise
         except Exception as e:
             raise RuntimeError(f"compute_logp failed, error: {e}")
 
         # cat tensor from dp head with padding
-        tensors_from_dp_heads = results[: self.dp_size]
+        tensors_from_dp_heads = [0] * self.dp_size
+        for worker_index in range(len(worker_results)):
+            if self.workers_is_dp_head[worker_index]:
+                dp_rank = self.rank_info[worker_index]["dp_rank"]
+                tensors_from_dp_heads[dp_rank] = worker_results[worker_index]
+
         if not tensors_from_dp_heads:
             return torch.tensor([])
 
         # Find max length in dim 1
         max_len = max(t.shape[1] for t in tensors_from_dp_heads)
-        max_len_all = max(t.shape[1] for t in results)
+        max_len_all = max(t.shape[1] for t in worker_results)
         assert max_len_all == max_len
         # Pad all tensors to max length
         padded_tensors = []
@@ -280,13 +273,15 @@ class TrainController(BaseTrainController):
         """
         # Handle empty batch by replicating to all DP groups
         if len(input_.get_data()) == 0:
-            return [input_] * self.alloc_mode.train.dp_size
+            return [input_] * self.parallel_strategy.dp_size
 
         # NOTE: group normalization should be done in workflow
         if rebalance:
-            inputs = input_.chunk_by_ffd(self.group_size, self.alloc_mode.train.dp_size)
+            inputs = input_.chunk_by_ffd(
+                self.group_size, self.parallel_strategy.dp_size
+            )
         else:
-            inputs = input_.chunk(self.alloc_mode.train.dp_size)
+            inputs = input_.chunk(self.parallel_strategy.dp_size)
         return inputs
 
     async def _call_with_dispatched_inputs(

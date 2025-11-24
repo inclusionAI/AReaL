@@ -9,9 +9,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.io_struct import WeightUpdateMeta
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.engine_api import InferenceEngine
+from areal.api.io_struct import WeightUpdateMeta
 from areal.api.scheduler_api import Job, Scheduler
 from areal.controller.rollout_controller import TASK_RUNNER_MAX_QSIZE
 from areal.controller.rollout_controller import (
@@ -22,7 +22,6 @@ from areal.core.async_task_runner import AsyncTaskRunner
 from areal.extension.asystem.remote_hybrid_inference_worker import (
     RemoteHypidInferenceInitConfig,
 )
-from areal.extension.asystem.controller.util import execute_parallel_tasks
 from areal.utils import logging
 
 
@@ -82,7 +81,7 @@ class RolloutController(BaseRolloutController):
 
         self.logger.info("Calling engine initialization...")
         init_configs = self._build_engine_initialize_config(
-            enable_colocate_mode=job.scheduling_strategy.type == "colocation"
+            enable_colocate_mode=kwargs.get("enable_colocate_mode", False)
         )
 
         # after building init configs, we reset self.workers so that each worker is a sglang instance
@@ -93,7 +92,6 @@ class RolloutController(BaseRolloutController):
             self.scheduler.async_call_engine(worker.id, "initialize", init_config)
             for worker, init_config in zip(self.workers, init_configs)
         ]
-        import time
         time.sleep(60)
         await asyncio.gather(*tasks)
         self.logger.info("All engines are initialized...")
@@ -182,16 +180,16 @@ class RolloutController(BaseRolloutController):
             main_server_addrs = [
                 f"{worker.ip}:{worker.engine_ports[0]}"
                 for worker in self.workers[
-                              index: index + self.alloc_mode.gen_instance_size
-                              ]
+                    index : index + self.alloc_mode.gen_instance_size
+                ]
                 if worker.engine_ports
             ]
             free_addrs = [
                 [
                     f"{worker.ip}:{port}"
                     for worker in self.workers[
-                                  index: index + self.alloc_mode.gen_instance_size
-                                  ]
+                        index : index + self.alloc_mode.gen_instance_size
+                    ]
                     for port in worker.engine_ports[1:]
                 ]
             ]
@@ -242,12 +240,19 @@ class RolloutController(BaseRolloutController):
             asyncio.set_event_loop(loop)
 
             try:
+
                 async def _async_exec_func():
                     try:
-                        self.logger.info(f"Executing {method_name} on {len(self.workers)} workers")
+                        self.logger.info(
+                            f"Executing {method_name} on {len(self.workers)} workers"
+                        )
                         tasks = [
                             self.scheduler.async_call_engine(
-                                worker.id, method_name, *args, **kwargs, _should_bcast=False
+                                worker.id,
+                                method_name,
+                                *args,
+                                **kwargs,
+                                _should_bcast=False,
                             )
                             for worker in self.workers
                         ]
@@ -257,9 +262,12 @@ class RolloutController(BaseRolloutController):
                         for i, result in enumerate(results):
                             if isinstance(result, Exception):
                                 self.logger.error(
-                                    f"Worker {self.workers[i].id} failed to execute {method_name}: {result}")
+                                    f"Worker {self.workers[i].id} failed to execute {method_name}: {result}"
+                                )
                             else:
-                                self.logger.info(f"Worker {self.workers[i].id} successfully executed {method_name}")
+                                self.logger.info(
+                                    f"Worker {self.workers[i].id} successfully executed {method_name}"
+                                )
 
                         # Re-raise if any exceptions occurred
                         for result in results:
@@ -268,7 +276,9 @@ class RolloutController(BaseRolloutController):
 
                         return results
                     except Exception as e:
-                        self.logger.error(f"Failed to execute {method_name} on workers: {e}")
+                        self.logger.error(
+                            f"Failed to execute {method_name} on workers: {e}"
+                        )
                         raise e
 
                 return loop.run_until_complete(_async_exec_func())
@@ -280,4 +290,3 @@ class RolloutController(BaseRolloutController):
                 asyncio.set_event_loop(None)
 
         return _run_async_in_thread()
-

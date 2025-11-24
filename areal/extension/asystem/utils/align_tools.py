@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import pickle
 from collections.abc import Iterable
 
 import torch
@@ -22,3 +24,19 @@ def summarize_rewards(rewards: torch.Tensor | Iterable[float]) -> str:
     ones = (flat == 1).sum().item()
 
     return f"last_10={last_k.tolist()}, ones_count={ones}, total_count={total}"
+
+    def save_logp_payload(payload, debug_dir, global_rank):
+        """Save payload to debug directory for inspection.
+
+        Parameters
+        ----------
+        payload : dict
+            The payload data to save
+            :param payload:
+            :param debug_dir:
+        """
+        os.makedirs(debug_dir, exist_ok=True)
+
+        payload_file = os.path.join(debug_dir, f"payload_rank_{global_rank}.pkl")
+        with open(payload_file, "wb") as f:
+            pickle.dump(payload, f)
