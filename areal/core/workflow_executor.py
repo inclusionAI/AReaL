@@ -1,12 +1,12 @@
 from __future__ import annotations  # noqa
 
-import queue
 import random
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar, Generic
+from collections.abc import Generator
 from collections import deque
 
 import torch
@@ -27,6 +27,7 @@ from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf, trace_session_event
+from logging import Logger
 
 if TYPE_CHECKING:
     from .remote_inf_engine import RemoteInfEngine
@@ -238,79 +239,42 @@ _MAX_FETCH_BATCH_SIZE = 100
 _SHUTDOWN_TIMEOUT_SECONDS = 2.0
 
 
-class WorkflowExecutor:
-    """Executor for asynchronous workflow-based rollout generation.
+TInput = TypeVar("TInput")
+TResult = TypeVar("TResult")
 
-    This class orchestrates the execution of rollout workflows with
-    AReaL-specific features including staleness management, trajectory
-    validation, and result filtering.
+
+class BatchTaskDispatcher(Generic[TInput, TResult]):
+    """Generic dispatcher for asynchronous task execution with staleness control.
+
+    Manages background threads for task submission and result collection.
+    Uses producer-consumer pattern with AsyncTaskRunner for async execution.
 
     Architecture:
-    - Main thread: submit() enqueues to _pending_inputs, wait() polls _pending_results
-    - Producer thread (_commit_loop): transfers tasks from _pending_inputs to
-      AsyncTaskRunner based on staleness capacity
-    - Consumer thread (_fetch_loop): collects results from AsyncTaskRunner and
-      places them in _pending_results
-    - AsyncTaskRunner: generic async executor running workflows in background event loop
-
-    The executor manages:
-    - Integration with RemoteInfEngine for model generation
-    - Staleness-aware capacity control via StalenessManager
-    - Trajectory format validation
-    - Result filtering via should_accept_fn callbacks
-    - InteractionWithTokenLogpReward processing
-    - Fail-fast error propagation from background threads
-
-    Parameters
-    ----------
-    config : InferenceEngineConfig
-        Configuration for the inference engine including queue sizes,
-        concurrency limits, and validation settings.
-    inference_engine : RemoteInfEngine
-        The inference engine to use for generating completions/responses.
-    staleness_manager : StalenessManager | None, optional
-        Manager for staleness-aware capacity control. If None, a default manager
-        will be created during initialization. Default is None.
-
-    See Also
-    --------
-    AsyncTaskRunner : Generic async task executor used internally
-    StalenessManager : Manages capacity based on staleness constraints
-    RolloutWorkflow : Interface for rollout episode execution
+    - Producer thread: Submits tasks from _pending_inputs to AsyncTaskRunner
+      based on staleness capacity
+    - Consumer thread: Collects results from AsyncTaskRunner to _pending_results
+    - Main thread: submit_task_input() enqueues, wait_results() polls results
     """
 
     def __init__(
         self,
-        config: InferenceEngineConfig,
-        inference_engine: RemoteInfEngine,
-        staleness_manager: StalenessManager | None = None,
+        max_queue_size: int,
+        task_factory: Callable[[TInput], Callable[[], Awaitable[TResult | None]]],
+        staleness_manager: StalenessManager,
+        enable_tracing: bool = False,
     ):
-        self.max_concurrent_rollouts = (
-            config.max_concurrent_rollouts or config.consumer_batch_size
+        self.runner = AsyncTaskRunner(
+            max_queue_size=max_queue_size,
+            enable_tracing=enable_tracing,
         )
-        self.consumer_batch_size = config.consumer_batch_size
-        self.max_staleness = config.max_head_offpolicyness
-
-        self.config = config
-        self.inference_engine = inference_engine
-
-        # Use provided staleness manager or create a default one
-        # The manager will be properly initialized in initialize()
-        self._staleness_manager = staleness_manager
-
-        # Create the generic async task runner
-        qsize = config.queue_size or self.max_concurrent_rollouts * 16
-        self.runner = AsyncTaskRunner[_RolloutResult | None](
-            max_queue_size=qsize,
-            enable_tracing=config.enable_rollout_tracing,
-        )
-
-        # For trajectory format checking
-        self._expected_trajectory_keys: set | None = None
+        self.task_factory = task_factory
+        self.staleness_manager = staleness_manager
+        self.enable_tracing = enable_tracing
+        self.logger: Logger
 
         # Unbounded deques for producer/consumer pattern
-        self._pending_inputs: deque[_RolloutTaskInput] = deque()
-        self._pending_results: deque[TimedResult[_RolloutResult]] = deque()
+        self._pending_inputs: deque[TInput] = deque()
+        self._pending_results: deque[TimedResult[TResult]] = deque()
 
         # Background thread infrastructure
         self._shutdown_event = threading.Event()
@@ -324,11 +288,11 @@ class WorkflowExecutor:
     def _set_thread_exception(self, exc: Exception):
         """Store exception from background thread for fail-fast behavior."""
         with self._thread_exception_lock:
-            if self._thread_exception is None:  # First exception wins
+            if self._thread_exception is None:
                 self._thread_exception = exc
 
     def _check_thread_exception(self):
-        """Check if any background thread has failed and raise if so (fail-fast)."""
+        """Check if any background thread has failed and raise if so."""
         with self._thread_exception_lock:
             if self._thread_exception is not None:
                 raise RuntimeError(
@@ -336,19 +300,7 @@ class WorkflowExecutor:
                 ) from self._thread_exception
 
     def _commit_loop(self) -> None:
-        """Producer thread main loop - continuously submits tasks to runner based on capacity.
-
-        This method runs in a background thread and continuously:
-        1. Checks for errors from other threads (fail-fast)
-        2. Waits if runner is paused
-        3. Gets capacity from staleness manager based on current model version
-        4. Pulls up to 'capacity' tasks from _pending_inputs deque
-        5. Submits them to AsyncTaskRunner (handles TaskQueueFullError by re-inserting)
-        6. Updates staleness manager metrics on successful submission
-
-        The loop exits when _shutdown_event is set. Polling interval: 0.5s.
-        """
-
+        """Producer thread - continuously submits tasks based on capacity."""
         while not self._shutdown_event.is_set():
             try:
                 # Check for errors from other threads (fail-fast)
@@ -360,8 +312,7 @@ class WorkflowExecutor:
                     continue
 
                 # Get capacity from staleness manager
-                version = self.inference_engine.get_version()
-                capacity = self.staleness_manager.get_capacity(version)
+                capacity = self.staleness_manager.get_capacity()
 
                 if capacity <= 0:
                     time.sleep(_POLL_INTERVAL_SECONDS)
@@ -370,21 +321,20 @@ class WorkflowExecutor:
                 # Try to submit up to 'capacity' tasks
                 for _ in range(capacity):
                     try:
-                        task = self._pending_inputs.popleft()
+                        task_input = self._pending_inputs.popleft()
                     except IndexError:
                         break
 
-                    # Submit to runner (may raise TaskQueueFullError)
-                    workflow_fn = self._create_workflow_task(task)
+                    # Submit to runner
+                    task_fn = self.task_factory(task_input)
                     try:
-                        self.runner.submit(workflow_fn)
-
+                        self.runner.submit(task_fn)
                         self.staleness_manager.on_rollout_submitted()
-                        if self.config.enable_rollout_tracing:
+                        if self.enable_tracing:
                             self.logger.info(f"Submit rollout. {self._rollout_stats()}")
                     except TaskQueueFullError:
                         # Put back and retry later
-                        self._pending_inputs.appendleft(task)
+                        self._pending_inputs.appendleft(task_input)
                         break
 
                 # Small sleep to avoid busy-waiting (latency-optimized)
@@ -396,17 +346,7 @@ class WorkflowExecutor:
                 break
 
     def _fetch_loop(self) -> None:
-        """Consumer thread main loop - continuously collects results from runner.
-
-        This method runs in a background thread and continuously:
-        1. Checks for errors from other threads (fail-fast)
-        2. Polls AsyncTaskRunner for available results (non-blocking)
-        3. Collects results in batches up to 100 with short timeout (0.05s)
-        4. Filters out None (rejected) results
-        5. Appends accepted TimedResult objects to _pending_results deque
-
-        The loop exits when _shutdown_event is set. Polling interval: 0.5s.
-        """
+        """Consumer thread - continuously collects results from runner."""
         while not self._shutdown_event.is_set():
             try:
                 # Check for errors from other threads (fail-fast)
@@ -446,11 +386,226 @@ class WorkflowExecutor:
                 self._set_thread_exception(e)
                 break
 
+    def initialize(self, logger: Logger):
+        self.logger = logger
+        self.runner.initialize(logger=logger)
+
+        self._shutdown_event.clear()
+
+        self._commit_thread = threading.Thread(target=self._commit_loop)
+        self._commit_thread.start()
+
+        self._fetch_thread = threading.Thread(target=self._fetch_loop)
+        self._fetch_thread.start()
+
+    def destroy(self):
+        self._shutdown_event.set()
+
+        if self._commit_thread and self._commit_thread.is_alive():
+            self._commit_thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+            if self._commit_thread.is_alive() and self.logger:
+                self.logger.warning(
+                    "Producer thread did not exit cleanly within timeout"
+                )
+
+        if self._fetch_thread and self._fetch_thread.is_alive():
+            self._fetch_thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+            if self._fetch_thread.is_alive() and self.logger:
+                self.logger.warning(
+                    "Consumer thread did not exit cleanly within timeout"
+                )
+
+        # Shutdown the async task runner
+        self.runner.destroy()
+
+    def pause(self):
+        """Pause request submission for async tasks.
+
+        After calling pause(), no new tasks will be started from the
+        input queue, but existing running tasks will continue to completion.
+        """
+        self.runner.pause()
+
+    def resume(self):
+        """Resume request submission for async tasks.
+
+        Allows new tasks to be pulled from the input queue and started.
+        """
+        self.runner.resume()
+
+    def is_paused(self) -> bool:
+        """Check if the dispatcher is currently paused.
+
+        Returns
+        -------
+        bool
+            True if paused, False otherwise.
+        """
+        return self.runner.paused.is_set()
+
+    def _rollout_stats(self) -> str:
+        stats = self.staleness_manager.get_stats()
+        return (
+            f"enqueued: {stats.enqueued}, "
+            f"running: {stats.running}, "
+            f"accepted: {stats.accepted}, "
+            f"rejected: {stats.rejected}."
+        )
+
+    def submit_task_input(self, task_input: TInput) -> None:
+        """Submit a task input for processing.
+
+        Parameters
+        ----------
+        task_input : TInput
+            Task input to be processed.
+        """
+        self._check_thread_exception()
+        self._pending_inputs.append(task_input)
+        self.staleness_manager.on_rollout_enqueued()
+        if self.enable_tracing:
+            self.logger.info(f"Enqueue rollout. {self._rollout_stats()}")
+
+    def wait_results(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> list[TResult | None]:
+        """Wait for the completion of `count` tasks.
+
+        Parameters
+        ----------
+        count : int
+            Number of results to wait for.
+        timeout : float | None
+            Maximum time to wait in seconds.
+        raise_timeout : bool
+            Whether to raise TimeoutError on timeout.
+
+        Returns
+        -------
+        list[TResult | None]
+            List of task results, None for rejected tasks.
+        """
+        if count <= 0:
+            raise ValueError(f"count must be positive, got {count}")
+
+        start_time = time.perf_counter()
+        timeout = timeout or float(7 * 24 * 3600)
+
+        while time.perf_counter() - start_time < timeout:
+            self._check_thread_exception()
+
+            if len(self._pending_results) >= count:
+                break
+
+            elapsed = time.perf_counter() - start_time
+            remaining = timeout - elapsed
+            time.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
+
+        if len(self._pending_results) < count:
+            if raise_timeout:
+                raise TimeoutError(
+                    f"Timed out waiting for {count} results, "
+                    f"only received {len(self._pending_results)}"
+                )
+            else:
+                return []
+
+        # Drain results and sort by creation time
+        results: list[TimedResult[TResult]] = []
+        while True:
+            try:
+                results.append(self._pending_results.popleft())
+            except IndexError:
+                break
+
+        results.sort(key=lambda x: x.create_time)
+        results, pending = results[:count], results[count:]
+        self._pending_results.extendleft(reversed(pending))
+
+        # Shuffle for randomness
+        random.shuffle(results)
+
+        return [r.data for r in results]
+
+    def active_submit_and_wait(
+        self, input_generator: Generator[TInput], batch_size: int
+    ) -> list[TResult]:
+        cnt = 0
+        results = []
+
+        while True:
+            # Submit tasks to maintain overlap
+            cap_staleness = self.staleness_manager.get_pending_limit() - len(
+                self._pending_inputs
+            )
+            cap_queue = self.runner.max_queue_size - (
+                self.runner.get_input_queue_size() + batch_size
+            )
+            capacity = min(cap_staleness, cap_queue)
+            if capacity > 0:
+                if self.enable_tracing:
+                    perf_tracer.instant(
+                        "batch_task_dispatcher.continously_submit",
+                        category="scheduler",
+                        args={"data": capacity},
+                    )
+                for _ in range(min(batch_size, capacity)):
+                    self.submit_task_input(next(input_generator))
+            try:
+                res = self.wait_results(count=1, timeout=1)
+                if not res or res[0] is None:
+                    continue
+                assert len(res) == 1
+                cnt += 1
+                results.append(res[0])
+                if cnt >= batch_size:
+                    break
+            except TimeoutError:
+                pass
+
+        return results
+
+
+class WorkflowExecutor:
+    """Executor for asynchronous workflow-based rollout generation.
+
+    Orchestrates workflow execution with AReaL-specific features including
+    staleness management, trajectory validation, and result filtering.
+    Delegates task dispatching to BatchTaskDispatcher.
+    """
+
+    def __init__(
+        self,
+        config: InferenceEngineConfig,
+        inference_engine: RemoteInfEngine,
+        staleness_manager: StalenessManager | None = None,
+    ):
+        self.max_concurrent_rollouts = (
+            config.max_concurrent_rollouts or config.consumer_batch_size
+        )
+        self.consumer_batch_size = config.consumer_batch_size
+        self.max_staleness = config.max_head_offpolicyness
+
+        self.config = config
+        self.inference_engine = inference_engine
+
+        # Use provided staleness manager or create a default one
+        # The manager will be properly initialized in initialize()
+        self._staleness_manager = staleness_manager
+
+        # For trajectory format checking
+        self._expected_trajectory_keys: set | None = None
+
+        # Dispatcher will be initialized in initialize() after staleness_manager is ready
+        self.dispatcher: (
+            BatchTaskDispatcher[_RolloutTaskInput, _RolloutResult] | None
+        ) = None
+
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start background threads.
 
-        Initializes StalenessManager (if needed), AsyncTaskRunner, and starts
-        producer (_commit_loop) and consumer (_fetch_loop) threads.
+        Creates and initializes BatchTaskDispatcher with StalenessManager.
+        The dispatcher starts producer and consumer threads for async execution.
 
         Parameters
         ----------
@@ -491,55 +646,38 @@ class WorkflowExecutor:
             consumer_batch_size = max(1, self.consumer_batch_size // dp_world_size)
 
             self._staleness_manager = StalenessManager(
+                version_provider=self.inference_engine,
                 max_concurrent_rollouts=max_concurrent_rollouts,
                 consumer_batch_size=consumer_batch_size,
                 max_staleness=self.config.max_head_offpolicyness,
             )
 
-        # Initialize the generic async task runner
-        self.runner.initialize(logger=logger)
+        # Create and initialize the dispatcher
+        qsize = self.config.queue_size or self.max_concurrent_rollouts * 16
+        self.dispatcher = BatchTaskDispatcher[_RolloutTaskInput, _RolloutResult](
+            max_queue_size=qsize,
+            task_factory=self._create_workflow_task,
+            staleness_manager=self._staleness_manager,
+            enable_tracing=self.config.enable_rollout_tracing,
+        )
 
-        # Start background threads for producer and consumer
-        self._shutdown_event.clear()
-
-        self._commit_thread = threading.Thread(target=self._commit_loop)
-        self._commit_thread.start()
-
-        self._fetch_thread = threading.Thread(target=self._fetch_loop)
-        self._fetch_thread.start()
+        # Initialize the dispatcher's async task runner
+        self.dispatcher.initialize(logger=logger)
 
     def destroy(self):
         """Shutdown the workflow executor and clean up resources.
 
-        Signals shutdown, waits for threads to exit (5s timeout each),
-        flushes perf tracer, and destroys AsyncTaskRunner.
+        Destroys the dispatcher (which stops background threads and AsyncTaskRunner),
+        then flushes the performance tracer.
         """
-        # Signal shutdown to background threads
-        self._shutdown_event.set()
-
-        # Wait for producer thread to finish (with timeout)
-        if self._commit_thread and self._commit_thread.is_alive():
-            self._commit_thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
-            if self._commit_thread.is_alive():
-                self.logger.warning(
-                    "Producer thread did not exit cleanly within timeout"
-                )
-
-        # Wait for consumer thread to finish (with timeout)
-        if self._fetch_thread and self._fetch_thread.is_alive():
-            self._fetch_thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
-            if self._fetch_thread.is_alive():
-                self.logger.warning(
-                    "Consumer thread did not exit cleanly within timeout"
-                )
+        # Stop background threads and shutdown the async task runner
+        if self.dispatcher is not None:
+            self.dispatcher.destroy()
 
         # Flush performance tracer
         tracer = perf_tracer.get_session_tracer()
         if tracer is not None:
             tracer.flush(force=True)
-
-        # Shutdown the async task runner
-        self.runner.destroy()
 
     def get_capacity(self):
         """Get current available capacity for new rollouts.
@@ -549,9 +687,7 @@ class WorkflowExecutor:
         int
             Number of new rollout slots available based on staleness constraints.
         """
-        version = self.inference_engine.get_version()
-        capacity = self.staleness_manager.get_capacity(version)
-        return capacity
+        return self.staleness_manager.get_capacity()
 
     def _resolve_workflow(
         self,
@@ -818,9 +954,6 @@ class WorkflowExecutor:
 
         See :meth:`~areal.api.engine_api.InferenceEngine.submit` for parameters.
         """
-        # Check for thread errors (fail-fast)
-        self._check_thread_exception()
-
         # Resolve workflow and should_accept to their concrete forms
         resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -833,70 +966,25 @@ class WorkflowExecutor:
             task_id=task_id,
         )
 
-        # Enqueue to thread-safe queue (may block if queue is full)
-        self._pending_inputs.append(task_input)
-
-        # Notify staleness manager of enqueued rollout tasks
-        self.staleness_manager.on_rollout_enqueued()
-        if self.config.enable_rollout_tracing:
-            self.logger.info(f"Enqueue rollout. {self._rollout_stats()}")
+        # Delegate to dispatcher
+        self.dispatcher.submit_task_input(task_input)
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
     ) -> list[dict[str, Any] | None]:
-        """Wait for the completion of `count` workflows from _pending_results deque.
+        """Wait for the completion of `count` workflows.
 
-        Polls _pending_results (populated by consumer thread), sorts by create_time,
-        shuffles, and returns concatenated batch tensors.
+        Returns a list of trajectory dictionaries (or None for rejected rollouts).
+        Results are sorted by creation time and shuffled for diversity.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for parameters.
         """
-        if count <= 0:
-            raise ValueError(f"count must be positive, got {count}")
-
-        start_time = time.perf_counter()
-        timeout = timeout or float(7 * 24 * 3600)
-
-        while time.perf_counter() - start_time < timeout:
-            self._check_thread_exception()
-
-            if len(self._pending_results) >= count:
-                break
-
-            elapsed = time.perf_counter() - start_time
-            remaining = timeout - elapsed
-            time.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
-
-        if len(self._pending_results) < count:
-            if raise_timeout:
-                raise TimeoutError(
-                    f"Timed out waiting for {count} rollouts, "
-                    f"only received {len(self._pending_results)}"
-                )
-            else:
-                return []
-
+        # Delegate to dispatcher and extract trajectories
+        results = self.dispatcher.wait_results(count, timeout, raise_timeout)
         # Log and trace
         if self.config.enable_rollout_tracing:
             self.logger.info("Rollout results are ready!")
-
-        # Drain all available requests and sort them by time of creation
-        # This prioritizes data submitted earlier.
-        results: list[TimedResult[_RolloutResult]] = []
-        while True:
-            try:
-                results.append(self._pending_results.popleft())
-            except IndexError:
-                break
-        # Sort results be create time
-        results.sort(key=lambda x: x.create_time)
-        results, pending = results[:count], results[count:]
-        self._pending_results.extendleft(reversed(pending))
-
-        # Shuffle for randomness (helps with data diversity)
-        random.shuffle(results)
-
-        return [r.data.trajectory if r.data is not None else None for r in results]
+        return [r.trajectory if r is not None else None for r in results]
 
     @trace_perf("workflow_executor.rollout_batch", category="scheduler")
     def rollout_batch(
@@ -943,44 +1031,35 @@ class WorkflowExecutor:
 
         See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for parameters.
         """
-        manager = self.staleness_manager
-        if not hasattr(self, "data_generator"):
-            self.data_generator = cycle_dataloader(dataloader)
-        assert dataloader.batch_size is not None
-        cnt = 0
-        results = []
-        while True:
-            # Submit at least two batches to allow maximum overlap
-            if (
-                len(self._pending_inputs) < manager.get_pending_limit()
-                and self.runner.get_input_queue_size() + dataloader.batch_size
-                < self.runner.max_queue_size
-            ):
-                data = next(self.data_generator)
-                perf_tracer.instant(
-                    "workflow_executor.prepare_batch",
-                    category="scheduler",
-                    args={"data": len(data)},
-                )
+
+        def task_input_generator():
+            resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
+            for data in cycle_dataloader(dataloader):
                 for item in data:
-                    self.submit(
-                        item,
-                        workflow=workflow,
-                        should_accept_fn=should_accept_fn,
-                        workflow_kwargs=workflow_kwargs,
+                    # Resolve workflow for each submission to allow
+                    # resource separation if a type or string is provided.
+                    resolved_workflow = self._resolve_workflow(
+                        workflow, workflow_kwargs
                     )
-            try:
-                res = self.wait(count=1, timeout=1)
-                if not res or res[0] is None:
-                    continue
-                assert len(res) == 1
-                cnt += 1
-                results.append(res[0])
-                if cnt >= dataloader.batch_size:
-                    break
-            except (TimeoutError, queue.Full):
-                pass
-        return concat_padded_tensors(results)
+                    yield _RolloutTaskInput(
+                        data=item,
+                        workflow=resolved_workflow,
+                        should_accept_fn=resolved_should_accept_fn,
+                        task_id=perf_tracer.register_task(),
+                    )
+
+        if not hasattr(self, "data_generator"):
+            self.data_generator = task_input_generator()
+
+        # Delegate to dispatcher
+        assert dataloader.batch_size is not None
+        results = self.dispatcher.active_submit_and_wait(
+            self.data_generator, batch_size=dataloader.batch_size
+        )
+
+        # Extract trajectories and concatenate
+        trajectories = [r.trajectory if r is not None else None for r in results]
+        return concat_padded_tensors([t for t in trajectories if t is not None])
 
     def pause(self):
         """Pause request submission for async rollout.
@@ -988,7 +1067,7 @@ class WorkflowExecutor:
         See :meth:`~areal.api.engine_api.InferenceEngine.pause` for detailed
         documentation.
         """
-        self.runner.pause()
+        self.dispatcher.pause()
 
     def resume(self):
         """Resume request submission for async rollout.
@@ -996,10 +1075,10 @@ class WorkflowExecutor:
         See :meth:`~areal.api.engine_api.InferenceEngine.resume` for detailed
         documentation.
         """
-        self.runner.resume()
+        self.dispatcher.resume()
 
     def is_paused(self):
-        return self.runner.paused.is_set()
+        return self.dispatcher.is_paused()
 
     @property
     def staleness_manager(self) -> StalenessManager:
@@ -1009,3 +1088,12 @@ class WorkflowExecutor:
                 "WorkflowExecutor.initialize() must be called before scheduling rollouts."
             )
         return manager
+
+    @property
+    def runner(self):
+        """For backward compatibility. The runner is now owned by the dispatcher."""
+        if self.dispatcher is None:
+            raise RuntimeError(
+                "WorkflowExecutor.initialize() must be called before accessing runner."
+            )
+        return self.dispatcher.runner
