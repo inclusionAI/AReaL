@@ -159,6 +159,10 @@ class GenerationHyperparameters:
             )
         },
     )
+    lora_name: str = field(
+        default="",
+        metadata={"help": "Lora name to be used for this generation."},
+    )
 
     def new(self, **kwargs):
         args = asdict(self)
