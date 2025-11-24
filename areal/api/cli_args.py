@@ -494,12 +494,19 @@ class TrainEngineConfig:
             SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
         ),
         metadata={
-            "help": "train engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
+            "help": "Train engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
             "if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; "
-            "if 2 specs provided, first one is for worker, second one is for engine."
+            "if 2 specs provided, first one is for worker, second one is for engine. "
+            "Currently only used by the TrainController."
         },
     )
-    scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "The scheduling strategy of this TrainEngine, either separation or colocation. "
+            "Currently only used by the TrainController."
+        },
+    )
 
     def __post_init__(self):
         """Validate scheduling_spec length."""
@@ -997,10 +1004,17 @@ class InferenceEngineConfig:
         metadata={
             "help": "inference engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
             "if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; "
-            "if 2 specs provided, first one is for worker, second one is for engine."
+            "if 2 specs provided, first one is for worker, second one is for engine. "
+            "Currently only used by the RolloutController."
         },
     )
-    scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "The scheduling strategy of this TrainEngine, either separation or colocation. "
+            "Currently only used by the RolloutController."
+        },
+    )
 
     def __post_init__(self):
         """Validate scheduling_spec length."""
