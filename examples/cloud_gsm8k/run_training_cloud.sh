@@ -33,6 +33,21 @@ if [ ! -f "examples/cloud_gsm8k/gsm8k_grpo_cloud.yaml" ]; then
     exit 1
 fi
 
+# Check for completion markers to prevent re-running
+COMPLETION_MARKER_PATTERN="/workspace/outputs/training_completed_*.marker"
+if ls $COMPLETION_MARKER_PATTERN 1> /dev/null 2>&1; then
+    echo "=========================================="
+    echo "⚠️  Training already completed!"
+    echo "=========================================="
+    echo "Found completion marker(s):"
+    ls -lh $COMPLETION_MARKER_PATTERN
+    echo ""
+    echo "Exiting to prevent re-running and save costs."
+    echo "If you want to run again, delete the completion markers first."
+    echo "=========================================="
+    exit 0
+fi
+
 # Check WandB API key
 if [ -z "$WANDB_API_KEY" ]; then
     echo "WARNING: WANDB_API_KEY not set. WandB logging will be disabled."
@@ -370,22 +385,17 @@ echo "Logs: outputs/grpo/logs/root/$EXPERIMENT_NAME/$TRIAL_NAME"
 echo "WandB: https://wandb.ai (project: gsm8k-grpo-local)"
 echo "=========================================="
 
-# Create completion marker to prevent re-running
-# This is critical to prevent RunPod from wasting money by re-running the script
+# Run validation on Base and Trained models (if training succeeded)
+# Note: We run tests BEFORE creating completion marker to ensure they complete
+# even if RunPod restarts. The completion marker is created AFTER tests finish.
+TEST_EXIT_CODE=0
 if [ $TRAINING_EXIT_CODE -eq 0 ]; then
-    COMPLETION_MARKER="/workspace/outputs/training_completed_$(date +%Y%m%d_%H%M%S).marker"
-    echo "Training completed successfully at $(date)" > "$COMPLETION_MARKER"
-    echo "Experiment: $EXPERIMENT_NAME" >> "$COMPLETION_MARKER"
-    echo "Trial: $TRIAL_NAME" >> "$COMPLETION_MARKER"
-    echo "Config: $CONFIG_NAME" >> "$COMPLETION_MARKER"
     echo ""
-    echo "✅ Created completion marker: $COMPLETION_MARKER"
-    echo "   This prevents the script from re-running if the container restarts."
-    echo ""
-    
-    # Run validation on Base and Trained models
     echo "=========================================="
     echo "Running validation (Base vs Trained Model)"
+    echo "=========================================="
+    echo "Note: Tests will complete before creating completion marker"
+    echo "to prevent RunPod restart from interrupting them."
     echo "=========================================="
     
     CHECKPOINT_BASE="/workspace/outputs/grpo/checkpoints/root/${EXPERIMENT_NAME}/${TRIAL_NAME}/default"
@@ -393,6 +403,9 @@ if [ $TRAINING_EXIT_CODE -eq 0 ]; then
         LATEST_CHECKPOINT=$(ls -td "$CHECKPOINT_BASE"/*/ | head -1)
         if [ -n "$LATEST_CHECKPOINT" ]; then
             echo "Found latest checkpoint: $LATEST_CHECKPOINT"
+            
+            # Temporarily disable exit on error for tests (we want to continue even if tests fail)
+            set +e
             
             if [[ "$EXPERIMENT_NAME" == *"reasoning"* ]]; then
                 echo "Detected reasoning model."
@@ -403,7 +416,8 @@ if [ $TRAINING_EXIT_CODE -eq 0 ]; then
                     --max-samples 50 \
                     --max-new-tokens 1024 \
                     --model-name "Baseline"
-
+                BASELINE_TEST_CODE=$?
+                
                 echo "------------------------------------------"
                 echo "Testing TRAINED model - 50 samples..."
                 python3 examples/cloud_gsm8k/test_reasoning_model_cloud.py \
@@ -411,6 +425,7 @@ if [ $TRAINING_EXIT_CODE -eq 0 ]; then
                     --max-samples 50 \
                     --max-new-tokens 1024 \
                     --model-name "Trained"
+                TRAINED_TEST_CODE=$?
             else
                 echo "Running standard validation (Base vs Trained Model)"
                 echo "------------------------------------------"
@@ -419,6 +434,7 @@ if [ $TRAINING_EXIT_CODE -eq 0 ]; then
                     --model-path "Qwen/Qwen2.5-0.5B-Instruct" \
                     --max-samples 50 \
                     --log-dir "/workspace/outputs/grpo/test_logs"
+                BASELINE_TEST_CODE=$?
                 
                 echo "------------------------------------------"
                 echo "Testing TRAINED model - 50 samples..."
@@ -426,18 +442,54 @@ if [ $TRAINING_EXIT_CODE -eq 0 ]; then
                     --model-path "$LATEST_CHECKPOINT" \
                     --max-samples 50 \
                     --log-dir "/workspace/outputs/grpo/test_logs"
+                TRAINED_TEST_CODE=$?
             fi
+            
+            # Re-enable exit on error
+            set -e
+            
+            # Track test results (but don't fail the script if tests fail)
+            if [ $BASELINE_TEST_CODE -ne 0 ] || [ $TRAINED_TEST_CODE -ne 0 ]; then
+                TEST_EXIT_CODE=1
+                echo ""
+                echo "⚠️  WARNING: Some tests failed (exit codes: baseline=$BASELINE_TEST_CODE, trained=$TRAINED_TEST_CODE)"
+                echo "   This is non-fatal - training completed successfully."
+            else
+                echo ""
+                echo "✅ All tests completed successfully!"
+            fi
+        else
+            echo "WARNING: No checkpoint found in $CHECKPOINT_BASE"
         fi
     else
-         echo "WARNING: Checkpoint directory not found: $CHECKPOINT_BASE"
+        echo "WARNING: Checkpoint directory not found: $CHECKPOINT_BASE"
     fi
+    
+    echo ""
+    echo "=========================================="
+    echo "Tests completed. Creating completion marker..."
+    echo "=========================================="
+    
+    # NOW create completion marker AFTER tests complete
+    # This prevents RunPod restart from interrupting tests
+    COMPLETION_MARKER="/workspace/outputs/training_completed_$(date +%Y%m%d_%H%M%S).marker"
+    echo "Training completed successfully at $(date)" > "$COMPLETION_MARKER"
+    echo "Experiment: $EXPERIMENT_NAME" >> "$COMPLETION_MARKER"
+    echo "Trial: $TRIAL_NAME" >> "$COMPLETION_MARKER"
+    echo "Config: $CONFIG_NAME" >> "$COMPLETION_MARKER"
+    echo "Training exit code: $TRAINING_EXIT_CODE" >> "$COMPLETION_MARKER"
+    echo "Test exit code: $TEST_EXIT_CODE" >> "$COMPLETION_MARKER"
+    echo ""
+    echo "✅ Created completion marker: $COMPLETION_MARKER"
+    echo "   This prevents the script from re-running if the container restarts."
+    echo ""
 fi
 
 echo ""
 echo "=========================================="
 echo "⚠️  IMPORTANT: Stop the pod to save costs!"
 echo "=========================================="
-echo "Training has finished. To prevent wasting money:"
+echo "Training and testing have finished. To prevent wasting money:"
 echo ""
 echo "1. Go to RunPod dashboard: https://www.runpod.io/console/pods"
 echo "2. Find your pod and click 'Stop'"
@@ -450,5 +502,11 @@ echo "prevent the training script from running again."
 echo "=========================================="
 echo ""
 
-# Exit with the training exit code
-exit $TRAINING_EXIT_CODE
+# Exit with training exit code (tests are non-fatal)
+# If training succeeded, exit 0 even if tests had issues
+# If training failed, exit with training exit code
+if [ $TRAINING_EXIT_CODE -eq 0 ]; then
+    exit 0
+else
+    exit $TRAINING_EXIT_CODE
+fi
