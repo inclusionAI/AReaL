@@ -13,9 +13,6 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
 from areal.utils import seeding, stats_tracker
-from areal.utils.data import (
-    cycle_dataloader,
-)
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
