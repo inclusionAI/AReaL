@@ -25,36 +25,38 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
 ## Repository map
 
 - `areal/` — Core Python package housing APIs, controllers, engines, workflows, and
-  shared utilities.
-- `areal/api/` — Contracts for workflows, engines, schedulers, IO structs, and
-  CLI/config dataclasses.
-- `areal/controller/` — Distributed batching and controller-side dataset packing
-  helpers.
-- `areal/core/` — Async orchestration primitives for task runners, remote inference, and
-  workflow execution.
-- `areal/dataset/` — Stateful dataset loaders and utilities that feed rollout jobs
-  safely.
-- `areal/engine/` — Training/inference backends (FSDP2, Megatron, PPO actors, remote
-  adapters).
-- `areal/experimental/` — Prototype engines/workflows that evolve quickly; expect
-  breaking changes.
-- `areal/launcher/` — Launch specs for local, Ray, and Slurm clusters plus container
-  guidance.
-- `areal/models/` — Model-specific adapters (Megatron-Core layers, Transformers
-  wrappers, custom heads).
-- `areal/platforms/` — Hardware/platform abstractions for CPU/GPU/NPU runtimes and
-  device adapters.
-- `areal/reward/` — Built-in reward functions, math parsers, and helpers (wrap slow
-  logic with AsyncRewardWrapper).
-- `areal/scheduler/` — Placement and allocation policies aligned with launcher configs.
-- `areal/tests/` — Focused unit/integration suites (many require GPUs or mocked
-  distributed backends).
-- `areal/thirdparty/` — Vendored integrations (e.g., vLLM/SGLang shims) kept in-tree.
-- `areal/tools/` — Developer utilities and maintenance scripts tied to the core package.
-- `areal/utils/` — Cross-cutting helpers for logging, tensor ops, stats tracking,
-  checkpoints, and recovery.
-- `areal/workflow/` — Concrete rollout agents (`multi_turn`, `rlvr`, `vision_rlvr`)
-  implementing `RolloutWorkflow`.
+  shared utilities:
+  - `areal/api/` — Contracts for workflows, engines, schedulers, IO structs, and
+    CLI/config dataclasses.
+  - `areal/controller/` — Distributed batching and controller-side dataset packing
+    helpers.
+  - `areal/core/` — Async orchestration primitives for task runners, remote inference,
+    and workflow execution.
+  - `areal/dataset/` — Stateful dataset loaders and utilities that feed rollout jobs
+    safely.
+  - `areal/engine/` — Training/inference backends (FSDP2, Megatron, PPO actors, remote
+    adapters).
+  - `areal/experimental/` — Prototype engines/workflows that evolve quickly; expect
+    breaking changes.
+  - `areal/launcher/` — Launch specs for local, Ray, and Slurm clusters plus container
+    guidance.
+  - `areal/models/` — Model-specific adapters (Megatron-Core layers, Transformers
+    wrappers, custom heads).
+  - `areal/platforms/` — Hardware/platform abstractions for CPU/GPU/NPU runtimes and
+    device adapters.
+  - `areal/reward/` — Built-in reward functions, math parsers, and helpers (wrap slow
+    logic with AsyncRewardWrapper).
+  - `areal/scheduler/` — Placement and allocation policies aligned with launcher
+    configs.
+  - `areal/tests/` — Focused unit/integration suites (many require GPUs or mocked
+    distributed backends).
+  - `areal/thirdparty/` — Vendored integrations (e.g., vLLM/SGLang shims) kept in-tree.
+  - `areal/tools/` — Developer utilities and maintenance scripts tied to the core
+    package.
+  - `areal/utils/` — Cross-cutting helpers for logging, tensor ops, stats tracking,
+    checkpoints, and recovery.
+  - `areal/workflow/` — Concrete rollout agents (`multi_turn`, `rlvr`, `vision_rlvr`)
+    implementing `RolloutWorkflow`.
 - `assets/` — Figures and other static assets referenced across docs and blogs.
 - `benchmark/` — Regression baselines, benchmark snapshots, and reference metrics (e.g.,
   `verl_v0_3_0_post1_*`).
@@ -257,7 +259,7 @@ Reference docs:
 - Reuse fixtures + helpers: copy the pattern from `test_utils.py` (local fixtures
   feeding parametrized cases) or import shared logic from `areal/tests/utils.py`
   (`is_in_ci`, `get_bool_env_var`). Prefer `pytest.fixture` + `pytest.mark.parametrize`
-  over ad‑hoc loops.
+  over ad-hoc loops.
 - Keep tests hermetic by mocking engines/workflows similar to
   `test_engine_api_workflow_resolution.py`; avoid spinning up real clusters unless you
   are under `torchrun/` or `experimental/`.
@@ -335,9 +337,8 @@ skipped.
 - **Best practices** (`docs/best_practices/*.md`): Practical debugging playbooks,
   reward-drift diagnostics, OOM mitigation, and performance profiling checklists you
   should cite when explaining skipped tests or perf limitations.
-- **CLI & doc tooling** (`docs/cli_reference.md`, `docs/README.md`): Auto-generated CLI
-  argument catalog plus instructions for regenerating docs/CLI output before landing
-  config changes.
+- **CLI & doc tooling** (`docs/cli_reference.md`): Auto-generated CLI argument catalog
+  plus instructions for regenerating docs/CLI output before landing config changes.
 - **Benchmarks & reproducibility** (`docs/references/*.md`): Canonical benchmark setups,
   dataset/model combos, and experiment-log expectations to mention in PR validation
   notes.
