@@ -68,7 +68,7 @@ actor:
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
-  kl_ctl: 0.0
+  kl_ctl: 0.0 # TODO: deepseek uses 0.001
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true

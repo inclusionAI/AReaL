@@ -298,6 +298,23 @@ case "$CONFIG_NAME" in
         echo "Note: Trains reasoning model with XML format (1000 samples, 2x A40 GPUs)"
         echo "GPU count: $GPU_COUNT (required: 2)"
         ;;
+    standard_1000samples_2GPUs)
+        # Check GPU count
+        if [ -z "$GPU_COUNT" ] || [ "$GPU_COUNT" -lt 2 ]; then
+            echo "ERROR: This config requires 2 GPUs"
+            echo "Detected: $GPU_COUNT GPU(s)"
+            echo ""
+            echo "This config is optimized for 2x A100 80GB (one GPU for SGLang, one for training)."
+            echo "Please use a pod with at least 2 GPUs or choose a single-GPU config."
+            exit 1
+        fi
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_1000samples_2GPUs.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-cloud-2gpu-1000samples"
+        echo "Using STANDARD 1000 SAMPLES 2 GPUs configuration"
+        echo "Note: GRPO only (no reasoning XML). Dataset capped at 1000 samples."
+        echo "GPU count: $GPU_COUNT (required: 2)"
+        ;;
     reasoning_2000samples_4GPUs)
         # Check GPU count
         if [ -z "$GPU_COUNT" ] || [ "$GPU_COUNT" -lt 4 ]; then
@@ -317,7 +334,7 @@ case "$CONFIG_NAME" in
         ;;
     *)
         echo "ERROR: Unknown config name: $CONFIG_NAME"
-        echo "Valid options: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_1000samples_2GPUs, reasoning_2000samples_4GPUs"
+        echo "Valid options: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_1000samples_2GPUs, reasoning_2000samples_4GPUs, standard_1000samples_2GPUs"
         exit 1
         ;;
 esac

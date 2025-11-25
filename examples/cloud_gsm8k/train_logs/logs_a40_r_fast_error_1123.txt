@@ -1,0 +1,1111 @@
+2025-11-23T17:12:34.569625878Z ==========
+2025-11-23T17:12:34.569633202Z == CUDA ==
+2025-11-23T17:12:34.569636196Z ==========
+2025-11-23T17:12:34.571474769Z CUDA Version 12.9.1
+2025-11-23T17:12:34.576497162Z Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+2025-11-23T17:12:34.576501802Z This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+2025-11-23T17:12:34.576504228Z By pulling and using the container, you accept the terms and conditions of this license:
+2025-11-23T17:12:34.576506097Z https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+2025-11-23T17:12:34.576510157Z A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+2025-11-23T17:12:34.775698676Z Writing to /root/.config/pip/pip.conf
+2025-11-23T17:12:34.984538433Z Writing to /root/.config/pip/pip.conf
+2025-11-23T17:12:35.016122069Z Cloning into 'AReaL'...
+2025-11-23T17:12:37.242455727Z Checking AReaL installation...
+2025-11-23T17:12:37.633892969Z AReaL already installed. Skipping installation.
+2025-11-23T17:12:37.633937803Z Cleaning up any leftover GPU processes...
+2025-11-23T17:12:37.634143506Z Installing cleanup tools (psmisc, lsof)...
+2025-11-23T17:12:37.788883055Z Get:2 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  InRelease [1,581 B]
+2025-11-23T17:12:37.945674496Z Get:3 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy InRelease [18.1 kB]
+2025-11-23T17:12:38.118961964Z Get:4 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy/main amd64 Packages [38.5 kB]
+2025-11-23T17:12:39.301931695Z Get:5 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  Packages [2,151 kB]
+2025-11-23T17:12:39.714264568Z Hit:6 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy InRelease
+2025-11-23T17:12:40.027366213Z Get:7 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates InRelease [128 kB]
+2025-11-23T17:12:40.838074712Z Ign:1 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  InRelease
+2025-11-23T17:12:40.922714038Z Get:9 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports InRelease [127 kB]
+2025-11-23T17:12:41.331671637Z Get:10 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security InRelease [129 kB]
+2025-11-23T17:12:41.725888507Z Get:11 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/restricted amd64 Packages [6,222 kB]
+2025-11-23T17:12:41.936548147Z Get:8 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release [496 B]
+2025-11-23T17:12:43.114129032Z Get:12 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/universe amd64 Packages [1,595 kB]
+2025-11-23T17:12:43.123441494Z Get:13 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Release.gpg [833 B]
+2025-11-23T17:12:43.224409506Z Get:14 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/main amd64 Packages [3,876 kB]
+2025-11-23T17:12:43.501411973Z Get:15 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-updates/multiverse amd64 Packages [69.2 kB]
+2025-11-23T17:12:43.502832556Z Get:16 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/universe amd64 Packages [35.2 kB]
+2025-11-23T17:12:43.503860303Z Get:17 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-backports/main amd64 Packages [83.9 kB]
+2025-11-23T17:12:43.505696373Z Get:18 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/restricted amd64 Packages [5,988 kB]
+2025-11-23T17:12:44.009678881Z Get:19 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/main amd64 Packages [3,532 kB]
+2025-11-23T17:12:44.386248338Z Get:20 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/multiverse amd64 Packages [60.9 kB]
+2025-11-23T17:12:44.387320468Z Get:21 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy-security/universe amd64 Packages [1,290 kB]
+2025-11-23T17:12:44.426981106Z Get:22 https://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64  Packages [18.8 kB]
+2025-11-23T17:12:44.598860251Z Fetched 25.4 MB in 7s (3,697 kB/s)
+2025-11-23T17:12:45.778712868Z Reading package lists...
+2025-11-23T17:12:45.797670254Z W: http://developer.download.nvidia.com/devtools/repos/ubuntu2004/amd64/Release.gpg: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
+2025-11-23T17:12:46.925953220Z Reading package lists...
+2025-11-23T17:12:47.157578429Z Building dependency tree...
+2025-11-23T17:12:47.158121706Z Reading state information...
+2025-11-23T17:12:47.352886454Z lsof is already the newest version (4.93.2+dfsg-1.1build2).
+2025-11-23T17:12:47.352918234Z The following NEW packages will be installed:
+2025-11-23T17:12:47.352963152Z   psmisc
+2025-11-23T17:12:49.728728228Z 0 upgraded, 1 newly installed, 0 to remove and 62 not upgraded.
+2025-11-23T17:12:49.728775188Z Need to get 119 kB of archives.
+2025-11-23T17:12:49.728781756Z After this operation, 463 kB of additional disk space will be used.
+2025-11-23T17:12:49.728787338Z Get:1 https://mirrors.tuna.tsinghua.edu.cn/ubuntu jammy/main amd64 psmisc amd64 23.4-2build3 [119 kB]
+2025-11-23T17:12:50.505174827Z debconf: delaying package configuration, since apt-utils is not installed
+2025-11-23T17:12:50.546985395Z Fetched 119 kB in 3s (40.8 kB/s)
+2025-11-23T17:12:50.574158157Z Selecting previously unselected package psmisc.
+2025-11-23T17:12:50.608960756Z (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 70438 files and directories currently installed.)
+2025-11-23T17:12:50.610526253Z Preparing to unpack .../psmisc_23.4-2build3_amd64.deb ...
+2025-11-23T17:12:50.611109746Z Unpacking psmisc (23.4-2build3) ...
+2025-11-23T17:12:50.649855512Z Setting up psmisc (23.4-2build3) ...
+2025-11-23T17:12:50.654022834Z Processing triggers for man-db (2.10.2-1) ...
+2025-11-23T17:12:53.734943911Z Checking for processes holding GPU device files...
+2025-11-23T17:12:54.491146675Z Found processes holding GPU devices: 1
+2025-11-23T17:12:54.491194895Z 19
+2025-11-23T17:12:54.491201465Z 542
+2025-11-23T17:12:54.491206675Z 543
+2025-11-23T17:12:54.491211699Z Killing process 1...
+2025-11-23T17:12:54.491218737Z Killing process 542...
+2025-11-23T17:12:54.491538987Z Killing process 543...
+2025-11-23T17:12:56.495918969Z Using fuser to kill processes on GPU devices...
+2025-11-23T17:12:58.527555291Z Checking GPU...
+2025-11-23T17:12:58.555804116Z NVIDIA A40, 46068 MiB
+2025-11-23T17:12:58.576007082Z Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for better memory management
+2025-11-23T17:12:58.576027638Z Detected 1 GPU(s)
+2025-11-23T17:12:58.576030067Z Checking GPU status...
+2025-11-23T17:12:58.596032037Z index, name, utilization.gpu [%], memory.used [MiB], compute_mode
+2025-11-23T17:12:58.597357477Z 0, NVIDIA A40, 0, 0, Default
+2025-11-23T17:12:58.631166015Z Verifying GPU accessibility...
+2025-11-23T17:12:59.359216755Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-23T17:12:59.359246505Z   import pynvml  # type: ignore[import]
+2025-11-23T17:13:00.384736758Z GPU accessibility verified on attempt 1
+2025-11-23T17:13:00.757286143Z Starting training...
+2025-11-23T17:13:03.759945543Z Using REASONING FAST training configuration (20-30 minutes)
+2025-11-23T17:13:03.759993373Z Note: Trains reasoning model with XML format
+2025-11-23T17:13:03.763994287Z ==========================================
+2025-11-23T17:13:03.764001917Z Starting GRPO Training (Cloud)
+2025-11-23T17:13:03.764035054Z ==========================================
+2025-11-23T17:13:03.764043934Z Config: reasoning_fast
+2025-11-23T17:13:03.764054580Z Config file: examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml
+2025-11-23T17:13:03.764093927Z Training script: examples/cloud_gsm8k/gsm8k_grpo_train.py
+2025-11-23T17:13:03.764105227Z Experiment: gsm8k-grpo-reasoning-fast
+2025-11-23T17:13:03.764113840Z Trial: trial_20251123_171303
+2025-11-23T17:13:03.764147054Z GPU: NVIDIA A40 (46068 MB)
+2025-11-23T17:13:03.764205984Z WandB API key: e1adc5be02...
+2025-11-23T17:13:03.764219453Z ==========================================
+2025-11-23T17:13:04.956248891Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-23T17:13:04.956275502Z   import pynvml  # type: ignore[import]
+2025-11-23T17:13:09.473606924Z [37m20251123-17:13:09.473 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-23T17:13:09.473667046Z [37m20251123-17:13:09.473 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-23T17:13:09.473941666Z [37m20251123-17:13:09.473 name-resolve INFO: No such name resolve path: ./tmp/areal/name_resolve/root/gsm8k-grpo-reasoning-fast/trial_20251123_171303[0m
+2025-11-23T17:13:09.597714747Z [37m20251123-17:13:09.597 Local Scheduler INFO: LocalLauncher: experiment_name=gsm8k-grpo-reasoning-fast, trial_name=trial_20251123_171303, fileroot=/workspace/outputs/grpo, run_id=0, is_recover_run=False[0m
+2025-11-23T17:13:09.608413839Z [37m20251123-17:13:09.608 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL CUDA_VISIBLE_DEVICES=0 stdbuf -oL python3 -m areal.launcher.sglang_server examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml experiment_name=gsm8k-grpo-reasoning-fast trial_name=trial_20251123_171303 sglang.random_seed=1 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-fast/trial_20251123_171303/llm_server.log[0m
+2025-11-23T17:13:10.856229108Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-23T17:13:10.856292915Z   import pynvml  # type: ignore[import]
+2025-11-23T17:13:12.474817428Z [37m20251123-17:13:12.474 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-23T17:13:12.474865761Z [37m20251123-17:13:12.474 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-23T17:13:12.591252382Z [37m20251123-17:13:12.590 SGLangServer Wrapper INFO: Launch command: python3 -m sglang.launch_server --host 172.16.32.2 --port 36134 --tokenizer-path Qwen/Qwen2.5-0.5B-Instruct --tokenizer-mode auto --load-format auto --trust-remote-code --device cuda --tp-size 1 --base-gpu-id 0 --nnodes 1 --node-rank 0 --dist-init-addr localhost:48178 --model-path Qwen/Qwen2.5-0.5B-Instruct --random-seed 1 --skip-tokenizer-init --disable-radix-cache --torch-compile-max-bs 32 --triton-attention-num-kv-splits 8 --num-continuous-decode-steps 1 --attention-backend triton --context-length 4096 --mem-fraction-static 0.6 --chunked-prefill-size -1 --max-prefill-tokens 32768 --schedule-policy lpm --schedule-conservativeness 1.0 --cpu-offload-gb 0 --dtype bfloat16 --kv-cache-dtype auto --dp-size 1 --ep-size 1 --max-loaded-loras 1 --max-loras-per-batch 1 --lora-backend triton --log-level warning --log-level-http warning --log-requests-level 0 --enable-metrics --decode-log-interval 1[0m
+2025-11-23T17:13:13.990367709Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-23T17:13:13.990439456Z   import pynvml  # type: ignore[import]
+2025-11-23T17:13:20.472905085Z INFO 11-23 17:13:20 [__init__.py:216] Automatically detected platform cuda.
+2025-11-23T17:13:21.748809025Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-23T17:13:22.664657980Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-23T17:13:22.664688639Z   import pynvml  # type: ignore[import]
+2025-11-23T17:13:22.829766062Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-23T17:13:22.829810259Z   import pynvml  # type: ignore[import]
+2025-11-23T17:13:28.552741477Z INFO 11-23 17:13:28 [__init__.py:216] Automatically detected platform cuda.
+2025-11-23T17:13:28.591336893Z INFO 11-23 17:13:28 [__init__.py:216] Automatically detected platform cuda.
+2025-11-23T17:13:29.433216787Z `torch_dtype` is deprecated! Use `dtype` instead!
+2025-11-23T17:13:29.864424350Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-23T17:13:29.879375742Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-23T17:13:29.880261829Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-23T17:13:29.880930625Z [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2025-11-23T17:13:29.953296982Z [2025-11-23 17:13:29] MOE_RUNNER_BACKEND is not initialized, using triton backend
+2025-11-23T17:13:30.533217627Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-23T17:13:30.533267517Z   warnings.warn(
+2025-11-23T17:13:30.533277550Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-23T17:13:30.533283037Z   warnings.warn(
+2025-11-23T17:13:34.324756911Z Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
+2025-11-23T17:13:34.527926969Z Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  4.93it/s]
+2025-11-23T17:13:34.528383407Z Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  4.92it/s]
+2025-11-23T17:13:57.696299268Z   0%|          | 0/23 [00:00<?, ?it/s]Capturing batches (bs=160 avail_mem=17.44 GB):   0%|          | 0/23 [00:00<?, ?it/s]Capturing batches (bs=160 avail_mem=17.44 GB):   4%|▍         | 1/23 [00:21<07:44, 21.12s/it]Capturing batches (bs=152 avail_mem=17.35 GB):   4%|▍         | 1/23 [00:21<07:44, 21.12s/it]Capturing batches (bs=144 avail_mem=17.34 GB):   4%|▍         | 1/23 [00:21<07:44, 21.12s/it]Capturing batches (bs=144 avail_mem=17.34 GB):  13%|█▎        | 3/23 [00:21<01:50,  5.52s/it]Capturing batches (bs=136 avail_mem=17.34 GB):  13%|█▎        | 3/23 [00:21<01:50,  5.52s/it]Capturing batches (bs=128 avail_mem=17.33 GB):  13%|█▎        | 3/23 [00:21<01:50,  5.52s/it]Capturing batches (bs=128 avail_mem=17.33 GB):  22%|██▏       | 5/23 [00:21<00:48,  2.71s/it]Capturing batches (bs=120 avail_mem=17.32 GB):  22%|██▏       | 5/23 [00:21<00:48,  2.71s/it]Capturing batches (bs=112 avail_mem=17.32 GB):  22%|██▏       | 5/23 [00:21<00:48,  2.71s/it]Capturing batches (bs=112 avail_mem=17.32 GB):  30%|███       | 7/23 [00:21<00:25,  1.59s/it]Capturing batches (bs=104 avail_mem=17.31 GB):  30%|███       | 7/23 [00:21<00:25,  1.59s/it]Capturing batches (bs=96 avail_mem=17.30 GB):  30%|███       | 7/23 [00:21<00:25,  1.59s/it] Capturing batches (bs=96 avail_mem=17.30 GB):  39%|███▉      | 9/23 [00:21<00:14,  1.01s/it]Capturing batches (bs=88 avail_mem=17.29 GB):  39%|███▉      | 9/23 [00:21<00:14,  1.01s/it]Capturing batches (bs=80 avail_mem=17.29 GB):  39%|███▉      | 9/23 [00:21<00:14,  1.01s/it]Capturing batches (bs=80 avail_mem=17.29 GB):  48%|████▊     | 11/23 [00:21<00:08,  1.47it/s]Capturing batches (bs=72 avail_mem=17.28 GB):  48%|████▊     | 11/23 [00:21<00:08,  1.47it/s]Capturing batches (bs=64 avail_mem=17.28 GB):  48%|████▊     | 11/23 [00:21<00:08,  1.47it/s]Capturing batches (bs=64 avail_mem=17.28 GB):  57%|█████▋    | 13/23 [00:21<00:04,  2.12it/s]Capturing batches (bs=56 avail_mem=17.27 GB):  57%|█████▋    | 13/23 [00:21<00:04,  2.12it/s]Capturing batches (bs=48 avail_mem=17.27 GB):  57%|█████▋    | 13/23 [00:21<00:04,  2.12it/s]Capturing batches (bs=48 avail_mem=17.27 GB):  65%|██████▌   | 15/23 [00:21<00:02,  2.96it/s]Capturing batches (bs=40 avail_mem=17.26 GB):  65%|██████▌   | 15/23 [00:21<00:02,  2.96it/s]Capturing batches (bs=32 avail_mem=17.25 GB):  65%|██████▌   | 15/23 [00:21<00:02,  2.96it/s]Capturing batches (bs=32 avail_mem=17.25 GB):  74%|███████▍  | 17/23 [00:22<00:01,  4.02it/s]Capturing batches (bs=24 avail_mem=17.25 GB):  74%|███████▍  | 17/23 [00:22<00:01,  4.02it/s]Capturing batches (bs=16 avail_mem=17.24 GB):  74%|███████▍  | 17/23 [00:22<00:01,  4.02it/s]Capturing batches (bs=16 avail_mem=17.24 GB):  83%|████████▎ | 19/23 [00:22<00:00,  5.08it/s]Capturing batches (bs=8 avail_mem=17.23 GB):  83%|████████▎ | 19/23 [00:22<00:00,  5.08it/s] Capturing batches (bs=4 avail_mem=17.23 GB):  83%|████████▎ | 19/23 [00:22<00:00,  5.08it/s]Capturing batches (bs=4 avail_mem=17.23 GB):  91%|█████████▏| 21/23 [00:22<00:00,  6.48it/s]Capturing batches (bs=2 avail_mem=17.22 GB):  91%|█████████▏| 21/23 [00:22<00:00,  6.48it/s]Capturing batches (bs=1 avail_mem=17.21 GB):  91%|█████████▏| 21/23 [00:22<00:00,  6.48it/s]Capturing batches (bs=1 avail_mem=17.21 GB): 100%|██████████| 23/23 [00:22<00:00,  7.90it/s]Capturing batches (bs=1 avail_mem=17.21 GB): 100%|██████████| 23/23 [00:22<00:00,  1.02it/s]
+2025-11-23T17:14:03.788866101Z [37m20251123-17:14:03.788 SGLangServer Wrapper INFO: SGLang server launched at: http://172.16.32.2:36134[0m
+2025-11-23T17:14:04.693902595Z [37m20251123-17:14:04.693 Launcher Utils INFO: Found 1 rollout servers: 172.16.32.2:36134[0m
+2025-11-23T17:14:04.693963995Z [37m20251123-17:14:04.693 Local Scheduler INFO: LLM inference server launched at: AREAL_LLM_SERVER_ADDRS=172.16.32.2:36134[0m
+2025-11-23T17:14:04.697229828Z [37m20251123-17:14:04.696 Local Scheduler INFO: Starting local process with command: TOKENIZERS_PARALLELISM=true PYTORCH_KERNEL_CACHE_PATH=/tmp/areal/.cache/root/torch/kernels/ TRITON_CACHE_DIR=/tmp/areal/.cache/root/triton/ VLLM_CACHE_ROOT=/tmp/areal/.cache/root/vllm/ CUDA_DEVICE_MAX_CONNECTIONS=1 PYTHONPATH=/workspace/AReaL:/workspace/AReaL AREAL_LLM_SERVER_ADDRS=172.16.32.2:36134 AREAL_RECOVER_RUN=0 NCCL_CUMEM_ENABLE=0 NCCL_NVLS_ENABLE=0 CUDA_VISIBLE_DEVICES=0 stdbuf -oL torchrun --nnodes 1 --nproc-per-node 1 --master-addr localhost --master-port 35383 examples/cloud_gsm8k/gsm8k_grpo_train.py --config examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml experiment_name=gsm8k-grpo-reasoning-fast trial_name=trial_20251123_171303 2>&1 | tee -a /workspace/outputs/grpo/logs/root/gsm8k-grpo-reasoning-fast/trial_20251123_171303/trainer.log[0m
+2025-11-23T17:14:04.698699868Z [37m20251123-17:14:04.698 Local Scheduler INFO: Waiting for 2 local running processes, pids: 785 1692[0m
+2025-11-23T17:14:05.362038358Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-23T17:14:05.362074611Z   import pynvml  # type: ignore[import]
+2025-11-23T17:14:06.848101283Z /usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+2025-11-23T17:14:06.848150070Z   import pynvml  # type: ignore[import]
+2025-11-23T17:14:14.831460911Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'repr' attribute with value False was provided to the `Field()` function, which has no effect in the context it was used. 'repr' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-23T17:14:14.831501136Z   warnings.warn(
+2025-11-23T17:14:14.831504983Z /usr/local/lib/python3.12/dist-packages/pydantic/_internal/_generate_schema.py:2249: UnsupportedFieldAttributeWarning: The 'frozen' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'frozen' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+2025-11-23T17:14:14.831507282Z   warnings.warn(
+2025-11-23T17:14:17.583967249Z [37m20251123-17:14:17.583 Platform init INFO: Detected CUDA device: NVIDIA A40[0m
+2025-11-23T17:14:17.584671369Z [37m20251123-17:14:17.583 Platform init INFO: Initializing CUDA platform (NVIDIA).[0m
+2025-11-23T17:14:17.890684252Z [37m20251123-17:14:17.890 [FSDP Engine Rank 0] INFO: Initializing device mesh with parallel dims (dp=1, sp=1, tp=1, ep=1, etp=1, world_size=1).[0m
+2025-11-23T17:14:17.892989225Z [37m20251123-17:14:17.892 [FSDP Engine Rank 0] INFO: Data parallel head 0 and rank 0[0m
+2025-11-23T17:14:21.691009893Z Generating train split:   0%|          | 0/7473 [00:00<?, ? examples/s]Generating train split: 100%|██████████| 7473/7473 [00:00<00:00, 373245.46 examples/s]
+2025-11-23T17:14:21.706229315Z Generating test split:   0%|          | 0/1319 [00:00<?, ? examples/s]Generating test split: 100%|██████████| 1319/1319 [00:00<00:00, 198624.46 examples/s]
+2025-11-23T17:14:22.269679816Z Map:   0%|          | 0/7473 [00:00<?, ? examples/s]Map:  27%|██▋       | 2000/7473 [00:00<00:00, 19055.58 examples/s]Map:  65%|██████▌   | 4869/7473 [00:00<00:00, 9682.99 examples/s] Map: 100%|██████████| 7473/7473 [00:00<00:00, 13358.04 examples/s]
+2025-11-23T17:14:23.957714059Z Filter:   0%|          | 0/7473 [00:00<?, ? examples/s]Filter:  13%|█▎        | 1000/7473 [00:00<00:01, 4358.55 examples/s]Filter:  27%|██▋       | 2000/7473 [00:00<00:01, 4513.09 examples/s]Filter:  40%|████      | 3000/7473 [00:00<00:00, 4629.81 examples/s]Filter:  54%|█████▎    | 4000/7473 [00:00<00:00, 4624.97 examples/s]Filter:  67%|██████▋   | 5000/7473 [00:01<00:00, 4627.12 examples/s]Filter:  80%|████████  | 6000/7473 [00:01<00:00, 4653.98 examples/s]Filter:  94%|█████████▎| 7000/7473 [00:01<00:00, 4680.63 examples/s]Filter: 100%|██████████| 7473/7473 [00:01<00:00, 4682.68 examples/s]Filter: 100%|██████████| 7473/7473 [00:01<00:00, 4632.42 examples/s]
+2025-11-23T17:14:25.734085162Z Map:   0%|          | 0/1319 [00:00<?, ? examples/s]Map: 100%|██████████| 1319/1319 [00:00<00:00, 14383.25 examples/s]
+2025-11-23T17:14:26.107875511Z Filter:   0%|          | 0/1319 [00:00<?, ? examples/s]Filter:  76%|███████▌  | 1000/1319 [00:00<00:00, 4459.21 examples/s]Filter: 100%|██████████| 1319/1319 [00:00<00:00, 4419.76 examples/s]
+2025-11-23T17:14:26.108255014Z [REASONING-FAST] Limiting dataset from 7473 to 200 samples
+2025-11-23T17:14:26.111428038Z [37m20251123-17:14:26.111 Launcher Utils INFO: Found 1 rollout servers: 172.16.32.2:36134[0m
+2025-11-23T17:14:26.111968317Z [37m20251123-17:14:26.111 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
+2025-11-23T17:14:26.111980068Z [37m20251123-17:14:26.111 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
+2025-11-23T17:14:27.115923342Z [37m20251123-17:14:27.115 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
+2025-11-23T17:14:27.118953442Z [37m20251123-17:14:27.118 Launcher Utils INFO: Found 1 rollout servers: 172.16.32.2:36134[0m
+2025-11-23T17:14:27.119450557Z [37m20251123-17:14:27.118 [Remote Inference Engine Rank 0] INFO: Get server addresses from name_resolve.[0m
+2025-11-23T17:14:27.119459137Z [37m20251123-17:14:27.118 [Remote Inference Engine Rank 0] INFO: Waiting for server ready...[0m
+2025-11-23T17:14:28.122371262Z [37m20251123-17:14:28.121 [Remote Inference Engine Rank 0] INFO: Servers are all ready![0m
+2025-11-23T17:14:29.232757241Z [37m20251123-17:14:29.232 [FSDP Engine Rank 0] INFO: Model creation and loading time: 0.991217290982604[0m
+2025-11-23T17:14:29.353309806Z [37m20251123-17:14:29.352 [FSDP Engine Rank 0] INFO: Applying FSDP2 with N-D parallelism for 0.12 seconds[0m
+2025-11-23T17:14:29.354418169Z [37m20251123-17:14:29.353 [FSDP Engine Rank 0] INFO: Create optimizer time: 0.0008729882538318634[0m
+2025-11-23T17:14:29.557154160Z swanlab: SwanLab run disabled, the data will not be saved or uploaded.
+2025-11-23T17:14:30.139531995Z ================================================================================
+2025-11-23T17:14:30.139539425Z [REASONING-FAST MODE]
+2025-11-23T17:14:30.139983590Z   Dataset size: 200 samples (limited from 7473)
+2025-11-23T17:14:30.139997360Z   Batch size: 4
+2025-11-23T17:14:30.140003235Z   Steps per epoch: 50
+2025-11-23T17:14:30.140008610Z   Total epochs: 1
+2025-11-23T17:14:30.140013533Z   Total steps: 50
+2025-11-23T17:14:30.140018435Z   Estimated time: ~50 minutes (~0.8 hours) at ~1 step/min
+2025-11-23T17:14:30.140023835Z   Circuit breaker: Enabled (threshold: 50 consecutive zero rewards)
+2025-11-23T17:14:30.140029575Z ================================================================================
+2025-11-23T17:14:34.933845251Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.933885726Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.942778812Z [31m20251123-17:14:34.942 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.943140632Z [37m20251123-17:14:34.942 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.946347165Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.946360788Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.946820160Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.946848575Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.947178015Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.947201350Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.948024580Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.948035987Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.948324308Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.948329128Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.949041983Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.949051428Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.949054478Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.949057450Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.949060291Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.949063177Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.949272000Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.949299233Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.949541271Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.949548257Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.949831153Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.949840971Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.951148620Z [31m20251123-17:14:34.950 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.951381610Z [37m20251123-17:14:34.951 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.951905087Z [31m20251123-17:14:34.951 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.952162104Z [37m20251123-17:14:34.951 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.952475463Z [31m20251123-17:14:34.952 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.952487020Z [37m20251123-17:14:34.952 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.953556167Z [31m20251123-17:14:34.953 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.954037347Z [37m20251123-17:14:34.953 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.954042542Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.954044868Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.954046770Z [31m20251123-17:14:34.953 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.954265517Z [37m20251123-17:14:34.954 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.954917460Z [31m20251123-17:14:34.954 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.955148478Z [37m20251123-17:14:34.954 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.955155918Z [31m20251123-17:14:34.954 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.955161090Z [37m20251123-17:14:34.955 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.955749190Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.955780806Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.955944847Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.955948918Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.955950943Z [31m20251123-17:14:34.955 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.956147141Z [37m20251123-17:14:34.955 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.956416144Z [31m20251123-17:14:34.956 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.956750351Z [37m20251123-17:14:34.956 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.956760776Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.956766318Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.957071358Z [31m20251123-17:14:34.956 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.957312826Z [37m20251123-17:14:34.957 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.957512346Z [31m20251123-17:14:34.957 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.957807158Z [37m20251123-17:14:34.957 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:34.958069203Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.958076581Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.958289336Z [31m20251123-17:14:34.958 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.958296446Z [37m20251123-17:14:34.958 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.958631183Z [31m20251123-17:14:34.958 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.958995138Z [37m20251123-17:14:34.958 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.959276494Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.959283114Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.959553811Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.959560761Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.959565868Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.959570824Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.959859844Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.959895694Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.959988738Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.959995537Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.961578668Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.961591084Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.961859998Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.961873178Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.962405811Z [31m20251123-17:14:34.962 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.962797838Z [37m20251123-17:14:34.962 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.962836508Z [31m20251123-17:14:34.962 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.962842817Z [37m20251123-17:14:34.962 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.963107547Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.963116424Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.963393627Z [31m20251123-17:14:34.963 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.964118861Z [37m20251123-17:14:34.963 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.964458614Z [31m20251123-17:14:34.964 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.964467454Z [37m20251123-17:14:34.964 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.964741864Z [31m20251123-17:14:34.964 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.964754447Z [37m20251123-17:14:34.964 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.964760321Z [31m20251123-17:14:34.964 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.965163664Z [37m20251123-17:14:34.964 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.965174444Z [31m20251123-17:14:34.965 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.965384337Z [37m20251123-17:14:34.965 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.966397444Z [31m20251123-17:14:34.966 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.966684716Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.966699388Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.966701918Z [37m20251123-17:14:34.966 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.966703873Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.966705578Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.966707504Z [31m20251123-17:14:34.966 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.966709487Z [37m20251123-17:14:34.966 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.967286469Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.967297206Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.967837336Z [31m20251123-17:14:34.967 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.968056347Z [37m20251123-17:14:34.967 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:34.968745719Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.968770168Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.968774759Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.968778423Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.969132949Z [31m20251123-17:14:34.969 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.969303417Z [37m20251123-17:14:34.969 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.969739349Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.969752018Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.969934872Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.969943174Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.970214955Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.970217186Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.970539830Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.970541891Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.971042754Z [31m20251123-17:14:34.970 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.971452861Z [37m20251123-17:14:34.971 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.971664262Z [31m20251123-17:14:34.971 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.971668925Z [31m20251123-17:14:34.971 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.972178547Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.972180432Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.972623407Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.972627912Z """
+2025-11-23T17:14:34.972630041Z Traceback (most recent call last):
+2025-11-23T17:14:34.972631594Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.972633479Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.972635807Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.972637302Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.972639025Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.972640552Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.972642000Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.972643600Z     ^^
+2025-11-23T17:14:34.972645067Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.972646572Z """
+2025-11-23T17:14:34.973335870Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.973522833Z Traceback (most recent call last):
+2025-11-23T17:14:34.973525376Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.973532003Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.973533397Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.974049159Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.974052526Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.974054201Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.974055726Z     return await fut
+2025-11-23T17:14:34.974057651Z            ^^^^^^^^^
+2025-11-23T17:14:34.974059116Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.974060884Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.974062778Z     ^^
+2025-11-23T17:14:34.974064731Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.974360815Z [31m20251123-17:14:34.974 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.974604913Z [37m20251123-17:14:34.974 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.974606706Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.974622159Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.976939071Z [31m20251123-17:14:34.974 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 6 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:34.976946145Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.976947909Z """
+2025-11-23T17:14:34.976949394Z Traceback (most recent call last):
+2025-11-23T17:14:34.976950821Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.976952328Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.976953757Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.976955441Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.976956919Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.976958358Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.976959774Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.976961683Z     ^^
+2025-11-23T17:14:34.976963103Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.976964626Z """
+2025-11-23T17:14:34.976967397Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.976970241Z Traceback (most recent call last):
+2025-11-23T17:14:34.976971624Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:34.976973179Z     result = await async_task
+2025-11-23T17:14:34.976975072Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.976976443Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:34.976977869Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:34.976979293Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.976980724Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:34.976982109Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:34.976983561Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.976984952Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:34.976986407Z     raise e
+2025-11-23T17:14:34.976987846Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.976989419Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.976990947Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.976992377Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.976993778Z     return await fut
+2025-11-23T17:14:34.976995149Z            ^^^^^^^^^
+2025-11-23T17:14:34.976996502Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.976997954Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.977003390Z     ^^
+2025-11-23T17:14:34.977004860Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.977370377Z [31m20251123-17:14:34.976 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.977373379Z [37m20251123-17:14:34.977 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.977759648Z [31m20251123-17:14:34.977 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.978082609Z [37m20251123-17:14:34.977 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.978089729Z [31m20251123-17:14:34.977 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.978095042Z [37m20251123-17:14:34.977 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.978398928Z [31m20251123-17:14:34.978 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.978422180Z [37m20251123-17:14:34.978 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.978428182Z [31m20251123-17:14:34.978 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.978433448Z [37m20251123-17:14:34.978 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.979302218Z [31m20251123-17:14:34.979 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.979509688Z [31m20251123-17:14:34.979 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.980374160Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.980394950Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.980694554Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.980715620Z """
+2025-11-23T17:14:34.980719921Z Traceback (most recent call last):
+2025-11-23T17:14:34.980724442Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.980728305Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.980732040Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.980735592Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.980739167Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.980742862Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.980746652Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.980750520Z     ^^
+2025-11-23T17:14:34.980754517Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.980758035Z """
+2025-11-23T17:14:34.980765527Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.980772852Z Traceback (most recent call last):
+2025-11-23T17:14:34.981188123Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.981196903Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.981201983Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.981447103Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.981451115Z     return await fut
+2025-11-23T17:14:34.981453619Z            ^^^^^^^^^
+2025-11-23T17:14:34.981455971Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.981458177Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.981460640Z     ^^
+2025-11-23T17:14:34.981462791Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.981465053Z [31m20251123-17:14:34.981 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.981470695Z [37m20251123-17:14:34.981 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:34.981757460Z [31m20251123-17:14:34.981 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.981775860Z [31m20251123-17:14:34.981 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.982187892Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.982191823Z """
+2025-11-23T17:14:34.982194111Z Traceback (most recent call last):
+2025-11-23T17:14:34.982196318Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.982198593Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.982212688Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.982215143Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.982217373Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.982219632Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.982221830Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.982224412Z     ^^
+2025-11-23T17:14:34.982226563Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.982228800Z """
+2025-11-23T17:14:34.982855836Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.982866190Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.982906280Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.982911343Z Traceback (most recent call last):
+2025-11-23T17:14:34.982916603Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.982921716Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.982926583Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.982931526Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.982936553Z     return await fut
+2025-11-23T17:14:34.982941693Z            ^^^^^^^^^
+2025-11-23T17:14:34.982946530Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.982951720Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.982956606Z     ^^
+2025-11-23T17:14:34.982962156Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.982967240Z [31m20251123-17:14:34.982 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.982972380Z [31m20251123-17:14:34.982 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.982977480Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.982982440Z """
+2025-11-23T17:14:34.982987516Z Traceback (most recent call last):
+2025-11-23T17:14:34.982992376Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.982997268Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.983002163Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.983006906Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.983011720Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.983016710Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.983021640Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.983031573Z     ^^
+2025-11-23T17:14:34.983036340Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.983041360Z """
+2025-11-23T17:14:34.983050608Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.983060176Z Traceback (most recent call last):
+2025-11-23T17:14:34.983065418Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.983070353Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.983075220Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.983079973Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.983084900Z     return await fut
+2025-11-23T17:14:34.983089926Z            ^^^^^^^^^
+2025-11-23T17:14:34.983095650Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.983100858Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.983105703Z     ^^
+2025-11-23T17:14:34.983110688Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.983661202Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.983669847Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.984043434Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.984046861Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.984049678Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.984051876Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.984434954Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.984437924Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.984967326Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:34.984971792Z   string = string.replace("\%", "")
+2025-11-23T17:14:34.987095596Z [31m20251123-17:14:34.986 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.987319370Z [31m20251123-17:14:34.987 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.987322488Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.987324806Z """
+2025-11-23T17:14:34.987327400Z Traceback (most recent call last):
+2025-11-23T17:14:34.987329678Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.987331857Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.987334435Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.987336658Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.987338864Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.987341020Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.987343224Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.987345712Z     ^^
+2025-11-23T17:14:34.987347972Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.987350142Z """
+2025-11-23T17:14:34.987354280Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.987358597Z Traceback (most recent call last):
+2025-11-23T17:14:34.987842446Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.987860299Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.987866009Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.987870760Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.987875536Z     return await fut
+2025-11-23T17:14:34.987880680Z            ^^^^^^^^^
+2025-11-23T17:14:34.987885440Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.987890539Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.987895330Z     ^^
+2025-11-23T17:14:34.987900463Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.988546224Z [31m20251123-17:14:34.988 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.989072198Z [31m20251123-17:14:34.988 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.989285123Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.989289463Z """
+2025-11-23T17:14:34.989291863Z Traceback (most recent call last):
+2025-11-23T17:14:34.989294278Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.989296544Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.989298790Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.989300932Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.989310655Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.989312988Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.989315173Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.989317583Z     ^^
+2025-11-23T17:14:34.989319728Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.989321974Z """
+2025-11-23T17:14:34.989593033Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.989602836Z Traceback (most recent call last):
+2025-11-23T17:14:34.989607980Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.989612833Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.989617643Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.989636936Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.989641956Z     return await fut
+2025-11-23T17:14:34.989646813Z            ^^^^^^^^^
+2025-11-23T17:14:34.989651623Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.989656640Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.989661656Z     ^^
+2025-11-23T17:14:34.989666590Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.990011854Z [31m20251123-17:14:34.989 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.990268243Z [31m20251123-17:14:34.989 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.990874976Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.990892881Z """
+2025-11-23T17:14:34.990901736Z Traceback (most recent call last):
+2025-11-23T17:14:34.990909751Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.990918506Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.990927541Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.990936833Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.990942063Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.990947001Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.990955353Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.990960343Z     ^^
+2025-11-23T17:14:34.990965133Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.990969936Z """
+2025-11-23T17:14:34.991139156Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.991149151Z Traceback (most recent call last):
+2025-11-23T17:14:34.991154441Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.991159303Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.991164089Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.991168849Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.991173681Z     return await fut
+2025-11-23T17:14:34.991178481Z            ^^^^^^^^^
+2025-11-23T17:14:34.991183293Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.991188723Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.991193631Z     ^^
+2025-11-23T17:14:34.991198436Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.991203566Z [31m20251123-17:14:34.990 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.991335121Z [31m20251123-17:14:34.991 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.991342831Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.991365141Z """
+2025-11-23T17:14:34.991370583Z Traceback (most recent call last):
+2025-11-23T17:14:34.991375481Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.991380481Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.991385476Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.991390411Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.991395393Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.991400259Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.991405099Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.991410166Z     ^^
+2025-11-23T17:14:34.991414913Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.991419756Z """
+2025-11-23T17:14:34.991429081Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.991438423Z Traceback (most recent call last):
+2025-11-23T17:14:34.991773493Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.991792546Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.991800376Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.991807826Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.991815333Z     return await fut
+2025-11-23T17:14:34.991822809Z            ^^^^^^^^^
+2025-11-23T17:14:34.991830196Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.991838259Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.991847893Z     ^^
+2025-11-23T17:14:34.991854191Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.991859171Z [31m20251123-17:14:34.991 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.991864103Z [31m20251123-17:14:34.991 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.991869219Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.991874156Z """
+2025-11-23T17:14:34.991883443Z Traceback (most recent call last):
+2025-11-23T17:14:34.991895219Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.991902889Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.991909899Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.991917103Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.991923866Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.991931206Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.991938469Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.991945829Z     ^^
+2025-11-23T17:14:34.991953049Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.991959993Z """
+2025-11-23T17:14:34.991972993Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.991987051Z Traceback (most recent call last):
+2025-11-23T17:14:34.991994003Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.992001346Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.992008829Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.992025493Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.992033613Z     return await fut
+2025-11-23T17:14:34.992040786Z            ^^^^^^^^^
+2025-11-23T17:14:34.992048066Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.992055909Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.992063259Z     ^^
+2025-11-23T17:14:34.992084081Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.992092661Z [31m20251123-17:14:34.991 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.992100736Z [31m20251123-17:14:34.991 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.992292394Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.992300009Z """
+2025-11-23T17:14:34.992305091Z Traceback (most recent call last):
+2025-11-23T17:14:34.992309961Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.992314891Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.992319689Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.992324551Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.992329514Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.992334449Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.992339314Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.992344349Z     ^^
+2025-11-23T17:14:34.992349164Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.992353961Z """
+2025-11-23T17:14:34.992363389Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.992372949Z Traceback (most recent call last):
+2025-11-23T17:14:34.992377706Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.992382611Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.992387866Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.992392659Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.992397504Z     return await fut
+2025-11-23T17:14:34.992402664Z            ^^^^^^^^^
+2025-11-23T17:14:34.992407504Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.992412379Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.992417254Z     ^^
+2025-11-23T17:14:34.992421964Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.992577151Z [31m20251123-17:14:34.992 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:34.992586416Z [31m20251123-17:14:34.992 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:34.992591754Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:34.992596861Z """
+2025-11-23T17:14:34.992601816Z Traceback (most recent call last):
+2025-11-23T17:14:34.992606561Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:34.992611466Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:34.992616301Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.992639446Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:34.992653779Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:34.992658904Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.992663934Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.992668871Z     ^^
+2025-11-23T17:14:34.992673651Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:34.992685001Z """
+2025-11-23T17:14:34.992694521Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:34.992704146Z Traceback (most recent call last):
+2025-11-23T17:14:34.992708936Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:34.992714011Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:34.992726494Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:34.992731461Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:34.992736256Z     return await fut
+2025-11-23T17:14:34.992741161Z            ^^^^^^^^^
+2025-11-23T17:14:34.992745954Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:34.992959831Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:34.992970449Z     ^^
+2025-11-23T17:14:34.992978876Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.357805587Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:35.357852547Z   string = string.replace("\%", "")
+2025-11-23T17:14:35.364491538Z [31m20251123-17:14:35.364 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:35.364837785Z [37m20251123-17:14:35.364 Reward API INFO: Retrying... (attempt 1/4)[0m
+2025-11-23T17:14:35.369210385Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:35.369225248Z   string = string.replace("\%", "")
+2025-11-23T17:14:35.375946973Z [31m20251123-17:14:35.375 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:35.376232603Z [37m20251123-17:14:35.375 Reward API INFO: Retrying... (attempt 2/4)[0m
+2025-11-23T17:14:35.380708924Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:35.380731109Z   string = string.replace("\%", "")
+2025-11-23T17:14:35.387787003Z [31m20251123-17:14:35.387 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:35.388179514Z [37m20251123-17:14:35.387 Reward API INFO: Retrying... (attempt 3/4)[0m
+2025-11-23T17:14:35.392879495Z /workspace/AReaL/areal/reward/math_parser.py:290: SyntaxWarning: invalid escape sequence '\%'
+2025-11-23T17:14:35.392894405Z   string = string.replace("\%", "")
+2025-11-23T17:14:35.399852941Z [31m20251123-17:14:35.399 Reward API ERROR: Unexpected error in reward computation: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378)[0m
+2025-11-23T17:14:35.407165276Z [31m20251123-17:14:35.399 Reward API ERROR: Max retries exceeded for unexpected error.[0m
+2025-11-23T17:14:35.407179889Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.407185149Z """
+2025-11-23T17:14:35.407190586Z Traceback (most recent call last):
+2025-11-23T17:14:35.407195476Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.407200376Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.407205464Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.407210849Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.407215669Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.407220629Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.407225479Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.407230476Z     ^^
+2025-11-23T17:14:35.407236172Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.407241849Z """
+2025-11-23T17:14:35.407251766Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.407261392Z Traceback (most recent call last):
+2025-11-23T17:14:35.407266344Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.407271302Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.407276052Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.407281469Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.407301184Z     return await fut
+2025-11-23T17:14:35.407306756Z            ^^^^^^^^^
+2025-11-23T17:14:35.407311659Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.407316759Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.407321636Z     ^^
+2025-11-23T17:14:35.407326629Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.479597532Z [31m20251123-17:14:35.477 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 8 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.479677738Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.479685935Z """
+2025-11-23T17:14:35.479692242Z Traceback (most recent call last):
+2025-11-23T17:14:35.479698398Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.479703678Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.479708922Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.479713725Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.479718842Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.479723732Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.479728728Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.479734052Z     ^^
+2025-11-23T17:14:35.479739205Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.479744135Z """
+2025-11-23T17:14:35.479754072Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.479763512Z Traceback (most recent call last):
+2025-11-23T17:14:35.479768408Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.479773332Z     result = await async_task
+2025-11-23T17:14:35.479778698Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.479783602Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.479788688Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.479793402Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.479798162Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.479803075Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.479807782Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.479812568Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.479830642Z     raise e
+2025-11-23T17:14:35.479835610Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.479840402Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.479845148Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.479849970Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.479854758Z     return await fut
+2025-11-23T17:14:35.479860055Z            ^^^^^^^^^
+2025-11-23T17:14:35.479864748Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.479869772Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.479874572Z     ^^
+2025-11-23T17:14:35.479879458Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.481105292Z [31m20251123-17:14:35.479 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 7 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.481150221Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.481166875Z """
+2025-11-23T17:14:35.481176262Z Traceback (most recent call last):
+2025-11-23T17:14:35.481185328Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.481194115Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.481218031Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.481223532Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.481228615Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.481233602Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.481238562Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.481244042Z     ^^
+2025-11-23T17:14:35.481249398Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.481254345Z """
+2025-11-23T17:14:35.481264312Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.481273938Z Traceback (most recent call last):
+2025-11-23T17:14:35.481279015Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.481283915Z     result = await async_task
+2025-11-23T17:14:35.481289175Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.481294148Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.481299335Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.481304165Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.481309021Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.481313962Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.481318788Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.481323655Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.481332688Z     raise e
+2025-11-23T17:14:35.481341232Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.481349471Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.481356712Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.481364181Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.481372231Z     return await fut
+2025-11-23T17:14:35.481380475Z            ^^^^^^^^^
+2025-11-23T17:14:35.481388232Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.481396538Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.481404938Z     ^^
+2025-11-23T17:14:35.481414012Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.482725102Z [31m20251123-17:14:35.481 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 11 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.482747811Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.482753328Z """
+2025-11-23T17:14:35.482758422Z Traceback (most recent call last):
+2025-11-23T17:14:35.482763535Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.482768945Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.482774045Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.482778878Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.482783792Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.482788622Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.482793492Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.482798442Z     ^^
+2025-11-23T17:14:35.482803292Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.482808185Z """
+2025-11-23T17:14:35.482817882Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.482827141Z Traceback (most recent call last):
+2025-11-23T17:14:35.482831932Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.482851552Z     result = await async_task
+2025-11-23T17:14:35.482857055Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.482861982Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.482866982Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.482871645Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.482876528Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.482881368Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.482886142Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.482890938Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.482895918Z     raise e
+2025-11-23T17:14:35.482900802Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.482905658Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.482910332Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.482915115Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.482919918Z     return await fut
+2025-11-23T17:14:35.482924765Z            ^^^^^^^^^
+2025-11-23T17:14:35.482929418Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.482934305Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.482939101Z     ^^
+2025-11-23T17:14:35.482943878Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.484288002Z [31m20251123-17:14:35.482 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 9 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.484302348Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.484307792Z """
+2025-11-23T17:14:35.484312762Z Traceback (most recent call last):
+2025-11-23T17:14:35.484317898Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.484323342Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.484328358Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.484333275Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.484338278Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.484343111Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.484348008Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.484353028Z     ^^
+2025-11-23T17:14:35.484357982Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.484363215Z """
+2025-11-23T17:14:35.484372758Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.484382208Z Traceback (most recent call last):
+2025-11-23T17:14:35.484387042Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.484391991Z     result = await async_task
+2025-11-23T17:14:35.484397162Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.484401985Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.484406898Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.484411631Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.484416451Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.484421258Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.484426122Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.484431092Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.484436185Z     raise e
+2025-11-23T17:14:35.484441162Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.484446092Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.484450908Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.484461911Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.484467082Z     return await fut
+2025-11-23T17:14:35.484472078Z            ^^^^^^^^^
+2025-11-23T17:14:35.484476832Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.484481931Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.484486872Z     ^^
+2025-11-23T17:14:35.484491722Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.485837202Z [31m20251123-17:14:35.484 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 1 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.485848998Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.485854428Z """
+2025-11-23T17:14:35.485859318Z Traceback (most recent call last):
+2025-11-23T17:14:35.485864332Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.485869415Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.485874302Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.485879272Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.485884068Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.485889165Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.485894152Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.485899115Z     ^^
+2025-11-23T17:14:35.485904211Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.485909091Z """
+2025-11-23T17:14:35.485918678Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.485928162Z Traceback (most recent call last):
+2025-11-23T17:14:35.485932955Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.485937802Z     result = await async_task
+2025-11-23T17:14:35.485942888Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.485947671Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.485952512Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.485957228Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.485961988Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.485966738Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.485971581Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.485976391Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.485981341Z     raise e
+2025-11-23T17:14:35.485986191Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.485990922Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.485995602Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.486000345Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.486039922Z     return await fut
+2025-11-23T17:14:35.486044891Z            ^^^^^^^^^
+2025-11-23T17:14:35.486049642Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.486054632Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.486059631Z     ^^
+2025-11-23T17:14:35.486064492Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.487412363Z [31m20251123-17:14:35.485 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 0 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.487428955Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.487437535Z """
+2025-11-23T17:14:35.487445895Z Traceback (most recent call last):
+2025-11-23T17:14:35.487454183Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.487479968Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.487485781Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.487490723Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.487495603Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.487500523Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.487505465Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.487510803Z     ^^
+2025-11-23T17:14:35.487515685Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.487520688Z """
+2025-11-23T17:14:35.487530218Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.487539618Z Traceback (most recent call last):
+2025-11-23T17:14:35.487544573Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.487550873Z     result = await async_task
+2025-11-23T17:14:35.487559878Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.487569693Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.487577091Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.487585178Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.487593205Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.487601323Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.487609581Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.487633711Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.487646375Z     raise e
+2025-11-23T17:14:35.487651313Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.487656071Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.487660783Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.487665545Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.487670385Z     return await fut
+2025-11-23T17:14:35.487675425Z            ^^^^^^^^^
+2025-11-23T17:14:35.487680203Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.487685135Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.487689905Z     ^^
+2025-11-23T17:14:35.487694723Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.488949148Z [31m20251123-17:14:35.487 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 4 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.488960796Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.488965968Z """
+2025-11-23T17:14:35.488971488Z Traceback (most recent call last):
+2025-11-23T17:14:35.488976588Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.488988406Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.488993413Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.488998373Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.489003238Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.489008113Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.489013126Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.489018203Z     ^^
+2025-11-23T17:14:35.489023051Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.489027971Z """
+2025-11-23T17:14:35.489037431Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.489046898Z Traceback (most recent call last):
+2025-11-23T17:14:35.489051806Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.489063008Z     result = await async_task
+2025-11-23T17:14:35.489068283Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.489073036Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.489077836Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.489082511Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.489087263Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.489091993Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.489096736Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.489101608Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.489106523Z     raise e
+2025-11-23T17:14:35.489111236Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.489115916Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.489120586Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.489125323Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.489130086Z     return await fut
+2025-11-23T17:14:35.489134958Z            ^^^^^^^^^
+2025-11-23T17:14:35.489140188Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.489145163Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.489149948Z     ^^
+2025-11-23T17:14:35.489154663Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.490548739Z [31m20251123-17:14:35.488 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 5 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.490559871Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.490565111Z """
+2025-11-23T17:14:35.490569963Z Traceback (most recent call last):
+2025-11-23T17:14:35.490575046Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.490580409Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.490585183Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.490590016Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.490594866Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.490599611Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.490604451Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.490609423Z     ^^
+2025-11-23T17:14:35.490614216Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.490631909Z """
+2025-11-23T17:14:35.490644069Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.490653473Z Traceback (most recent call last):
+2025-11-23T17:14:35.490658343Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.490663151Z     result = await async_task
+2025-11-23T17:14:35.490668251Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.490673023Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.490677806Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.490682501Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.490687253Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.490691959Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.490696879Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.490701703Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.490706679Z     raise e
+2025-11-23T17:14:35.490711443Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.490716293Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.490721246Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.490731866Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.490737091Z     return await fut
+2025-11-23T17:14:35.490742149Z            ^^^^^^^^^
+2025-11-23T17:14:35.490746843Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.490751713Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.490756571Z     ^^
+2025-11-23T17:14:35.490761353Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.492121069Z [31m20251123-17:14:35.490 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 10 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.492132293Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.492137536Z """
+2025-11-23T17:14:35.492142359Z Traceback (most recent call last):
+2025-11-23T17:14:35.492147429Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.492152392Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.492157629Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.492162429Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.492167196Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.492171943Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.492176752Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.492181563Z     ^^
+2025-11-23T17:14:35.492186312Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.492191409Z """
+2025-11-23T17:14:35.492201012Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.492210289Z Traceback (most recent call last):
+2025-11-23T17:14:35.492215103Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.492219906Z     result = await async_task
+2025-11-23T17:14:35.492224913Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.492229723Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.492234532Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.492239229Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.492243976Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.492248693Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.492253422Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.492258393Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.492263383Z     raise e
+2025-11-23T17:14:35.492268113Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.492272863Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.492277669Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.492282503Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.492287296Z     return await fut
+2025-11-23T17:14:35.492292099Z            ^^^^^^^^^
+2025-11-23T17:14:35.492296742Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.492301669Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.492306622Z     ^^
+2025-11-23T17:14:35.492311342Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.493658089Z [31m20251123-17:14:35.492 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 2 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.493674826Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.493683852Z """
+2025-11-23T17:14:35.493691753Z Traceback (most recent call last):
+2025-11-23T17:14:35.493701256Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.493717903Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.493723352Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.493728386Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.493733163Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.493737923Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.493743103Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.493748063Z     ^^
+2025-11-23T17:14:35.493752853Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.493757679Z """
+2025-11-23T17:14:35.493767003Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.493776312Z Traceback (most recent call last):
+2025-11-23T17:14:35.493781096Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.493785823Z     result = await async_task
+2025-11-23T17:14:35.493790813Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.493795516Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.493800222Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.493804853Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.493809556Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.493814219Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.493818976Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.493823773Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.493828639Z     raise e
+2025-11-23T17:14:35.493833319Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.493838026Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.493842672Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.493847483Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.493852209Z     return await fut
+2025-11-23T17:14:35.493857049Z            ^^^^^^^^^
+2025-11-23T17:14:35.493861862Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.493866852Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.493871603Z     ^^
+2025-11-23T17:14:35.493876316Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.495157523Z [31m20251123-17:14:35.493 [Remote Inference Engine Rank 0] ERROR: AsyncTaskRunner: Task 3 failed with exception: expected an indented block after 'if' statement on line 377 (math_parser.py, line 378) [0m
+2025-11-23T17:14:35.495170809Z concurrent.futures.process._RemoteTraceback:
+2025-11-23T17:14:35.495176022Z """
+2025-11-23T17:14:35.495180782Z Traceback (most recent call last):
+2025-11-23T17:14:35.495185752Z   File "/usr/lib/python3.12/concurrent/futures/process.py", line 264, in _process_worker
+2025-11-23T17:14:35.495190599Z     r = call_item.fn(*call_item.args, **call_item.kwargs)
+2025-11-23T17:14:35.495195319Z         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.495200112Z   File "/workspace/AReaL/examples/cloud_gsm8k/gsm8k_grpo_train.py", line 45, in gsm8k_reward_fn
+2025-11-23T17:14:35.495205013Z     from areal.reward.math_parser import process_results
+2025-11-23T17:14:35.495209739Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.495214506Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.495224012Z     ^^
+2025-11-23T17:14:35.495228813Z IndentationError: expected an indented block after 'if' statement on line 377
+2025-11-23T17:14:35.495233673Z """
+2025-11-23T17:14:35.495243052Z The above exception was the direct cause of the following exception:
+2025-11-23T17:14:35.495252619Z Traceback (most recent call last):
+2025-11-23T17:14:35.495257403Z   File "/workspace/AReaL/areal/core/async_task_runner.py", line 319, in _run_async_loop
+2025-11-23T17:14:35.495267589Z     result = await async_task
+2025-11-23T17:14:35.495272892Z              ^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.495277683Z   File "/workspace/AReaL/areal/core/workflow_executor.py", line 367, in _execute_workflow
+2025-11-23T17:14:35.495282486Z     traj = await task_input.workflow.arun_episode(
+2025-11-23T17:14:35.495287246Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.495291986Z   File "/workspace/AReaL/areal/workflow/rlvr.py", line 93, in arun_episode
+2025-11-23T17:14:35.495296809Z     reward = await self.async_reward_fn(
+2025-11-23T17:14:35.495301543Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.495306343Z   File "/workspace/AReaL/areal/api/reward_api.py", line 163, in __call__
+2025-11-23T17:14:35.495311303Z     raise e
+2025-11-23T17:14:35.495316109Z   File "/workspace/AReaL/areal/api/reward_api.py", line 122, in __call__
+2025-11-23T17:14:35.495320923Z     reward = await asyncio.wait_for(
+2025-11-23T17:14:35.495325629Z              ^^^^^^^^^^^^^^^^^^^^^^^
+2025-11-23T17:14:35.495330469Z   File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+2025-11-23T17:14:35.495335243Z     return await fut
+2025-11-23T17:14:35.495340096Z            ^^^^^^^^^
+2025-11-23T17:14:35.495344769Z   File "/workspace/AReaL/areal/reward/math_parser.py", line 378
+2025-11-23T17:14:35.495349626Z     if "final answer is $" in pred_str and "$. I hope" in pred_str:
+2025-11-23T17:14:35.495354423Z     ^^
+2025-11-23T17:14:35.495359123Z IndentationError: expected an indented block after 'if' statement on line 377
