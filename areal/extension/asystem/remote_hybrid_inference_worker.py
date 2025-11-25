@@ -23,6 +23,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow
+from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.extension.asystem.api.cli_args import RemoteHybridInferenceConfig
 from areal.extension.asystem.utils.util import wait_future_ordered
 from areal.utils import logging, seeding
@@ -666,8 +667,19 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 self.result_cache[count:],
             )
 
-        padded = concat_padded_tensors(results)
-        return padded
+        # Convert InteractionWithTokenLogpReward to tensor dict if needed
+        if isinstance(results, dict) and all(
+            isinstance(v, InteractionWithTokenLogpReward) for v in results.values()
+        ):
+            results = concat_padded_tensors(
+                [v.to_tensor_dict() for v in results.values()]
+            )
+
+        else:
+            results = concat_padded_tensors(results)
+
+        assert results is None or isinstance(results, dict), results
+        return results
 
     def rollout(  # only dp head accept this request
         self, data: list[dict[str, Any]], workflow: "RolloutWorkflow", *args, **kwargs
