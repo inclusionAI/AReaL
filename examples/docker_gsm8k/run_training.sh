@@ -1,19 +1,93 @@
 #!/bin/bash
 # Run GRPO training in Docker container
-# Usage: bash examples/docker_gsm8k/run_training.sh [config_file]
-# Example: bash examples/docker_gsm8k/run_training.sh examples/docker_gsm8k/gsm8k_grpo_reasoning_fast.yaml
+# Usage: bash examples/docker_gsm8k/run_training.sh [config_name|config_file]
+#
+# Config presets:
+#   - fast: Fast training (20-30 min, 200 samples, 1 epoch)
+#   - 1hour: 1-hour training (500 samples, 2 epochs)
+#   - 3hour: 3-hour training (1000 samples, 3 epochs)
+#   - full: Full training (all samples, 5 epochs)
+#   - reasoning_fast: Reasoning model fast training (20-30 min, 200 samples, 1 epoch)
+#   - reasoning_1hour: Reasoning model 1-hour training (500 samples, 2 epochs)
+#   - reasoning_3hour: Reasoning model 3-hour training (1000 samples, 3 epochs) [NEW]
+#   - reasoning_5hour: Reasoning model 5-hour training (2000 samples, 3 epochs)
+#
+# Or provide full path to any config file:
+#   Example: bash examples/docker_gsm8k/run_training.sh examples/docker_gsm8k/gsm8k_grpo_reasoning_fast.yaml
 
 set -e
 
 cd /workspace/AReaL
 
 # Configuration
-CONFIG_FILE="${1:-examples/docker_gsm8k/gsm8k_grpo_fast.yaml}"
-# Extract experiment name from filename (e.g., gsm8k_grpo_reasoning_fast)
-EXPERIMENT_NAME=$(basename "$CONFIG_FILE" .yaml | sed 's/_/-/')
-# Or just use a fixed one for docker runs if we want consistency, but dynamic is better
-EXPERIMENT_NAME="${EXPERIMENT_NAME}-docker"
+CONFIG_NAME="${1:-fast}"
 TRIAL_NAME="trial0"
+
+# Check if CONFIG_NAME is a preset or a file path
+if [[ "$CONFIG_NAME" == *".yaml" ]] || [[ "$CONFIG_NAME" == *".yml" ]]; then
+    # It's a file path - use it directly
+    CONFIG_FILE="$CONFIG_NAME"
+    # Extract experiment name from filename
+    EXPERIMENT_NAME=$(basename "$CONFIG_FILE" .yaml | sed 's/_/-/')
+    EXPERIMENT_NAME="${EXPERIMENT_NAME}-docker"
+else
+    # It's a preset name - map to config file
+    case "$CONFIG_NAME" in
+        fast)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_fast.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-fast-docker"
+            echo "Using FAST training configuration (20-30 minutes)"
+            ;;
+        1hour)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_1hour.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-1hour-docker"
+            echo "Using 1-HOUR training configuration (~1-2 hours)"
+            echo "Note: Uses limited dataset (500 samples)"
+            ;;
+        3hour)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_3hour.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-3hour-docker"
+            echo "Using 3-HOUR training configuration (~3-4 hours)"
+            echo "Note: Uses limited dataset (1000 samples)"
+            ;;
+        full)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_full.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-full-docker"
+            echo "Using FULL training configuration (full dataset, 5 epochs)"
+            ;;
+        reasoning_fast)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_reasoning_fast.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-reasoning-fast-docker"
+            echo "Using REASONING FAST training configuration (20-30 minutes)"
+            echo "Note: Trains reasoning model with XML format"
+            ;;
+        reasoning_1hour)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_reasoning_1hour.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-reasoning-1hour-docker"
+            echo "Using REASONING 1-HOUR training configuration (~1-2 hours)"
+            echo "Note: Trains reasoning model with XML format (500 samples)"
+            ;;
+        reasoning_3hour)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_reasoning_3hour.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-reasoning-3hour-docker"
+            echo "Using REASONING 3-HOUR training configuration (~3-4 hours)"
+            echo "Note: Trains reasoning model with XML format (1000 samples, 3 epochs)"
+            echo "Optimized for RTX 4080S (16GB VRAM)"
+            ;;
+        reasoning_5hour)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_reasoning_5hour.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-reasoning-5hour-docker"
+            echo "Using REASONING 5-HOUR training configuration (~5-6 hours)"
+            echo "Note: Trains reasoning model with XML format (2000 samples, 3 epochs)"
+            ;;
+        *)
+            echo "ERROR: Unknown config preset: $CONFIG_NAME"
+            echo "Valid presets: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_5hour"
+            echo "Or provide full path to a config file (e.g., examples/docker_gsm8k/gsm8k_grpo_fast.yaml)"
+            exit 1
+            ;;
+    esac
+fi
 
 # Load WandB API key from wandb folder if available
 if [ -f "wandb/.wandb_api_key" ]; then

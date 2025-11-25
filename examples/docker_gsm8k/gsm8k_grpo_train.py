@@ -411,6 +411,108 @@ def main(args):
     if ref is not None:
         ref.destroy()
     actor.destroy()
+    
+    # Run post-training tests if training completed successfully
+    if rank == 0:  # Only run on rank 0
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        baseline_model_path = config.actor.path
+        
+        # Get max_new_tokens from config
+        max_new_tokens = config.gconfig.max_new_tokens
+        print(f"Using max_new_tokens: {max_new_tokens} (from training config)")
+        
+        # Get the latest checkpoint (by modification time)
+        checkpoint_dir = os.path.join(config.cluster.fileroot, "checkpoints", os.getenv("USER", "root"), config.experiment_name, config.trial_name, "default")
+        if os.path.exists(checkpoint_dir):
+            checkpoints = [d for d in os.listdir(checkpoint_dir) if os.path.isdir(os.path.join(checkpoint_dir, d))]
+            if checkpoints:
+                # Sort by modification time, get the latest
+                checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
+                latest_checkpoint = os.path.join(checkpoint_dir, checkpoints[0])
+                
+                print(f"Trained model checkpoint: {latest_checkpoint}")
+                
+                # Determine if this is a reasoning model
+                is_reasoning = "reasoning" in config.experiment_name.lower() or "reasoning" in config.train_dataset.path.lower()
+                
+                # Save logs to local directory
+                test_log_dir = os.path.join("examples", "docker_gsm8k", "logs")
+                os.makedirs(test_log_dir, exist_ok=True)
+                
+                if is_reasoning:
+                    # Use reasoning test script
+                    test_script = os.path.join(script_dir, "test_reasoning_model.py")
+                    
+                    # Test baseline model first
+                    print(f"\n{'='*80}")
+                    print("Testing BASELINE model...")
+                    print(f"{'='*80}\n")
+                    baseline_cmd = [
+                        sys.executable,
+                        test_script,
+                        "--model-path", baseline_model_path,
+                        "--max-samples", "50",
+                        "--max-new-tokens", str(max_new_tokens),
+                        "--log-dir", test_log_dir,
+                        "--model-name", "BASELINE",
+                    ]
+                    
+                    # Test trained model
+                    print(f"\n{'='*80}")
+                    print("Testing TRAINED model...")
+                    print(f"{'='*80}\n")
+                    trained_cmd = [
+                        sys.executable,
+                        test_script,
+                        "--model-path", latest_checkpoint,
+                        "--max-samples", "50",
+                        "--max-new-tokens", str(max_new_tokens),
+                        "--log-dir", test_log_dir,
+                        "--model-name", "TRAINED",
+                    ]
+                    
+                    try:
+                        import subprocess
+                        
+                        # Test baseline model
+                        print(f"\n{'='*80}")
+                        print("Testing BASELINE model...")
+                        print(f"{'='*80}\n")
+                        baseline_result = subprocess.run(baseline_cmd, check=False, capture_output=False)
+                        
+                        if baseline_result.returncode == 0:
+                            print(f"\n✅ Baseline test completed successfully!")
+                        else:
+                            print(f"\n⚠️  Baseline test exited with code {baseline_result.returncode}")
+                        
+                        # Test trained model
+                        print(f"\n{'='*80}")
+                        print("Testing TRAINED model...")
+                        print(f"{'='*80}\n")
+                        trained_result = subprocess.run(trained_cmd, check=False, capture_output=False)
+                        
+                        if trained_result.returncode == 0:
+                            print(f"\n{'='*80}")
+                            print("✅ All tests completed successfully!")
+                            print(f"{'='*80}\n")
+                        else:
+                            print(f"\n{'='*80}")
+                            print(f"⚠️  Trained model test exited with code {trained_result.returncode}")
+                            print(f"{'='*80}\n")
+                    except Exception as e:
+                        print(f"\n{'='*80}")
+                        print(f"⚠️  Failed to run test: {e}")
+                        print(f"   You can run the test manually with:")
+                        print(f"   Baseline: python {test_script} --model-path {baseline_model_path} --max-samples 50 --max-new-tokens {max_new_tokens} --model-name BASELINE")
+                        print(f"   Trained:  python {test_script} --model-path {latest_checkpoint} --max-samples 50 --max-new-tokens {max_new_tokens} --model-name TRAINED")
+                        print(f"{'='*80}\n")
+                else:
+                    print("⚠️  Note: Post-training testing for regular (non-reasoning) models is not yet implemented.")
+                    print(f"   To test manually, use: python examples/docker_gsm8k/test_trained_model.py --config <config_file>")
+            else:
+                print(f"⚠️  No checkpoints found in {checkpoint_dir}")
+        else:
+            print(f"⚠️  Checkpoint directory not found: {checkpoint_dir}")
 
 
 if __name__ == "__main__":

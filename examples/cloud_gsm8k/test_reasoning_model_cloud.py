@@ -209,14 +209,17 @@ def test_reasoning_model(
             "parser_error": parser_error,
         })
         
-        # Log detailed info for all samples
+        # Log detailed info for all samples with correct answer comparison
         _log(f"\n{'='*80}")
         _log(f"Sample {i+1}/{num_samples}")
         _log(f"{'='*80}")
         _log(f"Question:\n{question}")
-        _log(f"\nGenerated Response:\n{generated_text}")
-        _log(f"\nCorrect Answer:\n{correct_answer}")
-        _log(f"\nResult: {'✅ CORRECT' if is_correct else '❌ INCORRECT'}")
+        _log(f"\n{'─'*80}")
+        _log(f"Generated Response:\n{generated_text}")
+        _log(f"\n{'─'*80}")
+        _log(f"Correct Answer:\n{correct_answer}")
+        _log(f"\n{'─'*80}")
+        _log(f"Result: {'✅ CORRECT' if is_correct else '❌ INCORRECT'}")
         if parser_error:
             _log(f"Parser Error: {parser_error}")
         _log(f"{'='*80}")

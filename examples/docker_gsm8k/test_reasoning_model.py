@@ -180,15 +180,17 @@ def test_reasoning_model(
             "parser_error": parser_error,
         })
         
-        # Log detailed info for first few samples or when incorrect
-        if i < 3 or not is_correct:
-            _log(f"\n--- Sample {i+1} ---")
-            _log(f"Question: {question[:100]}...")
-            _log(f"Generated: {generated_text[:500]}...")  # Show more for reasoning
-            _log(f"Correct Answer: {correct_answer[:100]}...")
-            _log(f"Result: {'CORRECT' if is_correct else 'INCORRECT'}")
-            if parser_error:
-                _log(f"Parser Error: {parser_error}")
+        # Log detailed info for all samples with correct answer comparison
+        _log(f"\n{'='*80}")
+        _log(f"Sample {i+1}/{num_samples}")
+        _log(f"{'='*80}")
+        _log(f"Question:\n{question}")
+        _log(f"\nGenerated Response:\n{generated_text}")
+        _log(f"\nCorrect Answer:\n{correct_answer}")
+        _log(f"\nResult: {'✅ CORRECT' if is_correct else '❌ INCORRECT'}")
+        if parser_error:
+            _log(f"Parser Error: {parser_error}")
+        _log(f"{'='*80}")
         
         # Log progress every 10 samples or for first/last
         if (i + 1) % 10 == 0 or i == 0 or i == num_samples - 1:
