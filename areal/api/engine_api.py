@@ -123,6 +123,17 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @property
+    def cpu_group(self) -> dist.ProcessGroup:
+        """Get the CPU communication group of this engine.
+
+        Returns
+        -------
+        dist.ProcessGroup
+            The CPU communication group
+        """
+        raise NotImplementedError()
+
     def destroy(self):
         """Destroy the engine and release GPU memory of models."""
 
@@ -317,14 +328,6 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
 
-class NoResult:
-    def __repr__(self):
-        return "NO_RESULT"
-
-
-NO_RESULT = NoResult()
-
-
 class InferenceEngine(abc.ABC):
     def initialize(self, *args, **kwargs):
         """Initialize environments and launch the background thread for asynchronous distributed inference.
@@ -508,7 +511,7 @@ class InferenceEngine(abc.ABC):
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any] | NoResult:
+    ) -> list[dict[str, Any] | None]:
         """Wait for a specified number of requests to complete, with a timeout.
 
         Should be used together with preceding `submit`.
@@ -521,12 +524,12 @@ class InferenceEngine(abc.ABC):
             Timeout in seconds. Exceeding the timeout will raise a `TimeoutError`, by default None
         raise_timeout : bool, optional
             Whether to raise a `TimeoutError` when the timeout is exceeded,
-            otherwise return a special NO_RESULT sentinel, by default True
+            otherwise return an empty list, by default True
 
         Returns
         -------
-        Dict[str, Any]
-            A concatenated batch of trajectories
+        list[dict[str, Any] | None]
+            A list of trajectory dictionaries. Each element may be None for rejected trajectories.
 
         Raises
         ------

@@ -396,6 +396,8 @@ def prepare_batch(
     if not hasattr(self, "data_generator"):
         self.data_generator = cycle_dataloader(dataloader)
 
+    cnt = 0
+    results = []
     while True:
         # Keep input queue filled to maximize overlap
         if (
@@ -411,11 +413,21 @@ def prepare_batch(
                     should_accept_fn=should_accept_fn,
                 )
 
-        # Try to collect a complete batch
+        # Try to collect completed trajectories
         try:
-            return self.wait(dataloader.batch_size, timeout=1)
+            res = self.wait(count=1, timeout=1)
+            if not res or res[0] is None:
+                continue
+            assert len(res) == 1
+            cnt += 1
+            results.append(res[0])
+            if cnt >= dataloader.batch_size:
+                break
         except TimeoutError:
             pass  # Not ready yet, continue loop
+
+    # Concatenate into batch tensor format
+    return concat_padded_tensors(results)
 ```
 
 **Integration**: `RemoteInfEngine` exposes batch preparation by delegating to its

@@ -12,8 +12,9 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.api.io_struct import WeightUpdateMeta
+from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import network
-from areal.utils.data import get_batch_size
+from areal.utils.data import concat_padded_tensors, get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.pkg_version import is_available
 
@@ -135,6 +136,7 @@ def test_rollout(inference_engine, n_samples):
         consumer_batch_size=2,
         enable_rollout_tracing=True,
         setup_timeout=360,
+        max_head_offpolicyness=int(1e10),
     )
 
     engine = inference_engine["engine_class"](config)
@@ -159,6 +161,18 @@ def test_rollout(inference_engine, n_samples):
     assert isinstance(result, dict)
     bs = get_batch_size(result)
     assert bs == 2 * n_samples
+
+    class NullWorkflow(RolloutWorkflow):
+        async def arun_episode(self, engine, data):
+            return None
+
+    # Test workflow returning None
+    result = engine.rollout_batch(
+        [data] * 2,
+        workflow=NullWorkflow(),
+    )
+    assert result == {}
+
     engine.destroy()
     assert not dist.is_initialized()
 
@@ -206,7 +220,8 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         with pytest.raises(TimeoutError):
             engine.wait(count=bs * 2, timeout=10)
     else:
-        result = engine.wait(count=bs * 2, timeout=10)
+        results = engine.wait(count=bs * 2, timeout=10)
+        result = concat_padded_tensors([r for r in results if r is not None])
         assert result["attention_mask"].shape[0] == bs * 2 * n_samples
 
     # Update model version
@@ -223,7 +238,8 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
             engine.wait(count=bs * 4, timeout=5)
     else:
         # 2 * bs samples haved been retrived above
-        results = engine.wait(count=bs * 2, timeout=5)
+        results_list = engine.wait(count=bs * 2, timeout=5)
+        results = concat_padded_tensors([r for r in results_list if r is not None])
         assert results["attention_mask"].shape[0] == bs * 2 * n_samples
 
     engine.destroy()

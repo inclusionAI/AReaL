@@ -20,7 +20,6 @@ from areal.utils.data import concat_padded_tensors
 from areal.utils.perf_tracer import (
     atrace_session_phase,
     session_context,
-    trace_perf,
     trace_session,
 )
 
@@ -133,7 +132,6 @@ class RLVRWorkflow(RolloutWorkflow):
 
         return resp, reward, completions_str
 
-    @trace_perf("rlvr_workflow.arun_episode", category="compute")
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, torch.Tensor]:

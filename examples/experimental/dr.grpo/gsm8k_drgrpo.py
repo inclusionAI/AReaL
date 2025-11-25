@@ -30,7 +30,6 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
@@ -201,8 +200,8 @@ def main(args):
                             eval_rollout.submit(item, eval_workflow)
                             cnt += 1
                     eval_rollout.wait(cnt, timeout=None)
-                dist.barrier(device_ids=[actor.device.index])
                 current_platform.synchronize()
+                dist.barrier(group=actor.cpu_group)
 
             evaluator.evaluate(
                 evaluate_fn,
@@ -222,15 +221,15 @@ def main(args):
                 tokenizer=tokenizer,
             )
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Upload statistics to the logger (e.g., wandb)
         stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
         stats_logger.commit(epoch, step, global_step, stats)
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Resume rollout
         rollout.resume()

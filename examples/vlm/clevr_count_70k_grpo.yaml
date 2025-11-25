@@ -2,6 +2,7 @@ experiment_name: clevr_count_70k-grpo
 trial_name: trial1
 
 seed: 1
+enable_offload: false
 total_train_epochs: 3
 tokenizer_path: ${actor.path}
 

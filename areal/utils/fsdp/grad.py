@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import List
 
 import torch
 import torch.distributed as dist
@@ -34,7 +33,7 @@ except ImportError:
         import warnings
 
         warnings.warn(
-            f"Transformer Engine and Apex are not installed. "
+            "Transformer Engine and Apex are not installed. "
             "Falling back to local implementations of multi_tensor_applier, "
             "multi_tensor_l2norm, and multi_tensor_scale"
         )
@@ -76,7 +75,7 @@ def is_param_not_tensor_parallel_duplicate(param, tensor_parallel_rank: int):
     return True
 
 
-def get_main_grads_for_grad_norm(params, tensor_parallel_rank: int) -> List[Tensor]:
+def get_main_grads_for_grad_norm(params, tensor_parallel_rank: int) -> list[Tensor]:
     return [
         param.grad
         for param in params
@@ -87,7 +86,7 @@ def get_main_grads_for_grad_norm(params, tensor_parallel_rank: int) -> List[Tens
 
 # Adapted from Megatron-LM
 def get_grad_norm_fp32(
-    grads_for_norm: List[Tensor] | Tensor,
+    grads_for_norm: list[Tensor] | Tensor,
     data_parallel_group: ProcessGroup,
     model_parallel_group: ProcessGroup,
     norm_type: float = 2.0,
@@ -157,7 +156,7 @@ def get_grad_norm_fp32(
 
 # Adapted from Megatron-LM
 def clip_grad_by_total_norm_fp32(
-    parameters: List[nn.Parameter],
+    parameters: list[nn.Parameter],
     max_norm: int | float,
     total_norm: float,
 ):
@@ -198,7 +197,7 @@ def clip_grad_by_total_norm_fp32(
 
 
 def fsdp2_clip_grad_norm(
-    parameters: List[nn.Parameter],
+    parameters: list[nn.Parameter],
     nd_device_mesh: DeviceMesh,
     max_norm: float,
     norm_type: float = 2.0,

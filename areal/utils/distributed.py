@@ -1,4 +1,22 @@
+from datetime import timedelta
+
 import torch
+
+
+def patch_dist_group_timeout(timeout: timedelta):
+    """
+    Patch the default timeout for process groups in torch.distributed.
+
+    Args:
+        timeout (float): Timeout in seconds.
+    """
+    from torch.distributed import distributed_c10d
+
+    if hasattr(distributed_c10d, "default_pg_timeout"):
+        distributed_c10d.default_pg_timeout = timeout
+
+    if hasattr(distributed_c10d, "default_pg_nccl_timeout"):
+        distributed_c10d.default_pg_nccl_timeout = timeout
 
 
 # Copy from pytorch and OpenRLHF to allow creating multiple main groups.
@@ -23,9 +41,8 @@ def init_custom_process_group(
         rendezvous,
     )
 
-    assert (store is None) or (
-        init_method is None
-    ), "Cannot specify both init_method and store."
+    if store is not None and init_method is not None:
+        raise RuntimeError("Cannot specify both init_method and store.")
 
     if store is not None:
         assert world_size > 0, "world_size must be positive if using store"

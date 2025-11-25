@@ -205,8 +205,8 @@ class GRPOTrainer:
                     tokenizer=self.tokenizer,
                 )
 
-            dist.barrier(device_ids=[self.actor.device.index])
             current_platform.synchronize()
+            dist.barrier(group=self.actor.cpu_group)
 
             with stats_tracker.record_timing("eval"):
 
@@ -226,8 +226,8 @@ class GRPOTrainer:
                                 self.eval_rollout.submit(item, eval_workflow)
                                 cnt += 1
                         self.eval_rollout.wait(cnt, timeout=None)
-                    dist.barrier(device_ids=[self.actor.device.index])
                     current_platform.synchronize()
+                    dist.barrier(group=self.actor.cpu_group)
 
                 self.evaluator.evaluate(
                     evaluate_fn,
@@ -236,8 +236,8 @@ class GRPOTrainer:
                     global_step,
                 )
 
-            dist.barrier(device_ids=[self.actor.device.index])
             current_platform.synchronize()
+            dist.barrier(group=self.actor.cpu_group)
 
             # Upload statistics to the logger (e.g., wandb)
             stats = stats_tracker.export_all(
@@ -245,8 +245,8 @@ class GRPOTrainer:
             )
             self.stats_logger.commit(epoch, step, global_step, stats)
 
-            dist.barrier(device_ids=[self.actor.device.index])
             current_platform.synchronize()
+            dist.barrier(group=self.actor.cpu_group)
 
             # Resume rollout
             self.rollout.resume()

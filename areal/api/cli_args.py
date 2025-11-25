@@ -4,7 +4,7 @@ import os
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import uvloop
 import yaml
@@ -21,6 +21,8 @@ from areal.utils.pkg_version import is_version_less
 uvloop.install()
 
 logger = logging.getLogger("CLI args")
+
+ConfigT = TypeVar("ConfigT")
 
 
 @dataclass
@@ -383,6 +385,51 @@ class MegatronEngineConfig:
 
 
 @dataclass
+class SchedulingStrategy:
+    type: str = field(
+        default="separation", metadata={"choices": ["separation", "colocation"]}
+    )
+    target: str | None = field(
+        default=None, metadata={"help": "The target role to be colocated with"}
+    )
+
+
+@dataclass
+class SchedulingSpec:
+    cpu: int = field(default=0, metadata={"help": "Number of CPU cores required"})
+    gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
+    mem: int = field(default=0, metadata={"help": "Amount of memory (GB) required"})
+    port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
+    image: str = field(
+        default="", metadata={"help": "Docker/Singularity container image to use"}
+    )
+    type: str = field(
+        default="worker",
+        metadata={
+            "help": "Task type (e.g., worker, engine)",
+            "choices": ["worker", "engine"],
+        },
+    )
+    env_vars: dict[str, str] = field(
+        default_factory=dict,
+        metadata={"help": "Environment variables for the container"},
+    )
+    cmd: str | None = field(
+        default=None,
+        metadata={
+            "help": "Command to execute inside the container. Defaults to AReaL's RPC server."
+        },
+    )
+    # slurm configurations from "https://slurm.schedmd.com/sbatch.html"
+    nodelist: str | None = None
+    exclude: str | None = None
+    partition: str | None = None
+    time_limit: str | None = None  # see  "--time" option for format
+    begin: str | None = None  # see "--begin" option for format
+    deadline: str | None = None  # see "--deadline" option for format
+
+
+@dataclass
 class TrainEngineConfig:
     """Core configuration for model training, including optimization and backend settings."""
 
@@ -452,6 +499,32 @@ class TrainEngineConfig:
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
+    scheduling_spec: tuple[SchedulingSpec, ...] = field(
+        default_factory=lambda: (
+            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+        ),
+        metadata={
+            "help": "Train engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
+            "if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; "
+            "if 2 specs provided, first one is for worker, second one is for engine. "
+            "Currently only used by the TrainController."
+        },
+    )
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "The scheduling strategy of this TrainEngine, either separation or colocation. "
+            "Currently only used by the TrainController."
+        },
+    )
+
+    def __post_init__(self):
+        """Validate scheduling_spec length."""
+        if len(self.scheduling_spec) not in (1, 2):
+            raise ValueError(
+                f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
+                f"got {len(self.scheduling_spec)}"
+            )
 
 
 @dataclass
@@ -934,6 +1007,32 @@ class InferenceEngineConfig:
             "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
         },
     )
+    scheduling_spec: tuple[SchedulingSpec, ...] = field(
+        default_factory=lambda: (
+            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+        ),
+        metadata={
+            "help": "inference engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
+            "if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; "
+            "if 2 specs provided, first one is for worker, second one is for engine. "
+            "Currently only used by the RolloutController."
+        },
+    )
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "The scheduling strategy of this TrainEngine, either separation or colocation. "
+            "Currently only used by the RolloutController."
+        },
+    )
+
+    def __post_init__(self):
+        """Validate scheduling_spec length."""
+        if len(self.scheduling_spec) not in (1, 2):
+            raise ValueError(
+                f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
+                f"got {len(self.scheduling_spec)}"
+            )
 
 
 @dataclass
@@ -1095,6 +1194,15 @@ class PerfTracerConfig:
             "help": (
                 "Flush trace events to disk every N calls to save(step=...). "
                 "A value of 1 writes on every step; values <= 0 fall back to 1."
+            )
+        },
+    )
+    profile_steps: list[int] | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "List of step numbers at which to capture detailed profiling traces. "
+                "If None, no detailed profiling traces are captured."
             )
         },
     )
@@ -1309,6 +1417,13 @@ class BaseExperimentConfig:
         metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
     )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
+    enable_offload: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to enable training offload using torch_memory_saver. "
+            "This requires setting up the environment for TMS (e.g., via LD_PRELOAD)."
+        },
+    )
     total_train_epochs: int = field(
         default=1, metadata={"help": "Total number of epochs to train the model."}
     )
@@ -1416,7 +1531,7 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def load_expr_config(argv: list[str], config_cls):
+def load_expr_config(argv: list[str], config_cls: type[ConfigT]) -> tuple[ConfigT, str]:
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)

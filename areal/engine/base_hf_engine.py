@@ -22,6 +22,7 @@ from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.platforms import current_platform
 from areal.utils import logging
+from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
@@ -33,6 +34,7 @@ from areal.utils.data import (
     unpack_sequence,
     unsqueeze_mb_list,
 )
+from areal.utils.distributed import patch_dist_group_timeout
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
     disable_dropout_in_model,
@@ -42,7 +44,6 @@ from areal.utils.model import (
     is_qwen_vl_model,
     is_valid_vision_model,
 )
-from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
 
 
 class BaseHFEngine(TrainEngine):
@@ -63,6 +64,7 @@ class BaseHFEngine(TrainEngine):
         self.own_global_group = False
         self._parallelism_group: dist.ProcessGroup
         self.mp_group: dist.ProcessGroup
+        self._cpu_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
 
         self.model_config = AutoConfig.from_pretrained(
@@ -113,7 +115,15 @@ class BaseHFEngine(TrainEngine):
         assert self.initialized
         return _get_default_group()
 
+    @property
+    def cpu_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self._cpu_group
+
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
+        # Patch the default timeout for process groups created by DeviceMesh
+        patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
+
         backend = current_platform.communication_backend
         if not dist.is_initialized():
             # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
@@ -121,14 +131,20 @@ class BaseHFEngine(TrainEngine):
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
                 backend=backend,
-                timeout=NCCL_DEFAULT_TIMEOUT,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
             self.own_global_group = True
         # Each process is its own model parallel group.
-        mp_group = dist.new_group([dist.get_rank()])
+        mp_group = dist.new_group(
+            ranks=[dist.get_rank()], timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend=backend
+        )
         assert mp_group is not None
         self.mp_group = mp_group
 
+        # This is needed for barrier synchronization when models are moved to CPU
+        self._cpu_group = dist.new_group(
+            timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend="gloo"
+        )
         self.logger = logging.getLogger(f"[HF Engine Rank {dist.get_rank()}]")
 
     def create_device_model(self):
@@ -238,7 +254,7 @@ class BaseHFEngine(TrainEngine):
         )
         state_dict = self.optimizer.state_dict()
         torch.save(state_dict, shard_path)
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
     def load_optimizer_state(self, path: str):
         # Load FSDP sharded state dict
@@ -250,7 +266,7 @@ class BaseHFEngine(TrainEngine):
         )
         optimizer_state_dict = torch.load(shard_path, weights_only=False)
         self.optimizer.load_state_dict(optimizer_state_dict)
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
     def step_lr_scheduler(self):
         assert self.lr_scheduler is not None

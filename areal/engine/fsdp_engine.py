@@ -4,6 +4,7 @@ import os
 import time
 from collections.abc import Callable
 from concurrent.futures import Future
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 
@@ -24,6 +25,7 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
+from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     PreTrainedTokenizerFast,
@@ -42,19 +44,21 @@ from areal.engine.base_hf_engine import BaseHFEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, pkg_version
+from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
     reorder_list,
     unpack_sequence,
 )
+from areal.utils.device import clear_memory, log_gpu_stats
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
-from areal.utils.nccl import NCCL_DEFAULT_TIMEOUT
+from areal.utils.offload import is_tms_enabled
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
@@ -83,6 +87,8 @@ class FSDPEngine(BaseHFEngine):
         self.rank: int
         self.dp_head: int
         self.dp_rank: int
+
+        self.is_offload: bool = False
 
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
@@ -139,7 +145,7 @@ class FSDPEngine(BaseHFEngine):
 
         self.rank = dist.get_rank()
 
-        self.dp_head = int(self.world_mesh["sp_tp"].mesh[0].item())
+        self.dp_head = dist.get_process_group_ranks(self.mp_group)[0]
         self.dp_rank = dist.get_rank(self.dp_group)
 
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
@@ -154,6 +160,9 @@ class FSDPEngine(BaseHFEngine):
         assert ft_spec is not None, "FSDPEngine requires FinetuneSpec to initialize."
         if pkg_version.is_version_less("torch", "2.4.0"):
             raise RuntimeError("areal only supports FSDP2, which requires torch>=2.4.0")
+
+        if is_tms_enabled():
+            torch_memory_saver.hook_mode = "preload"
 
         # Create device model
         self.create_device_model()
@@ -252,7 +261,7 @@ class FSDPEngine(BaseHFEngine):
             if processor is not None:
                 processor.save_pretrained(path)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
     def _load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
@@ -380,7 +389,7 @@ class FSDPEngine(BaseHFEngine):
                 init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
                 group_name=meta.nccl_group_name,
-                timeout=NCCL_DEFAULT_TIMEOUT,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
 
             fut.result()
@@ -392,7 +401,7 @@ class FSDPEngine(BaseHFEngine):
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
@@ -422,13 +431,13 @@ class FSDPEngine(BaseHFEngine):
         if named_tensors:
             self._update_bucket_weights_from_distributed(meta, named_tensors)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         if dist.get_rank() == 0:
             self.rollout_engine.continue_generation()
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     @trace_perf("fsdp_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
@@ -452,14 +461,21 @@ class FSDPEngine(BaseHFEngine):
 
             fut.result()
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
         if meta.type == current_platform.communication_backend:
             assert self.weight_update_group_initialized
-            self._update_weights_from_distributed(meta)
+            # In offload mode, wakes up parameters as needed to perform the update.
+            tms_context = (
+                torch_memory_saver.disable()
+                if self.is_offload and not torch.version.hip
+                else nullcontext()
+            )
+            with tms_context:
+                self._update_weights_from_distributed(meta)
         elif meta.type == "disk":
             self._update_weights_from_disk(meta)
         else:
@@ -482,8 +498,8 @@ class FSDPEngine(BaseHFEngine):
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""
@@ -538,6 +554,9 @@ class FSDPEngine(BaseHFEngine):
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         """Train on a batch using gradient accumulation."""
+        if self.is_offload:
+            self.onload()
+
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
@@ -652,6 +671,9 @@ class FSDPEngine(BaseHFEngine):
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
+        if self.is_offload:
+            self.onload()
+
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
@@ -742,6 +764,9 @@ class FSDPEngine(BaseHFEngine):
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Forward pass with optional post-processing."""
+        if self.is_offload:
+            self.onload()
+
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
@@ -909,3 +934,35 @@ class FSDPEngine(BaseHFEngine):
                 f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
             )
         self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
+
+    def offload(self) -> None:
+        """Offload model memory to CPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
+        """
+
+        log_gpu_stats("before offload model")
+
+        # Use torch_memory_saver to pause CUDA memory
+        clear_memory()
+        torch_memory_saver.pause()
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+        log_gpu_stats("after offload model")
+
+        self.is_offload = True
+
+    def onload(self) -> None:
+        """Onload model memory from CPU back to GPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
+        """
+
+        torch_memory_saver.resume()
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+        log_gpu_stats("after onload model")
+
+        self.is_offload = False

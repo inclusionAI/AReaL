@@ -35,7 +35,6 @@ def rw_modeling_colate_fn(items):
 
 def main(args):
     config, _ = load_expr_config(args, RWConfig)
-    config: RWConfig
 
     rank = int(os.getenv("RANK"))
 
@@ -142,8 +141,8 @@ def main(args):
                     tokenizer=tokenizer,
                 )
 
-            dist.barrier(device_ids=[engine.device.index])
             current_platform.synchronize()
+            dist.barrier(group=engine.cpu_group)
 
             with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
@@ -165,8 +164,8 @@ def main(args):
                     global_step,
                 )
 
-            dist.barrier(device_ids=[engine.device.index])
             current_platform.synchronize()
+            dist.barrier(group=engine.cpu_group)
 
             stats_logger.commit(
                 epoch,
