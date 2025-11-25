@@ -52,7 +52,8 @@ class RLVRAgentWorkflow(RolloutWorkflow):
         rollout_stat_scope: str = "rollout",
         n_trajs: int = 1,
     ):
-        self.gconfig = gconfig
+        # NOTE(refactor): stop tokens are not used in this workflow, adding stop and pad token ids may not be necessary
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir

@@ -20,6 +20,7 @@ import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
+from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
@@ -247,7 +248,7 @@ class RemoteInfBackendProtocol(Protocol):
         ...
 
 
-class RemoteInfEngine:
+class RemoteInfEngine(InferenceEngine):
     """
     Base implementation for HTTP-based remote inference engines.
 

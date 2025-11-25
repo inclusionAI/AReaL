@@ -596,7 +596,7 @@ def slurm_main(config, run_id: int = 0):
             logger.warning("No trainer commands")
         return trainer_cmds
 
-    if config.enable_offload:
+    if config.get("enable_offload", False):
         tms_env_vars = get_tms_env_vars()
     else:
         tms_env_vars = {}

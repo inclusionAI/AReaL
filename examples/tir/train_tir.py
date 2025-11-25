@@ -107,11 +107,6 @@ def main(args):
     reward_fn = math_reward_fn
 
     # Create TIR workflow
-    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-
     workflow = TIRWorkflow(
         reward_fn=reward_fn,
         gconfig=config.gconfig,

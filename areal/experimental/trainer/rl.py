@@ -46,12 +46,6 @@ class GRPOTrainer:
         if self.tokenizer is None:
             self.tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
-        # update the gconfig stop token ids (also updates self.config)
-        if self.tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-            config.gconfig.stop_token_ids.append(self.tokenizer.pad_token_id)
-        if self.tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-            config.gconfig.stop_token_ids.append(self.tokenizer.eos_token_id)
-
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
 
