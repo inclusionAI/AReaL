@@ -38,7 +38,41 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
 
 def main(args):
-    config, _ = load_expr_config(args, GRPOConfig)
+    # Extract custom training parameters from YAML before config validation
+    # These parameters are not part of GRPOConfig, so we read them directly from YAML
+    import argparse
+    from omegaconf import OmegaConf
+    from pathlib import Path
+    
+    # Parse args to find config file
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", help="Path to the main configuration file", required=True)
+    # Skip script path if present
+    if args and args[0].endswith(".py"):
+        args = args[1:]
+    parsed_args, _ = parser.parse_known_args(args)
+    
+    # Load YAML directly to extract custom fields
+    config_file = Path(parsed_args.config)
+    if not config_file.is_absolute():
+        # Make it absolute relative to current working directory
+        config_file = Path.cwd() / config_file
+    raw_yaml = OmegaConf.load(config_file)
+    
+    # Remove custom fields from config to avoid validation errors
+    # Use OmegaConf/Hydra delete syntax (~key) to remove keys
+    custom_keys = ["max_train_samples", "training_mode", "circuit_breaker_enabled", "circuit_breaker_threshold"]
+    override_args = []
+    for key in custom_keys:
+        if key in raw_yaml:
+            # Use ~ prefix to delete the key in OmegaConf/Hydra
+            override_args.append(f"~{key}")
+    
+    # Add overrides to args to remove custom keys
+    args_with_overrides = args + override_args
+    
+    # Now load config normally - the overrides will remove the custom keys
+    config, _ = load_expr_config(args_with_overrides, GRPOConfig)
     config: GRPOConfig
 
     # Set up logging to network volume (persists after pod stops)
