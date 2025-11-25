@@ -31,7 +31,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         dump_dir: str | None = None,
     ):
         self.reward_fn = reward_fn
-        self.gconfig = gconfig
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
         self.max_turns = max_turns
         self.turn_discount = turn_discount
