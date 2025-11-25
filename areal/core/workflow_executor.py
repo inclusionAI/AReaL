@@ -231,8 +231,6 @@ class _RolloutResult:
     task_id: int | None = None
 
 
-# Polling interval for background threads
-_POLL_INTERVAL_SECONDS = 0.5
 # Batch size for fetching from the async task runner
 _MAX_FETCH_BATCH_SIZE = 100
 # Timeout for shutting down threads
@@ -276,6 +274,12 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         self._pending_inputs: deque[TInput] = deque()
         self._pending_results: deque[TimedResult[TResult]] = deque()
 
+        # Condition variables for coordination
+        self._input_lock = threading.Lock()
+        self._input_cv = threading.Condition(self._input_lock)
+        self._result_lock = threading.Lock()
+        self._result_cv = threading.Condition(self._result_lock)
+
         # Background thread infrastructure
         self._shutdown_event = threading.Event()
         self._commit_thread: threading.Thread | None = None
@@ -299,6 +303,13 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                     f"Background thread failed: {self._thread_exception}"
                 ) from self._thread_exception
 
+    def _has_runner_capacity(self) -> bool:
+        return (
+            not self.runner.paused.is_set()
+            and self.staleness_manager.get_capacity() > 0
+            and self.runner.get_input_queue_size() < self.runner.max_queue_size
+        )
+
     def _commit_loop(self) -> None:
         """Producer thread - continuously submits tasks based on capacity."""
         while not self._shutdown_event.is_set():
@@ -306,39 +317,25 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                 # Check for errors from other threads (fail-fast)
                 self._check_thread_exception()
 
-                # Wait for resume if paused
-                if self.runner.paused.is_set():
-                    time.sleep(_POLL_INTERVAL_SECONDS)
+                task_input = self._get_next_task_for_submission()
+                if task_input is None:
                     continue
 
-                # Get capacity from staleness manager
-                capacity = self.staleness_manager.get_capacity()
-
-                if capacity <= 0:
-                    time.sleep(_POLL_INTERVAL_SECONDS)
-                    continue
-
-                # Try to submit up to 'capacity' tasks
-                for _ in range(capacity):
-                    try:
-                        task_input = self._pending_inputs.popleft()
-                    except IndexError:
-                        break
-
-                    # Submit to runner
-                    task_fn = self.task_factory(task_input)
-                    try:
-                        self.runner.submit(task_fn)
-                        self.staleness_manager.on_rollout_submitted()
-                        if self.enable_tracing:
-                            self.logger.info(f"Submit rollout. {self._rollout_stats()}")
-                    except TaskQueueFullError:
-                        # Put back and retry later
+                task_fn = self.task_factory(task_input)
+                try:
+                    self.runner.submit(task_fn)
+                    self.staleness_manager.on_rollout_submitted()
+                    if self.enable_tracing:
+                        self.logger.info(f"Submit rollout. {self._rollout_stats()}")
+                except TaskQueueFullError:
+                    with self._input_cv:
                         self._pending_inputs.appendleft(task_input)
-                        break
-
-                # Small sleep to avoid busy-waiting (latency-optimized)
-                time.sleep(_POLL_INTERVAL_SECONDS)
+                        self._input_cv.wait_for(
+                            lambda: self._shutdown_event.is_set()
+                            or self._has_runner_capacity()
+                        )
+                    # Allow other threads to make progress before retrying
+                    continue
 
             except Exception as e:
                 self.logger.error("Producer thread failed", exc_info=True)
@@ -354,37 +351,43 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
                 # Poll runner for available results (non-blocking)
                 output_queue_size = self.runner.get_output_queue_size()
-
-                if output_queue_size == 0:
-                    time.sleep(_POLL_INTERVAL_SECONDS)
-                    continue
-
-                # Collect all available results at once (batch for efficiency)
-                # Limit batch size to avoid blocking too long
-                count = min(output_queue_size, _MAX_FETCH_BATCH_SIZE)
+                count = max(1, min(output_queue_size, _MAX_FETCH_BATCH_SIZE))
 
                 try:
                     # Use short timeout for responsiveness (latency-optimized)
                     results = self.runner.wait(
                         count=count, timeout=0.05, with_timing=True
                     )
+                except TimeoutError:
+                    continue
 
-                    # Enqueue all results. Filtering will be delayed to
-                    # `rollout_batch` or `prepare_batch`.
+                with self._result_cv:
                     for result in results:
                         self._pending_results.append(result)
+                    self._result_cv.notify_all()
 
-                except TimeoutError:
-                    # No results ready yet
-                    pass
-
-                # Small sleep to avoid busy-waiting (latency-optimized)
-                time.sleep(_POLL_INTERVAL_SECONDS)
+                # Newly available capacity after result processing should wake producers
+                with self._input_cv:
+                    self._input_cv.notify()
 
             except Exception as e:
                 self.logger.error("Consumer thread failed", exc_info=True)
                 self._set_thread_exception(e)
                 break
+
+    def _get_next_task_for_submission(self) -> TInput | None:
+        with self._input_cv:
+            while not self._shutdown_event.is_set():
+                # There is capacity and pending inputs
+                if (
+                    not self.runner.paused.is_set()
+                    and self.staleness_manager.get_capacity() > 0
+                    and self._pending_inputs
+                ):
+                    return self._pending_inputs.popleft()
+                self._input_cv.wait()
+
+        return None
 
     def initialize(self, logger: Logger):
         self.logger = logger
@@ -400,6 +403,10 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
     def destroy(self):
         self._shutdown_event.set()
+        with self._input_cv:
+            self._input_cv.notify()
+        with self._result_cv:
+            self._result_cv.notify_all()
 
         if self._commit_thread and self._commit_thread.is_alive():
             self._commit_thread.join(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
@@ -425,6 +432,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         input queue, but existing running tasks will continue to completion.
         """
         self.runner.pause()
+        with self._input_cv:
+            self._input_cv.notify()
 
     def resume(self):
         """Resume request submission for async tasks.
@@ -432,6 +441,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         Allows new tasks to be pulled from the input queue and started.
         """
         self.runner.resume()
+        with self._input_cv:
+            self._input_cv.notify()
 
     def is_paused(self) -> bool:
         """Check if the dispatcher is currently paused.
@@ -461,10 +472,12 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             Task input to be processed.
         """
         self._check_thread_exception()
-        self._pending_inputs.append(task_input)
-        self.staleness_manager.on_rollout_enqueued()
-        if self.enable_tracing:
-            self.logger.info(f"Enqueue rollout. {self._rollout_stats()}")
+        with self._input_cv:
+            self._pending_inputs.append(task_input)
+            self.staleness_manager.on_rollout_enqueued()
+            if self.enable_tracing:
+                self.logger.info(f"Enqueue rollout. {self._rollout_stats()}")
+            self._input_cv.notify()
 
     def wait_results(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
@@ -489,43 +502,38 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             raise ValueError(f"count must be positive, got {count}")
 
         start_time = time.perf_counter()
-        timeout = timeout or float(7 * 24 * 3600)
+        if timeout is None:
+            timeout = float(7 * 24 * 3600)
 
-        while time.perf_counter() - start_time < timeout:
-            self._check_thread_exception()
+        with self._result_cv:
+            while len(self._pending_results) < count:
+                self._check_thread_exception()
 
-            if len(self._pending_results) >= count:
-                break
+                elapsed = time.perf_counter() - start_time
+                remaining = timeout - elapsed
+                if remaining <= 0:
+                    if raise_timeout:
+                        raise TimeoutError(
+                            f"Timed out waiting for {count} results, "
+                            f"only received {len(self._pending_results)}"
+                        )
+                    return []
 
-            elapsed = time.perf_counter() - start_time
-            remaining = timeout - elapsed
-            time.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
+                self._result_cv.wait(timeout=remaining)
 
-        if len(self._pending_results) < count:
-            if raise_timeout:
-                raise TimeoutError(
-                    f"Timed out waiting for {count} results, "
-                    f"only received {len(self._pending_results)}"
-                )
-            else:
-                return []
+            drained: list[TimedResult[TResult]] = list(self._pending_results)
+            self._pending_results.clear()
 
-        # Drain results and sort by creation time
-        results: list[TimedResult[TResult]] = []
-        while True:
-            try:
-                results.append(self._pending_results.popleft())
-            except IndexError:
-                break
+        drained.sort(key=lambda x: x.create_time)
+        selected, pending = drained[:count], drained[count:]
+        if pending:
+            with self._result_cv:
+                self._pending_results.extendleft(reversed(pending))
+                self._result_cv.notify_all()
 
-        results.sort(key=lambda x: x.create_time)
-        results, pending = results[:count], results[count:]
-        self._pending_results.extendleft(reversed(pending))
+        random.shuffle(selected)
 
-        # Shuffle for randomness
-        random.shuffle(results)
-
-        return [r.data for r in results]
+        return [r.data for r in selected]
 
     def active_submit_and_wait(
         self, input_generator: Generator[TInput], batch_size: int
@@ -535,9 +543,9 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         while True:
             # Submit tasks to maintain overlap
-            cap_staleness = self.staleness_manager.get_pending_limit() - len(
-                self._pending_inputs
-            )
+            with self._input_cv:
+                pending_inputs = len(self._pending_inputs)
+            cap_staleness = self.staleness_manager.get_pending_limit() - pending_inputs
             cap_queue = self.runner.max_queue_size - (
                 self.runner.get_input_queue_size() + batch_size
             )
