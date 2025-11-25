@@ -63,7 +63,7 @@ class RLVRWorkflow(RolloutWorkflow):
         ] = default_data_extract_prompt_fn,
     ):
         self.reward_fn = reward_fn
-        self.gconfig = gconfig
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
         self.enable_thinking = enable_thinking
         self.dump_dir = dump_dir

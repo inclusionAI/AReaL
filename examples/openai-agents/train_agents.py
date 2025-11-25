@@ -92,11 +92,6 @@ def main(args):
     actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow based on agent type
-    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-
     if config.agent_type == "math":
         from math_workflow import RLVRAgentWorkflow
 

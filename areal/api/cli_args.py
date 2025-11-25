@@ -12,6 +12,7 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
+from transformers import PreTrainedTokenizerFast
 
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, pkg_version
@@ -164,6 +165,15 @@ class GenerationHyperparameters:
         args = asdict(self)
         args.update(kwargs)
         return GenerationHyperparameters(**args)
+
+    def new_with_stop_and_pad_token_ids(self, tokenizer: PreTrainedTokenizerFast):
+        """Create a new generation hyperparameters with stop and pad token ids added."""
+        new_stop_token_ids = self.stop_token_ids.copy()
+        if tokenizer.pad_token_id not in new_stop_token_ids:
+            new_stop_token_ids.append(tokenizer.pad_token_id)
+        if tokenizer.eos_token_id not in new_stop_token_ids:
+            new_stop_token_ids.append(tokenizer.eos_token_id)
+        return self.new(stop_token_ids=new_stop_token_ids)
 
     def to_openai_args_dict(
         self, exclude_args: list[str] | None = None
