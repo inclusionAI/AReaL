@@ -631,3 +631,17 @@ class InferenceEngine(abc.ABC):
     def resume(self):
         """Resume request submission for async rollout."""
         raise NotImplementedError()
+
+    def offload(self):
+        """Offload model from GPU to CPU for inference engine."""
+        raise NotImplementedError()
+
+    def onload(self, tags: list[str] | None = None):
+        """Onload model from CPU to GPU for inference engine.
+
+        Parameters
+        ----------
+        tags : list[str], optional
+            Tags to onload specific components. If None, onloads all components.
+        """
+        raise NotImplementedError()
