@@ -50,7 +50,7 @@ class CountDownWorkflow(RolloutWorkflow):
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
     ):
-        self.gconfig = gconfig
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
@@ -222,10 +222,6 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     # Create rollout workflow
-    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
     workflow = CountDownWorkflow(
         gconfig=config.gconfig,
         tokenizer=tokenizer,

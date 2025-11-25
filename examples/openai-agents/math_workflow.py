@@ -52,6 +52,7 @@ class RLVRAgentWorkflow(RolloutWorkflow):
         rollout_stat_scope: str = "rollout",
         n_trajs: int = 1,
     ):
+        # FIXME: gconfig is not used to control agent behavior yet in this workflow
         self.gconfig = gconfig
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer

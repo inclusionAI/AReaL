@@ -195,6 +195,7 @@ class MultiAgentRLVRAgentWorkflow(RolloutWorkflow):
         max_tokens: int = 32768,
         max_turns: int = 8,
     ):
+        # NOTE: stop tokens are not used in this workflow
         self.gconfig = gconfig
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer

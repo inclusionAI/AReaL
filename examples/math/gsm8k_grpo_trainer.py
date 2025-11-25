@@ -18,11 +18,6 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
-    # update the gconfig stop token ids (also updates self.config)
-    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
 
     train_dataset = get_custom_dataset(
         split="train",
