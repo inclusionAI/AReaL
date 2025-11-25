@@ -6,8 +6,9 @@ This script loads a trained model checkpoint and evaluates it on the GSM8K test 
 
 import os
 import sys
+import time
 import warnings
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Suppress annoying warnings
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*pynvml.*")
@@ -91,9 +92,77 @@ def main(args):
     _log(f"Log file: {log_path}")
     _log(f"{'='*80}\n")
 
-    dist.init_process_group("gloo")
-    # Create a group for stats all-reduce.
-    group = dist.new_group()
+    # Initialize distributed process group if not already initialized
+    # Use a unique port to avoid conflicts with training processes
+    if not dist.is_initialized():
+        import socket
+        import random
+        
+        # Find a free port in a high range to avoid conflicts
+        def find_free_port():
+            # Use a high port range (30000-60000) to avoid conflicts
+            for _ in range(10):  # Try up to 10 random ports
+                port = random.randint(30000, 60000)
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    try:
+                        s.bind(('', port))
+                        return port
+                    except OSError:
+                        continue
+            # Fallback: let OS choose
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', 0))
+                return s.getsockname()[1]
+        
+        # Try to initialize with a unique port
+        max_retries = 5
+        initialized = False
+        for attempt in range(max_retries):
+            try:
+                free_port = find_free_port()
+                master_addr = os.environ.get("MASTER_ADDR", "localhost")
+                init_method = f"tcp://{master_addr}:{free_port}"
+                
+                rank = int(os.environ.get("RANK", "0"))
+                world_size = int(os.environ.get("WORLD_SIZE", "1"))
+                
+                # Add a small delay to ensure port is fully released
+                if attempt > 0:
+                    time.sleep(1)
+                
+                dist.init_process_group(
+                    backend="gloo",
+                    init_method=init_method,
+                    rank=rank,
+                    world_size=world_size,
+                    timeout=timedelta(seconds=30)
+                )
+                _log(f"Initialized process group on port {free_port}")
+                initialized = True
+                break
+            except (dist.DistNetworkError, OSError) as e:
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2  # Exponential backoff: 2s, 4s, 6s, 8s
+                    _log(f"Port conflict (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    _log(f"Failed to initialize process group after {max_retries} attempts: {e}")
+                    _log("Continuing without distributed stats aggregation...")
+                    # Continue without distributed - stats won't be aggregated but test can proceed
+                    break
+    else:
+        _log("Process group already initialized")
+        initialized = True
+    
+    # Create a group for stats all-reduce (only if dist is initialized)
+    if dist.is_initialized():
+        try:
+            group = dist.new_group()
+        except Exception as e:
+            _log(f"Warning: Could not create stats group: {e}, continuing without group")
+            group = None
+    else:
+        group = None
 
     rank = int(os.getenv("RANK", "0"))
     world_size = int(os.getenv("WORLD_SIZE", "1"))
@@ -205,7 +274,13 @@ def main(args):
     print(f"{'='*80}\n")
     
     eval_rollout.destroy()
-    dist.destroy_process_group()
+    
+    # Only destroy process group if we initialized it
+    if dist.is_initialized():
+        try:
+            dist.destroy_process_group()
+        except Exception as e:
+            _log(f"Warning: Could not destroy process group: {e}")
     
     # Exit cleanly
     sys.exit(0)
