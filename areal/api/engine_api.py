@@ -637,5 +637,11 @@ class InferenceEngine(abc.ABC):
         raise NotImplementedError()
 
     def onload(self, tags: list[str] | None = None):
-        """Onload model from CPU to GPU for inference engine."""
+        """Onload model from CPU to GPU for inference engine.
+
+        Parameters
+        ----------
+        tags : list[str], optional
+            Tags to onload specific components. If None, onloads all components.
+        """
         raise NotImplementedError()
