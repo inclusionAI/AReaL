@@ -536,8 +536,32 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         return [r.data for r in selected]
 
     def active_submit_and_wait(
-        self, input_generator: Generator[TInput], batch_size: int
+        self, input_generator: Generator[TInput, None, None], batch_size: int
     ) -> list[TResult]:
+        """Continuously submit tasks and wait until a full batch of results is ready.
+
+        This method maintains overlap between submission and result collection
+        to maximize throughput.
+
+        Parameters
+        ----------
+        input_generator : Generator[TInput, None, None]
+            An **infinite** generator that yields task inputs. The generator
+            must not be exhausted before the batch is complete. Use
+            :func:`~areal.utils.data.cycle_dataloader` to wrap finite data sources.
+        batch_size : int
+            Number of results to collect before returning.
+
+        Returns
+        -------
+        list[TResult]
+            A list of ``batch_size`` task results.
+
+        Raises
+        ------
+        RuntimeError
+            If the input generator is exhausted before the batch is complete.
+        """
         cnt = 0
         results = []
 
@@ -558,7 +582,13 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                         args={"data": capacity},
                     )
                 for _ in range(min(batch_size, capacity)):
-                    self.submit_task_input(next(input_generator))
+                    try:
+                        self.submit_task_input(next(input_generator))
+                    except StopIteration:
+                        raise RuntimeError(
+                            "Input generator exhausted before batch completion. "
+                            "Use cycle_dataloader() or provide an infinite generator."
+                        ) from None
             try:
                 res = self.wait_results(count=1, timeout=1)
                 if not res or res[0] is None:
@@ -605,7 +635,7 @@ class WorkflowExecutor:
         self._expected_trajectory_keys: set | None = None
 
         # Dispatcher will be initialized in initialize() after staleness_manager is ready
-        self.dispatcher: (
+        self._dispatcher: (
             BatchTaskDispatcher[_RolloutTaskInput, _RolloutResult] | None
         ) = None
 
@@ -662,7 +692,7 @@ class WorkflowExecutor:
 
         # Create and initialize the dispatcher
         qsize = self.config.queue_size or self.max_concurrent_rollouts * 16
-        self.dispatcher = BatchTaskDispatcher[_RolloutTaskInput, _RolloutResult](
+        self._dispatcher = BatchTaskDispatcher[_RolloutTaskInput, _RolloutResult](
             max_queue_size=qsize,
             task_factory=self._create_workflow_task,
             staleness_manager=self._staleness_manager,
@@ -670,7 +700,7 @@ class WorkflowExecutor:
         )
 
         # Initialize the dispatcher's async task runner
-        self.dispatcher.initialize(logger=logger)
+        self._dispatcher.initialize(logger=logger)
 
     def destroy(self):
         """Shutdown the workflow executor and clean up resources.
@@ -679,8 +709,8 @@ class WorkflowExecutor:
         then flushes the performance tracer.
         """
         # Stop background threads and shutdown the async task runner
-        if self.dispatcher is not None:
-            self.dispatcher.destroy()
+        if self._dispatcher is not None:
+            self._dispatcher.destroy()
 
         # Flush performance tracer
         tracer = perf_tracer.get_session_tracer()
@@ -1037,6 +1067,19 @@ class WorkflowExecutor:
         Continuously submits from dataloader and waits for results, ensuring at least
         two batches are pending to maximize overlap.
 
+        .. warning::
+
+            This method caches an internal data generator on the first call.
+            The ``dataloader``, ``workflow``, ``workflow_kwargs``, and
+            ``should_accept_fn`` parameters are captured at the first invocation
+            and reused in all subsequent calls. Passing different arguments in
+            later calls will **not** take effect.
+
+            If you need to switch configurations mid-training, consider:
+
+            - Using a separate :class:`WorkflowExecutor` (or engine) instance
+            - Using the :meth:`submit` / :meth:`wait` pattern for finer control
+
         See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for parameters.
         """
 
@@ -1098,10 +1141,15 @@ class WorkflowExecutor:
         return manager
 
     @property
+    def dispatcher(self) -> BatchTaskDispatcher[_RolloutTaskInput, _RolloutResult]:
+        """Get the task dispatcher, ensuring initialization has been called."""
+        if self._dispatcher is None:
+            raise RuntimeError(
+                "WorkflowExecutor.initialize() must be called before scheduling rollouts."
+            )
+        return self._dispatcher
+
+    @property
     def runner(self):
         """For backward compatibility. The runner is now owned by the dispatcher."""
-        if self.dispatcher is None:
-            raise RuntimeError(
-                "WorkflowExecutor.initialize() must be called before accessing runner."
-            )
         return self.dispatcher.runner
