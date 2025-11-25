@@ -1,5 +1,4 @@
 import asyncio
-import importlib
 import os
 import uuid
 from collections.abc import Callable
@@ -18,6 +17,7 @@ from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
+from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import (
     atrace_session_phase,
     session_context,
@@ -50,9 +50,9 @@ class RLVRWorkflow(RolloutWorkflow):
 
     def __init__(
         self,
-        reward_fn: Callable[..., Any],
+        reward_fn: Callable[..., Any] | str,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast | str,
+        tokenizer: PreTrainedTokenizerFast,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
@@ -69,7 +69,8 @@ class RLVRWorkflow(RolloutWorkflow):
         self.enable_thinking = enable_thinking
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
-        self.async_reward_fn = AsyncRewardWrapper(reward_fn)
+        if not isinstance(reward_fn, str):
+            self.async_reward_fn = AsyncRewardWrapper(reward_fn)
         self.get_input_ids_fn = get_input_ids_fn
         self.data_extract_prompt_fn = data_extract_prompt_fn
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
@@ -136,22 +137,9 @@ class RLVRWorkflow(RolloutWorkflow):
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, torch.Tensor]:
-        # NOTE: tokenizer and reward_fn are not jsonifiable for remote execution,
-        # so we need to load it eagerly during execution.
-        if isinstance(self.tokenizer, str):
-            from areal.utils.hf_utils import load_hf_tokenizer
-
-            tokenizer = load_hf_tokenizer(self.tokenizer)
-            if tokenizer.pad_token_id not in self.gconfig.stop_token_ids:
-                self.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-            if tokenizer.eos_token_id not in self.gconfig.stop_token_ids:
-                self.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
-            self.tokenizer = tokenizer
-
+        # NOTE: load reward function dynamically if given as string
         if isinstance(self.reward_fn, str):
-            module_path, fname = self.reward_fn.rsplit(".", 1)
-            module = importlib.import_module(module_path)
-            self.reward_fn = getattr(module, fname)
+            self.reward_fn = import_from_string(self.reward_fn)
             self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
 
         input_ids = self.get_input_ids_fn(

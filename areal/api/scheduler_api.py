@@ -22,7 +22,6 @@ class Worker:
     """
 
     id: str
-    # worker and engine deploy on the same machine, so ip are the same
     ip: str
     worker_ports: list[str] = field(default_factory=list)
     engine_ports: list[str] = field(default_factory=list)
