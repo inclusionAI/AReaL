@@ -1075,6 +1075,8 @@ class FSDPEngine(TrainEngine):
         model_kwargs.update(common_kwargs)
 
         if self.config.init_from_scratch:
+            # initialize model from config
+            # NOTE: VLM cannot directly load state dict using this random initialized model
             model = model_class.from_config(
                 self.model_config,
                 **model_kwargs,
