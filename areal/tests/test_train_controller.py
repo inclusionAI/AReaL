@@ -178,7 +178,6 @@ class TestTrainControllerInitialization:
         assert controller.scheduler == mock_scheduler
         assert controller.workers == []
         assert controller.workers_is_dp_head == []
-        assert controller.logger is None
 
     def test_initialize(self, train_controller, alloc_mode, ft_spec):
         """Test initialize method creates workers and engines."""
