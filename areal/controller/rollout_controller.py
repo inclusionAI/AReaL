@@ -111,7 +111,7 @@ class RolloutController:
             self.config.max_concurrent_rollouts or self.config.consumer_batch_size
         )
         consumer_batch_size = self.config.consumer_batch_size
-        self.staleness_manager = StalenessManager(
+        self._staleness_manager = StalenessManager(
             version_provider=self,
             max_concurrent_rollouts=max_concurrent_rollouts,
             consumer_batch_size=consumer_batch_size,
@@ -120,16 +120,16 @@ class RolloutController:
 
         # Create and initialize the dispatcher
         qsize = self.config.queue_size or max_concurrent_rollouts * 16
-        self.dispatcher = BatchTaskDispatcher[
+        self._dispatcher = BatchTaskDispatcher[
             _RemoteRolloutTaskInput, _RemoteRolloutResult
         ](
             max_queue_size=qsize,
             task_factory=self._create_submit_callback,
-            staleness_manager=self.staleness_manager,
+            staleness_manager=self._staleness_manager,
             enable_tracing=self.config.enable_rollout_tracing,
         )
         # Initialize the dispatcher's async task runner
-        self.dispatcher.initialize(logger=logger)
+        self._dispatcher.initialize(logger=logger)
 
     async def _async_initialize(
         self, job: Job, server_args: dict[str, Any], *args, **kwargs
@@ -168,8 +168,8 @@ class RolloutController:
 
     def destroy(self):
         # Stop background threads and shutdown the async task runner
-        if self.dispatcher is not None:
-            self.dispatcher.destroy()
+        if self._dispatcher is not None:
+            self._dispatcher.destroy()
 
         self._collective_rpc("destroy")
 
@@ -223,7 +223,7 @@ class RolloutController:
             raise ValueError(f"Invalid workflow type: {type(workflow)}")
 
     def _rollout_stats(self) -> str:
-        stats = self.staleness_manager.get_stats()
+        stats = self._staleness_manager.get_stats()
         return (
             f"enqueued: {stats.enqueued}, "
             f"running: {stats.running}, "
@@ -300,6 +300,9 @@ class RolloutController:
                 return None
 
         return _submit_then_wait
+
+    def get_capacity(self):
+        return self.staleness_manager.get_capacity()
 
     def submit(
         self,
@@ -480,6 +483,10 @@ class RolloutController:
                 continue
             stats[k] /= stats[k + "__count"]
         return stats
+
+    @property
+    def staleness_manager(self):
+        return self._staleness_manager
 
     @property
     def dispatcher(

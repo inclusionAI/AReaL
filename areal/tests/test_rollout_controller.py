@@ -1,6 +1,5 @@
 import asyncio
-import queue
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -11,7 +10,6 @@ from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Worker
 from areal.controller.batch import DistributedBatchMemory
 from areal.controller.rollout_controller import RolloutController
-from areal.core.async_task_runner import TaskQueueFullError
 
 
 def create_test_config(**kwargs):
@@ -64,24 +62,20 @@ class MockScheduler:
     async def async_call_engine(self, worker_id, method, *args, **kwargs):
         self.engine_calls.append((worker_id, method, args, kwargs))
         self.call_count += 1
-
-        if method == "run_workflow":
-            await asyncio.sleep(0.01)
-            return {
-                "input_ids": torch.randint(0, 100, (1, 10)),
-                "attention_mask": torch.ones(1, 10, dtype=torch.bool),
-                "loss_mask": torch.tensor(
-                    [0] * 5 + [1] * 5, dtype=torch.bool
-                ).unsqueeze(0),
-                "rewards": torch.randn(1),
-            }
-        elif method == "agenerate":
+        if method == "agenerate":
             return Mock()
-        elif method == "wait_quiet":
+        elif method == "wait":
             # Return a result from pending results if available
+            count = kwargs["count"]
             if worker_id in self._pending_results and self._pending_results[worker_id]:
-                return self._pending_results[worker_id].pop(0)
-            return "NO_RESULT"
+                if len(self._pending_results[worker_id]) < count:
+                    return []
+                results, self._pending_results[worker_id] = (
+                    self._pending_results[worker_id][:count],
+                    self._pending_results[worker_id][count:],
+                )
+                return results
+            return []
         return None
 
     def call_engine(self, worker_id, method, *args, **kwargs):
@@ -147,7 +141,6 @@ class TestRolloutControllerInitialization:
         assert controller.workers == []
         assert controller._current_worker_idx == 0
         assert controller._version == 0
-        assert controller.runner is None
         assert controller.staleness_manager is None
 
     def test_initialize_creates_workers(self):
@@ -164,10 +157,9 @@ class TestRolloutControllerInitialization:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d2")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         assert len(controller.workers) == 2
-        assert controller.runner is not None
         assert controller.staleness_manager is not None
 
         controller.destroy()
@@ -186,7 +178,7 @@ class TestRolloutControllerInitialization:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         assert controller.staleness_manager.max_concurrent_rollouts == 100
         assert controller.staleness_manager.consumer_batch_size == 32
@@ -208,7 +200,7 @@ class TestRolloutControllerInitialization:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         assert controller.staleness_manager.max_concurrent_rollouts == 64
 
@@ -228,9 +220,7 @@ class TestRolloutControllerInitialization:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
-
-        assert controller.runner.enable_tracing is True
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.destroy()
 
@@ -246,14 +236,11 @@ class TestRolloutControllerDestroy:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
-        assert controller.runner is not None
         assert len(controller.workers) > 0
 
         controller.destroy()
-
-        assert controller.runner is None
         assert len(controller.workers) == 0
 
     def test_destroy_deletes_workers_via_scheduler(self):
@@ -266,7 +253,7 @@ class TestRolloutControllerDestroy:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d2")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         assert len(scheduler.workers) == 2
 
@@ -286,7 +273,7 @@ class TestRolloutControllerDestroy:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.destroy()
 
@@ -306,7 +293,7 @@ class TestRolloutControllerCapacity:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         capacity = controller.get_capacity()
         assert capacity == 32
@@ -327,7 +314,7 @@ class TestRolloutControllerCapacity:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         capacity_v0 = controller.get_capacity()
 
@@ -350,7 +337,7 @@ class TestRolloutControllerWorkerSelection:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d3")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         worker_ids = []
         for _ in range(6):
@@ -368,51 +355,6 @@ class TestRolloutControllerWorkerSelection:
 
 
 class TestRolloutControllerSubmitAndWait:
-    def test_submit_adds_to_pending_queue(self):
-        config = create_test_config(consumer_batch_size=16)
-        scheduler = MockScheduler()
-        controller = RolloutController(
-            inf_engine=MockInferenceEngine,
-            config=config,
-            scheduler=scheduler,
-        )
-
-        alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
-
-        data = {"test": "data"}
-        controller.submit(
-            data, workflow_path="areal.tests.utils.TestWorkflow", workflow_kwargs={}
-        )
-
-        assert len(controller._pending_inputs) == 1
-        assert controller._pending_inputs[0].data == data
-
-        controller.destroy()
-
-    def test_submit_multiple_requests(self):
-        config = create_test_config(consumer_batch_size=16)
-        scheduler = MockScheduler()
-        controller = RolloutController(
-            inf_engine=MockInferenceEngine,
-            config=config,
-            scheduler=scheduler,
-        )
-
-        alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
-
-        for i in range(5):
-            controller.submit(
-                {"id": i},
-                workflow_path="areal.tests.utils.TestWorkflow",
-                workflow_kwargs={},
-            )
-
-        assert len(controller._pending_inputs) == 5
-
-        controller.destroy()
-
     def test_wait_returns_distributed_batch(self):
         config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
         scheduler = MockScheduler()
@@ -423,19 +365,21 @@ class TestRolloutControllerSubmitAndWait:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         for i in range(3):
             controller.submit(
                 {"id": i},
-                workflow_path="areal.tests.utils.TestWorkflow",
+                workflow="areal.tests.utils.TestWorkflow",
                 workflow_kwargs={},
             )
 
         batch = controller.wait(count=3, timeout=5.0)
 
-        assert isinstance(batch, DistributedBatchMemory)
+        assert isinstance(batch, list)
         assert len(batch) == 3
+        for b in batch:
+            assert isinstance(b, dict)
 
         controller.destroy()
 
@@ -456,11 +400,11 @@ class TestRolloutControllerSubmitAndWait:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.submit(
             {"id": 0},
-            workflow_path="areal.tests.utils.TestWorkflow",
+            workflow="areal.tests.utils.TestWorkflow",
             workflow_kwargs={},
         )
 
@@ -504,12 +448,12 @@ class TestRolloutControllerSubmitAndWait:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         for i in range(6):
             controller.submit(
                 {"id": i},
-                workflow_path="areal.tests.utils.TestWorkflow",
+                workflow="areal.tests.utils.TestWorkflow",
                 workflow_kwargs={},
             )
 
@@ -530,12 +474,12 @@ class TestRolloutControllerBatchOperations:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         batch_data = [{"id": i, "value": f"item_{i}"} for i in range(4)]
         batch = controller.rollout_batch(
             batch_data,
-            workflow_path="areal.tests.utils.TestWorkflow",
+            workflow="areal.tests.utils.TestWorkflow",
             workflow_kwargs={},
         )
 
@@ -554,12 +498,12 @@ class TestRolloutControllerBatchOperations:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d2")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         batch_data = [{"id": i} for i in range(10)]
         batch = controller.rollout_batch(
             batch_data,
-            workflow_path="areal.tests.utils.TestWorkflow",
+            workflow="areal.tests.utils.TestWorkflow",
             workflow_kwargs={},
         )
 
@@ -590,7 +534,7 @@ class TestRolloutControllerVersionManagement:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d2")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.set_version(42)
         assert controller.get_version() == 42
@@ -607,7 +551,7 @@ class TestRolloutControllerVersionManagement:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d2")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.set_version(10)
 
@@ -634,7 +578,7 @@ class TestRolloutControllerVersionManagement:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.set_version(5)
 
@@ -650,7 +594,7 @@ class TestRolloutControllerWeightUpdates:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         meta = WeightUpdateMeta(type="disk", path="/tmp/test")
         coro = controller.init_weights_update_group(meta)
@@ -670,7 +614,7 @@ class TestRolloutControllerWeightUpdates:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         meta = WeightUpdateMeta(type="disk", path="/tmp/test")
         param_specs = [ParamSpec(name="test", shape=(10, 10), dtype="float32")]
@@ -691,7 +635,7 @@ class TestRolloutControllerWeightUpdates:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         meta = WeightUpdateMeta(type="disk", path="/tmp/test")
         coro = controller.update_weights_from_disk(meta)
@@ -713,7 +657,7 @@ class TestRolloutControllerLifecycle:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d3")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.pause()
 
@@ -732,7 +676,7 @@ class TestRolloutControllerLifecycle:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d3")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.resume()
 
@@ -757,7 +701,7 @@ class TestRolloutControllerLifecycle:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.pause()
 
@@ -777,7 +721,7 @@ class TestRolloutControllerLifecycle:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.resume()
 
@@ -793,7 +737,7 @@ class TestRolloutControllerAgenerate:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d2")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         req = ModelRequest(input_ids=[1, 2, 3, 4, 5])
 
@@ -821,7 +765,7 @@ class TestRolloutControllerAgenerate:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d3")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         async def test_multiple_agenerate():
             for _ in range(6):
@@ -844,32 +788,6 @@ class TestRolloutControllerAgenerate:
 
 
 class TestRolloutControllerErrorHandling:
-    def test_commit_raises_on_queue_full(self):
-        config = create_test_config(consumer_batch_size=16)
-        scheduler = MockScheduler()
-        controller = RolloutController(
-            inf_engine=MockInferenceEngine,
-            config=config,
-            scheduler=scheduler,
-        )
-
-        alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
-
-        with patch.object(
-            controller.runner, "submit", side_effect=TaskQueueFullError("Queue full")
-        ):
-            controller.submit(
-                {"id": 0},
-                workflow_path="areal.tests.utils.TestWorkflow",
-                workflow_kwargs={},
-            )
-
-            with pytest.raises(queue.Full):
-                controller._commit_one_to_runner()
-
-        controller.destroy()
-
     def test_wait_returns_empty_batch_on_no_results(self):
         config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
         scheduler = MockScheduler()
@@ -887,7 +805,7 @@ class TestRolloutControllerErrorHandling:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         with pytest.raises(TimeoutError):
             controller.wait(count=1, timeout=0.5)
@@ -910,7 +828,7 @@ class TestRolloutControllerIntegration:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d2")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         capacity = controller.get_capacity()
         assert capacity == 20
@@ -918,7 +836,7 @@ class TestRolloutControllerIntegration:
         for i in range(5):
             controller.submit(
                 {"id": i},
-                workflow_path="areal.tests.utils.TestWorkflow",
+                workflow="areal.tests.utils.TestWorkflow",
                 workflow_kwargs={},
             )
 
@@ -944,44 +862,18 @@ class TestRolloutControllerIntegration:
         )
 
         alloc_mode = AllocationMode.from_str("sglang:d1")
-        controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         for cycle in range(3):
             batch_data = [{"id": i, "cycle": cycle} for i in range(4)]
             batch = controller.rollout_batch(
                 batch_data,
-                workflow_path="areal.tests.utils.TestWorkflow",
+                workflow="areal.tests.utils.TestWorkflow",
                 workflow_kwargs={},
             )
             assert len(batch) == 4
 
         controller.destroy()
-
-
-class TestRolloutControllerNotImplemented:
-    def test_register_callback_not_implemented(self):
-        config = create_test_config(consumer_batch_size=16)
-        scheduler = MockScheduler()
-        controller = RolloutController(
-            inf_engine=MockInferenceEngine,
-            config=config,
-            scheduler=scheduler,
-        )
-
-        with pytest.raises(NotImplementedError):
-            controller.register_callback_to_all_worker("test", lambda: None)
-
-    def test_abort_all_requests_not_implemented(self):
-        config = create_test_config(consumer_batch_size=16)
-        scheduler = MockScheduler()
-        controller = RolloutController(
-            inf_engine=MockInferenceEngine,
-            config=config,
-            scheduler=scheduler,
-        )
-
-        with pytest.raises(NotImplementedError):
-            controller.abort_all_requests()
 
 
 @pytest.mark.parametrize("num_workers", [1, 2, 4])
@@ -995,7 +887,7 @@ def test_parametrized_worker_count(num_workers):
     )
 
     alloc_mode = AllocationMode.from_str(f"sglang:d{num_workers}")
-    controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+    controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
     assert len(controller.workers) == num_workers
 
@@ -1022,7 +914,7 @@ def test_parametrized_capacity_settings(
     )
 
     alloc_mode = AllocationMode.from_str("sglang:d1")
-    controller.initialize(role="rollout", alloc_mode=alloc_mode, engine_args={})
+    controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
     capacity = controller.get_capacity()
     assert capacity == expected_capacity
