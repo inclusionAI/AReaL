@@ -381,6 +381,13 @@ class RemoteInfEngine(InferenceEngine):
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
             self.logger.info("Get server addresses from the `addr` argument.")
+        elif os.getenv("AREAL_LLM_SERVER_ADDRS"):
+            # When addr is not provided, fallback to reading addrs from env var
+            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
+            self.logger.info("Get server addresses from environment variable.")
+        elif len(self.local_server_processes) > 0:
+            self.addresses = [f"{s.host}:{s.port}" for s in self.local_server_processes]
+            self.logger.info("Get server addresses from the local subprocess.")
         else:
             if (
                 self.config.experiment_name is not None
@@ -396,10 +403,6 @@ class RemoteInfEngine(InferenceEngine):
                 except (TimeoutError, RuntimeError):
                     # RuntimeError happens when name_resolve is not properly configured.
                     pass
-        if not self.addresses and os.getenv("AREAL_LLM_SERVER_ADDRS"):
-            # When addr is not provided, fallback to reading addrs from env var
-            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
-            self.logger.info("Get server addresses from environment variable.")
         if not self.addresses:
             raise RuntimeError(
                 "No configured inference servers. "
@@ -912,6 +915,9 @@ class RemoteInfEngine(InferenceEngine):
             raise
 
     def _shutdown_one_server(self, server_info: LocalInfServerInfo):
+        addr = f"{server_info.host}:{server_info.port}"
+        if addr in self.addresses:
+            self.addresses.remove(addr)
         if server_info.process.poll() is not None:
             return
         server_info.process.terminate()

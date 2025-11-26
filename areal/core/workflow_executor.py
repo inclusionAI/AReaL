@@ -395,10 +395,10 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         self._shutdown_event.clear()
 
-        self._commit_thread = threading.Thread(target=self._commit_loop)
+        self._commit_thread = threading.Thread(target=self._commit_loop, daemon=True)
         self._commit_thread.start()
 
-        self._fetch_thread = threading.Thread(target=self._fetch_loop)
+        self._fetch_thread = threading.Thread(target=self._fetch_loop, daemon=True)
         self._fetch_thread.start()
 
     def destroy(self):

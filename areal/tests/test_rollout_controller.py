@@ -1,15 +1,24 @@
 import asyncio
+import os
 from unittest.mock import Mock
 
 import pytest
 import torch
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import InferenceEngineConfig, SchedulingSpec
+from areal.api.cli_args import (
+    GenerationHyperparameters,
+    InferenceEngineConfig,
+    SchedulingSpec,
+    SGLangConfig,
+)
 from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Worker
+from areal.controller import RolloutController
 from areal.controller.batch import DistributedBatchMemory
-from areal.controller.rollout_controller import RolloutController
+from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.scheduler.local import LocalScheduler
+from areal.utils.hf_utils import load_hf_tokenizer
 
 
 def create_test_config(**kwargs):
@@ -387,11 +396,12 @@ class TestRolloutControllerSubmitAndWait:
         config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=10)
         scheduler = MockScheduler()
 
-        async def slow_workflow(*args, **kwargs):
-            await asyncio.sleep(10.0)
+        async def async_mock(*args, **kwargs):
+            await asyncio.sleep(0.1)
             return None
 
-        scheduler.async_call_engine = slow_workflow
+        # Mock the `wait` call.
+        scheduler.async_call_engine = async_mock
 
         controller = RolloutController(
             inf_engine=MockInferenceEngine,
@@ -409,7 +419,7 @@ class TestRolloutControllerSubmitAndWait:
         )
 
         with pytest.raises(TimeoutError, match="Timed out waiting for"):
-            controller.wait(count=1, timeout=0.2)
+            controller.wait(count=1, timeout=0.1)
 
         controller.destroy()
 
@@ -920,6 +930,55 @@ def test_parametrized_capacity_settings(
     assert capacity == expected_capacity
 
     controller.destroy()
+
+
+QWEN3_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
+if not os.path.exists(QWEN3_PATH):
+    QWEN3_PATH = "Qwen/Qwen3-0.6B"
+
+
+@pytest.mark.parametrize("model_path", [QWEN3_PATH])
+@pytest.mark.slow
+@pytest.mark.ci
+def test_rollout_controller_integration(tmp_path, model_path):
+    tokenizer = load_hf_tokenizer(model_path)
+    scheduler = LocalScheduler(log_dir=tmp_path)
+    rollout = RolloutController(
+        inf_engine=RemoteSGLangEngine,
+        config=InferenceEngineConfig(
+            experiment_name="test",
+            trial_name="test",
+            consumer_batch_size=128,
+            max_head_offpolicyness=1,
+            max_concurrent_rollouts=5,
+        ),
+        scheduler=scheduler,
+    )
+
+    bs = 10
+    try:
+        rollout.initialize(
+            role="rollout",
+            alloc_mode=AllocationMode.from_str("sglang:d4"),
+            server_args=SGLangConfig.build_args(
+                SGLangConfig(model_path=model_path),
+                tp_size=1,
+                base_gpu_id=0,
+            ),
+        )
+        result = rollout.rollout_batch(
+            data=[dict(messages=[dict(role="user", content="hello")], answer="1")] * bs,
+            workflow="areal.workflow.rlvr.RLVRWorkflow",
+            workflow_kwargs=dict(
+                reward_fn="areal.reward.gsm8k.gsm8k_reward_fn",
+                gconfig=GenerationHyperparameters(),
+                tokenizer=tokenizer,
+            ),
+        )
+        assert isinstance(result, DistributedBatchMemory)
+        assert len(result) == bs
+    finally:
+        rollout.destroy()
 
 
 if __name__ == "__main__":

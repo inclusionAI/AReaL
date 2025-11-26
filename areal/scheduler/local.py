@@ -374,8 +374,9 @@ class LocalScheduler(Scheduler):
                 raise
             raise WorkerCreationError(role, "Unexpected error", str(e)) from e
 
-        for worker_rank, worker_info in enumerate(workers):
-            self._configure_worker(worker_info, worker_rank)
+        if self.exp_config is not None:
+            for worker_rank, worker_info in enumerate(workers):
+                self._configure_worker(worker_info, worker_rank)
 
         return worker_ids
 
@@ -815,8 +816,7 @@ class LocalScheduler(Scheduler):
 
                 response = self._http_client.post(
                     url,
-                    content=orjson.dumps(payload),
-                    headers={"Content-Type": "application/json"},
+                    json=payload,
                     timeout=7200.0,  # 2 hours for long-running operations
                 )
 
