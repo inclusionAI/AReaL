@@ -180,27 +180,30 @@ class TrainController:
 
         Note
         ----
-        The rank, world_size, master_addr, and master_port parameters are passed to
-        the RPC server, which sets them as environment variables for PyTorch distributed
-        initialization. This allows each worker to properly initialize its distributed
-        process group.
+        Distributed training environment variables (RANK, WORLD_SIZE, MASTER_ADDR,
+        MASTER_PORT, LOCAL_RANK) are configured via a dedicated RPC endpoint before
+        engine instantiation.
         """
         self.logger.info("Creating engines on workers...")
-        tasks = []
-        for rank, worker in enumerate(self.workers):
-            tasks.append(
-                self.scheduler.create_engine(
-                    worker_id=worker.id,
-                    engine=engine_path,
-                    config=self.config,
-                    # These parameters are set as environment variables in RPC server
-                    # for PyTorch distributed initialization
-                    rank=rank,
-                    world_size=len(self.workers),
-                    master_addr=self._master_addr,
-                    master_port=self._master_port,
-                )
+
+        async def _setup_worker(worker: Worker, rank: int):
+            env = {
+                "RANK": str(rank),
+                "WORLD_SIZE": str(len(self.workers)),
+                "MASTER_ADDR": str(self._master_addr),
+                "MASTER_PORT": str(self._master_port),
+                "LOCAL_RANK": "0",  # NOTE: local rank is always 0 while each process use
+            }
+            await self.scheduler.set_worker_env(worker.id, env)
+            await self.scheduler.create_engine(
+                worker_id=worker.id,
+                engine=engine_path,
+                config=self.config,
             )
+
+        tasks = [
+            _setup_worker(worker, rank) for rank, worker in enumerate(self.workers)
+        ]
         await asyncio.gather(*tasks)
         self.logger.info("Engines created on all workers!")
 

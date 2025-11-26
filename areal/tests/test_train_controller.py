@@ -43,6 +43,7 @@ class MockScheduler:
         self.call_count = 0
         self.engine_calls = []
         self.deleted_roles = []
+        self.env_settings: dict[str, dict[str, str]] = {}
 
     def create_workers(self, job):
         """Create mock workers based on job configuration."""
@@ -61,6 +62,11 @@ class MockScheduler:
     def get_workers(self, role, timeout=None):
         """Return list of workers for the given role."""
         return self.workers
+
+    async def set_worker_env(self, worker_id, env):
+        """Mock environment configuration."""
+        await asyncio.sleep(0.001)
+        self.env_settings[worker_id] = {k: str(v) for k, v in env.items()}
 
     async def create_engine(self, worker_id, engine, **kwargs):
         """Mock engine creation."""
@@ -197,6 +203,10 @@ class TestTrainControllerInitialization:
 
         # Verify scheduler was called
         assert train_controller.scheduler.call_count > 0
+        # Verify environment configuration occurred for each worker
+        assert len(train_controller.scheduler.env_settings) == len(
+            train_controller.workers
+        )
 
     def test_create_process_group_sets_parallel_strategy(
         self, train_controller, parallel_strategy

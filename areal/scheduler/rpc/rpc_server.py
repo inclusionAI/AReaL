@@ -70,6 +70,42 @@ def configure():
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
+@app.route("/set_env", methods=["POST"])
+def set_env():
+    """Set environment variables for the worker process."""
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON in request body"}), 400
+
+        env_payload = data.get("env")
+        if env_payload is None:
+            return jsonify({"error": "Missing 'env' field in request"}), 400
+        if not isinstance(env_payload, dict):
+            return jsonify({"error": "'env' must be a dictionary"}), 400
+
+        for key, value in env_payload.items():
+            if not isinstance(key, str):
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                f"Environment variable name must be str, got {type(key)}"
+                            )
+                        }
+                    ),
+                    400,
+                )
+            os.environ[key] = str(value)
+            logger.info(f"Set {key}={value}")
+
+        return jsonify({"status": "success"})
+
+    except Exception as e:
+        logger.error(f"Unexpected error in set_env: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
 @app.route("/create_engine", methods=["POST"])
 def create_engine():
     """
@@ -81,12 +117,12 @@ def create_engine():
         "init_args": [...],  # Positional arguments
         "init_kwargs": {
             "config": ...,  # Engine config
-            "rank": 0,  # Optional: worker rank for distributed training (will be popped)
-            "world_size": 1,  # Optional: total number of workers (will be popped)
-            "master_addr": "localhost",  # Optional: master address (will be popped)
-            "master_port": 29500  # Optional: master port (will be popped)
         }
     }
+
+    Distributed training environment variables (RANK, WORLD_SIZE, MASTER_ADDR,
+    MASTER_PORT, LOCAL_RANK, etc.) should be configured via the `/set_env`
+    endpoint before invoking this endpoint.
     """
     global _engine
 
@@ -102,27 +138,6 @@ def create_engine():
 
         if not engine_path:
             return jsonify({"error": "Missing 'engine' field in request"}), 400
-
-        # Pop distributed training parameters from init_kwargs and set as environment variables
-        # These should not be passed to engine.__init__
-        dist_params_map = {
-            "rank": "RANK",
-            "world_size": "WORLD_SIZE",
-            "master_addr": "MASTER_ADDR",
-            "master_port": "MASTER_PORT",
-        }
-        rank = init_kwargs.get("rank")
-
-        for kwarg_key, env_var_key in dist_params_map.items():
-            value = init_kwargs.pop(kwarg_key, None)
-            if value is not None:
-                os.environ[env_var_key] = str(value)
-                logger.info(f"Set {env_var_key}={value}")
-
-        # Set LOCAL_RANK to 0 (one GPU per process)
-        if rank is not None:
-            os.environ["LOCAL_RANK"] = "0"
-            logger.info("Set LOCAL_RANK=0")
 
         # Dynamic import
         try:
