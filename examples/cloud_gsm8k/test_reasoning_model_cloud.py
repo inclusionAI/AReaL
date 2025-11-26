@@ -77,9 +77,12 @@ def test_reasoning_model(
     log_path = os.path.join(log_dir, f"test_reasoning_{ts}.log")
     
     def _log(msg: str):
-        print(msg)
+        # Print directly to stdout/stderr (unbuffered) so it shows in terminal immediately
+        print(msg, flush=True)
+        # Also write to log file
         with open(log_path, "a", encoding="utf-8") as lf:
             lf.write(msg + "\n")
+            lf.flush()  # Ensure it's written immediately
     
     _log(f"\n{'='*80}")
     _log(f"Testing {model_name} REASONING model: {model_path}")

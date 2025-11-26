@@ -81,9 +81,12 @@ def test_model(
     log_path = os.path.join(log_dir, f"test_model_{model_name.lower()}_{ts}.log")
     
     def _log(msg: str):
-        print(msg)
+        # Print directly to stdout/stderr (unbuffered) so it shows in terminal immediately
+        print(msg, flush=True)
+        # Also write to log file
         with open(log_path, "a", encoding="utf-8") as lf:
             lf.write(msg + "\n")
+            lf.flush()  # Ensure it's written immediately
     
     _log(f"\n{'='*80}")
     _log(f"Testing {model_name} model: {model_path}")
@@ -126,10 +129,10 @@ def test_model(
         question = sample["question"]
         correct_answer = sample["answer"]
         
-        # Process correct_answer: convert #### to \boxed{} format (matching local_gsm8k/test_model.py)
-        hashes_idx = correct_answer.find("#### ")
-        if hashes_idx != -1:
-            correct_answer = correct_answer[:hashes_idx] + "\\boxed{" + correct_answer[hashes_idx + 5 :] + "}"
+        # Note: process_results expects the answer in its original format from the dataset
+        # It will extract the answer from both the ground truth and generated text
+        # So we should NOT modify the correct_answer format - let process_results handle it
+        # The dataset's answer field contains the full solution with #### prefix, which process_results can handle
         
         # Format prompt: simple user message format (no system prompt for standard GRPO)
         messages = [
@@ -162,14 +165,25 @@ def test_model(
         generated_text = tokenizer.decode(generated_token_ids, skip_special_tokens=True)
         
         # Check correctness using AReaL's math parser
+        # Note: process_results(answer, solution) where answer is ground truth, solution is generated
         is_correct = False
         parser_error = None
+        extracted_answers = (None, None)
         try:
+            # Debug: log what we're passing to process_results
+            _log(f"[DEBUG] Sample {i+1}: correct_answer length={len(correct_answer)}, generated_text length={len(generated_text)}")
+            _log(f"[DEBUG] Sample {i+1}: correct_answer preview={correct_answer[:100]}...")
+            _log(f"[DEBUG] Sample {i+1}: generated_text preview={generated_text[:100]}...")
+            
             parser_result, extracted_answers = process_results(correct_answer, generated_text)
             is_correct = bool(parser_result)
+            
+            _log(f"[DEBUG] Sample {i+1}: parser_result={parser_result}, extracted_answers={extracted_answers}")
         except Exception as e:
             parser_error = str(e)
             _log(f"Warning: Parser failed for sample {i+1}: {e}")
+            import traceback
+            _log(f"Traceback: {traceback.format_exc()}")
         
         if is_correct:
             correct += 1

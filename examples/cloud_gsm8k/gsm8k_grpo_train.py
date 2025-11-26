@@ -18,6 +18,9 @@ import os
 import sys
 import logging
 import getpass
+import glob
+import re
+import subprocess
 from copy import deepcopy
 
 import torch.distributed as dist
@@ -529,9 +532,6 @@ def main(args):
                     ]
                 
                 try:
-                    import subprocess
-                    import re
-                    
                     baseline_accuracy = None
                     trained_accuracy = None
                     
@@ -540,37 +540,56 @@ def main(args):
                         print(f"\n{'='*80}")
                         print("Testing BASELINE model...")
                         print(f"{'='*80}\n")
-                        baseline_result = subprocess.run(baseline_cmd, check=False, capture_output=True, text=True)
+                        # Don't capture output so it prints directly to terminal
+                        baseline_result = subprocess.run(baseline_cmd, check=False, capture_output=False)
                         
-                        # Extract accuracy from output
+                        # Extract accuracy from log file (test script prints to both stdout and log file)
+                        # The test script will print accuracy to stdout, but we'll also check the log file as backup
                         if baseline_result.returncode == 0:
-                            # Look for various accuracy formats: "BASELINE MODEL ACCURACY: X.XX%", "REASONING MODEL ACCURACY: X.XX%", "ACCURACY: X.XX%"
-                            match = re.search(r'(?:[A-Z]+\s+)?(?:MODEL\s+)?ACCURACY:\s+(\d+\.\d+)%', baseline_result.stdout + baseline_result.stderr, re.IGNORECASE)
-                            if match:
-                                baseline_accuracy = float(match.group(1))
+                            # Try to find the log file and extract accuracy from it
+                            log_pattern = os.path.join(test_log_dir, f"test_model_baseline_*.log")
+                            log_files = glob.glob(log_pattern)
+                            if log_files:
+                                # Get the most recent log file
+                                latest_log = max(log_files, key=os.path.getmtime)
+                                try:
+                                    with open(latest_log, 'r', encoding='utf-8') as f:
+                                        log_content = f.read()
+                                        match = re.search(r'(?:[A-Z]+\s+)?(?:MODEL\s+)?ACCURACY:\s+(\d+\.\d+)%', log_content, re.IGNORECASE)
+                                        if match:
+                                            baseline_accuracy = float(match.group(1))
+                                except Exception as e:
+                                    print(f"Warning: Could not read baseline log file: {e}")
                             print(f"\n✅ Baseline test completed successfully!")
                         else:
                             print(f"\n⚠️  Baseline test exited with code {baseline_result.returncode}")
-                            print(baseline_result.stdout)
-                            print(baseline_result.stderr)
                     
                     # Test trained model
                     print(f"\n{'='*80}")
                     print("Testing TRAINED model...")
                     print(f"{'='*80}\n")
-                    trained_result = subprocess.run(trained_cmd, check=False, capture_output=True, text=True)
+                    # Don't capture output so it prints directly to terminal
+                    trained_result = subprocess.run(trained_cmd, check=False, capture_output=False)
                     
-                    # Extract accuracy from output
+                    # Extract accuracy from log file (test script prints to both stdout and log file)
                     if trained_result.returncode == 0:
-                        # Look for various accuracy formats: "TRAINED MODEL ACCURACY: X.XX%", "REASONING MODEL ACCURACY: X.XX%", "ACCURACY: X.XX%"
-                        match = re.search(r'(?:[A-Z]+\s+)?(?:MODEL\s+)?ACCURACY:\s+(\d+\.\d+)%', trained_result.stdout + trained_result.stderr, re.IGNORECASE)
-                        if match:
-                            trained_accuracy = float(match.group(1))
+                        # Try to find the log file and extract accuracy from it
+                        log_pattern = os.path.join(test_log_dir, f"test_model_trained_*.log")
+                        log_files = glob.glob(log_pattern)
+                        if log_files:
+                            # Get the most recent log file
+                            latest_log = max(log_files, key=os.path.getmtime)
+                            try:
+                                with open(latest_log, 'r', encoding='utf-8') as f:
+                                    log_content = f.read()
+                                    match = re.search(r'(?:[A-Z]+\s+)?(?:MODEL\s+)?ACCURACY:\s+(\d+\.\d+)%', log_content, re.IGNORECASE)
+                                    if match:
+                                        trained_accuracy = float(match.group(1))
+                            except Exception as e:
+                                print(f"Warning: Could not read trained log file: {e}")
                         print(f"\n✅ Trained test completed successfully!")
                     else:
                         print(f"\n⚠️  Trained model test exited with code {trained_result.returncode}")
-                        print(trained_result.stdout)
-                        print(trained_result.stderr)
                     
                     # Print comparison summary
                     print(f"\n{'='*80}")
