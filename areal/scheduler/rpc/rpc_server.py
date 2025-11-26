@@ -105,25 +105,19 @@ def create_engine():
 
         # Pop distributed training parameters from init_kwargs and set as environment variables
         # These should not be passed to engine.__init__
-        rank = init_kwargs.pop("rank", None)
-        if rank is not None:
-            os.environ["RANK"] = str(rank)
-            logger.info(f"Set RANK={rank}")
+        dist_params_map = {
+            "rank": "RANK",
+            "world_size": "WORLD_SIZE",
+            "master_addr": "MASTER_ADDR",
+            "master_port": "MASTER_PORT",
+        }
+        rank = init_kwargs.get("rank")
 
-        world_size = init_kwargs.pop("world_size", None)
-        if world_size is not None:
-            os.environ["WORLD_SIZE"] = str(world_size)
-            logger.info(f"Set WORLD_SIZE={world_size}")
-
-        master_addr = init_kwargs.pop("master_addr", None)
-        if master_addr is not None:
-            os.environ["MASTER_ADDR"] = master_addr
-            logger.info(f"Set MASTER_ADDR={master_addr}")
-
-        master_port = init_kwargs.pop("master_port", None)
-        if master_port is not None:
-            os.environ["MASTER_PORT"] = str(master_port)
-            logger.info(f"Set MASTER_PORT={master_port}")
+        for kwarg_key, env_var_key in dist_params_map.items():
+            value = init_kwargs.pop(kwarg_key, None)
+            if value is not None:
+                os.environ[env_var_key] = str(value)
+                logger.info(f"Set {env_var_key}={value}")
 
         # Set LOCAL_RANK to 0 (one GPU per process)
         if rank is not None:
