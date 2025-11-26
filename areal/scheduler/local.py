@@ -53,6 +53,25 @@ class WorkerInfo:
     env_vars: dict[str, str] = field(default_factory=dict)
 
 
+def _get_device_count_safely() -> int | None:
+    """
+    Safely get device count without initializing CUDA context.
+    """
+    gpu_types = ["nvidia", "davinci"]
+    try:
+        if os.path.exists("/dev"):
+            for gpu_type in gpu_types:
+                devices = [
+                    f
+                    for f in os.listdir("/dev")
+                    if f.startswith(gpu_type) and f[len(gpu_type) :].isdigit()
+                ]
+                if devices:
+                    return len(devices)
+    except (OSError, ValueError):
+        return None
+
+
 class LocalScheduler(Scheduler):
     """Local scheduler that manages worker subprocesses on a single GPU node.
 
@@ -116,7 +135,10 @@ class LocalScheduler(Scheduler):
                     f"Invalid {current_platform.device_control_env_var}: {cuda_visible}, using default [0]"
                 )
                 return [0]
-        return [0]
+        cnt = _get_device_count_safely()
+        if cnt is None:
+            return [0]
+        return list(range(cnt))
 
     def _allocate_gpus(self, num_gpus: int) -> list[int]:
         if num_gpus > len(self.gpu_devices):
