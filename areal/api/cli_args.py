@@ -1324,8 +1324,6 @@ class _DatasetConfig:
 class TrainDatasetConfig(_DatasetConfig):
     """Configuration for training dataset loading and preprocessing."""
 
-    pass
-
 
 @dataclass
 class ValidDatasetConfig(_DatasetConfig):
