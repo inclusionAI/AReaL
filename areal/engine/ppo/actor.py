@@ -654,81 +654,116 @@ def grpo_loss_fn(
         denominator="clipped_tokens",
     )
 
-    # Compute and log proximal approximation metrics
-    # Requirements: versions available, metrics mode enabled, and has ground truth
-    can_log_metrics = (
-        "versions" in input_data
-        and current_version is not None
-        and prox_logp_method == PROX_LOGP_METHOD_METRICS
-        and not prox_logp_is_none  # Only log metrics when we have ground truth
-    )
+    # Always log compute_logp metrics (not just in metrics mode)
+    # Use the same mask as actual training (respects behave_imp_weight_cap)
+    compute_logp_mask = stat.get("behave_mask", loss_mask)
 
-    if can_log_metrics:
-        versions = input_data["versions"]
+    with stats_tracker.scope("compute_logp"):
+        # Set denominator within this scope (using the capped mask)
+        stats_tracker.denominator(n_valid_tokens=compute_logp_mask.bool())
 
-        # Compute all approximation methods for comparison (method=None means compute all)
-        approximations = compute_prox_logp_approximations(
-            old_logp=old_logp,
-            logprobs=logprobs.detach(),
-            versions=versions,
-            current_version=current_version,
-            method=None,  # Compute all methods for metrics comparison
-        )
-
-        # Use the same mask as actual training (respects behav_imp_weight_cap)
-        # If behave_mask exists, use it; otherwise use loss_mask
-        approx_metrics_mask = stat.get("behave_mask", loss_mask)
-
-        # Log metrics under compute_logp scope
-        with stats_tracker.scope("compute_logp"):
-            # Set denominator within this scope (using the capped mask)
-            stats_tracker.denominator(n_valid_tokens=approx_metrics_mask.bool())
-
-            # Log ground truth proximal logp
+        # Log ground truth prox_logp (when available)
+        if not prox_logp_is_none:
             stats_tracker.stat(
                 prox_logp_gt=prox_logp_gt.float(),
                 denominator="n_valid_tokens",
             )
 
-            # For each approximation method, compute and log metrics
-            for method_name, approx_logp in approximations.items():
-                # Absolute error (against ground truth)
-                abs_error = torch.abs(prox_logp_gt - approx_logp).float()
-
-                # Relative error (percentage)
-                rel_error = torch.abs(
-                    (prox_logp_gt - approx_logp) / (torch.abs(prox_logp_gt) + 1e-8)
-                ).float()
-
-                # Squared error (for variance computation)
-                squared_error = ((prox_logp_gt - approx_logp) ** 2).float()
-
-                # Importance weight errors
-                # Ground truth: exp(log_p_proximal_gt - log_p_behave)
-                behav_imp_weight_gt = torch.exp(prox_logp_gt - old_logp).float()
-                # Approximated: exp(log_p_approx - log_p_behave)
-                behav_imp_weight_approx = torch.exp(approx_logp - old_logp).float()
-                imp_weight_error = torch.abs(
-                    behav_imp_weight_gt - behav_imp_weight_approx
-                ).float()
-                imp_weight_rel_error = torch.abs(
-                    (behav_imp_weight_gt - behav_imp_weight_approx)
-                    / (behav_imp_weight_gt + 1e-8)
-                ).float()
-
-                # Log all metrics for this method
-                stats_tracker.stat(
-                    **{
-                        f"{method_name}/approx_logp": approx_logp.float(),
-                        f"{method_name}/abs_error": abs_error,
-                        f"{method_name}/rel_error": rel_error,
-                        f"{method_name}/squared_error": squared_error,
-                        f"{method_name}/behav_imp_weight": behav_imp_weight_approx,
-                        f"{method_name}/imp_weight_abs_error": imp_weight_error,
-                        f"{method_name}/imp_weight_rel_error": imp_weight_rel_error,
-                    },
-                    denominator="n_valid_tokens",
+        # Determine which methods to compute and log
+        if prox_logp_method == PROX_LOGP_METHOD_LOGLINEAR:
+            # Loglinear mode: log only loglinear approximation (no ground truth for errors)
+            if "versions" in input_data and current_version is not None:
+                versions = input_data["versions"]
+                approximations = compute_prox_logp_approximations(
+                    old_logp=old_logp,
+                    logprobs=logprobs.detach(),
+                    versions=versions,
+                    current_version=current_version,
+                    method=PROX_APPROX_METHOD_LOGLINEAR,
                 )
+                # Log approximated values (no error metrics without ground truth)
+                for method_name, approx_logp in approximations.items():
+                    behave_imp_weight = torch.exp(approx_logp - old_logp).float()
+                    importance_weight = torch.exp(logprobs - approx_logp).float()
+
+                    stats_tracker.stat(
+                        **{
+                            f"{method_name}/approx_logp": approx_logp.float(),
+                            f"{method_name}/behave_imp_weight": behave_imp_weight,
+                            f"{method_name}/importance_weight": importance_weight,
+                        },
+                        denominator="n_valid_tokens",
+                    )
+
+        elif prox_logp_method == PROX_LOGP_METHOD_METRICS:
+            # Metrics mode: compute all methods and log with error metrics
+            if (
+                "versions" in input_data
+                and current_version is not None
+                and not prox_logp_is_none
+            ):
+                versions = input_data["versions"]
+                # Compute all approximation methods for comparison
+                approximations = compute_prox_logp_approximations(
+                    old_logp=old_logp,
+                    logprobs=logprobs.detach(),
+                    versions=versions,
+                    current_version=current_version,
+                    method=None,  # Compute all methods
+                )
+
+                # Compute ground truth importance weights
+                behave_imp_weight_gt = torch.exp(prox_logp_gt - old_logp).float()
+                importance_weight_gt = torch.exp(logprobs - prox_logp_gt).float()
+
+                # For each approximation method, compute and log metrics
+                for method_name, approx_logp in approximations.items():
+                    # Log-probability errors
+                    abs_error = torch.abs(prox_logp_gt - approx_logp).float()
+                    rel_error = torch.abs(
+                        (prox_logp_gt - approx_logp) / (torch.abs(prox_logp_gt) + 1e-8)
+                    ).float()
+                    squared_error = ((prox_logp_gt - approx_logp) ** 2).float()
+
+                    # Approximated importance weights
+                    behave_imp_weight_approx = torch.exp(approx_logp - old_logp).float()
+                    importance_weight_approx = torch.exp(logprobs - approx_logp).float()
+
+                    # Behave importance weight errors (π_prox / π_behave)
+                    behave_imp_weight_abs_error = torch.abs(
+                        behave_imp_weight_gt - behave_imp_weight_approx
+                    ).float()
+                    behave_imp_weight_rel_error = torch.abs(
+                        (behave_imp_weight_gt - behave_imp_weight_approx)
+                        / (behave_imp_weight_gt + 1e-8)
+                    ).float()
+
+                    # Importance weight errors (π_θ / π_prox)
+                    importance_weight_abs_error = torch.abs(
+                        importance_weight_gt - importance_weight_approx
+                    ).float()
+                    importance_weight_rel_error = torch.abs(
+                        (importance_weight_gt - importance_weight_approx)
+                        / (importance_weight_gt + 1e-8)
+                    ).float()
+
+                    # Log all metrics for this method
+                    stats_tracker.stat(
+                        **{
+                            f"{method_name}/approx_logp": approx_logp.float(),
+                            f"{method_name}/abs_error": abs_error,
+                            f"{method_name}/rel_error": rel_error,
+                            f"{method_name}/squared_error": squared_error,
+                            f"{method_name}/behave_imp_weight": behave_imp_weight_approx,
+                            f"{method_name}/behave_imp_weight_abs_error": behave_imp_weight_abs_error,
+                            f"{method_name}/behave_imp_weight_rel_error": behave_imp_weight_rel_error,
+                            f"{method_name}/importance_weight": importance_weight_approx,
+                            f"{method_name}/importance_weight_abs_error": importance_weight_abs_error,
+                            f"{method_name}/importance_weight_rel_error": importance_weight_rel_error,
+                        },
+                        denominator="n_valid_tokens",
+                    )
+        # else: PROX_LOGP_METHOD_RECOMPUTE - only prox_logp_gt is logged above
 
     # Log version difference metrics (sample staleness)
     # This does NOT require ground truth, only version information

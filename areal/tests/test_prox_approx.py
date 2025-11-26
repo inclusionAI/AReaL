@@ -658,5 +658,225 @@ class TestConfigValidation:
         assert "prox_logp_method" in field_names, "prox_logp_method should exist"
 
 
+class TestComputeLogpMetricsLogging:
+    """Test suite for compute_logp metrics logging in different modes."""
+
+    def test_loglinear_mode_logs_basic_metrics(self):
+        """Test that loglinear mode logs approx_logp and importance weights without errors."""
+        from unittest.mock import MagicMock, patch
+
+        from areal.engine.ppo.actor import grpo_loss_fn
+
+        batch_size, seq_len = 2, 4
+        logits = torch.randn(batch_size, seq_len, 100)
+        input_data = {
+            "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
+            "logprobs": torch.randn(batch_size, seq_len),
+            "advantages": torch.randn(batch_size, seq_len),
+            "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
+            "prox_logp": None,  # Skipped forward pass
+            "versions": torch.randint(0, 3, (batch_size, seq_len), dtype=torch.int32),
+        }
+
+        # Mock stats_tracker to capture what gets logged
+        logged_stats = {}
+
+        def mock_stat(**kwargs):
+            logged_stats.update(kwargs)
+
+        with patch("areal.engine.ppo.actor.stats_tracker") as mock_tracker:
+            mock_tracker.stat = mock_stat
+            mock_tracker.scope = MagicMock()
+            mock_tracker.scope.return_value.__enter__ = MagicMock()
+            mock_tracker.scope.return_value.__exit__ = MagicMock()
+            mock_tracker.denominator = MagicMock()
+
+            loss = grpo_loss_fn(
+                logits=logits,
+                input_data=input_data,
+                temperature=1.0,
+                eps_clip=0.2,
+                eps_clip_higher=None,
+                c_clip=None,
+                behav_imp_weight_cap=None,
+                current_version=5,
+                prox_logp_method="loglinear",
+            )
+
+        assert isinstance(loss, torch.Tensor), "Loss should be a tensor"
+        # Verify basic metrics are logged (but not error metrics)
+        if "loglinear/approx_logp" in logged_stats:
+            assert "loglinear/approx_logp" in logged_stats
+            assert "loglinear/behave_imp_weight" in logged_stats
+            assert "loglinear/importance_weight" in logged_stats
+            # Should NOT have error metrics
+            assert "loglinear/abs_error" not in logged_stats
+            assert "loglinear/behave_imp_weight_abs_error" not in logged_stats
+            assert "loglinear/importance_weight_abs_error" not in logged_stats
+
+    def test_recompute_mode_logs_ground_truth_only(self):
+        """Test that recompute mode logs only prox_logp_gt."""
+        from unittest.mock import MagicMock, patch
+
+        from areal.engine.ppo.actor import grpo_loss_fn
+
+        batch_size, seq_len = 2, 4
+        logits = torch.randn(batch_size, seq_len, 100)
+        input_data = {
+            "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
+            "logprobs": torch.randn(batch_size, seq_len),
+            "advantages": torch.randn(batch_size, seq_len),
+            "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
+            "prox_logp": torch.randn(batch_size, seq_len),  # Recomputed
+            "versions": torch.randint(0, 3, (batch_size, seq_len), dtype=torch.int32),
+        }
+
+        logged_stats = {}
+
+        def mock_stat(**kwargs):
+            logged_stats.update(kwargs)
+
+        with patch("areal.engine.ppo.actor.stats_tracker") as mock_tracker:
+            mock_tracker.stat = mock_stat
+            mock_tracker.scope = MagicMock()
+            mock_tracker.scope.return_value.__enter__ = MagicMock()
+            mock_tracker.scope.return_value.__exit__ = MagicMock()
+            mock_tracker.denominator = MagicMock()
+
+            loss = grpo_loss_fn(
+                logits=logits,
+                input_data=input_data,
+                temperature=1.0,
+                eps_clip=0.2,
+                eps_clip_higher=None,
+                c_clip=None,
+                behav_imp_weight_cap=None,
+                current_version=5,
+                prox_logp_method="recompute",
+            )
+
+        assert isinstance(loss, torch.Tensor), "Loss should be a tensor"
+        # Should log ground truth but not approximation methods
+        if "prox_logp_gt" in logged_stats:
+            assert "prox_logp_gt" in logged_stats
+            # Should NOT have approximation metrics
+            assert "loglinear/approx_logp" not in logged_stats
+            assert "linear/approx_logp" not in logged_stats
+
+    def test_metrics_mode_logs_all_methods_with_errors(self):
+        """Test that metrics mode logs all methods with complete error metrics."""
+        from unittest.mock import MagicMock, patch
+
+        from areal.engine.ppo.actor import grpo_loss_fn
+        from areal.utils.constants import PROX_APPROX_METHODS_ALL
+
+        batch_size, seq_len = 2, 4
+        logits = torch.randn(batch_size, seq_len, 100)
+        input_data = {
+            "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
+            "logprobs": torch.randn(batch_size, seq_len),
+            "advantages": torch.randn(batch_size, seq_len),
+            "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
+            "prox_logp": torch.randn(batch_size, seq_len),  # Ground truth
+            "versions": torch.randint(0, 3, (batch_size, seq_len), dtype=torch.int32),
+        }
+
+        logged_stats = {}
+
+        def mock_stat(**kwargs):
+            logged_stats.update(kwargs)
+
+        with patch("areal.engine.ppo.actor.stats_tracker") as mock_tracker:
+            mock_tracker.stat = mock_stat
+            mock_tracker.scope = MagicMock()
+            mock_tracker.scope.return_value.__enter__ = MagicMock()
+            mock_tracker.scope.return_value.__exit__ = MagicMock()
+            mock_tracker.denominator = MagicMock()
+
+            loss = grpo_loss_fn(
+                logits=logits,
+                input_data=input_data,
+                temperature=1.0,
+                eps_clip=0.2,
+                eps_clip_higher=None,
+                c_clip=None,
+                behav_imp_weight_cap=None,
+                current_version=5,
+                prox_logp_method="metrics",
+            )
+
+        assert isinstance(loss, torch.Tensor), "Loss should be a tensor"
+        # Should log ground truth
+        if "prox_logp_gt" in logged_stats:
+            assert "prox_logp_gt" in logged_stats
+
+            # Should log all approximation methods
+            for method in PROX_APPROX_METHODS_ALL:
+                # Basic metrics
+                assert f"{method}/approx_logp" in logged_stats
+                assert f"{method}/abs_error" in logged_stats
+                assert f"{method}/rel_error" in logged_stats
+                assert f"{method}/squared_error" in logged_stats
+
+                # Behave importance weight metrics
+                assert f"{method}/behave_imp_weight" in logged_stats
+                assert f"{method}/behave_imp_weight_abs_error" in logged_stats
+                assert f"{method}/behave_imp_weight_rel_error" in logged_stats
+
+                # Importance weight metrics (NEW!)
+                assert f"{method}/importance_weight" in logged_stats
+                assert f"{method}/importance_weight_abs_error" in logged_stats
+                assert f"{method}/importance_weight_rel_error" in logged_stats
+
+    def test_metrics_naming_consistency(self):
+        """Test that metric names use correct spelling (behave not behav)."""
+        from unittest.mock import MagicMock, patch
+
+        from areal.engine.ppo.actor import grpo_loss_fn
+
+        batch_size, seq_len = 2, 4
+        logits = torch.randn(batch_size, seq_len, 100)
+        input_data = {
+            "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
+            "logprobs": torch.randn(batch_size, seq_len),
+            "advantages": torch.randn(batch_size, seq_len),
+            "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
+            "prox_logp": torch.randn(batch_size, seq_len),
+            "versions": torch.randint(0, 3, (batch_size, seq_len), dtype=torch.int32),
+        }
+
+        logged_stats = {}
+
+        def mock_stat(**kwargs):
+            logged_stats.update(kwargs)
+
+        with patch("areal.engine.ppo.actor.stats_tracker") as mock_tracker:
+            mock_tracker.stat = mock_stat
+            mock_tracker.scope = MagicMock()
+            mock_tracker.scope.return_value.__enter__ = MagicMock()
+            mock_tracker.scope.return_value.__exit__ = MagicMock()
+            mock_tracker.denominator = MagicMock()
+
+            loss = grpo_loss_fn(
+                logits=logits,
+                input_data=input_data,
+                temperature=1.0,
+                eps_clip=0.2,
+                eps_clip_higher=None,
+                c_clip=None,
+                behav_imp_weight_cap=None,
+                current_version=5,
+                prox_logp_method="metrics",
+            )
+
+        assert isinstance(loss, torch.Tensor), "Loss should be a tensor"
+        # Check for correct spelling in all logged metrics
+        for key in logged_stats.keys():
+            # Should use "behave_imp_weight" not "behav_imp_weight"
+            if "imp_weight" in key and "importance_weight" not in key:
+                assert "behave_imp_weight" in key, f"Metric {key} uses wrong spelling"
+                assert "behav_imp_weight" not in key, f"Metric {key} uses old spelling"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

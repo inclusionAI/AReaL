@@ -125,22 +125,45 @@ use_decoupled_loss?
 
 ### Metrics Explanation
 
-When `prox_logp_method="metrics"`, the following metrics are logged under `ppo_actor/update/compute_logp/`:
+Metrics are always logged under `ppo_actor/update/compute_logp/` regardless of `prox_logp_method`. The exact metrics depend on the mode:
+
+#### Recompute Mode (`prox_logp_method="recompute"`)
+- `prox_logp_gt/avg`: Ground truth proximal log-probability (recomputed)
+
+#### Loglinear Mode (`prox_logp_method="loglinear"`)
+- `prox_logp_gt/avg`: Ground truth proximal log-probability (recomputed, when available)
+- `loglinear/approx_logp/avg`: Approximated proximal log-probability
+- `loglinear/behave_imp_weight/avg`: π_prox / π_behave (approximated)
+- `loglinear/importance_weight/avg`: π_θ / π_prox (approximated)
+
+#### Metrics Mode (`prox_logp_method="metrics"`)
 
 **Ground Truth:**
-- `prox_logp_gt/avg`: Average ground truth proximal log-probability
+- `prox_logp_gt/avg`: Ground truth proximal log-probability
 
-**Per-Method Metrics** (e.g., `linear/`, etc.):
-- `{method}/approx_logp/avg`: Average approximated log-probability
-- `{method}/abs_error/avg`: Average absolute error
-- `{method}/rel_error/avg`: Average relative error (%)
-- `{method}/squared_error/avg`: Average squared error
-- `{method}/imp_weight_error/avg`: Error in importance weight (exp space)
+**Per-Method Metrics** (for each of `loglinear/`, `linear/`, `rollout/`):
+
+*Log-Probability Metrics:*
+- `{method}/approx_logp/avg`: Approximated log-probability
+- `{method}/abs_error/avg`: Absolute error vs ground truth
+- `{method}/rel_error/avg`: Relative error (%)
+- `{method}/squared_error/avg`: Squared error
+
+*Behave Importance Weight (π_prox / π_behave):*
+- `{method}/behave_imp_weight/avg`: Approximated ratio
+- `{method}/behave_imp_weight_abs_error/avg`: Absolute error
+- `{method}/behave_imp_weight_rel_error/avg`: Relative error (%)
+
+*Importance Weight (π_θ / π_prox):*
+- `{method}/importance_weight/avg`: Approximated ratio
+- `{method}/importance_weight_abs_error/avg`: Absolute error
+- `{method}/importance_weight_rel_error/avg`: Relative error (%)
 
 **Typical good values:**
-- Absolute error: 0.001-0.01
-- Relative error: 0.1%-1%
-- Importance weight error: 0.001-0.01
+- Log-probability absolute error: 0.001-0.01
+- Log-probability relative error: 0.1%-1%
+- Importance weight absolute error: 0.001-0.01
+- Importance weight relative error: 0.1%-1%
 
 ### When to Use
 
