@@ -23,6 +23,7 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import RemoteInfEngine
 from areal.platforms import current_platform
+from areal.utils import stats_tracker
 from areal.utils.launcher import TRITON_CACHE_PATH
 
 
@@ -327,3 +328,6 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def onload(self, tags: list[str] | None = None):
         return self._engine.onload(tags=tags)
+
+    def export_stats(self) -> dict[str, float]:
+        return stats_tracker.export_all(reduce_group=None)

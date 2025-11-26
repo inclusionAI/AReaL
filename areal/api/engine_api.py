@@ -674,7 +674,7 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def export_stats(self) -> dict[str, list[float]]:
+    def export_stats(self) -> dict[str, float]:
         """Export the statistics recorded during workflow execution in the process.
 
         Workflow should only record scalar metrics like "rewards".
@@ -686,7 +686,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        dict[str, list[float]]
+        dict[str, float]
             The recorded scalar list statistics.
         """
         raise NotImplementedError()
