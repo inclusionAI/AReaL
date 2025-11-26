@@ -6,7 +6,7 @@ from areal.utils import logging
 logger = logging.getLogger("AReaLOpenAI Interaction Cache")
 
 
-class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
+class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._apply_reward_discount_called = False

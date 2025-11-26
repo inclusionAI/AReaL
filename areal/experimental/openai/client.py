@@ -38,7 +38,7 @@ from openai.types.shared_params.metadata import Metadata
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
-from areal.experimental.openai.cache import CompletionCache
+from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
@@ -67,7 +67,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         client,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        cache: CompletionCache,
+        cache: InteractionCache,
         tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -97,7 +97,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
-        areal_completion_cache: CompletionCache | None = None,
+        areal_completion_cache: InteractionCache | None = None,
         **kwargs: Any,
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
@@ -253,7 +253,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         client,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        cache: CompletionCache,
+        cache: InteractionCache,
         tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -570,7 +570,7 @@ class ArealOpenAI(AsyncOpenAI):
         self.tool_call_parser = tool_call_parser
 
         # Use an ordered dict to maintain insertion order of completions/responses
-        self._cache: CompletionCache = CompletionCache()
+        self._cache: InteractionCache = InteractionCache()
 
         # Override responses with our extended implementation
         self.responses = AsyncResponsesWithReward(
