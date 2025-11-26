@@ -263,8 +263,8 @@ def main():
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=256,
-        help="Maximum new tokens to generate (default: 256)",
+        default=512,  # Increased from 256 to allow longer reasoning chains
+        help="Maximum new tokens to generate (default: 512)",
     )
     parser.add_argument(
         "--temperature",

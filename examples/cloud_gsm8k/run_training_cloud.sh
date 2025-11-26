@@ -5,10 +5,12 @@
 #   bash examples/cloud_gsm8k/run_training_cloud.sh [config_name]
 #
 # Config options:
+#   - fastest: Fastest training (~5-10 min, 20 samples, 1 epoch) - Pipeline testing only
 #   - fast: Fast training (20-30 min, 200 samples, 1 epoch)
 #   - 1hour: 1-hour training (500 samples, 2 epochs) [default]
 #   - 3hour: 3-hour training (1000 samples, 3 epochs)
 #   - full: Full training (all samples, 5 epochs) - REQUIRES H200/H100/A100-80GB or equivalent
+#   - reasoning_fastest: Reasoning model fastest training (~5-10 min, 20 samples, 1 epoch) - Pipeline testing only
 #   - reasoning_fast: Reasoning model fast training (20-30 min, 200 samples, 1 epoch)
 #   - reasoning_1hour: Reasoning model 1-hour training (500 samples, 2 epochs)
 #   - reasoning_3hour: Reasoning model 3-hour training (1000 samples, 3 epochs)
@@ -218,6 +220,13 @@ check_full_training_gpu() {
 
 # Select configuration
 case "$CONFIG_NAME" in
+    fastest)
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_fastest.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-cloud-fastest"
+        echo "Using FASTEST training configuration (~5-10 minutes)"
+        echo "Note: Minimal training for pipeline testing only (20 samples, 1 epoch)"
+        ;;
     fast)
         CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_fast.yaml"
         TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
@@ -259,6 +268,14 @@ case "$CONFIG_NAME" in
         echo "Using FULL training configuration (full dataset, 5 epochs)"
         echo "GPU: $GPU_NAME ($GPU_MEMORY MB) - suitable for full training"
         echo "Estimated time: ~5 days"
+        ;;
+    reasoning_fastest)
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_reasoning_fastest.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-reasoning-cloud-fastest"
+        echo "Using REASONING FASTEST training configuration (~5-10 minutes)"
+        echo "Note: Minimal training for pipeline testing only (20 samples, 1 epoch)"
+        echo "Note: Trains reasoning model with XML format"
         ;;
     reasoning_fast)
         CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_reasoning_fast.yaml"
@@ -334,7 +351,7 @@ case "$CONFIG_NAME" in
         ;;
     *)
         echo "ERROR: Unknown config name: $CONFIG_NAME"
-        echo "Valid options: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_1000samples_2GPUs, reasoning_2000samples_4GPUs, standard_1000samples_2GPUs"
+        echo "Valid options: fastest, fast, 1hour, 3hour, full, reasoning_fastest, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_1000samples_2GPUs, reasoning_2000samples_4GPUs, standard_1000samples_2GPUs"
         exit 1
         ;;
 esac

@@ -272,7 +272,7 @@ def main():
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=1024,
+        default=1024,  # Keep 1024 for reasoning chains (already sufficient)
         help="Maximum new tokens to generate (default: 1024 for reasoning chains)",
     )
     parser.add_argument(

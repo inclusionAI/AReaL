@@ -3,10 +3,12 @@
 # Usage: bash examples/docker_gsm8k/run_training.sh [config_name|config_file]
 #
 # Config presets:
+#   - fastest: Fastest training (~5-10 min, 20 samples, 1 epoch) - Pipeline testing only
 #   - fast: Fast training (20-30 min, 200 samples, 1 epoch)
 #   - 1hour: 1-hour training (500 samples, 2 epochs)
 #   - 3hour: 3-hour training (1000 samples, 3 epochs)
 #   - full: Full training (all samples, 5 epochs)
+#   - reasoning_fastest: Reasoning model fastest training (~5-10 min, 20 samples, 1 epoch) - Pipeline testing only
 #   - reasoning_fast: Reasoning model fast training (20-30 min, 200 samples, 1 epoch)
 #   - reasoning_1hour: Reasoning model 1-hour training (500 samples, 2 epochs)
 #   - reasoning_3hour: Reasoning model 3-hour training (1000 samples, 3 epochs) [NEW]
@@ -33,6 +35,12 @@ if [[ "$CONFIG_NAME" == *".yaml" ]] || [[ "$CONFIG_NAME" == *".yml" ]]; then
 else
     # It's a preset name - map to config file
     case "$CONFIG_NAME" in
+        fastest)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_fastest.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-fastest-docker"
+            echo "Using FASTEST training configuration (~5-10 minutes)"
+            echo "Note: Minimal training for pipeline testing only (20 samples, 1 epoch)"
+            ;;
         fast)
             CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_fast.yaml"
             EXPERIMENT_NAME="gsm8k-grpo-fast-docker"
@@ -54,6 +62,13 @@ else
             CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_full.yaml"
             EXPERIMENT_NAME="gsm8k-grpo-full-docker"
             echo "Using FULL training configuration (full dataset, 5 epochs)"
+            ;;
+        reasoning_fastest)
+            CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_reasoning_fastest.yaml"
+            EXPERIMENT_NAME="gsm8k-grpo-reasoning-fastest-docker"
+            echo "Using REASONING FASTEST training configuration (~5-10 minutes)"
+            echo "Note: Minimal training for pipeline testing only (20 samples, 1 epoch)"
+            echo "Note: Trains reasoning model with XML format"
             ;;
         reasoning_fast)
             CONFIG_FILE="examples/docker_gsm8k/gsm8k_grpo_reasoning_fast.yaml"
@@ -82,7 +97,7 @@ else
             ;;
         *)
             echo "ERROR: Unknown config preset: $CONFIG_NAME"
-            echo "Valid presets: fast, 1hour, 3hour, full, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_5hour"
+            echo "Valid presets: fastest, fast, 1hour, 3hour, full, reasoning_fastest, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_5hour"
             echo "Or provide full path to a config file (e.g., examples/docker_gsm8k/gsm8k_grpo_fast.yaml)"
             exit 1
             ;;
