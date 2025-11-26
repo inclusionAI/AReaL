@@ -52,7 +52,7 @@ class TrainController:
         self.parallel_strategy: ParallelStrategy | None = None
 
         self._worker_role: str
-        self.logger = None
+        self.logger = logging.getLogger("TrainController")
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Placeholder method for process group creation.
