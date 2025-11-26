@@ -497,85 +497,119 @@ def main(args):
                         "--model-name", "TRAINED",
                     ]
                 else:
-                    # Use regular test script (requires config file)
+                    # Use regular test script (supports both --model-path and --config)
                     test_script = os.path.join(script_dir, "test_trained_model_cloud.py")
-                    # Find config file from original args
-                    config_file_for_test = None
-                    if isinstance(original_args, list):
-                        try:
-                            config_idx = original_args.index("--config")
-                            if config_idx + 1 < len(original_args):
-                                config_file_for_test = original_args[config_idx + 1]
-                        except ValueError:
-                            pass
                     
-                    if config_file_for_test:
-                        # Note: test_trained_model_cloud.py automatically saves logs to network volume
-                        # Set environment variable to limit test samples to 50
-                        test_env = os.environ.copy()
-                        test_env["MAX_TEST_SAMPLES"] = "50"
-                        
-                        # For regular models, we need to test baseline by temporarily changing the model path
-                        # This is more complex, so we'll just test the trained model for now
-                        # TODO: Add baseline testing for regular models
-                        print("⚠️  Note: Baseline testing for regular models requires manual testing.")
-                        print(f"   To test baseline: Change config actor.path to {baseline_model_path} and run test script")
-                        
-                        trained_cmd = [
-                            sys.executable,
-                            test_script,
-                            "--config", config_file_for_test,
-                        ]
-                        baseline_cmd = None  # Skip baseline for regular models (too complex)
-                    else:
-                        print("⚠️  Regular model testing requires config file.")
-                        print(f"   Run manually: python {test_script} --config <config_file>")
-                        return
+                    # Test baseline model first
+                    print(f"\n{'='*80}")
+                    print("Testing BASELINE model...")
+                    print(f"{'='*80}\n")
+                    baseline_cmd = [
+                        sys.executable,
+                        test_script,
+                        "--model-path", baseline_model_path,
+                        "--max-samples", "50",
+                        "--max-new-tokens", str(max_new_tokens),
+                        "--log-dir", test_log_dir,
+                        "--model-name", "BASELINE",
+                    ]
+                    
+                    # Test trained model
+                    print(f"\n{'='*80}")
+                    print("Testing TRAINED model...")
+                    print(f"{'='*80}\n")
+                    trained_cmd = [
+                        sys.executable,
+                        test_script,
+                        "--model-path", latest_checkpoint,
+                        "--max-samples", "50",
+                        "--max-new-tokens", str(max_new_tokens),
+                        "--log-dir", test_log_dir,
+                        "--model-name", "TRAINED",
+                    ]
                 
                 try:
                     import subprocess
+                    import re
+                    
+                    baseline_accuracy = None
+                    trained_accuracy = None
                     
                     # Test baseline model
                     if baseline_cmd is not None:
                         print(f"\n{'='*80}")
                         print("Testing BASELINE model...")
                         print(f"{'='*80}\n")
-                        if 'test_env' in locals():
-                            baseline_result = subprocess.run(baseline_cmd, check=False, capture_output=False, env=test_env)
-                        else:
-                            baseline_result = subprocess.run(baseline_cmd, check=False, capture_output=False)
+                        baseline_result = subprocess.run(baseline_cmd, check=False, capture_output=True, text=True)
                         
+                        # Extract accuracy from output
                         if baseline_result.returncode == 0:
+                            # Look for various accuracy formats: "BASELINE MODEL ACCURACY: X.XX%", "REASONING MODEL ACCURACY: X.XX%", "ACCURACY: X.XX%"
+                            match = re.search(r'(?:[A-Z]+\s+)?(?:MODEL\s+)?ACCURACY:\s+(\d+\.\d+)%', baseline_result.stdout + baseline_result.stderr, re.IGNORECASE)
+                            if match:
+                                baseline_accuracy = float(match.group(1))
                             print(f"\n✅ Baseline test completed successfully!")
                         else:
                             print(f"\n⚠️  Baseline test exited with code {baseline_result.returncode}")
+                            print(baseline_result.stdout)
+                            print(baseline_result.stderr)
                     
                     # Test trained model
                     print(f"\n{'='*80}")
                     print("Testing TRAINED model...")
                     print(f"{'='*80}\n")
-                    if 'test_env' in locals():
-                        trained_result = subprocess.run(trained_cmd, check=False, capture_output=False, env=test_env)
-                    else:
-                        trained_result = subprocess.run(trained_cmd, check=False, capture_output=False)
+                    trained_result = subprocess.run(trained_cmd, check=False, capture_output=True, text=True)
                     
+                    # Extract accuracy from output
                     if trained_result.returncode == 0:
-                        print(f"\n{'='*80}")
-                        print("✅ All tests completed successfully!")
-                        print(f"{'='*80}\n")
+                        # Look for various accuracy formats: "TRAINED MODEL ACCURACY: X.XX%", "REASONING MODEL ACCURACY: X.XX%", "ACCURACY: X.XX%"
+                        match = re.search(r'(?:[A-Z]+\s+)?(?:MODEL\s+)?ACCURACY:\s+(\d+\.\d+)%', trained_result.stdout + trained_result.stderr, re.IGNORECASE)
+                        if match:
+                            trained_accuracy = float(match.group(1))
+                        print(f"\n✅ Trained test completed successfully!")
                     else:
-                        print(f"\n{'='*80}")
-                        print(f"⚠️  Trained model test exited with code {trained_result.returncode}")
-                        print(f"{'='*80}\n")
+                        print(f"\n⚠️  Trained model test exited with code {trained_result.returncode}")
+                        print(trained_result.stdout)
+                        print(trained_result.stderr)
+                    
+                    # Print comparison summary
+                    print(f"\n{'='*80}")
+                    print("TEST RESULTS SUMMARY")
+                    print(f"{'='*80}")
+                    if baseline_accuracy is not None:
+                        print(f"Baseline Model Accuracy: {baseline_accuracy:.2f}%")
+                    else:
+                        print(f"Baseline Model Accuracy: N/A (test may have failed)")
+                    
+                    if trained_accuracy is not None:
+                        print(f"Trained Model Accuracy:  {trained_accuracy:.2f}%")
+                    else:
+                        print(f"Trained Model Accuracy:  N/A (test may have failed)")
+                    
+                    if baseline_accuracy is not None and trained_accuracy is not None:
+                        improvement = trained_accuracy - baseline_accuracy
+                        improvement_pct = (improvement / baseline_accuracy * 100) if baseline_accuracy > 0 else 0
+                        print(f"\nImprovement: {improvement:+.2f}% ({improvement_pct:+.1f}% relative)")
+                        if improvement > 0:
+                            print("✅ Training improved model performance!")
+                        elif improvement < 0:
+                            print("⚠️  Training degraded model performance")
+                        else:
+                            print("➡️  Training did not change model performance")
+                    
+                    print(f"{'='*80}\n")
+                    
+                    if baseline_result.returncode == 0 and trained_result.returncode == 0:
+                        print(f"✅ All tests completed successfully!")
+                    else:
+                        print(f"⚠️  Some tests may have failed. Check logs above for details.")
+                    print(f"{'='*80}\n")
                 except Exception as e:
                     print(f"\n{'='*80}")
                     print(f"⚠️  Failed to run test: {e}")
                     print(f"   You can run the test manually with:")
-                    if is_reasoning:
-                        print(f"   Baseline: python {test_script} --model-path {baseline_model_path} --max-samples 50 --max-new-tokens {max_new_tokens} --model-name BASELINE")
-                        print(f"   Trained:  python {test_script} --model-path {latest_checkpoint} --max-samples 50 --max-new-tokens {max_new_tokens} --model-name TRAINED")
-                    else:
-                        print(f"   MAX_TEST_SAMPLES=50 python {test_script} --config <config_file>")
+                    print(f"   Baseline: python {test_script} --model-path {baseline_model_path} --max-samples 50 --max-new-tokens {max_new_tokens} --model-name BASELINE")
+                    print(f"   Trained:  python {test_script} --model-path {latest_checkpoint} --max-samples 50 --max-new-tokens {max_new_tokens} --model-name TRAINED")
                     print(f"{'='*80}\n")
             else:
                 print(f"⚠️  No checkpoints found in {checkpoint_dir}")
