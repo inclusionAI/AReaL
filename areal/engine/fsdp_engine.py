@@ -43,7 +43,7 @@ from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.base_hf_engine import BaseHFEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, pkg_version
+from areal.utils import logging, name_resolve, names, pkg_version, stats_tracker
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     pack_tensor_dict,
@@ -966,3 +966,6 @@ class FSDPEngine(BaseHFEngine):
         log_gpu_stats("after onload model")
 
         self.is_offload = False
+
+    def export_stats(self) -> dict[str, float]:
+        return stats_tracker.export_all(reduce_group=self.data_parallel_group)

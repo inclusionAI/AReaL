@@ -327,6 +327,21 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def export_stats(self) -> dict[str, float]:
+        """Export the statistics recorded in this engine process.
+
+        Note
+        ----
+        This method should be only called by the controller.
+        Statistics will be all-reduced across the data parallel group.
+
+        Returns
+        -------
+        dict[str, float]
+            The exported scalar statistics.
+        """
+        raise NotImplementedError()
+
 
 class InferenceEngine(abc.ABC):
     def initialize(self, *args, **kwargs):
@@ -656,5 +671,22 @@ class InferenceEngine(abc.ABC):
         ----------
         tags : list[str], optional
             Tags to onload specific components. If None, onloads all components.
+        """
+        raise NotImplementedError()
+
+    def export_stats(self) -> dict[str, float]:
+        """Export the statistics recorded during workflow execution in the process.
+
+        Workflow should only record scalar metrics like "rewards".
+        These metrics will be reduced in the controller side.
+
+        Note
+        ----
+        This method should be only called by the controller.
+
+        Returns
+        -------
+        dict[str, float]
+            The recorded scalar list statistics.
         """
         raise NotImplementedError()
