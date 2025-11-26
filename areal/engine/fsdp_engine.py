@@ -1,4 +1,5 @@
 import dataclasses
+import gc
 import math
 import os
 import time
@@ -23,11 +24,17 @@ from torch.distributed.checkpoint.state_dict import (
     get_model_state_dict,
 )
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.distributed_c10d import _get_default_group
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
 from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
+    AutoModelForTokenClassification,
+    PretrainedConfig,
     PreTrainedTokenizerFast,
     ProcessorMixin,
     get_constant_schedule_with_warmup,
@@ -36,28 +43,41 @@ from transformers import (
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import InferenceEngine
+from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.dist_rollout import DistRolloutCoordinator
-from areal.engine.base_hf_engine import BaseHFEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, pkg_version
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
+    MicroBatchList,
+    amend_position_ids,
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
+    pad_mb_list,
     reorder_list,
+    split_padded_tensor_dict_into_mb_list,
     unpack_sequence,
+    unsqueeze_mb_list,
 )
 from areal.utils.device import clear_memory, log_gpu_stats
-from areal.utils.distributed import init_custom_process_group
+from areal.utils.distributed import init_custom_process_group, patch_dist_group_timeout
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
+from areal.utils.model import (
+    disable_dropout_in_model,
+    is_gemma3_model,
+    is_qwen3_moe_model,
+    is_qwen3_vl_model,
+    is_qwen_vl_model,
+    is_valid_vision_model,
+)
 from areal.utils.offload import is_tms_enabled
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
@@ -69,10 +89,33 @@ from areal.utils.ulysses import (
 )
 
 
-class FSDPEngine(BaseHFEngine):
+class FSDPEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
-        super().__init__(config)
-        # FSDP options
+        self.config = config
+        self.optimizer_config = config.optimizer
+
+        self.model: torch.nn.Module
+        self.optimizer: torch.optim.Optimizer
+        self.tokenizer: PreTrainedTokenizerFast
+        self.processor: ProcessorMixin | None = None
+        self.model_config: PretrainedConfig
+        self._version: int = 0
+
+        self.initialized = False
+        self.own_global_group = False
+        self._parallelism_group: dist.ProcessGroup
+        self.mp_group: dist.ProcessGroup
+        self._cpu_group: dist.ProcessGroup
+        self.weight_update_group_initialized = False
+
+        self.model_config = AutoConfig.from_pretrained(
+            pretrained_model_name_or_path=self.config.path,
+            trust_remote_code=True,
+        )
+        self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
+        self.world_size = int(os.environ["WORLD_SIZE"])
+
+        # FSDP-specific initialization
         self.cpu_offload: CPUOffloadPolicy | None = None
 
         self.rollout_engine: InferenceEngine | None = None
@@ -120,8 +163,21 @@ class FSDPEngine(BaseHFEngine):
         )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
-        super().create_process_group(parallel_strategy)
+        patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
 
+        backend = current_platform.communication_backend
+        if not dist.is_initialized():
+            dist.init_process_group(
+                backend=backend,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
+            )
+            self.own_global_group = True
+
+        self._cpu_group = dist.new_group(
+            timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend="gloo"
+        )
+
+        # FSDP-specific process group setup
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
 
@@ -934,6 +990,288 @@ class FSDPEngine(BaseHFEngine):
                 f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
             )
         self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
+
+    def set_version(self, version: int):
+        self._version = version
+
+    def get_version(self) -> int:
+        return self._version
+
+    def train(self, mode: bool = True):
+        assert self.model is not None
+        self.model.train(mode=mode)
+        return self
+
+    @property
+    def parallelism_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return _get_default_group()
+
+    @property
+    def cpu_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self._cpu_group
+
+    def create_device_model(self):
+        current_platform.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = torch.device(int(os.environ["LOCAL_RANK"]))
+
+        dtype = getattr(torch, self.config.dtype)
+
+        if self.is_vision_model:
+            if dtype == torch.float16:
+                raise ValueError(
+                    "Vision models do not support float16 dtype. Please use bfloat16."
+                )
+            if self.config.init_from_scratch:
+                raise ValueError(
+                    "Vision models do not support initialization from scratch. Please use a pretrained model."
+                )
+            self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
+                self.config.path
+            )
+
+            tik = time.perf_counter()
+            device = current_platform.device_type
+            with torch.device(device):
+                model = AutoModelForImageTextToText.from_pretrained(
+                    pretrained_model_name_or_path=self.config.path,
+                    trust_remote_code=True,
+                    dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+                if self.config.disable_dropout:
+                    disable_dropout_in_model(model)
+        else:
+            self.tokenizer = load_hf_tokenizer(self.config.path)
+            self.processor = None
+            tik = time.perf_counter()
+            with torch.device(current_platform.device_type):
+                model = self._create_llm_actor_or_critic()
+                if self.config.disable_dropout:
+                    disable_dropout_in_model(model)
+
+        if self.config.gradient_checkpointing:
+            model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
+        self.logger.info(
+            f"Model creation and loading time: {time.perf_counter() - tik}"
+        )
+        self.model = model
+
+    def _create_llm_actor_or_critic(self):
+        dtype = getattr(torch, self.config.dtype)
+
+        if self.config.is_critic:
+            model_class = AutoModelForTokenClassification
+            model_kwargs = {"num_labels": 1}
+        else:
+            model_class = AutoModelForCausalLM
+            model_kwargs = {}
+
+        common_kwargs = {
+            "dtype": dtype,
+            "attn_implementation": self.config.attn_impl,
+        }
+        model_kwargs.update(common_kwargs)
+
+        if self.config.init_from_scratch:
+            model = model_class.from_config(
+                self.model_config,
+                **model_kwargs,
+            )
+        else:
+            model = model_class.from_pretrained(
+                pretrained_model_name_or_path=self.config.path,
+                trust_remote_code=True,
+                **model_kwargs,
+            )
+        return model
+
+    def destroy(self):
+        if hasattr(self, "optimizer"):
+            del self.optimizer
+        if hasattr(self, "model"):
+            del self.model
+        gc.collect()
+        current_platform.empty_cache()
+        gc.collect()
+        non_trivial_world = dist.get_world_size() > 1
+        if non_trivial_world:
+            if hasattr(self, "dp_group"):
+                dist.destroy_process_group(self.dp_group)
+            if hasattr(self, "sp_group"):
+                dist.destroy_process_group(self.sp_group)
+            dist.destroy_process_group(self.context_and_model_parallel_group)
+        if hasattr(self, "_cpu_group"):
+            dist.destroy_process_group(self._cpu_group)
+        if self.own_global_group:
+            dist.destroy_process_group()
+        self.initialized = False
+
+    def save_optimizer_state(self, path: str):
+        assert self.optimizer is not None
+        assert dist.is_initialized()
+        rank = dist.get_rank()
+        shard_path = os.path.join(
+            path, f"optim_world_size_{self.world_size}_rank_{rank}.pt"
+        )
+        state_dict = self.optimizer.state_dict()
+        torch.save(state_dict, shard_path)
+        dist.barrier(group=self.cpu_group)
+
+    def load_optimizer_state(self, path: str):
+        assert self.optimizer is not None
+        assert dist.is_initialized()
+        rank = dist.get_rank()
+        shard_path = os.path.join(
+            path, f"optim_world_size_{self.world_size}_rank_{rank}.pt"
+        )
+        optimizer_state_dict = torch.load(shard_path, weights_only=False)
+        self.optimizer.load_state_dict(optimizer_state_dict)
+        dist.barrier(group=self.cpu_group)
+
+    def step_lr_scheduler(self):
+        assert self.lr_scheduler is not None
+        self.lr_scheduler.step()
+
+    def prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
+        assert "attention_mask" in input_ and "input_ids" in input_
+        input_ = input_.copy()
+
+        if is_qwen_vl_model(self.model_config.model_type):
+            attn_mask = input_["attention_mask"]
+            input_ids = input_["input_ids"]
+            image_grid_thw = None
+            video_grid_thw = None
+            if "multi_modal_input" in input_:
+                multi_modal_input = input_["multi_modal_input"]
+                image_grid_thw_list = [
+                    m["image_grid_thw"]
+                    for m in multi_modal_input
+                    if "image_grid_thw" in m
+                ]
+                if image_grid_thw_list:
+                    image_grid_thw = torch.cat(image_grid_thw_list)
+                video_grid_thw_list = [
+                    m["video_grid_thw"]
+                    for m in multi_modal_input
+                    if "video_grid_thw" in m
+                ]
+                if video_grid_thw_list:
+                    video_grid_thw = torch.cat(video_grid_thw_list)
+
+            position_ids, _ = self.model.model.get_rope_index(
+                input_ids, image_grid_thw, video_grid_thw, attn_mask
+            )
+            position_ids = torch.einsum("ijk->jki", position_ids)
+            input_["position_ids"] = position_ids
+        else:
+            input_ = amend_position_ids(input_)
+
+        mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
+        mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
+        mb_list = pad_mb_list(
+            mb_list,
+            pad_value=0.0,
+            pad_to_maximum=self.config.pad_to_maximum,
+        )
+        self.logger.info(
+            f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}, "
+            f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}"
+        )
+        mb_list = unsqueeze_mb_list(mb_list)
+        if is_qwen_vl_model(self.model_config.model_type):
+            assert mb_list.padded_mbs is not None
+            for mb in mb_list.padded_mbs:
+                mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
+
+        assert mb_list.padded_mbs is not None
+        for i, mb in enumerate(mb_list.mbs):
+            mb_list.mbs[i] = dict(**mb)
+        for i, mb in enumerate(mb_list.padded_mbs):
+            mb_list.padded_mbs[i] = dict(**mb)
+        for mb, padded_mb in zip(mb_list.mbs, mb_list.padded_mbs):
+            mb["max_length_q"] = mb["max_length_k"] = mb["max_seqlen"] = int(
+                mb["max_seqlen"]
+            )
+            padded_mb["max_length_q"] = padded_mb["max_length_k"] = padded_mb[
+                "max_seqlen"
+            ] = int(padded_mb["max_seqlen"])
+            mb["cu_seq_lens_q"] = mb["cu_seq_lens_k"] = mb["cu_seqlens"]
+            padded_mb["cu_seq_lens_q"] = padded_mb["cu_seq_lens_k"] = padded_mb[
+                "cu_seqlens"
+            ]
+            mb["use_cache"] = False
+            padded_mb["use_cache"] = False
+            if is_qwen3_moe_model(self.model_config.model_type) or is_qwen3_vl_model(
+                self.model_config.model_type
+            ):
+                mb["attention_mask"] = None
+                padded_mb["attention_mask"] = None
+            else:
+                mb["attention_mask"] = dict(full_attention=None, sliding_attention=None)
+                padded_mb["attention_mask"] = dict(
+                    full_attention=None, sliding_attention=None
+                )
+            if "multi_modal_input" in mb:
+                image_grid_thw_list = [
+                    item["image_grid_thw"]
+                    for item in mb["multi_modal_input"]
+                    if "image_grid_thw" in item
+                ]
+                if image_grid_thw_list:
+                    mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+                    padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+                pixel_values_list = [
+                    item["pixel_values"]
+                    for item in mb["multi_modal_input"]
+                    if "pixel_values" in item
+                ]
+                if pixel_values_list:
+                    mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+                    padded_mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+                video_grid_thw_list = [
+                    item["video_grid_thw"]
+                    for item in mb["multi_modal_input"]
+                    if "video_grid_thw" in item
+                ]
+                if video_grid_thw_list:
+                    mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+                    padded_mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+        return mb_list
+
+    def get_model_name_parameters(self):
+        name_params_iterator = self.model.named_parameters()
+        if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
+
+            def name_remapping_generator():
+                for name, value in name_params_iterator:
+                    new_name = name.replace("model.", "", 1).replace(
+                        "language_model", "model"
+                    )
+                    yield new_name, value
+
+            yield from name_remapping_generator()
+        elif self.is_vision_model and is_gemma3_model(self.model_config.model_type):
+
+            def name_remapping_generator():
+                for name, value in name_params_iterator:
+                    new_name = name.replace("model.", "", 1)
+                    if new_name.startswith("language_model."):
+                        new_name = new_name.replace(
+                            "language_model.", "language_model.model.", 1
+                        )
+                    elif new_name.startswith("lm_head."):
+                        new_name = new_name.replace(
+                            "lm_head.", "language_model.lm_head.", 1
+                        )
+                    yield new_name, value
+
+            yield from name_remapping_generator()
+        else:
+            yield from name_params_iterator
 
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver.

@@ -576,7 +576,7 @@ When `connect_engine` is called, the actor creates a `DistRolloutCoordinator` to
 distributed batch preparation:
 
 ```python
-class FSDPEngine(BaseHFEngine):
+class FSDPEngine(TrainEngine):
     def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
         self.rollout_engine = engine
         # Create coordinator for distributed rollout
