@@ -103,8 +103,6 @@ class FSDPEngine(TrainEngine):
 
         self.initialized = False
         self.own_global_group = False
-        self._parallelism_group: dist.ProcessGroup
-        self.mp_group: dist.ProcessGroup
         self._cpu_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
 
@@ -1103,7 +1101,8 @@ class FSDPEngine(TrainEngine):
                 dist.destroy_process_group(self.dp_group)
             if hasattr(self, "sp_group"):
                 dist.destroy_process_group(self.sp_group)
-            dist.destroy_process_group(self.context_and_model_parallel_group)
+            if hasattr(self, "mp_group"):
+                dist.destroy_process_group(self.mp_group)
         if hasattr(self, "_cpu_group"):
             dist.destroy_process_group(self._cpu_group)
         if self.own_global_group:
@@ -1245,31 +1244,23 @@ class FSDPEngine(TrainEngine):
     def get_model_name_parameters(self):
         name_params_iterator = self.model.named_parameters()
         if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
-
-            def name_remapping_generator():
-                for name, value in name_params_iterator:
-                    new_name = name.replace("model.", "", 1).replace(
-                        "language_model", "model"
-                    )
-                    yield new_name, value
-
-            yield from name_remapping_generator()
+            for name, value in name_params_iterator:
+                new_name = name.replace("model.", "", 1).replace(
+                    "language_model", "model"
+                )
+                yield new_name, value
         elif self.is_vision_model and is_gemma3_model(self.model_config.model_type):
-
-            def name_remapping_generator():
-                for name, value in name_params_iterator:
-                    new_name = name.replace("model.", "", 1)
-                    if new_name.startswith("language_model."):
-                        new_name = new_name.replace(
-                            "language_model.", "language_model.model.", 1
-                        )
-                    elif new_name.startswith("lm_head."):
-                        new_name = new_name.replace(
-                            "lm_head.", "language_model.lm_head.", 1
-                        )
-                    yield new_name, value
-
-            yield from name_remapping_generator()
+            for name, value in name_params_iterator:
+                new_name = name.replace("model.", "", 1)
+                if new_name.startswith("language_model."):
+                    new_name = new_name.replace(
+                        "language_model.", "language_model.model.", 1
+                    )
+                elif new_name.startswith("lm_head."):
+                    new_name = new_name.replace(
+                        "lm_head.", "language_model.lm_head.", 1
+                    )
+                yield new_name, value
         else:
             yield from name_params_iterator
 
