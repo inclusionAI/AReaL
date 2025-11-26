@@ -10,6 +10,7 @@ from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import logging, stats_tracker
 from areal.utils.constants import (
     PROX_APPROX_METHOD_LINEAR,
+    PROX_APPROX_METHOD_LOGLINEAR,
     PROX_APPROX_METHOD_ROLLOUT,
     PROX_APPROX_METHODS_ALL,
     PROX_LOGP_METHOD_LOGLINEAR,
@@ -461,10 +462,10 @@ def compute_prox_logp_approximations(
     methods_to_compute = [method] if method else PROX_APPROX_METHODS_ALL
 
     for m in methods_to_compute:
-        if m == PROX_LOGP_METHOD_LOGLINEAR:
+        if m == PROX_APPROX_METHOD_LOGLINEAR:
             # Method 1: Log-linear interpolation in log-space (geometric mean in probability space)
             # log(p_prox) = (1-α)·log(p_behave) + α·log(p_theta)
-            approximations[PROX_LOGP_METHOD_LOGLINEAR] = old_logp + alpha * (
+            approximations[PROX_APPROX_METHOD_LOGLINEAR] = old_logp + alpha * (
                 logprobs - old_logp
             )
 
@@ -548,9 +549,9 @@ def grpo_loss_fn(
                 logprobs=logprobs.detach(),
                 versions=versions,
                 current_version=current_version,
-                method=PROX_LOGP_METHOD_LOGLINEAR,
+                method=PROX_APPROX_METHOD_LOGLINEAR,
             )
-            prox_logp = approximations[PROX_LOGP_METHOD_LOGLINEAR]
+            prox_logp = approximations[PROX_APPROX_METHOD_LOGLINEAR]
     elif prox_logp_method == PROX_LOGP_METHOD_METRICS:
         # Metrics mode: use recomputed prox_logp for training,
         # but will also compute approximation metrics later
