@@ -1097,14 +1097,22 @@ class FSDPEngine(TrainEngine):
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
-        non_trivial_world = dist.get_world_size() > 1
-        if non_trivial_world:
-            if hasattr(self, "dp_group"):
-                dist.destroy_process_group(self.dp_group)
-            if hasattr(self, "sp_group"):
-                dist.destroy_process_group(self.sp_group)
-            if hasattr(self, "mp_group"):
-                dist.destroy_process_group(self.mp_group)
+        world_size = dist.get_world_size()
+        if (
+            hasattr(self, "dp_group")
+            and dist.get_world_size(self.dp_group) != world_size
+        ):
+            dist.destroy_process_group(self.dp_group)
+        if (
+            hasattr(self, "sp_group")
+            and dist.get_world_size(self.sp_group) != world_size
+        ):
+            dist.destroy_process_group(self.sp_group)
+        if (
+            hasattr(self, "mp_group")
+            and dist.get_world_size(self.mp_group) != world_size
+        ):
+            dist.destroy_process_group(self.mp_group)
         if hasattr(self, "_cpu_group"):
             dist.destroy_process_group(self._cpu_group)
         if self.own_global_group:
