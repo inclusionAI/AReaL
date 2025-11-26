@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Union
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -17,7 +17,7 @@ class DistributedBatchMemory(DistributedBatch):
     dataset = None
 
     @classmethod
-    def from_dict(cls, dict_dataset: Dict[str, Union[Tensor, Any]]):
+    def from_dict(cls, dict_dataset: dict[str, Tensor | Any]):
         """Create a DistributedBatchMemory from dictionary format dataset.
 
         Parameters
@@ -36,7 +36,7 @@ class DistributedBatchMemory(DistributedBatch):
         return instance
 
     @classmethod
-    def from_list(cls, list_dataset: List[Dict[str, Union[Tensor, Any]]]):
+    def from_list(cls, list_dataset: list[dict[str, Tensor | Any]]):
         """Create a DistributedBatchMemory from list format dataset.
 
         Parameters
@@ -103,9 +103,9 @@ class DistributedBatchMemory(DistributedBatch):
             List of DistributedBatchMemory objects
         """
         total_size = self._get_total_size()
-        assert (
-            total_size % group_size == 0
-        ), "tensor length must be devided by group_size"
+        assert total_size % group_size == 0, (
+            "tensor length must be devided by group_size"
+        )
 
         # Handle seqlen calculation for both tensor and scalar types
         if "seqlen" in self.dataset.keys():
@@ -209,7 +209,7 @@ class DistributedBatchMemory(DistributedBatch):
             # For scalar values, assume it's a single sample
             return 1
 
-    def get_data(self) -> Dict[str, Union[torch.Tensor, Any]]:
+    def get_data(self) -> dict[str, torch.Tensor | Any]:
         """Get all data from the DistributedBatchMemory.
 
         Returns
@@ -319,7 +319,7 @@ class DistributedBatchMemory(DistributedBatch):
             self.dataset[key] = value
         else:
             raise FrameworkError(
-                "FrameworkError", "DistributedBatchMemoryError", f"key must be str"
+                "FrameworkError", "DistributedBatchMemoryError", "key must be str"
             )
 
     def __delitem__(self, key):

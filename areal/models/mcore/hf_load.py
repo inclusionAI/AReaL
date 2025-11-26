@@ -4,7 +4,6 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from glob import glob
-from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -17,7 +16,7 @@ from areal.utils import logging
 logger = logging.getLogger("HF WeightsLoader")
 
 
-def _get_tp_slice(shape, dim, tp_rank, tp_size) -> Tuple:
+def _get_tp_slice(shape, dim, tp_rank, tp_size) -> tuple:
     size_per_tp = shape[dim] // tp_size
     res = [slice(None) for _ in range(dim)]
     res.append(slice(tp_rank * size_per_tp, (tp_rank + 1) * size_per_tp))
@@ -27,11 +26,11 @@ def _get_tp_slice(shape, dim, tp_rank, tp_size) -> Tuple:
 def _weight_to_mcore_tp(
     hf_config,
     mcore_weights_name: str,
-    mcore_param_shape: List,
-    hf_weights_safe_slice: List,
+    mcore_param_shape: list,
+    hf_weights_safe_slice: list,
     tp_rank: int,
     tp_size: int,
-    dtype: Optional[torch.dtype] = None,
+    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     if (
         "self_attention.linear_qkv." in mcore_weights_name
@@ -102,13 +101,12 @@ def _weight_to_mcore_tp(
 
 def _load_weight_with_bridge_worker(
     bridge: Bridge,
-    state_dict: Dict[str, torch.Tensor],
-    local_names: List[str],
-    filenames: List[str],
-    local_to_hf_map: Dict[str, List[str]],
+    state_dict: dict[str, torch.Tensor],
+    local_names: list[str],
+    filenames: list[str],
+    local_to_hf_map: dict[str, list[str]],
     weights_path: str,
 ):
-
     all_slices = {}
     for filename in filenames:
         safetensor_file = os.path.join(weights_path, filename)
@@ -141,8 +139,8 @@ def _load_weight_with_bridge_worker(
 
 
 def make_filename_bins(
-    local_to_file_map: Dict[str, List[str]],
-) -> Tuple[List[List[str]], List[List[str]]]:
+    local_to_file_map: dict[str, list[str]],
+) -> tuple[list[list[str]], list[list[str]]]:
     # Allocate local weight name into bins, where each bin access independent files
     # Then we can use multiple threads to concurrently load each bin's parameters.
     # This function has a complexity of O(F + L²)
@@ -216,14 +214,14 @@ def load_weights_from_hf_with_mbridge_fast(
     bridge: Bridge,
     models: list[torch.nn.Module],
     weights_path: str,
-    max_workers: Optional[int] = None,
+    max_workers: int | None = None,
 ) -> None:
     weights_path = bridge._get_actual_hf_path(weights_path)
     index_file = os.path.join(weights_path, "model.safetensors.index.json")
     manual_tie_word_embedding = False
     index = {}
     if os.path.exists(index_file):
-        with open(index_file, "r") as f:
+        with open(index_file) as f:
             index = json.load(f)["weight_map"]
     else:
         # Search all safetensors files
