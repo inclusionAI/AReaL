@@ -17,6 +17,8 @@ from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.controller.batch import DistributedBatchMemory
 from areal.utils import logging
 
+logger = logging.getLogger("TrainController")
+
 
 class TrainController:
     """Controller for managing distributed training across multiple workers.
@@ -51,7 +53,6 @@ class TrainController:
         self.parallel_strategy: ParallelStrategy | None = None
 
         self._worker_role: str
-        self.logger = logging.getLogger("TrainController")
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Placeholder method for process group creation.
@@ -103,14 +104,14 @@ class TrainController:
         )
 
         # Create workers via scheduler
-        self.logger.info("Creating workers via scheduler...")
+        logger.info("Creating workers via scheduler...")
         worker_ids = self.scheduler.create_workers(job=job)
-        self.logger.info(f"Workers created: {worker_ids}")
+        logger.info(f"Workers created: {worker_ids}")
 
         # Wait for workers to be ready
-        self.logger.info("Waiting for workers to be ready...")
+        logger.info("Waiting for workers to be ready...")
         self.workers = self.scheduler.get_workers(role=job.role)
-        self.logger.info(f"Workers ready: {[w.id for w in self.workers]}")
+        logger.info(f"Workers ready: {[w.id for w in self.workers]}")
 
         # Determine distributed training master address and port from rank 0 worker
         # These are used for PyTorch distributed initialization across workers
@@ -122,7 +123,7 @@ class TrainController:
             self._master_port = int(rank0_worker.worker_ports[1])
         self._master_addr = rank0_worker.ip
 
-        self.logger.info(
+        logger.info(
             f"Distributed training: MASTER_ADDR={self._master_addr}, MASTER_PORT={self._master_port}"
         )
 
@@ -138,7 +139,7 @@ class TrainController:
         # Identify DP head workers
         self._identify_dp_heads()
 
-        self.logger.info("TrainController initialization complete")
+        logger.info("TrainController initialization complete")
 
     def _run_async_task(self, task):
         """Run an async task in a separate thread with a new event loop.
@@ -184,7 +185,7 @@ class TrainController:
         MASTER_PORT, LOCAL_RANK) are configured via a dedicated RPC endpoint before
         engine instantiation.
         """
-        self.logger.info("Creating engines on workers...")
+        logger.info("Creating engines on workers...")
 
         async def _setup_worker(worker: Worker, rank: int):
             env = {
@@ -205,7 +206,7 @@ class TrainController:
             _setup_worker(worker, rank) for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
-        self.logger.info("Engines created on all workers!")
+        logger.info("Engines created on all workers!")
 
     async def _async_initialize_engines(self, ft_spec: FinetuneSpec, **kwargs):
         """Initialize engines on all workers in two phases.
@@ -220,7 +221,7 @@ class TrainController:
         **kwargs
             Additional keyword arguments passed to engine.initialize()
         """
-        self.logger.info("Calling engine initialization...")
+        logger.info("Calling engine initialization...")
         # Phase 1: Create process groups for distributed training
         tasks = [
             self.scheduler.async_call_engine(
@@ -244,7 +245,7 @@ class TrainController:
             for worker in self.workers
         ]
         await asyncio.gather(*tasks)
-        self.logger.info("All engines are initialized!")
+        logger.info("All engines are initialized!")
 
     def _identify_dp_heads(self):
         """Identify which workers are data-parallel heads.
@@ -256,7 +257,7 @@ class TrainController:
         The result is stored in `self.workers_is_dp_head`, a boolean list where
         `True` indicates the worker at that index is a DP head.
         """
-        self.logger.info("Identifying DP head workers...")
+        logger.info("Identifying DP head workers...")
 
         async def _get_dp_head():
             tasks = [
@@ -274,20 +275,20 @@ class TrainController:
 
         Cleans up all resources including workers, engines, and internal state.
         """
-        self.logger.info("Destroying TrainController...")
+        logger.info("Destroying TrainController...")
 
         # Delete workers via scheduler
         try:
             self.scheduler.delete_workers(role=self._worker_role)
-            self.logger.info("Workers deleted")
+            logger.info("Workers deleted")
         except Exception as e:
-            self.logger.error(f"Error deleting workers: {e}")
+            logger.error(f"Error deleting workers: {e}")
 
         # Clear worker lists
         self.workers.clear()
         self.workers_is_dp_head.clear()
 
-        self.logger.info("TrainController destroyed")
+        logger.info("TrainController destroyed")
 
     def _custom_function_call(self, method: str, *args, **kwargs):
         """Dispatch method call to appropriate workers based on input type.
