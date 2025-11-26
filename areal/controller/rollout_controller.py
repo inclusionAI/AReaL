@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import defaultdict
 from dataclasses import dataclass
-from itertools import chain
 from threading import Lock
 from typing import Any
 
@@ -463,33 +463,22 @@ class RolloutController:
         self._collective_rpc("resume")
         self.dispatcher.resume()
 
-    def export_stats(self):
-        # FIXME:
-        async def _call_all():
-            tasks = [
-                self.scheduler.async_call_engine(
-                    worker_id=worker.id,
-                    method="export_stats",
-                )
-                for worker in self.workers
-            ]
-            return await asyncio.gather(*tasks)
-
-        # Stats
-        all_raw_stats = asyncio.run(_call_all())
-        stats = {}
-        exported = set()
+    def export_stats(self) -> dict[str, float]:
+        all_raw_stats = asyncio.run(self._collective_rpc_async(method="export_stats"))
+        stats = defaultdict(int)
         for raw_stats in all_raw_stats:
-            for k in raw_stats:
-                if k in exported:
+            for k, v in raw_stats.items():
+                if k.endswith("__count"):
+                    stats[k] += v
+                else:
+                    stats[k] += v * stats[k + "__count"]
                     continue
-                # Aggregate data from all workers for this key
-                # Use itertools.chain for better performance than sum([...], [])
-                data = list(chain.from_iterable(s.get(k, []) for s in all_raw_stats))
-                if len(data) == 0:
-                    continue
-                stats[k] = sum(data) / len(data)
-                exported.add(k)
+
+        # Average non-count stats
+        for k, v in stats.items():
+            if k.endswith("__count"):
+                continue
+            stats[k] /= stats[k + "__count"]
         return stats
 
     @property

@@ -8,7 +8,7 @@ from areal.api.cli_args import BaseExperimentConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.platforms import current_platform
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
-from areal.utils import logging, name_resolve, seeding, stats_tracker
+from areal.utils import logging, name_resolve, seeding
 from areal.utils.data import (
     broadcast_tensor_container,
     tensor_container_to,
@@ -239,28 +239,6 @@ def call_engine_method():
 
     except Exception as e:
         logger.error(f"Unexpected error in call: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-
-
-@app.route("/export_stats", methods=["POST"])
-def export_stats():
-    """Export training statistics from stats_tracker."""
-    try:
-        global _engine
-        if _engine is None:
-            return jsonify({"error": "Engine not initialized"}), 503
-
-        # TrainEngine: reduce stats across data_parallel_group
-        if not isinstance(_engine, TrainEngine):
-            return (
-                jsonify({"error": "/export_stats is only available for TrainEngine"}),
-                400,
-            )
-        result = stats_tracker.export(reduce_group=_engine.data_parallel_group)
-        return jsonify({"status": "success", "result": result})
-
-    except Exception as e:
-        logger.error(f"Unexpected error in export_stats: {e}\n{traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 

@@ -900,20 +900,16 @@ class LocalScheduler(Scheduler):
 
         # Route to different endpoint based on method
         port = int(worker_info.worker.worker_ports[0])
-        if method == "export_stats":
-            url = f"http://{worker_info.worker.ip}:{port}/export_stats"
-            payload = None
-        else:
-            # Standard engine method call
-            url = f"http://{worker_info.worker.ip}:{port}/call"
-            # Serialize args and kwargs
-            serialized_args = serialize_value(list(args))
-            serialized_kwargs = serialize_value(kwargs)
-            payload = {
-                "method": method,
-                "args": serialized_args,
-                "kwargs": serialized_kwargs,
-            }
+        # Standard engine method call
+        url = f"http://{worker_info.worker.ip}:{port}/call"
+        # Serialize args and kwargs
+        serialized_args = serialize_value(list(args))
+        serialized_kwargs = serialize_value(kwargs)
+        payload = {
+            "method": method,
+            "args": serialized_args,
+            "kwargs": serialized_kwargs,
+        }
 
         last_error = None
 

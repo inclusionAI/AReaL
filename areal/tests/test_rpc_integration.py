@@ -132,9 +132,3 @@ class TestSyncRPCServer:
         health_resp = client.get("/health")
         assert health_resp.status_code == 200
         assert health_resp.get_json()["engine_initialized"] is True
-
-        stats_resp = client.post("/export_stats")
-        assert stats_resp.status_code == 200
-        stats_data = stats_resp.get_json()
-        assert stats_data["status"] == "success"
-        assert stats_data["result"] == {"loss": 0.1}
