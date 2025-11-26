@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import torch
@@ -15,8 +16,6 @@ from areal.api.io_struct import (
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.controller.batch import DistributedBatchMemory
 from areal.utils import logging
-
-logger = logging.getLogger("TrainController")
 
 
 class TrainController:
@@ -87,8 +86,6 @@ class TrainController:
         **kwargs
             Additional keyword arguments passed to engine initialization
         """
-        self.logger = logging.getLogger("[TrainController]")
-
         # Store configuration
         self._worker_role = role
         self.alloc_mode = alloc_mode
@@ -168,8 +165,6 @@ class TrainController:
                 return new_loop.run_until_complete(task)
             finally:
                 new_loop.close()
-
-        from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor() as executor:
             future = executor.submit(_run_in_thread)
@@ -697,7 +692,7 @@ class TrainController:
 
         Returns
         -------
-        Dict[str, float]
+        dict[str, float]
             Scalar statistics after training
         """
         return self._custom_function_call("train_lm", input_, *args, **kwargs)

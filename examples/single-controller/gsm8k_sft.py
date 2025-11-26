@@ -70,7 +70,6 @@ def main(args):
         role="default",
         alloc_mode=allocation_mode,
         ft_spec=ft_spec,
-        addr=None,
     )
 
     saver = Saver(config.saver, ft_spec)
