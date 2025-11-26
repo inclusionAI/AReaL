@@ -1068,17 +1068,11 @@ def bcast_mb_list(
 def cycle_dataloader(dataloader: StatefulDataLoader):
     """Cycle through a dataloader indefinitely."""
     epoch = 0
-    if isinstance(dataloader.sampler, DistributedSampler):
-        dataloader.sampler.set_epoch(epoch)
-    g = iter(dataloader)
     while True:
-        try:
-            yield next(g)
-        except StopIteration:
-            epoch += 1
-            if isinstance(dataloader.sampler, DistributedSampler):
-                dataloader.sampler.set_epoch(epoch)
-            g = iter(dataloader)
+        if isinstance(dataloader.sampler, DistributedSampler):
+            dataloader.sampler.set_epoch(epoch)
+        yield from dataloader
+        epoch += 1
 
 
 class Normalization:
