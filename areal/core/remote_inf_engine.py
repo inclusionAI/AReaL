@@ -43,6 +43,8 @@ from .workflow_executor import WorkflowExecutor
 
 RID_CACHE_SIZE = 128
 
+logger = logging.getLogger(__name__)
+
 _session_storage = ContextVar("aiohttp.ClientSession")
 
 
@@ -911,6 +913,9 @@ class RemoteInfEngine(InferenceEngine):
             self.local_server_processes.append(server_info)
             return server_info
         except TimeoutError:
+            logger.warning(
+                f"Launch local server timeouted at {address} after {self.config.setup_timeout}s."
+            )
             self._shutdown_one_server(server_info)
             raise
 

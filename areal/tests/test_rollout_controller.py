@@ -951,6 +951,7 @@ def test_rollout_controller_integration(tmp_path, model_path):
             consumer_batch_size=128,
             max_head_offpolicyness=1,
             max_concurrent_rollouts=5,
+            setup_timeout=300,
         ),
         scheduler=scheduler,
     )

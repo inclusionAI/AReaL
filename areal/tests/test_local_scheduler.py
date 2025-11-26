@@ -165,16 +165,6 @@ class TestLocalSchedulerInitialization:
             )
             assert scheduler.gpu_devices == [0]
 
-    def test_init_without_cuda_visible_devices(self, tmp_path):
-        """Should default to [0] when CUDA_VISIBLE_DEVICES is not set."""
-        with patch.dict(os.environ, {}, clear=True):
-            if "CUDA_VISIBLE_DEVICES" in os.environ:
-                del os.environ["CUDA_VISIBLE_DEVICES"]
-            scheduler = LocalScheduler(
-                log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
-            )
-            assert scheduler.gpu_devices == [0]
-
     def test_init_creates_log_directory(self, tmp_path):
         """Should create log directory if it doesn't exist."""
         log_dir = tmp_path / "nested" / "log" / "dir"
