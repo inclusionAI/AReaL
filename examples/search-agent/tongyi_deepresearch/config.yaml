@@ -98,7 +98,6 @@ sglang:
 # datasets
 train_dataset:
   batch_size: 128
-  shuffle: true
   pin_memory: true
   type: rl
   path: inclusionAI__Asearcher-train-data/ASearcher-LRM-35k.jsonl
