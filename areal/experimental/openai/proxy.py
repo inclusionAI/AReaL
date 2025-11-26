@@ -253,7 +253,7 @@ def build_app(
 
         try:
             completion: ChatCompletion = await state.client.chat.completions.create(
-                areal_completion_cache=session_cache[session_id].completions, **kwargs
+                areal_cache=session_cache[session_id].completions, **kwargs
             )
             return completion
         except ValueError as e:
