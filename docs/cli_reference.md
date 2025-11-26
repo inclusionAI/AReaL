@@ -48,10 +48,6 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 - [SGLang Configuration](section-sg-lang)
 - [vLLM Configuration](section-v-llm)
 
-### Dataset
-
-- [Dataset Configuration](section-dataset)
-
 ### System and Cluster Configurations
 
 - [Cluster Specification Configuration](section-cluster)
@@ -71,6 +67,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 
 ### Others
 
+- [Dataset Configuration](section-dataset)
 - [DistributedDataParallel Configuration](section-distributed-data-parallel)
 - [MegatronEngine Configuration](section-megatron-engine)
 - [PerfTracer Configuration](section-perf-tracer)
@@ -115,8 +112,7 @@ Base configuration class for all experiment types with common settings.
 
 ## GRPO Configuration
 
-Configuration for Group Relative Policy Optimization (GRPO) reinforcement learning
-experiments.
+A dummy place holder of GRPO config for backward compatibility.
 
 | Parameter            | Type                                                              | Default      | Description                                                                                                                           |
 | -------------------- | ----------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -144,7 +140,8 @@ experiments.
 | `gconfig`            | [`GenerationHyperparameters`](section-generation-hyperparameters) | **Required** | -                                                                                                                                     |
 | `rollout`            | [`InferenceEngineConfig`](section-inference-engine)               | **Required** | -                                                                                                                                     |
 | `actor`              | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                                     |
-| `ref`                | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                                     |
+| `ref`                | [`PPOActorConfig`](section-ppo-actor) \| None                     | `None`       | -                                                                                                                                     |
+| `critic`             | [`PPOCriticConfig`](section-ppo-critic) \| None                   | `None`       | -                                                                                                                                     |
 
 (section-ppo)=
 
@@ -178,8 +175,8 @@ Configuration for Proximal Policy Optimization (PPO) reinforcement learning expe
 | `gconfig`            | [`GenerationHyperparameters`](section-generation-hyperparameters) | **Required** | -                                                                                                                                     |
 | `rollout`            | [`InferenceEngineConfig`](section-inference-engine)               | **Required** | -                                                                                                                                     |
 | `actor`              | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                                     |
-| `ref`                | [`PPOActorConfig`](section-ppo-actor)                             | **Required** | -                                                                                                                                     |
-| `critic`             | [`PPOCriticConfig`](section-ppo-critic)                           | **Required** | -                                                                                                                                     |
+| `ref`                | [`PPOActorConfig`](section-ppo-actor) \| None                     | `None`       | -                                                                                                                                     |
+| `critic`             | [`PPOCriticConfig`](section-ppo-critic) \| None                   | `None`       | -                                                                                                                                     |
 
 (section-rw)=
 
@@ -584,23 +581,6 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 | `enable_sleep_mode`            | boolean         | `False`                                                             | -           |
 | `uvicorn_log_level`            | string          | `"warning"`                                                         | -           |
 
-(section-dataset)=
-
-## Dataset Configuration
-
-Configuration for dataset loading and preprocessing.
-
-| Parameter     | Type            | Default      | Description                                                                      |
-| ------------- | --------------- | ------------ | -------------------------------------------------------------------------------- |
-| `path`        | string          | **Required** | Path to the dataset. Can be a local path or a HuggingFace dataset name.          |
-| `type`        | string          | **Required** | Type of training method, e.g., 'sft', 'rl', etc.                                 |
-| `batch_size`  | integer         | `1`          | Batch size for the dataloader                                                    |
-| `shuffle`     | boolean         | `True`       | Whether to shuffle the dataset                                                   |
-| `pin_memory`  | boolean         | `False`      | Pin memory for faster data loading (set True for GPU training)                   |
-| `num_workers` | integer         | `0`          | Number of worker processes for data loading                                      |
-| `drop_last`   | boolean         | `True`       | Drop the last incomplete batch                                                   |
-| `max_length`  | integer \| None | `None`       | Maximum token length of sequences in dataset. Longer sequences are filtered out. |
-
 (section-cluster)=
 
 ## Cluster Specification Configuration
@@ -766,6 +746,23 @@ Configuration for Weights & Biases experiment tracking.
 | `tags`           | list of string \| None | `None`       | -           |
 | `config`         | `dict` \| None         | `None`       | -           |
 | `id_suffix`      | string \| None         | `"train"`    | -           |
+
+(section-dataset)=
+
+## Dataset Configuration
+
+Configuration for dataset loading and preprocessing.
+
+| Parameter     | Type            | Default      | Description                                                                      |
+| ------------- | --------------- | ------------ | -------------------------------------------------------------------------------- |
+| `path`        | string          | **Required** | Path to the dataset. Can be a local path or a HuggingFace dataset name.          |
+| `type`        | string          | **Required** | Type of training method, e.g., 'sft', 'rl', etc.                                 |
+| `batch_size`  | integer         | `1`          | Batch size for the dataloader                                                    |
+| `shuffle`     | boolean         | `True`       | Whether to shuffle the dataset                                                   |
+| `pin_memory`  | boolean         | `False`      | Pin memory for faster data loading (set True for GPU training)                   |
+| `num_workers` | integer         | `0`          | Number of worker processes for data loading                                      |
+| `drop_last`   | boolean         | `True`       | Drop the last incomplete batch                                                   |
+| `max_length`  | integer \| None | `None`       | Maximum token length of sequences in dataset. Longer sequences are filtered out. |
 
 (section-distributed-data-parallel)=
 
