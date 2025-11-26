@@ -66,7 +66,6 @@ class TrainController:
         parallel_strategy : ParallelStrategy | None, optional
             Parallel strategy configuration (currently unused), by default None
         """
-        pass
 
     def initialize(
         self,
