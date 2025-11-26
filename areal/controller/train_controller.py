@@ -141,35 +141,11 @@ class TrainController:
         logger.info("TrainController initialization complete")
 
     def _run_async_task(self, task):
-        """Run an async task synchronously using `asyncio.run`.
-
-        Parameters
-        ----------
-        task : coroutine
-            The async task (coroutine) to execute
-
-        Returns
-        -------
-        Any
-            The result of the async task
-        """
-
+        """Run an async task synchronously."""
         return asyncio.run(task)
 
     async def _async_create_engines(self, engine_path: str):
-        """Create engine instances on all workers with distributed training configuration.
-
-        Parameters
-        ----------
-        engine_path : str
-            Full import path to the engine class (e.g., "areal.engine.fsdp_engine.FSDPEngine")
-
-        Note
-        ----
-        Distributed training environment variables (RANK, WORLD_SIZE, MASTER_ADDR,
-        MASTER_PORT, LOCAL_RANK) are configured via a dedicated RPC endpoint before
-        engine instantiation.
-        """
+        """Create engine instances on all workers. Sets distributed env vars before creation."""
         logger.info("Creating engines on workers...")
 
         async def _setup_worker(worker: Worker, rank: int):
@@ -178,7 +154,7 @@ class TrainController:
                 "WORLD_SIZE": str(len(self.workers)),
                 "MASTER_ADDR": str(self._master_addr),
                 "MASTER_PORT": str(self._master_port),
-                "LOCAL_RANK": "0",  # NOTE: local rank is always 0 while each process use
+                "LOCAL_RANK": "0",  # NOTE: local rank is always 0 while each process use only one GPU
             }
             await self.scheduler.set_worker_env(worker.id, env)
             await self.scheduler.create_engine(
@@ -194,18 +170,7 @@ class TrainController:
         logger.info("Engines created on all workers!")
 
     async def _async_initialize_engines(self, ft_spec: FinetuneSpec, **kwargs):
-        """Initialize engines on all workers in two phases.
-
-        First creates process groups for distributed training, then initializes
-        the engines with model loading and optimizer setup.
-
-        Parameters
-        ----------
-        ft_spec : FinetuneSpec
-            Finetune specification containing model and training configuration
-        **kwargs
-            Additional keyword arguments passed to engine.initialize()
-        """
+        """Initialize engines: create process groups, then load models and setup optimizers."""
         logger.info("Calling engine initialization...")
         # Phase 1: Create process groups for distributed training
         tasks = [
@@ -233,15 +198,7 @@ class TrainController:
         logger.info("All engines are initialized!")
 
     def _identify_dp_heads(self):
-        """Identify which workers are data-parallel heads.
-
-        Queries each worker to determine if it is a DP head. Only DP head workers
-        receive data slices directly; non-head workers get data via broadcast from
-        their corresponding DP head.
-
-        The result is stored in `self.workers_is_dp_head`, a boolean list where
-        `True` indicates the worker at that index is a DP head.
-        """
+        """Query workers to identify DP heads. Stores result in self.workers_is_dp_head."""
         logger.info("Identifying DP head workers...")
 
         async def _get_dp_head():
@@ -262,8 +219,26 @@ class TrainController:
         """
         logger.info("Destroying TrainController...")
 
-        # Delete workers via scheduler
+        # First destroy engines to release GPU memory
+        if self.workers:
+            logger.info("Destroying engines on all workers...")
+            try:
+
+                async def _destroy_all_engines():
+                    tasks = [
+                        self.scheduler.async_call_engine(worker.id, "destroy")
+                        for worker in self.workers
+                    ]
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+                self._run_async_task(_destroy_all_engines())
+                logger.info("Engines destroyed")
+            except Exception as e:
+                logger.error(f"Error destroying engines: {e}")
+
+        # Then delete workers via scheduler
         try:
+            logger.info("Deleting all workers...")
             self.scheduler.delete_workers(role=self._worker_role)
             logger.info("Workers deleted")
         except Exception as e:
@@ -276,30 +251,7 @@ class TrainController:
         logger.info("TrainController destroyed")
 
     def _custom_function_call(self, method: str, *args, **kwargs):
-        """Dispatch method call to appropriate workers based on input type.
-
-        This is the main entry point for calling engine methods across workers.
-        It handles:
-        1. Splitting DistributedBatch arguments across data-parallel groups
-        2. Replicating non-batch arguments to all DP heads
-        3. Calling the method on all workers (only DP heads receive data)
-        4. Filtering results to only include DP head responses
-        5. Merging results from DP heads
-
-        Parameters
-        ----------
-        method : str
-            Name of the engine method to call
-        *args
-            Positional arguments (DistributedBatch will be split, others replicated)
-        **kwargs
-            Keyword arguments (DistributedBatch will be split, others replicated)
-
-        Returns
-        -------
-        Any
-            Merged result from DP head workers
-        """
+        """Dispatch method call to workers: split batches, replicate args, merge results."""
         dp_split_args, dp_split_kwargs = self._dispatch_inputs(*args, **kwargs)
         results = self._run_async_task(
             self._call_with_dispatched_inputs(method, dp_split_args, dp_split_kwargs)
@@ -309,25 +261,7 @@ class TrainController:
         return self._merge_results(results, method)
 
     async def _async_custom_function_call(self, method: str, *args, **kwargs):
-        """Async version of _custom_function_call.
-
-        See `_custom_function_call` for detailed documentation.
-        This async version is used internally when already in an async context.
-
-        Parameters
-        ----------
-        method : str
-            Name of the engine method to call
-        *args
-            Positional arguments
-        **kwargs
-            Keyword arguments
-
-        Returns
-        -------
-        Any
-            Merged result from DP head workers
-        """
+        """Async version of _custom_function_call."""
         dp_split_args, dp_split_kwargs = self._dispatch_inputs(*args, **kwargs)
         results = await self._call_with_dispatched_inputs(
             method, dp_split_args, dp_split_kwargs
@@ -337,24 +271,7 @@ class TrainController:
         return self._merge_results(results, method)
 
     def _dispatch_inputs(self, *args, **kwargs):
-        """Split or replicate inputs across data-parallel groups.
-
-        DistributedBatch arguments are split across DP groups (one slice per DP head).
-        Non-batch arguments are replicated to all DP heads.
-
-        Parameters
-        ----------
-        *args
-            Positional arguments to dispatch
-        **kwargs
-            Keyword arguments to dispatch
-
-        Returns
-        -------
-        tuple[list[list[Any]], dict[str, list[Any]]]
-            A tuple of (split_args, split_kwargs) where each element is a list
-            of values, one per DP head worker
-        """
+        """Split DistributedBatch across DP groups, replicate other args to all DP heads."""
         split_args = []
         for arg in args:
             if isinstance(arg, DistributedBatch):
@@ -378,32 +295,7 @@ class TrainController:
         dp_split_args: list[list[Any]],
         dp_worker_kwargs: list[dict[str, Any]],
     ):
-        """Call engine method on all workers with dispatched inputs.
-
-        Only DP head workers receive their data slice directly. Non-head workers
-        receive empty arguments and will get data via broadcast in the RPC server
-        from their corresponding DP head.
-
-        Parameters
-        ----------
-        method : str
-            Name of the engine method to call
-        dp_split_args : list[list[Any]]
-            Arguments split per DP head (outer list is per-argument, inner list is per-DP-head)
-        dp_worker_kwargs : list[dict[str, Any]]
-            Keyword arguments split per DP head
-
-        Returns
-        -------
-        list[Any]
-            Results from all workers (will be filtered to DP heads later)
-
-        Note
-        ----
-        DistributedBatch objects are converted to dicts for RPC serialization.
-        TODO: Consider passing only metadata instead of full tensors to reduce
-        network overhead for large batches.
-        """
+        """Call method on all workers. DP heads get data slices, others get empty args (broadcast via RPC)."""
         tasks = []
         dp_idx = 0
         for idx, worker in enumerate(self.workers):
@@ -443,31 +335,7 @@ class TrainController:
         return await asyncio.gather(*tasks)
 
     def _merge_results(self, results, method):
-        """Merge results from DP head workers based on result type.
-
-        Handles different result types:
-        - torch.Tensor: Pads to max sequence length and concatenates along batch dimension
-        - dict with attention_mask: Uses DistributedBatchMemory.concat for proper padding
-        - dict without attention_mask: Concatenates tensors along batch dimension
-        - Other types: Assumes already synchronized, returns first result
-
-        Parameters
-        ----------
-        results : list[Any]
-            Results from DP head workers (all should be of the same type)
-        method : str
-            Method name (currently unused, kept for potential future use)
-
-        Returns
-        -------
-        Any
-            Merged result from all DP head workers
-
-        Note
-        ----
-        TODO: Consider implementing a more general data conversion strategy that
-        can handle arbitrary nested structures and tensor types.
-        """
+        """Merge results from DP heads: pad tensors to max seq_len, concat dicts, return first for others."""
         first_result = results[0]
 
         if isinstance(first_result, torch.Tensor):
@@ -517,30 +385,7 @@ class TrainController:
     def _align_batches_with_dp(
         self, input_: DistributedBatch, rebalance=True
     ) -> list[DistributedBatch]:
-        """Split DistributedBatch across data-parallel groups.
-
-        Splits the input batch into multiple sub-batches, one for each DP head worker.
-        Empty batches are replicated to all DP groups.
-
-        Parameters
-        ----------
-        input_ : DistributedBatch
-            The batch to split across DP groups
-        rebalance : bool, optional
-            If True, uses chunk_by_ffd for fair distribution based on sequence lengths.
-            If False, uses simple chunking. Default is True.
-
-        Returns
-        -------
-        list[DistributedBatch]
-            List of batches, one for each DP head worker
-
-        Note
-        ----
-        Group normalization (e.g., for reward normalization) should be handled
-        in the workflow layer before calling this method, as this method only
-        handles data splitting.
-        """
+        """Split batch across DP groups. Uses chunk_by_ffd if rebalance=True, else simple chunking."""
         # Handle empty batch by replicating to all DP groups
         if len(input_.get_data()) == 0:
             return [input_] * self.alloc_mode.train.dp_size
