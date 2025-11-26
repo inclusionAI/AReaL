@@ -959,9 +959,9 @@ def test_rollout_controller_integration(tmp_path, model_path):
     try:
         rollout.initialize(
             role="rollout",
-            alloc_mode=AllocationMode.from_str("sglang:d4"),
+            alloc_mode=AllocationMode.from_str("sglang:d2"),
             server_args=SGLangConfig.build_args(
-                SGLangConfig(model_path=model_path),
+                SGLangConfig(model_path=model_path, mem_fraction_static=0.3),
                 tp_size=1,
                 base_gpu_id=0,
             ),

@@ -66,9 +66,6 @@ def rpc_server(monkeypatch):
     monkeypatch.setattr(module.current_platform, "current_device", lambda: "cpu")
     monkeypatch.setattr(module.name_resolve, "reconfigure", MagicMock())
     monkeypatch.setattr(module.seeding, "set_random_seed", MagicMock())
-    monkeypatch.setattr(
-        module.stats_tracker, "export", MagicMock(return_value={"loss": 0.1})
-    )
     module._engine = None
     yield module
     module._engine = None
