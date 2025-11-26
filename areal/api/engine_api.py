@@ -113,17 +113,6 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @property
-    def parallelism_group(self) -> dist.ProcessGroup:
-        """Get the global communication group of this engine.
-
-        Returns
-        -------
-        dist.ProcessGroup
-            The global communication group
-        """
-        raise NotImplementedError()
-
-    @property
     def cpu_group(self) -> dist.ProcessGroup:
         """Get the CPU communication group of this engine.
 

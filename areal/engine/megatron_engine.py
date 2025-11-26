@@ -280,9 +280,6 @@ class MegatronEngine(TrainEngine):
             tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
             self.own_global_group = True
         self.logger = logging.getLogger(f"[Megatron Engine Rank {dist.get_rank()}]")
-        self._parallelism_group = dist.new_group(
-            timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend=backend
-        )
         self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
         # This is needed for barrier synchronization when models are moved to CPU
@@ -403,11 +400,6 @@ class MegatronEngine(TrainEngine):
         return self._cpu_group
 
     @property
-    def parallelism_group(self) -> dist.ProcessGroup:
-        assert self.process_group_initialized
-        return self._parallelism_group
-
-    @property
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
         assert self.process_group_initialized
         return self._context_and_model_parallel_group
@@ -455,12 +447,13 @@ class MegatronEngine(TrainEngine):
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
-        dist.destroy_process_group(self.parallelism_group)
-        dist.destroy_process_group(self.context_and_model_parallel_group)
-        dist.destroy_process_group(self.cpu_group)
         self.process_group_initialized = False
-        if self.own_global_group:
-            assert dist.is_initialized()
+        # NOTE: if `own_global_group` is true, we assume that
+        # no communications are needed after `destroy`, so we
+        # directly destroy all groups. Otherwise, process group
+        # handles still exist and we expect another engine to
+        # clean up these groups.
+        if dist.is_initialized() and self.own_global_group:
             mpu.destroy_model_parallel()
             dist.destroy_process_group()
             self.own_global_group = False
