@@ -678,8 +678,8 @@ def grpo_loss_fn(
         # If behave_mask exists, use it; otherwise use loss_mask
         approx_metrics_mask = stat.get("behave_mask", loss_mask)
 
-        # Log metrics under prox_approx scope
-        with stats_tracker.scope("prox_approx"):
+        # Log metrics under compute_logp scope
+        with stats_tracker.scope("compute_logp"):
             # Set denominator within this scope (using the capped mask)
             stats_tracker.denominator(n_valid_tokens=approx_metrics_mask.bool())
 

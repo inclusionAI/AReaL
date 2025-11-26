@@ -125,7 +125,7 @@ use_decoupled_loss?
 
 ### Metrics Explanation
 
-When `prox_logp_method="metrics"`, the following metrics are logged under `ppo_actor/update/prox_approx/`:
+When `prox_logp_method="metrics"`, the following metrics are logged under `ppo_actor/update/compute_logp/`:
 
 **Ground Truth:**
 - `prox_logp_gt/avg`: Average ground truth proximal log-probability
