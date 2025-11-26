@@ -8,10 +8,10 @@ tokenizer_path: ${model.path}
 cluster:
   n_nodes: 1
   n_gpus_per_node: 8
-  fileroot: /storage/openpsi/experiments
+  fileroot: /tmp/areal/experiments
   name_resolve:
     type: nfs
-    nfs_record_root: /storage/openpsi/name_resolve
+    nfs_record_root: /tmp/areal/name_resolve
 
 allocation_mode: d8p1t1
 
