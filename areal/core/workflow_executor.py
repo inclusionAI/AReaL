@@ -340,6 +340,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             except Exception as e:
                 self.logger.error("Producer thread failed", exc_info=True)
                 self._set_thread_exception(e)
+                with self._input_cv:
+                    self._input_cv.notify()
                 break
 
     def _fetch_loop(self) -> None:
@@ -373,6 +375,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             except Exception as e:
                 self.logger.error("Consumer thread failed", exc_info=True)
                 self._set_thread_exception(e)
+                with self._result_cv:
+                    self._result_cv.notify_all()
                 break
 
     def _get_next_task_for_submission(self) -> TInput | None:
@@ -395,10 +399,10 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         self._shutdown_event.clear()
 
-        self._commit_thread = threading.Thread(target=self._commit_loop)
+        self._commit_thread = threading.Thread(target=self._commit_loop, daemon=True)
         self._commit_thread.start()
 
-        self._fetch_thread = threading.Thread(target=self._fetch_loop)
+        self._fetch_thread = threading.Thread(target=self._fetch_loop, daemon=True)
         self._fetch_thread.start()
 
     def destroy(self):

@@ -282,7 +282,7 @@ class ProxyServer:
             self.app, host=self._localhost, port=self.port, log_level=log_level
         )
         self.server = uvicorn.Server(self.server_config)
-        self.thread = threading.Thread(target=self.server.run)
+        self.thread = threading.Thread(target=self.server.run, daemon=True)
 
     @property
     def public_addr(self) -> str:
