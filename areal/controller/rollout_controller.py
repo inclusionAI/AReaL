@@ -1,75 +1,47 @@
 from __future__ import annotations
 
 import asyncio
-import queue
-import random
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import chain
+from threading import Lock
 from typing import Any
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.controller_api import DistributedBatch
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Job, Scheduler, Worker
+from areal.api.workflow_api import RolloutWorkflow
 from areal.controller.batch import DistributedBatchMemory
-from areal.core.async_task_runner import AsyncTaskRunner, TaskQueueFullError
 from areal.core.staleness_manager import StalenessManager
-from areal.utils import logging
-from areal.utils.data import cycle_dataloader
+from areal.core.workflow_executor import BatchTaskDispatcher
+from areal.utils import logging, perf_tracer
+from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.utils.perf_tracer import trace_perf
 
-CREATE_WORKER_TIMEOUT = 60.0
-TASK_RUNNER_MAX_QSIZE = 32768
+logger = logging.getLogger(__name__)
 
 
+# NOTE: remote task input has a slightly different
+# type annotation, which disallows workflow object or types
 @dataclass
 class _RemoteRolloutTaskInput:
     data: dict[str, Any]
-    workflow_path: str
+    workflow: str
     workflow_kwargs: dict[str, Any]
-    should_accept_path: str | None = None
+    task_id: int | None = None
+
+
+@dataclass
+class _RemoteRolloutResult:
+    trajectory: dict[str, Any]
+    task_id: int | None = None
 
 
 class RolloutController:
-    """A centralized controller that manages multiple distributed InferenceEngine workers for rollout generation.
-
-    RolloutController orchestrates distributed inference workloads by scheduling and
-    dispatching requests across multiple concurrent InferenceEngine instances. It provides
-    intelligent load balancing, staleness control, and capacity management to optimize
-    rollout generation efficiency.
-
-    Key features:
-        - Distributed request scheduling and load balancing across workers
-        - Centralized staleness and capacity control for consistent performance
-        - Asynchronous rollout generation with configurable acceptance criteria
-        - Data aggregation from heterogeneously loaded workers
-
-    The controller handles workload imbalances inherent in rollout generation, where
-    different workers may produce varying amounts of data depending on the complexity
-    of their assigned tasks. Generated data is stored locally on workers and aggregated
-    into `DistributedBatch` objects for seamless integration with TrainController.
-
-    Implementation details:
-        - Launches local inference engines on workers via scheduler
-        - Schedules requests to specific engines via round-robin
-        - Delegates actual execution to AsyncTaskRunner
-        - Aggregates results from workers into DistributedBatch
-
-    Parameters
-    ----------
-    inf_engine : type[InferenceEngine]
-        The inference engine class (not instance) to instantiate on each worker
-    config : InferenceEngineConfig
-        Configuration for inference engines
-    scheduler : Scheduler
-        Scheduler for worker management
-    """
-
     def __init__(
         self,
         inf_engine: type[InferenceEngine],
@@ -87,46 +59,30 @@ class RolloutController:
         # Round-robin scheduling
         self._current_worker_idx = 0
 
-        # Async task execution
-        self.runner: AsyncTaskRunner | None = None
-
-        # Logging
-        self.logger = None
-
         # State
+        self._version_lock = Lock()
         self._version = 0
 
-        # Staleness management
-        self.staleness_manager: StalenessManager | None = None
+        # Use provided staleness manager or create a default one
+        # The manager will be properly initialized in initialize()
+        self._staleness_manager: StalenessManager | None = None
 
-        self._pending_results: list[dict[str, Any]] = []
-        self._pending_inputs: list[_RemoteRolloutTaskInput] = []
+        # Dispatcher will be initialized in initialize() after staleness_manager is ready
+        self._dispatcher: (
+            BatchTaskDispatcher[_RemoteRolloutTaskInput, _RemoteRolloutResult] | None
+        ) = None
 
     def initialize(
         self,
         role: str,
         alloc_mode: AllocationMode,
-        engine_args: dict[str, Any],
+        server_args: dict[str, Any],
         *args,
         **kwargs,
     ):
-        """Initialize environments and launch the background thread for asynchronous distributed inference.
-
-        For remote inference engines, this serves as a client and connects to the inference servers.
-        For local inference engines, this creates an LLM engine on the local GPU.
-
-        Parameters
-        ----------
-        alloc_mode : AllocationMode
-            The allocation mode configuration for distributed setup
-        *args
-            Variable length argument list passed to engine initialization
-        **kwargs
-            Arbitrary keyword arguments passed to engine initialization
-        """
-        self.logger = logging.getLogger("[RolloutController]")
-
         # Get scheduling config from kwargs or use defaults
+        # Schedule inference engines in the granularity of instance sizes,
+        # usually TP x PP.
         self._worker_role = role
         self.config.scheduling_spec[0].cpu *= alloc_mode.gen_instance_size
         self.config.scheduling_spec[0].mem *= alloc_mode.gen_instance_size
@@ -144,50 +100,56 @@ class RolloutController:
         asyncio.run(
             self._async_initialize(
                 job,
-                engine_args,
+                server_args,
                 *args,
                 **kwargs,
             )
         )
-
-        # Initialize AsyncTaskRunner for task execution
-        self.runner = AsyncTaskRunner(
-            max_queue_size=TASK_RUNNER_MAX_QSIZE,
-            enable_tracing=self.config.enable_rollout_tracing,
-        )
-        self.runner.initialize(logger=self.logger)
 
         # Initialize staleness manager for global capacity control
         max_concurrent_rollouts = (
             self.config.max_concurrent_rollouts or self.config.consumer_batch_size
         )
         consumer_batch_size = self.config.consumer_batch_size
-
         self.staleness_manager = StalenessManager(
+            version_provider=self,
             max_concurrent_rollouts=max_concurrent_rollouts,
             consumer_batch_size=consumer_batch_size,
             max_staleness=self.config.max_head_offpolicyness,
         )
 
+        # Create and initialize the dispatcher
+        qsize = self.config.queue_size or max_concurrent_rollouts * 16
+        self.dispatcher = BatchTaskDispatcher[
+            _RemoteRolloutTaskInput, _RemoteRolloutResult
+        ](
+            max_queue_size=qsize,
+            task_factory=self._create_submit_callback,
+            staleness_manager=self.staleness_manager,
+            enable_tracing=self.config.enable_rollout_tracing,
+        )
+        # Initialize the dispatcher's async task runner
+        self.dispatcher.initialize(logger=logger)
+
     async def _async_initialize(
-        self, job: Job, engine_args: dict[str, Any], *args, **kwargs
+        self, job: Job, server_args: dict[str, Any], *args, **kwargs
     ):
         # Create workers via scheduler
-        self.logger.info("Creating workers via scheduler...")
+        logger.info("Creating workers via scheduler...")
         worker_ids = self.scheduler.create_workers(job=job)
-        self.logger.info(f"Workers created: {worker_ids}")
+        logger.info(f"Workers created: {worker_ids}")
 
         # Wait for workers to be ready
-        self.logger.info("Waiting for workers to be ready...")
+        logger.info("Waiting for workers to be ready...")
         self.workers = self.scheduler.get_workers(role=job.role)
-        self.logger.info(f"Workers ready: {[w.id for w in self.workers]}")
+        logger.info(f"Workers ready: {[w.id for w in self.workers]}")
 
         # Get engine class path for dynamic import on workers
         engine_class = self.inf_engine
         engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
-        self.logger.info("Creating engines...")
+        logger.info("Creating engines...")
         tasks = [
             self.scheduler.create_engine(
                 worker_id=worker.id,
@@ -197,58 +159,43 @@ class RolloutController:
             for worker in self.workers
         ]
         await asyncio.gather(*tasks)
-        self.logger.info("Engine created on all workers!")
+        logger.info("Engine created on all workers!")
 
-        self.logger.info("Calling engine initialization...")
-        tasks = [
-            self.scheduler.async_call_engine(
-                worker_id=worker.id, method="create_engine", engine_args=engine_args
-            )
-            for worker in self.workers
-        ]
-        await asyncio.gather(*tasks)
-        tasks = [
-            self.scheduler.async_call_engine(
-                worker_id=worker.id, method="initialize", *args, **kwargs
-            )
-            for worker in self.workers
-        ]
-        await asyncio.gather(*tasks)
-        self.logger.info("All engines are initialized...")
+        logger.info("Calling engine initialization...")
+        await self._collective_rpc_async("launch_server", server_args=server_args)
+        await self._collective_rpc_async("initialize", *args, **kwargs)
+        logger.info("All engines are initialized...")
 
     def destroy(self):
-        """Destroy the engine and release GPU memory for the local inference engine.
+        # Stop background threads and shutdown the async task runner
+        if self.dispatcher is not None:
+            self.dispatcher.destroy()
 
-        This method cleans up all resources including workers, task runner, and thread pool.
-        """
-        self.logger.info("Destroying RolloutController...")
-
-        # Destroy task runner
-        if self.runner is not None:
-            self.runner.destroy()
-            self.runner = None
+        self._collective_rpc("destroy")
 
         # Delete workers via scheduler
         try:
             self.scheduler.delete_workers(role=self._worker_role)
-            self.logger.info("Workers deleted")
+            logger.info("Workers deleted")
         except Exception as e:
-            self.logger.error(f"Error deleting workers: {e}")
+            logger.error(f"Error deleting workers: {e}")
 
         self.workers.clear()
 
-        self.logger.info("RolloutController destroyed")
+    def _collective_rpc(self, method: str, *args, **kwargs) -> list[Any]:
+        return asyncio.run(self._collective_rpc_async(method, *args, **kwargs))
 
-    def get_capacity(self) -> int:
-        """Get current available capacity for new rollouts based on staleness.
-
-        Returns
-        -------
-        int
-            Number of new rollout slots available based on staleness constraints
-        """
-        version = self.get_version()  # Use controller's global version
-        return self.staleness_manager.get_capacity(version)
+    async def _collective_rpc_async(self, method: str, *args, **kwargs) -> list[Any]:
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker_id=worker.id,
+                method=method,
+                *args,
+                **kwargs,
+            )
+            for worker in self.workers
+        ]
+        return await asyncio.gather(*tasks)
 
     def _choose_worker(self) -> Worker:
         """Choose a worker for the next request using round-robin scheduling.
@@ -263,296 +210,202 @@ class RolloutController:
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
         return worker
 
+    def _resolve_workflow_str(
+        self, workflow: RolloutWorkflow | type[RolloutWorkflow] | str
+    ) -> str:
+        if isinstance(workflow, str):
+            return workflow
+        elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
+            return f"{workflow.__module__}.{workflow.__name__}"
+        elif isinstance(workflow, RolloutWorkflow):
+            return f"{workflow.__module__}.{workflow.__class__.__name__}"
+        else:
+            raise ValueError(f"Invalid workflow type: {type(workflow)}")
+
+    def _rollout_stats(self) -> str:
+        stats = self.staleness_manager.get_stats()
+        return (
+            f"enqueued: {stats.enqueued}, "
+            f"running: {stats.running}, "
+            f"accepted: {stats.accepted}, "
+            f"rejected: {stats.rejected}."
+        )
+
+    def _create_submit_callback(self, pending_task: _RemoteRolloutTaskInput):
+        async def _submit_then_wait() -> _RemoteRolloutResult | None:
+            # Choose worker via round-robin
+            worker = self._choose_worker()
+
+            # NOTE: No need to call `on_rollout_submitted` here.
+            # This function will be passed to `BatchTaskDispather` where
+            # `on_rollout_submitted` will be called upon dispatching
+            self.scheduler.call_engine(
+                worker.id,
+                "submit",
+                data=pending_task.data,
+                workflow=pending_task.workflow,
+                workflow_kwargs=pending_task.workflow_kwargs,
+            )
+
+            task_id = pending_task.task_id
+            manager = self.staleness_manager
+            traj: dict[str, Any] | None = None
+
+            try:
+                # Wait for a generation to return
+                # NOTE: the returned result may not be the one that has
+                # been submitted before this callback
+                result = []
+                tik = time.time()
+                while (
+                    len(result) == 0 and time.time() - tik < self.config.request_timeout
+                ):
+                    result = await self.scheduler.async_call_engine(
+                        worker.id,
+                        "wait",
+                        count=1,
+                        timeout=0.1,  # A short time to prevent blocking other requests
+                        raise_timeout=False,
+                    )
+
+                # TimeourError will be catched below
+                if len(result) == 0:
+                    raise TimeoutError(
+                        f"Rollout request timed out after {self.config.request_timeout}"
+                    )
+
+                assert len(result) == 1
+                traj = result[0]
+
+                should_accept_traj = traj is not None
+                if should_accept_traj:
+                    manager.on_rollout_accepted()
+                    if self.config.enable_rollout_tracing:
+                        logger.info(
+                            f"Finish and accept rollout. {self._rollout_stats()}",
+                        )
+                    assert traj is not None
+                    return _RemoteRolloutResult(task_id=task_id, trajectory=traj)
+
+                manager.on_rollout_rejected()
+                if self.config.enable_rollout_tracing:
+                    logger.info(
+                        f"Finish but reject rollout. {self._rollout_stats()}",
+                    )
+                return None
+
+            except Exception as exc:  # pragma: no cover - workflow execution errors
+                manager.on_rollout_rejected()
+                logger.error("Workflow execution failed: %s", exc, exc_info=True)
+                return None
+
+        return _submit_then_wait
+
     def submit(
         self,
         data: dict[str, Any],
-        workflow_path: str,
-        workflow_kwargs: dict[str, Any],
-        should_accept_path: str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Submit a request to the inference engine and return immediately.
+        workflow_str = self._resolve_workflow_str(workflow)
+        if workflow_kwargs is None:
+            workflow_kwargs = {}
 
-        Should be used together with subsequent `wait`.
-
-        Parameters
-        ----------
-        data : dict[str, Any]
-            The input data for rollout. Used by the user's customized workflow implementation.
-        workflow_path : str
-            The fully qualified path to the workflow class (e.g., "module.submodule.WorkflowClass").
-            The workflow will be dynamically imported on the worker.
-        workflow_kwargs : dict[str, Any]
-            Keyword arguments to pass to the workflow constructor.
-        should_accept_path : str | None, optional
-            The fully qualified path to a function used to decide whether to accept a specific
-            trajectory (dynamic filtering). The function should take a complete trajectory
-            output by the workflow and return a bool, by default None.
-        """
-        # Add to pending queue (will be submitted when capacity allows)
-        self._pending_inputs.append(
-            _RemoteRolloutTaskInput(
-                data=data,
-                workflow_kwargs=workflow_kwargs,
-                workflow_path=workflow_path,
-                should_accept_path=should_accept_path,
-            )
+        # NOTE: RolloutController does not support `should_accept_fn`
+        # If the workflow's result should be aborted,
+        # `arun_episode` should return None instead.
+        task_input = _RemoteRolloutTaskInput(
+            data=data,
+            workflow=workflow_str,
+            workflow_kwargs=workflow_kwargs,
+            # NOTE: For now we don't trace tasks at the controller level
+            task_id=None,
         )
 
-    async def _wait_callback(self, worker: Worker):
-        # Wait for a generation to return
-        result = "NO_RESULT"
-        tik = time.time()
-        while result == "NO_RESULT" and time.time() - tik < self.config.request_timeout:
-            result = await self.scheduler.async_call_engine(
-                worker.id, "wait_quiet", count=1, timeout=1, max_retries=1
-            )
+        # Delegate to dispatcher
+        self.dispatcher.submit_task_input(task_input)
 
-        # The RPCServer will return None if the
-        # trajectory is rejected.
-        if result is not None:
-            self.staleness_manager.on_rollout_accepted()
-            if self.config.enable_rollout_tracing:
-                stat = self.staleness_manager.get_stats()
-                self.logger.info(
-                    f"Finish and accept rollout. "
-                    f"Submit: {stat.submitted}, "
-                    f"running: {stat.running}, "
-                    f"accepted: {stat.accepted}."
-                )
-            return result
-        else:
-            self.staleness_manager.on_rollout_rejected()
-            if self.config.enable_rollout_tracing:
-                stat = self.staleness_manager.get_stats()
-                self.logger.info(
-                    f"Finish but reject rollout. "
-                    f"Submit: {stat.submitted}, "
-                    f"running: {stat.running}, "
-                    f"accepted: {stat.accepted}."
-                )
-            return None
-
-    def _commit_one_to_runner(self):
-        """Commit one pending input to task runner with staleness tracking."""
-        task_input = self._pending_inputs.pop(0)
-
-        # Choose worker via round-robin
-        worker = self._choose_worker()
-
-        self.scheduler.call_engine(
-            worker.id,
-            "submit",
-            data=task_input.data,
-            workflow_path=task_input.workflow_path,
-            workflow_kwargs=task_input.workflow_kwargs,
-            should_accept_path=task_input.should_accept_path,
-        )
-
-        # Submit a wait callback to AsyncTaskRunner
-        try:
-            self.runner.submit(
-                self._wait_callback,
-                worker,
-            )
-        except TaskQueueFullError:
-            raise queue.Full("Input queue full")
-
-        # Notify staleness manager AFTER successful submission
-        self.staleness_manager.on_rollout_submitted()
+    def wait(
+        self, count: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> list[dict[str, Any] | None]:
+        # Delegate to dispatcher and extract trajectories
+        results = self.dispatcher.wait_results(count, timeout, raise_timeout)
+        # Log and trace
         if self.config.enable_rollout_tracing:
-            stat = self.staleness_manager.get_stats()
-            self.logger.info(
-                f"Submit rollout. "
-                f"Submit: {stat.submitted}, "
-                f"running: {stat.running}, "
-                f"accepted: {stat.accepted}."
-            )
+            logger.info("Rollout results are ready!")
+        return [r.trajectory if r is not None else None for r in results]
 
-    def wait(self, count: int, timeout: float | None = None) -> DistributedBatch:
-        """Wait for a specified number of requests to complete, with a timeout.
-
-        Should be used together with preceding `submit`.
-
-        Parameters
-        ----------
-        count : int
-            The number of accepted trajectories to wait for
-        timeout : float | None, optional
-            Timeout in seconds. Exceeding the timeout will raise a `TimeoutError`, by default None
-
-        Returns
-        -------
-        DistributedBatch
-            A concatenated batch of trajectories
-
-        Raises
-        ------
-        TimeoutError
-            If the timeout is exceeded before enough trajectories are collected
-        """
-        #######################################################
-        # The following logic is copied from WorkflowExecutor #
-        #######################################################
-        start_time = time.perf_counter()
-        timeout = timeout or float(7 * 24 * 3600)
-
-        # Keep requesting results from runner until we have enough accepted
-        # (non-None) results. Use short timeout (1 second) for each wait call
-        # to allow periodic checking. This matches original behavior where
-        # wait() would poll and allow prepare_batch() to continue
-        while True:
-            # Submit pending inputs
-            # Check capacity before submitting
-            capacity = self.get_capacity()
-            # Submit pending tasks
-            for _ in range(capacity):
-                if len(self._pending_inputs) == 0:
-                    break
-                self._commit_one_to_runner()
-
-            if len(self._pending_results) >= count:
-                break
-
-            elapsed = time.perf_counter() - start_time
-            remaining_timeout = timeout - elapsed
-
-            if remaining_timeout <= 0:
-                raise TimeoutError(
-                    f"Timed out waiting for {count} rollouts, only received "
-                    f"{len(self._pending_results)}."
-                )
-
-            # Try to get at least the number we still need, but request at least 1
-            # Note: runner.wait() might return fewer due to rejections (None results)
-            needed = max(1, count - len(self._pending_results))
-
-            try:
-                # Use short timeout to allow periodic returns (matches original
-                # polling behavior)
-                batch = self.runner.wait(
-                    count=needed, timeout=min(0.1, remaining_timeout)
-                )
-
-                # Filter out None results (rejected trajectories)
-                # runner.wait() returns List[T] where T can be None for
-                # rejected rollouts
-                accepted = [result for result in batch if result is not None]
-                self._pending_results.extend(accepted)
-            except TimeoutError:
-                pass
-
-        if self.config.enable_rollout_tracing:
-            self.logger.info("Rollout results are ready!")
-
-        # Extract requested number of results
-        results = self._pending_results[:count]
-        self._pending_results = self._pending_results[count:]
-
-        # Shuffle for randomness (helps with data diversity)
-        random.shuffle(results)
-
-        # Convert to DistributedBatch
-        if len(results) == 0:
-            return DistributedBatchMemory.from_dict({})
-
-        return DistributedBatchMemory.concat(
-            [DistributedBatchMemory.from_dict(r) for r in results]
-        )
-
+    @trace_perf("rollout_controller.rollout_batch", category="scheduler")
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow_path: str,
-        workflow_kwargs: dict[str, Any],
-        should_accept_path: str | None = None,
-    ) -> DistributedBatch:
-        """Submit a batch of requests to the inference engine and wait for the results.
-
-        Parameters
-        ----------
-        data : list[dict[str, Any]]
-            A list of input data dictionaries for rollout
-        workflow_path : str
-            The fully qualified path to the workflow class (e.g., "module.submodule.WorkflowClass")
-        workflow_kwargs : dict[str, Any]
-            Keyword arguments to pass to the workflow constructor
-        should_accept_path : str | None, optional
-            The fully qualified path to a function to decide whether to accept a trajectory, by default None
-
-        Returns
-        -------
-        DistributedBatch
-            A concatenated batch of trajectory results
-        """
-        # Submit all requests
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        perf_tracer.instant(
+            "rollout_controller.rollout_batch",
+            category="scheduler",
+            args={"data": len(data)},
+        )
         for item in data:
-            try:
-                self.submit(
-                    item,
-                    workflow_kwargs=workflow_kwargs,
-                    workflow_path=workflow_path,
-                    should_accept_path=should_accept_path,
-                )
-            except queue.Full:
-                break
+            self.submit(
+                data=item,
+                workflow=workflow,
+                workflow_kwargs=workflow_kwargs,
+            )
+        results = self.wait(count=len(data))
+        # Concatenate into batch tensor format
+        batch = concat_padded_tensors([r for r in results if r is not None])
 
-        # Wait for all results
-        return self.wait(count=len(data))
+        # NOTE: DistributedBatchMemory.from_dict does nothing for now
+        # Just for sync with internal code
+        return DistributedBatchMemory.from_dict(batch)
 
+    @trace_perf("rollout_controller.prepare_batch", category="scheduler")
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow_path: str,
-        workflow_kwargs: dict[str, Any],
-        should_accept_path: str | None = None,
-    ) -> DistributedBatch:
-        """Asynchronously submit and wait until a full batch is ready with controlled staleness.
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+    ):
+        """Prepare a batch with controlled staleness.
 
-        Parameters
-        ----------
-        dataloader : StatefulDataLoader
-            The data loader to pull data from for batch preparation
-        workflow_path : str
-            The fully qualified path to the workflow class (e.g., "module.submodule.WorkflowClass")
-        workflow_kwargs : dict[str, Any]
-            Keyword arguments to pass to the workflow constructor
-        should_accept_path : str | None, optional
-            The fully qualified path to a function to decide whether to accept a trajectory, by default None
+        Continuously submits from dataloader and waits for results, ensuring at least
+        two batches are pending to maximize overlap.
 
-        Returns
-        -------
-        DistributedBatch
-            A full batch of trajectory results with controlled staleness
+        See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for parameters.
         """
-        #######################################################
-        # The following logic is copied from WorkflowExecutor #
-        #######################################################
-        if not hasattr(self, "data_generator"):
-            self.data_generator = cycle_dataloader(dataloader)
-        assert dataloader.batch_size is not None
-        while True:
-            # Submit at least two batches to allow maximum overlap
-            if (
-                self.get_capacity() + dataloader.batch_size > 0
-                and self.runner.get_input_queue_size() + dataloader.batch_size
-                < self.runner.max_queue_size
-            ):
-                data = next(self.data_generator)
+
+        workflow_str = self._resolve_workflow_str(workflow)
+        if workflow_kwargs is None:
+            workflow_kwargs = {}
+
+        def task_input_generator():
+            for data in cycle_dataloader(dataloader):
                 for item in data:
-                    try:
-                        self.submit(
-                            item,
-                            workflow_kwargs=workflow_kwargs,
-                            workflow_path=workflow_path,
-                            should_accept_path=should_accept_path,
-                        )
-                    except queue.Full:
-                        # Capacity exhausted during batch submission, stop and wait
-                        break
-            try:
-                return self.wait(dataloader.batch_size, timeout=1)
-            except TimeoutError:
-                pass
+                    yield _RemoteRolloutTaskInput(
+                        data=item,
+                        workflow=workflow_str,
+                        workflow_kwargs=workflow_kwargs,
+                        task_id=None,
+                    )
+
+        if not hasattr(self, "data_generator"):
+            self.data_generator = task_input_generator()
+
+        # Delegate to dispatcher
+        assert dataloader.batch_size is not None
+        results = self.dispatcher.active_submit_and_wait(
+            self.data_generator, batch_size=dataloader.batch_size
+        )
+
+        # Extract trajectories and concatenate
+        trajectories = [r.trajectory if r is not None else None for r in results]
+        batch = concat_padded_tensors([t for t in trajectories if t is not None])
+
+        # NOTE: DistributedBatchMemory.from_dict does nothing for now
+        # Just for sync with internal code
+        return DistributedBatchMemory.from_dict(batch)
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.
@@ -581,102 +434,37 @@ class RolloutController:
         )
 
     async def init_weights_update_group(self, meta: WeightUpdateMeta) -> None:
-        tasks = [
-            self.scheduler.async_call_engine(
-                worker_id=worker.id,
-                method="init_weights_update_group",
-                meta=meta,
-            )
-            for worker in self.workers
-        ]
-        await asyncio.gather(*tasks)
+        await self._collective_rpc_async("init_weights_update_group", meta=meta)
 
     async def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
     ):
-        tasks = [
-            self.scheduler.async_call_engine(
-                worker_id=worker.id,
-                method="update_weights_from_distributed",
-                meta=meta,
-                param_specs=param_specs,
-                max_retries=1,
-            )
-            for worker in self.workers
-        ]
-        await asyncio.gather(*tasks)
+        await self._collective_rpc_async(
+            "update_weights_from_distributed", meta=meta, param_specs=param_specs
+        )
 
     async def update_weights_from_disk(self, meta: WeightUpdateMeta):
-        tasks = [
-            self.scheduler.async_call_engine(
-                worker_id=worker.id,
-                method="update_weights_from_disk",
-                meta=meta,
-                max_retries=1,
-            )
-            for worker in self.workers
-        ]
-        await asyncio.gather(*tasks)
+        await self._collective_rpc_async("update_weights_from_disk", meta=meta)
 
     def set_version(self, version: int) -> None:
-        """Set the current weight version in the inference engine.
-
-        This updates the version number across all workers, which is used for
-        staleness tracking in online training scenarios.
-
-        Parameters
-        ----------
-        version : int
-            The weight version number to set
-        """
-        self._version = version
-        for worker in self.workers:
-            try:
-                self.scheduler.call_engine(
-                    worker_id=worker.id,
-                    method="set_version",
-                    version=version,
-                    max_retries=1,
-                )
-            except Exception as e:
-                self.logger.error(f"Error setting version for worker {worker.id}: {e}")
+        with self._version_lock:
+            self._version = version
+            self._collective_rpc("set_version", version=version)
 
     def get_version(self) -> int:
-        """Get the current weight version in the inference engine.
-
-        Returns
-        -------
-        int
-            The current weight version number
-        """
-        return self._version
+        with self._version_lock:
+            return self._version
 
     def pause(self):
-        """Pause request submission for async rollout.
-
-        Used during evaluation to prevent data over-generation across all workers.
-        """
-        for worker in self.workers:
-            try:
-                self.scheduler.call_engine(
-                    worker_id=worker.id,
-                    method="pause",
-                )
-            except Exception as e:
-                self.logger.error(f"Error pausing worker {worker.id}: {e}")
+        self.dispatcher.pause()
+        self._collective_rpc("pause")
 
     def resume(self):
-        """Resume request submission for async rollout across all workers."""
-        for worker in self.workers:
-            try:
-                self.scheduler.call_engine(
-                    worker_id=worker.id,
-                    method="resume",
-                )
-            except Exception as e:
-                self.logger.error(f"Error resuming worker {worker.id}: {e}")
+        self._collective_rpc("resume")
+        self.dispatcher.resume()
 
     def export_stats(self):
+        # FIXME:
         async def _call_all():
             tasks = [
                 self.scheduler.async_call_engine(
@@ -704,40 +492,18 @@ class RolloutController:
                 exported.add(k)
         return stats
 
-    def register_callback_to_all_worker(
-        self, method: str, callback: Callable, **kwargs
-    ):
-        """Register a callback function for the specified method across all workers.
+    @property
+    def dispatcher(
+        self,
+    ) -> BatchTaskDispatcher[_RemoteRolloutTaskInput, _RemoteRolloutResult]:
+        """Get the task dispatcher, ensuring initialization has been called."""
+        if self._dispatcher is None:
+            raise RuntimeError(
+                "RolloutController.initialize() must be called before scheduling rollouts."
+            )
+        return self._dispatcher
 
-        Partial rollout API. After successful registration, the controller will poll
-        and call the specified method in a background thread. When the return value
-        is obtained, it will be used as a parameter to call the `callback` function.
-
-        Parameters
-        ----------
-        method : str
-            The name of the method to register the callback for
-        callback : Callable
-            The callback function to be called with the method's return value
-        **kwargs
-            Additional keyword arguments for the callback registration
-
-        Raises
-        ------
-        NotImplementedError
-            This method is not yet implemented
-        """
-        raise NotImplementedError()
-
-    def abort_all_requests(self) -> None:
-        """Abort all ongoing requests in the inference engine.
-
-        Partial rollout API for canceling all queued and in-progress requests across
-        all workers.
-
-        Raises
-        ------
-        NotImplementedError
-            This method is not yet implemented
-        """
-        raise NotImplementedError()
+    @property
+    def runner(self):
+        """For backward compatibility. The runner is now owned by the dispatcher."""
+        return self.dispatcher.runner
