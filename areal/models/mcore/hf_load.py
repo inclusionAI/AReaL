@@ -221,7 +221,7 @@ def load_weights_from_hf_with_mbridge_fast(
     manual_tie_word_embedding = False
     index = {}
     if os.path.exists(index_file):
-        with open(index_file) as f:
+        with open(index_file, encoding="utf-8") as f:
             index = json.load(f)["weight_map"]
     else:
         # Search all safetensors files
