@@ -16,6 +16,9 @@
 #   - reasoning_3hour: Reasoning model 3-hour training (1000 samples, 3 epochs)
 #   - reasoning_1000samples_2GPUs: Reasoning model with 1000 samples using 2x A40 GPUs
 #   - reasoning_2000samples_4GPUs: Reasoning model with 2000 samples using 4x A40 GPUs (uses 3 GPUs)
+#   - standard_1000samples_2GPUs: Standard GRPO with 1000 samples using 2x A100 GPUs (~3 hours)
+#   - standard_2000samples_2GPUs: Standard GRPO with 2000 samples using 2x A100 GPUs (~6 hours)
+#   - standard_4000samples_2GPUs: Standard GRPO with 4000 samples using 2x A100 GPUs (~12 hours)
 #
 # All configs use memory-optimized settings that work on all GPUs.
 
@@ -329,7 +332,41 @@ case "$CONFIG_NAME" in
         TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
         EXPERIMENT_NAME="gsm8k-grpo-cloud-2gpu-1000samples"
         echo "Using STANDARD 1000 SAMPLES 2 GPUs configuration"
-        echo "Note: GRPO only (no reasoning XML). Dataset capped at 1000 samples."
+        echo "Note: GRPO only (no reasoning XML). Dataset capped at 1000 samples (~3 hours)."
+        echo "GPU count: $GPU_COUNT (required: 2)"
+        ;;
+    standard_2000samples_2GPUs)
+        # Check GPU count
+        if [ -z "$GPU_COUNT" ] || [ "$GPU_COUNT" -lt 2 ]; then
+            echo "ERROR: This config requires 2 GPUs"
+            echo "Detected: $GPU_COUNT GPU(s)"
+            echo ""
+            echo "This config is optimized for 2x A100 80GB (one GPU for SGLang, one for training)."
+            echo "Please use a pod with at least 2 GPUs or choose a single-GPU config."
+            exit 1
+        fi
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_2000samples_2GPUs.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-cloud-2gpu-2000samples"
+        echo "Using STANDARD 2000 SAMPLES 2 GPUs configuration"
+        echo "Note: GRPO only (no reasoning XML). Dataset capped at 2000 samples (~6 hours)."
+        echo "GPU count: $GPU_COUNT (required: 2)"
+        ;;
+    standard_4000samples_2GPUs)
+        # Check GPU count
+        if [ -z "$GPU_COUNT" ] || [ "$GPU_COUNT" -lt 2 ]; then
+            echo "ERROR: This config requires 2 GPUs"
+            echo "Detected: $GPU_COUNT GPU(s)"
+            echo ""
+            echo "This config is optimized for 2x A100 80GB (one GPU for SGLang, one for training)."
+            echo "Please use a pod with at least 2 GPUs or choose a single-GPU config."
+            exit 1
+        fi
+        CONFIG_FILE="examples/cloud_gsm8k/gsm8k_grpo_4000samples_2GPUs.yaml"
+        TRAIN_SCRIPT="examples/cloud_gsm8k/gsm8k_grpo_train.py"
+        EXPERIMENT_NAME="gsm8k-grpo-cloud-2gpu-4000samples"
+        echo "Using STANDARD 4000 SAMPLES 2 GPUs configuration"
+        echo "Note: GRPO only (no reasoning XML). Dataset capped at 4000 samples (~12 hours)."
         echo "GPU count: $GPU_COUNT (required: 2)"
         ;;
     reasoning_2000samples_4GPUs)
@@ -351,7 +388,7 @@ case "$CONFIG_NAME" in
         ;;
     *)
         echo "ERROR: Unknown config name: $CONFIG_NAME"
-        echo "Valid options: fastest, fast, 1hour, 3hour, full, reasoning_fastest, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_1000samples_2GPUs, reasoning_2000samples_4GPUs, standard_1000samples_2GPUs"
+        echo "Valid options: fastest, fast, 1hour, 3hour, full, reasoning_fastest, reasoning_fast, reasoning_1hour, reasoning_3hour, reasoning_1000samples_2GPUs, reasoning_2000samples_4GPUs, standard_1000samples_2GPUs, standard_2000samples_2GPUs, standard_4000samples_2GPUs"
         exit 1
         ;;
 esac
@@ -535,12 +572,14 @@ echo "If the pod auto-restarts, the completion marker will"
 echo "prevent the training script from running again."
 echo "=========================================="
 echo ""
+echo "Script will now wait indefinitely to prevent RunPod from restarting."
+echo "Press Ctrl+C or stop the pod manually to exit."
+echo ""
 
-# Exit with training exit code (tests are non-fatal)
-# If training succeeded, exit 0 even if tests had issues
-# If training failed, exit with training exit code
-if [ $TRAINING_EXIT_CODE -eq 0 ]; then
-    exit 0
-else
-    exit $TRAINING_EXIT_CODE
-fi
+# Instead of exiting, keep the script running indefinitely
+# This prevents RunPod from restarting the container and running another round
+# The completion marker check at the beginning will prevent re-running if the pod restarts
+while true; do
+    sleep 3600  # Sleep for 1 hour, then check again (keeps the process alive)
+    echo "$(date): Still waiting... (Training completed. Stop the pod to save costs.)"
+done
