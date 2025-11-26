@@ -1091,25 +1091,12 @@ class FSDPEngine(TrainEngine):
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
-        world_size = dist.get_world_size()
-        if (
-            hasattr(self, "dp_group")
-            and dist.get_world_size(self.dp_group) != world_size
-        ):
-            dist.destroy_process_group(self.dp_group)
-        if (
-            hasattr(self, "sp_group")
-            and dist.get_world_size(self.sp_group) != world_size
-        ):
-            dist.destroy_process_group(self.sp_group)
-        if (
-            hasattr(self, "mp_group")
-            and dist.get_world_size(self.mp_group) != world_size
-        ):
-            dist.destroy_process_group(self.mp_group)
-        if hasattr(self, "_cpu_group"):
-            dist.destroy_process_group(self._cpu_group)
-        if self.own_global_group:
+        # NOTE: if `own_global_group` is true, we assume that
+        # no communications are needed after `destroy`, so we
+        # directly destroy all groups. Otherwise, process group
+        # handles still exist and we expect another engine to
+        # clean up these groups.
+        if dist.is_initialized() and self.own_global_group:
             dist.destroy_process_group()
         self.initialized = False
 

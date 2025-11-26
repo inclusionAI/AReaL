@@ -447,17 +447,13 @@ class MegatronEngine(TrainEngine):
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
-        world_size = dist.get_world_size()
-        if (
-            self.context_and_model_parallel_group is not None
-            and dist.get_world_size(self.context_and_model_parallel_group) != world_size
-        ):
-            dist.destroy_process_group(self.context_and_model_parallel_group)
-        if hasattr(self, "_cpu_group"):
-            dist.destroy_process_group(self._cpu_group)
         self.process_group_initialized = False
-        if self.own_global_group:
-            assert dist.is_initialized()
+        # NOTE: if `own_global_group` is true, we assume that
+        # no communications are needed after `destroy`, so we
+        # directly destroy all groups. Otherwise, process group
+        # handles still exist and we expect another engine to
+        # clean up these groups.
+        if dist.is_initialized() and self.own_global_group:
             mpu.destroy_model_parallel()
             dist.destroy_process_group()
             self.own_global_group = False
