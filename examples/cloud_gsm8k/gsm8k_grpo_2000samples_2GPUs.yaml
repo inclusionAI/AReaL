@@ -85,7 +85,7 @@ actor:
   adv_norm:
     mean_level: batch
     std_level: batch
-    max_new_tokens: ${gconfig.max_new_tokens}
+  max_new_tokens: ${gconfig.max_new_tokens}
 
 ref:
   experiment_name: ${experiment_name}
