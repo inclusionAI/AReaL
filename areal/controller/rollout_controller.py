@@ -469,21 +469,23 @@ class RolloutController:
 
     def export_stats(self) -> dict[str, float]:
         all_raw_stats = asyncio.run(self._collective_rpc_async(method="export_stats"))
-        stats = defaultdict(int)
+        stats = defaultdict(float)
+        counts = defaultdict(int)
+
         for raw_stats in all_raw_stats:
             for k, v in raw_stats.items():
                 if k.endswith("__count"):
-                    stats[k] += v
+                    counts[k] += v
                 else:
-                    stats[k] += v * raw_stats[k + "__count"]
-                    continue
+                    stats[k] += v * raw_stats.get(k + "__count", 0)
 
         # Average non-count stats
+        final_stats = {}
         for k, v in stats.items():
-            if k.endswith("__count"):
-                continue
-            stats[k] /= stats[k + "__count"]
-        return stats
+            count_key = k + "__count"
+            if count_key in counts and counts[count_key] > 0:
+                final_stats[k] = v / counts[count_key]
+        return final_stats
 
     @property
     def staleness_manager(self):

@@ -687,6 +687,6 @@ class InferenceEngine(abc.ABC):
         Returns
         -------
         dict[str, float]
-            The recorded scalar list statistics.
+            The recorded scalar statistics.
         """
         raise NotImplementedError()

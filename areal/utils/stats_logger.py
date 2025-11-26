@@ -144,6 +144,9 @@ class StatsLogger:
             data = [data]
         log_step = max(global_step, self._last_commit_step + 1)
         for i, item in enumerate(data):
+            # Filter out counter keys for scalar variables
+            item = {k: v for k, v in item.items() if not k.endswith("__count")}
+
             logger.info(f"Stats ({i + 1}/{len(data)}):")
             self.print_stats(item)
             wandb.log(item, step=log_step + i)
