@@ -961,7 +961,7 @@ def test_rollout_controller_integration(tmp_path, model_path):
             role="rollout",
             alloc_mode=AllocationMode.from_str("sglang:d2"),
             server_args=SGLangConfig.build_args(
-                SGLangConfig(model_path=model_path, mem_fraction_static=0.3),
+                SGLangConfig(model_path=model_path, mem_fraction_static=0.5),
                 tp_size=1,
                 base_gpu_id=0,
             ),
