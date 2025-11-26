@@ -205,7 +205,8 @@ class RolloutController:
         Worker
             The chosen worker object
         """
-
+        if not self.workers:
+            raise RuntimeError("No workers available to choose from.")
         worker = self.workers[self._current_worker_idx]
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
         return worker
