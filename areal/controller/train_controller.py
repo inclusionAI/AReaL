@@ -503,8 +503,7 @@ class TrainController:
             if len(first_result) == 0:
                 return DistributedBatchMemory.from_dict({})
 
-            k = next(iter(first_result.keys()))
-            if isinstance(first_result[k], torch.Tensor):
+            if any(isinstance(v, torch.Tensor) for v in first_result.values()):
                 # Check if this looks like a proper batch (has attention_mask)
                 # If so, use DistributedBatchMemory.concat which handles padding correctly
                 if "attention_mask" in first_result:
