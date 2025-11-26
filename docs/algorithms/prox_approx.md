@@ -31,26 +31,17 @@ where $v$ denotes the policy version when each token was generated.
 - `actor.use_decoupled_loss`: Must be `true` to enable decoupled PPO (required for approximation)
 - `actor.prox_logp_method`: Method for computing proximal policy log-probabilities (default: `"recompute"`)
   - `"recompute"`: Standard decoupled PPO, recompute proximal policy via forward pass
-  - `"rollout"`: Use behavior policy from rollout as proximal policy (skip forward pass)
   - `"loglinear"`: Use log-linear interpolation to approximate proximal policy (fast, recommended)
-  - `"metrics"`: Like recompute, but also compute loglinear approximation and log comparison metrics
+  - `"metrics"`: Like recompute, but also compute approximation metrics for evaluation
 
 ## Example Usage
 
 ### Production Configuration (Maximum Speed)
 
-**Log-linear method (recommended for best eval reward):**
 ```yaml
 actor:
   use_decoupled_loss: true
   prox_logp_method: loglinear  # Enables approximation, skips forward pass
-```
-
-**Rollout method (uses behavior policy as-is):**
-```yaml
-actor:
-  use_decoupled_loss: true
-  prox_logp_method: rollout  # Uses π_behave as π_proximal
 ```
 
 Run with:
@@ -126,20 +117,15 @@ Based on GSM8K experiments with Qwen2.5-1.5B-Instruct:
 use_decoupled_loss?
 ├─ No → Standard PPO (approximation not available)
 └─ Yes → Decoupled PPO enabled
-    └─ use_prox_approx?
-        ├─ No → Always recompute π_proximal via forward pass
-        └─ Yes → Approximation enabled
-            └─ recompute_logprob?
-                ├─ No → Production mode (approximation only, no forward pass)
-                └─ Yes → Evaluation mode (compute both ground truth + approximation)
-                    └─ log_prox_approx_metrics?
-                        ├─ No → Don't log comparison metrics
-                        └─ Yes → Log approximation quality metrics
+    └─ prox_logp_method?
+        ├─ "recompute" → Standard decoupled PPO (recompute π_proximal via forward pass)
+        ├─ "loglinear" → Production mode (use approximation, skip forward pass)
+        └─ "metrics" → Evaluation mode (recompute π_proximal + compute approximation metrics)
 ```
 
 ### Metrics Explanation
 
-When `log_prox_approx_metrics=true` and `recompute_logprob=true`, the following metrics are logged under `ppo_actor/update/prox_approx/`:
+When `prox_logp_method="metrics"`, the following metrics are logged under `ppo_actor/update/prox_approx/`:
 
 **Ground Truth:**
 - `prox_logp_gt/avg`: Average ground truth proximal log-probability
@@ -180,10 +166,9 @@ When `log_prox_approx_metrics=true` and `recompute_logprob=true`, the following 
 Each generated token carries a version number indicating which policy version generated it. The approximation uses these versions to compute the interpolation weight α.
 
 **Automatic Optimization:**
-When `use_prox_approx=true` and `recompute_logprob=false`, the forward pass is automatically skipped in `compute_logp()`, requiring zero changes to user scripts.
+When `prox_logp_method="loglinear"`, the forward pass is automatically skipped in `compute_logp()`, requiring zero changes to user scripts.
 
 **Safety Checks:**
-- Validates configuration combinations at initialization
 - Checks for NaN/Inf in approximated values
 - Ensures versions are available when needed
 - Provides clear error messages for misconfigurations
