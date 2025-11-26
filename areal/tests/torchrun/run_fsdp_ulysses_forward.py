@@ -128,9 +128,8 @@ def test_ulysses(model_type: str):
     logits_list = [torch.empty_like(logits) for _ in range(world_size)]
     dist.all_gather(logits_list, logits, group=dist.group.WORLD)
 
-    assert all(torch.equal(logits, logits_list[0]) for logits in logits_list), (
-        "Logits should be the same across all model parallel ranks."
-    )
+    for logits in logits_list:
+        assert torch.equal(logits, logits_list[0])
 
     engine_golden.eval()
     logits_golden = engine_golden.forward(
