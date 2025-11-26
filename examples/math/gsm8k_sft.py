@@ -12,10 +12,14 @@ def main(args):
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     train_dataset = get_custom_dataset(
-        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
+        split="train",
+        dataset_config=config.train_dataset,
+        tokenizer=tokenizer,
     )
     valid_dataset = get_custom_dataset(
-        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
+        split="test",
+        dataset_config=config.valid_dataset,
+        tokenizer=tokenizer,
     )
 
     with SFTTrainer(
