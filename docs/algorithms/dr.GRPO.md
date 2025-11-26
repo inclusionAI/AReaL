@@ -35,13 +35,13 @@ We only list the different parameters from GRPO here:
 > The algorithm is experimental and may not be stable.
 
 We recommend to change the parameter within the configuration file
-(i.e.gsm8k_drgrpo.yaml).
+(i.e. gsm8k_drgrpo.yaml).
 
 | Backend   | CMD                                                                                                                                  |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_drgrpo.py --config examples/math/gsm8k_drgrpo.yaml --<other_args_to_overwrite>` |
-| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_drgrpo.py --config examples/math/gsm8k_drgrpo.yaml --<other_args_to_overwrite>`   |
-| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_drgrpo.py --config examples/math/gsm8k_drgrpo.yaml --<other_args_to_overwrite>` |
+| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_drgrpo.yaml --<other_args_to_overwrite>` |
+| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_drgrpo.yaml --<other_args_to_overwrite>`   |
+| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_drgrpo.yaml --<other_args_to_overwrite>` |
 
 ## Baselines
 
