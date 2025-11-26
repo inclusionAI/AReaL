@@ -28,7 +28,7 @@ allocation_mode: sglang.d1p1t1+d1p1t1
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 32
+  max_concurrent_rollouts: 16  # Reduced from 32 to save memory on single GPU
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
@@ -47,10 +47,10 @@ actor:
   path: Qwen/Qwen2.5-0.5B-Instruct
   init_from_scratch: false
   disable_dropout: true
-  gradient_checkpointing: false
+  gradient_checkpointing: true  # Enable for single GPU to save memory
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 5120
+    max_tokens_per_mb: 4096  # Reduced from 5120 to save memory on single GPU
   optimizer:
     type: adam
     lr: 1.70e-5
@@ -90,7 +90,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 5120
+    max_tokens_per_mb: 4096  # Reduced from 5120 to save memory on single GPU
   optimizer: null
   backend: fsdp
 
@@ -101,11 +101,11 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 4096
-  mem_fraction_static: 0.8
+  mem_fraction_static: 0.5  # Reduced from 0.8 to leave more memory for training on single GPU
   attention_backend: flashinfer  # Required for RTX 5090 (SM 100+), also works on other GPUs
 
 train_dataset:
-  batch_size: 8
+  batch_size: 4  # Reduced from 8 to save memory on single GPU
   shuffle: true
   pin_memory: true
   num_workers: 0
