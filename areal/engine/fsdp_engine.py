@@ -24,7 +24,6 @@ from torch.distributed.checkpoint.state_dict import (
     get_model_state_dict,
 )
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.distributed_c10d import _get_default_group
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
 from torch_memory_saver import torch_memory_saver
@@ -999,11 +998,6 @@ class FSDPEngine(TrainEngine):
         assert self.model is not None
         self.model.train(mode=mode)
         return self
-
-    @property
-    def parallelism_group(self) -> dist.ProcessGroup:
-        assert self.initialized
-        return _get_default_group()
 
     @property
     def cpu_group(self) -> dist.ProcessGroup:
