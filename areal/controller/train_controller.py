@@ -1,5 +1,4 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import torch
@@ -142,11 +141,7 @@ class TrainController:
         logger.info("TrainController initialization complete")
 
     def _run_async_task(self, task):
-        """Run an async task in a separate thread with a new event loop.
-
-        This is a helper method to execute async operations synchronously.
-        It creates a new event loop in a thread pool executor to avoid blocking
-        the main thread.
+        """Run an async task synchronously using `asyncio.run`.
 
         Parameters
         ----------
@@ -159,17 +154,7 @@ class TrainController:
             The result of the async task
         """
 
-        def _run_in_thread():
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            try:
-                return new_loop.run_until_complete(task)
-            finally:
-                new_loop.close()
-
-        with ThreadPoolExecutor() as executor:
-            future = executor.submit(_run_in_thread)
-            return future.result()
+        return asyncio.run(task)
 
     async def _async_create_engines(self, engine_path: str):
         """Create engine instances on all workers with distributed training configuration.
