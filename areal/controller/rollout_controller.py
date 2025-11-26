@@ -474,7 +474,7 @@ class RolloutController:
                 if k.endswith("__count"):
                     stats[k] += v
                 else:
-                    stats[k] += v * stats[k + "__count"]
+                    stats[k] += v * raw_stats[k + "__count"]
                     continue
 
         # Average non-count stats
