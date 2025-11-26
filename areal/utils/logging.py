@@ -1,6 +1,6 @@
 import logging.config
 from logging import WARNING, Logger, Manager, RootLogger
-from typing import Literal, Optional
+from typing import Literal
 
 import colorlog
 
@@ -111,8 +111,8 @@ log_config = {
 
 
 def getLogger(
-    name: Optional[str] = None,
-    type_: Optional[Literal["plain", "benchmark", "colored", "system"]] = None,
+    name: str | None = None,
+    type_: Literal["plain", "benchmark", "colored", "system"] | None = None,
 ):
     # Fix the logging config automatically set by transformer_engine
     # by reset config everytime getLogger is called.

@@ -1,11 +1,10 @@
 import os
 from pathlib import Path
-from typing import Dict
 
 import torch
 
 
-def get_state_dict_from_repo_id_or_path(repo_id_or_path: str) -> Dict:
+def get_state_dict_from_repo_id_or_path(repo_id_or_path: str) -> dict:
     """
     Obtain a state dictionary from either a Hugging Face repo ID or a local path.
 

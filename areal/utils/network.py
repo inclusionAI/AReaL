@@ -1,6 +1,5 @@
 import random
 import socket
-from typing import List, Set
 
 
 def gethostname():
@@ -12,8 +11,8 @@ def gethostip():
 
 
 def find_free_ports(
-    count: int, port_range: tuple = (1024, 65535), exclude_ports: Set[int] | None = None
-) -> List[int]:
+    count: int, port_range: tuple = (1024, 65535), exclude_ports: set[int] | None = None
+) -> list[int]:
     """
     Find multiple free ports within a specified range.
 
