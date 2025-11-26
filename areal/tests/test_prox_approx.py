@@ -8,13 +8,19 @@ import pytest
 import torch
 
 from areal.engine.ppo.actor import compute_prox_logp_approximations
+from areal.utils.constants import (
+    PROX_APPROX_METHOD_ROLLOUT,
+    PROX_APPROX_METHODS_ALL,
+    PROX_LOGP_METHOD_RECOMPUTE,
+    PROX_LOGP_METHODS_ALL,
+)
 
 
 class TestProximalApproximations:
     """Test suite for proximal log-probability approximation methods."""
 
-    def test_basic_linear_interpolation(self):
-        """Test linear interpolation with simple version progression."""
+    def test_basic_loglinear_interpolation(self):
+        """Test log-linear interpolation with simple version progression."""
         # Setup: behavior version=0, proximal version=1, current version=2
         old_logp = torch.tensor([[-1.0, -2.0, -3.0]], dtype=torch.float32)
         logprobs = torch.tensor([[-1.5, -2.5, -3.5]], dtype=torch.float32)
@@ -29,14 +35,14 @@ class TestProximalApproximations:
         )
 
         # alpha = (proximal - behave) / (theta - behave) = (1 - 0) / (2 - 0) = 0.5
-        # linear: old + alpha * (new - old) = -1.0 + 0.5 * (-1.5 - (-1.0)) = -1.25
-        expected_linear = torch.tensor([[-1.25, -2.25, -3.25]], dtype=torch.float32)
+        # loglinear: old + alpha * (new - old) = -1.0 + 0.5 * (-1.5 - (-1.0)) = -1.25
+        expected_loglinear = torch.tensor([[-1.25, -2.25, -3.25]], dtype=torch.float32)
         torch.testing.assert_close(
-            approx["linear"], expected_linear, rtol=1e-4, atol=1e-4
+            approx["loglinear"], expected_loglinear, rtol=1e-4, atol=1e-4
         )
 
-    def test_identity_approximation(self):
-        """Test identity approximation returns behavior logp."""
+    def test_rollout_approximation(self):
+        """Test rollout approximation returns behavior logp unchanged."""
         old_logp = torch.tensor([[-1.0, -2.0]], dtype=torch.float32)
         logprobs = torch.tensor([[-5.0, -6.0]], dtype=torch.float32)
         versions = torch.tensor([[0, 1]], dtype=torch.int32)
@@ -49,8 +55,10 @@ class TestProximalApproximations:
             current_version=current_version,
         )
 
-        # Identity should return old_logp unchanged
-        torch.testing.assert_close(approx["identity"], old_logp, rtol=1e-6, atol=1e-6)
+        # Rollout approximation should return old_logp unchanged (uses behavior policy as-is)
+        torch.testing.assert_close(
+            approx[PROX_APPROX_METHOD_ROLLOUT], old_logp, rtol=1e-6, atol=1e-6
+        )
 
     def test_alpha_clamping(self):
         """Test that alpha is clamped to [0, 1] range."""
@@ -68,8 +76,8 @@ class TestProximalApproximations:
         )
 
         # alpha = (4 - 4) / (5 - 4) = 0
-        # linear should equal old_logp
-        torch.testing.assert_close(approx["linear"], old_logp, rtol=1e-4, atol=1e-4)
+        # loglinear should equal old_logp
+        torch.testing.assert_close(approx["loglinear"], old_logp, rtol=1e-4, atol=1e-4)
 
     def test_mixed_versions_in_batch(self):
         """Test handling of samples with different behavior versions."""
@@ -87,16 +95,16 @@ class TestProximalApproximations:
         )
 
         # Sample 1: alpha = (3 - 0) / (4 - 0) = 0.75
-        # linear = -1.0 + 0.75 * (-1.5 - (-1.0)) = -1.0 + 0.75 * (-0.5) = -1.375
+        # loglinear = -1.0 + 0.75 * (-1.5 - (-1.0)) = -1.0 + 0.75 * (-0.5) = -1.375
         # Sample 2: alpha = (3 - 2) / (4 - 2) = 0.5
-        # linear = -2.0 + 0.5 * (-2.2 - (-2.0)) = -2.0 + 0.5 * (-0.2) = -2.1
-        expected_linear = torch.tensor([[-1.375], [-2.1]], dtype=torch.float32)
+        # loglinear = -2.0 + 0.5 * (-2.2 - (-2.0)) = -2.0 + 0.5 * (-0.2) = -2.1
+        expected_loglinear = torch.tensor([[-1.375], [-2.1]], dtype=torch.float32)
         torch.testing.assert_close(
-            approx["linear"], expected_linear, rtol=1e-4, atol=1e-4
+            approx["loglinear"], expected_loglinear, rtol=1e-4, atol=1e-4
         )
 
-    def test_harmonic_approximation_probabilities(self):
-        """Test harmonic mean works in probability space."""
+    def test_linear_approximation_probabilities(self):
+        """Test linear interpolation works in probability space (arithmetic mean)."""
         old_logp = torch.tensor([[-0.693]], dtype=torch.float32)  # log(0.5)
         logprobs = torch.tensor([[-1.386]], dtype=torch.float32)  # log(0.25)
         versions = torch.tensor([[0]], dtype=torch.int32)
@@ -111,10 +119,10 @@ class TestProximalApproximations:
 
         # alpha = 0.5
         # p_behave = 0.5, p_theta = 0.25
-        # p_harmonic = (1-0.5)*0.5 + 0.5*0.25 = 0.25 + 0.125 = 0.375
+        # p_arithmetic = (1-0.5)*0.5 + 0.5*0.25 = 0.25 + 0.125 = 0.375
         # log(0.375) ≈ -0.981
         expected = torch.log(torch.tensor([[0.375]], dtype=torch.float32))
-        torch.testing.assert_close(approx["harmonic"], expected, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(approx["linear"], expected, rtol=1e-3, atol=1e-3)
 
     def test_all_methods_return_tensors(self):
         """Test that all approximation methods return valid tensors."""
@@ -130,12 +138,7 @@ class TestProximalApproximations:
             current_version=current_version,
         )
 
-        expected_methods = [
-            "linear",
-            "identity",
-            "harmonic",
-            "quadratic",
-        ]
+        expected_methods = PROX_APPROX_METHODS_ALL
         for method in expected_methods:
             assert method in approx, f"Missing method: {method}"
             assert isinstance(approx[method], torch.Tensor), f"{method} not a tensor"
@@ -157,29 +160,8 @@ class TestProximalApproximations:
             current_version=current_version,
         )
 
-        # When versions are equal, alpha should be 0, linear should equal old_logp
-        torch.testing.assert_close(approx["linear"], old_logp, rtol=1e-4, atol=1e-4)
-
-    def test_quadratic_approximation(self):
-        """Test quadratic interpolation includes acceleration term."""
-        old_logp = torch.tensor([[-1.0]], dtype=torch.float32)
-        logprobs = torch.tensor([[-2.0]], dtype=torch.float32)
-        versions = torch.tensor([[0]], dtype=torch.int32)
-        current_version = 2  # alpha = 0.5
-
-        approx = compute_prox_logp_approximations(
-            old_logp=old_logp,
-            logprobs=logprobs,
-            versions=versions,
-            current_version=current_version,
-        )
-
-        # alpha = 0.5, delta = -2.0 - (-1.0) = -1.0
-        # quadratic = old + alpha * delta + 0.5 * alpha^2 * delta
-        #           = -1.0 + 0.5 * (-1.0) + 0.5 * 0.25 * (-1.0)
-        #           = -1.0 - 0.5 - 0.125 = -1.625
-        expected = torch.tensor([[-1.625]], dtype=torch.float32)
-        torch.testing.assert_close(approx["quadratic"], expected, rtol=1e-4, atol=1e-4)
+        # When versions are equal, alpha should be 0, loglinear should equal old_logp
+        torch.testing.assert_close(approx["loglinear"], old_logp, rtol=1e-4, atol=1e-4)
 
     def test_negative_versions_in_prompt(self):
         """Test handling of negative versions (prompt tokens)."""
@@ -197,10 +179,10 @@ class TestProximalApproximations:
         )
 
         # Should not crash with negative versions
-        assert approx["linear"].shape == old_logp.shape
+        assert approx["loglinear"].shape == old_logp.shape
         # For prompt tokens (version < 0), alpha is 0, so approximation should equal old_logp
-        assert torch.isclose(approx["linear"][0, 0], old_logp[0, 0])
-        assert torch.isfinite(approx["linear"]).all(), "NaN/Inf in approximation"
+        assert torch.isclose(approx["loglinear"][0, 0], old_logp[0, 0])
+        assert torch.isfinite(approx["loglinear"]).all(), "NaN/Inf in approximation"
 
     def test_batch_dimensions(self):
         """Test handling of different batch shapes."""
@@ -218,7 +200,7 @@ class TestProximalApproximations:
             current_version=current_version,
         )
 
-        for method in ["linear", "identity", "harmonic", "quadratic"]:
+        for method in PROX_APPROX_METHODS_ALL:
             assert approx[method].shape == (batch_size, seq_len)
             assert torch.isfinite(approx[method]).all(), f"{method} has NaN/Inf"
 
@@ -226,9 +208,9 @@ class TestProximalApproximations:
 class TestProximalApproximationIntegration:
     """Integration tests for proximal approximation in training flow."""
 
-    def test_versions_preserved_before_popping(self):
-        """Test that versions are preserved before being popped from batch."""
-        # Simulate the code in ppo_update
+    def test_versions_not_popped_from_batch(self):
+        """Test that versions are kept in batch (not popped) for use in loss function."""
+        # Simulate the code in ppo_update - versions should NOT be popped
         data = {
             "versions": torch.tensor([[0, 1, 2]], dtype=torch.int32),
             "rewards": torch.tensor([1.0]),
@@ -236,34 +218,51 @@ class TestProximalApproximationIntegration:
             "kl_rewards": torch.tensor([[0.1, 0.2, 0.3]]),
         }
 
-        # Simulate preservation logic
-        use_decoupled_loss = True
-        if "versions" in data and use_decoupled_loss:
-            data["_versions_for_approx"] = data["versions"].clone()
+        original_versions = data["versions"]
 
-        # Pop versions
-        for key in ["rewards", "tot_rewards", "kl_rewards", "versions"]:
+        # Pop other keys but not versions
+        for key in ["rewards", "tot_rewards", "kl_rewards"]:
             data.pop(key, None)
 
-        # Verify _versions_for_approx still exists
-        assert "_versions_for_approx" in data
+        # Verify versions still exists and is the same object (not cloned)
+        assert "versions" in data, "versions should still be in data"
+        if data["versions"] is not original_versions:
+            assert False, "versions should be the same object (not cloned)"
         torch.testing.assert_close(
-            data["_versions_for_approx"],
+            data["versions"],
             torch.tensor([[0, 1, 2]], dtype=torch.int32),
         )
 
-    def test_approximation_metrics_not_computed_without_flag(self):
-        """Test that metrics are not computed when use_decoupled_loss=False."""
-        data = {
-            "versions": torch.tensor([[0, 1, 2]], dtype=torch.int32),
+    def test_approximation_metrics_only_with_metrics_method(self):
+        """Test that metrics are only computed when prox_logp_method='metrics'."""
+        from areal.engine.ppo.actor import grpo_loss_fn
+
+        batch_size, seq_len = 2, 4
+        logits = torch.randn(batch_size, seq_len, 100)
+        input_data = {
+            "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
+            "logprobs": torch.randn(batch_size, seq_len),
+            "advantages": torch.randn(batch_size, seq_len),
+            "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
+            "prox_logp": torch.randn(batch_size, seq_len),  # Ground truth available
+            "versions": torch.randint(0, 3, (batch_size, seq_len), dtype=torch.int32),
         }
 
-        use_decoupled_loss = False
-        if "versions" in data and use_decoupled_loss:
-            data["_versions_for_approx"] = data["versions"].clone()
+        # With prox_logp_method != "metrics", metrics should not be logged
+        loss = grpo_loss_fn(
+            logits=logits,
+            input_data=input_data,
+            temperature=1.0,
+            eps_clip=0.2,
+            eps_clip_higher=None,
+            c_clip=None,
+            behav_imp_weight_cap=None,
+            current_version=5,
+            prox_logp_method="recompute",  # Not metrics
+        )
 
-        # _versions_for_approx should NOT be set
-        assert "_versions_for_approx" not in data
+        # Should complete without error
+        assert isinstance(loss, torch.Tensor)
 
 
 def test_import_success():
@@ -277,16 +276,15 @@ class TestComputeLogpOptimization:
     """Test suite for compute_logp() None return optimization."""
 
     def test_compute_logp_returns_none_when_optimized(self):
-        """Test that compute_logp() returns None when using approximation without recomputation."""
+        """Test that compute_logp() returns None when using loglinear method."""
         from unittest.mock import MagicMock
 
         from areal.engine.ppo.actor import PPOActor, PPOActorConfig
 
-        # Create config with approximation enabled, recomputation disabled
+        # Create config with loglinear method (skips forward pass)
         config = PPOActorConfig(
             use_decoupled_loss=True,
-            use_prox_approx=True,
-            recompute_logprob=False,
+            prox_logp_method="loglinear",
         )
 
         # Mock the engine
@@ -306,50 +304,15 @@ class TestComputeLogpOptimization:
         mock_engine.forward.assert_not_called()  # Should NOT call forward
 
     def test_compute_logp_returns_tensor_when_recomputation_enabled(self):
-        """Test that compute_logp() returns tensor when recomputation is enabled."""
+        """Test that compute_logp() returns tensor when using recompute or metrics method."""
         from unittest.mock import MagicMock
 
         from areal.engine.ppo.actor import PPOActor, PPOActorConfig
 
-        # Create config with approximation enabled, recomputation ENABLED
+        # Create config with recompute method (does forward pass)
         config = PPOActorConfig(
             use_decoupled_loss=True,
-            use_prox_approx=True,
-            recompute_logprob=True,  # Should compute
-        )
-
-        # Mock the engine
-        mock_engine = MagicMock()
-        mock_engine.forward.return_value = torch.tensor(
-            [[-1.0, -2.0, -3.0, -4.0]], dtype=torch.float32
-        )
-        actor = PPOActor(config, mock_engine)
-        actor.temperature = 1.0
-
-        # Create dummy batch data
-        batch = {
-            "input_ids": torch.tensor([[1, 2, 3, 4]], dtype=torch.long),
-            "attention_mask": torch.ones(1, 4, dtype=torch.bool),
-        }
-
-        # Call compute_logp - should return tensor
-        result = actor.compute_logp(batch)
-
-        assert result is not None
-        assert isinstance(result, torch.Tensor)
-        mock_engine.forward.assert_called_once()  # Should call forward
-
-    def test_compute_logp_returns_tensor_when_approximation_disabled(self):
-        """Test that compute_logp() returns tensor when approximation is disabled."""
-        from unittest.mock import MagicMock
-
-        from areal.engine.ppo.actor import PPOActor, PPOActorConfig
-
-        # Create config with approximation DISABLED
-        config = PPOActorConfig(
-            use_decoupled_loss=True,
-            use_prox_approx=False,  # No approximation
-            recompute_logprob=False,
+            prox_logp_method="recompute",  # Should compute
         )
 
         # Mock the engine
@@ -390,14 +353,12 @@ class TestGrpoLossFnNoneHandling:
             "advantages": torch.randn(batch_size, seq_len),
             "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
             "prox_logp": None,  # Key test: None value
-            "_versions_for_approx": torch.randint(
-                0, 5, (batch_size, seq_len), dtype=torch.int32
-            ),
+            "versions": torch.randint(0, 5, (batch_size, seq_len), dtype=torch.int32),
         }
 
-        # Should raise error if use_prox_approx=False but prox_logp=None
+        # Should raise error if prox_logp_method="recompute" but prox_logp=None
         with pytest.raises(
-            ValueError, match="prox_logp is None but use_prox_approx=False"
+            ValueError, match="prox_logp is None but prox_logp_method='recompute'"
         ):
             grpo_loss_fn(
                 logits=logits,
@@ -408,9 +369,7 @@ class TestGrpoLossFnNoneHandling:
                 c_clip=None,
                 behav_imp_weight_cap=None,
                 current_version=5,
-                use_prox_approx=False,  # Approximation disabled but prox_logp is None
-                prox_approx_method="linear",
-                log_prox_approx_metrics=False,
+                prox_logp_method="recompute",
             )
 
     def test_grpo_loss_fn_requires_versions_when_prox_logp_none(self):
@@ -426,12 +385,13 @@ class TestGrpoLossFnNoneHandling:
             "advantages": torch.randn(batch_size, seq_len),
             "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
             "prox_logp": None,  # None value
-            # Missing: "_versions_for_approx"
+            # Missing: "versions"
         }
 
         # Should raise error if versions not available
         with pytest.raises(
-            ValueError, match="versions not available for approximation"
+            ValueError,
+            match=r"prox_logp is None with prox_logp_method='loglinear' but versions not available",
         ):
             grpo_loss_fn(
                 logits=logits,
@@ -442,9 +402,7 @@ class TestGrpoLossFnNoneHandling:
                 c_clip=None,
                 behav_imp_weight_cap=None,
                 current_version=5,
-                use_prox_approx=True,
-                prox_approx_method="linear",
-                log_prox_approx_metrics=False,
+                prox_logp_method="loglinear",
             )
 
     def test_grpo_loss_fn_computes_approximation_when_prox_logp_none(self):
@@ -460,9 +418,7 @@ class TestGrpoLossFnNoneHandling:
             "advantages": torch.randn(batch_size, seq_len),
             "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
             "prox_logp": None,  # None - will be replaced with approximation
-            "_versions_for_approx": torch.randint(
-                0, 3, (batch_size, seq_len), dtype=torch.int32
-            ),
+            "versions": torch.randint(0, 3, (batch_size, seq_len), dtype=torch.int32),
         }
 
         # Should successfully compute approximation
@@ -475,9 +431,7 @@ class TestGrpoLossFnNoneHandling:
             c_clip=None,
             behav_imp_weight_cap=None,
             current_version=5,
-            use_prox_approx=True,
-            prox_approx_method="linear",
-            log_prox_approx_metrics=False,
+            prox_logp_method="loglinear",
         )
 
         # Loss should be computed successfully
@@ -497,9 +451,7 @@ class TestGrpoLossFnNoneHandling:
             "advantages": torch.randn(batch_size, seq_len),
             "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
             "prox_logp": torch.randn(batch_size, seq_len),  # Tensor (normal case)
-            "_versions_for_approx": torch.randint(
-                0, 3, (batch_size, seq_len), dtype=torch.int32
-            ),
+            "versions": torch.randint(0, 3, (batch_size, seq_len), dtype=torch.int32),
         }
 
         # Should work normally
@@ -512,9 +464,7 @@ class TestGrpoLossFnNoneHandling:
             c_clip=None,
             behav_imp_weight_cap=None,
             current_version=5,
-            use_prox_approx=True,
-            prox_approx_method="linear",
-            log_prox_approx_metrics=False,
+            prox_logp_method="loglinear",
         )
 
         assert isinstance(loss, torch.Tensor), "Loss should be a tensor"
@@ -533,13 +483,10 @@ class TestGrpoLossFnNoneHandling:
             "advantages": torch.randn(batch_size, seq_len),
             "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
             "prox_logp": None,  # No ground truth
-            "_versions_for_approx": torch.randint(
-                0, 3, (batch_size, seq_len), dtype=torch.int32
-            ),
+            "versions": torch.randint(0, 3, (batch_size, seq_len), dtype=torch.int32),
             "prox_logp_recomputed": False,  # Not recomputed
         }
 
-        # Even with log_prox_approx_metrics=True, metrics should not be logged
         loss = grpo_loss_fn(
             logits=logits,
             input_data=input_data,
@@ -549,9 +496,7 @@ class TestGrpoLossFnNoneHandling:
             c_clip=None,
             behav_imp_weight_cap=None,
             current_version=5,
-            use_prox_approx=True,
-            prox_approx_method="linear",
-            log_prox_approx_metrics=True,  # Metrics enabled but should not log
+            prox_logp_method="loglinear",
         )
 
         # Should not crash and loss should be valid
@@ -571,7 +516,7 @@ class TestEndToEndOptimization:
         # Setup: user configuration with optimization enabled
         config = PPOActorConfig(
             use_decoupled_loss=True,
-            use_prox_approx=True,
+            prox_logp_method="loglinear",
             recompute_logprob=False,  # Optimization active
         )
 
@@ -595,24 +540,22 @@ class TestEndToEndOptimization:
         mock_engine.forward.assert_not_called()  # Forward pass was skipped!
 
     def test_configuration_matrix(self):
-        """Test all combinations of configuration flags."""
+        """Test all combinations of prox_logp_method values."""
         from unittest.mock import MagicMock
 
         from areal.engine.ppo.actor import PPOActor, PPOActorConfig
 
         test_cases = [
-            # (use_prox_approx, recompute_logprob, should_return_none, description)
-            (True, False, True, "Approximation ON, Recompute OFF -> None"),
-            (True, True, False, "Approximation ON, Recompute ON -> Tensor"),
-            (False, True, False, "Approximation OFF, Recompute ON -> Tensor"),
-            (False, False, False, "Approximation OFF, Recompute OFF -> Tensor"),
+            # (prox_logp_method, should_return_none, should_call_forward, description)
+            ("loglinear", True, False, "loglinear -> None (skip forward)"),
+            ("recompute", False, True, "recompute -> Tensor (do forward)"),
+            ("metrics", False, True, "metrics -> Tensor (do forward)"),
         ]
 
-        for use_approx, recompute, should_be_none, desc in test_cases:
+        for method, should_be_none, should_call_forward, desc in test_cases:
             config = PPOActorConfig(
                 use_decoupled_loss=True,
-                use_prox_approx=use_approx,
-                recompute_logprob=recompute,
+                prox_logp_method=method,
             )
 
             mock_engine = MagicMock()
@@ -629,68 +572,44 @@ class TestEndToEndOptimization:
 
             if should_be_none:
                 assert result is None, f"Failed: {desc}"
-                mock_engine.forward.assert_not_called()
             else:
                 assert result is not None, f"Failed: {desc}"
                 assert isinstance(result, torch.Tensor), f"Failed: {desc}"
 
+            if should_call_forward:
+                mock_engine.forward.assert_called_once()
+            else:
+                mock_engine.forward.assert_not_called()
+
+            # Reset mock for next test
+            mock_engine.reset_mock()
+
 
 class TestConfigValidation:
-    """Test suite for PPOActorConfig validation, especially dynamic method validation."""
+    """Test suite for PPOActorConfig with new prox_logp_method field."""
 
-    def test_valid_method_from_config_metadata(self):
-        """Test that validation accepts methods defined in PPOActorConfig choices."""
-        from areal.api.cli_args import PPOActorConfig
-        from areal.engine.ppo.actor import PPOActor
-
-        # Test each valid method from the config
-        valid_methods = ["linear", "harmonic", "quadratic", "identity"]
-        for method in valid_methods:
-            config = PPOActorConfig(
-                use_decoupled_loss=True,
-                use_prox_approx=True,
-                prox_approx_method=method,
-                recompute_logprob=False,
-            )
-            # Should not raise ValueError
-            try:
-                # We validate in __init__, but we need a mock engine
-                from unittest.mock import MagicMock
-
-                mock_engine = MagicMock()
-                mock_engine.module.config = MagicMock()
-                _ = PPOActor(config, mock_engine)  # noqa: F841
-                # If we reach here, validation passed
-            except ValueError as e:
-                pytest.fail(f"Method '{method}' should be valid but got: {e}")
-
-    def test_invalid_method_raises_error(self):
-        """Test that validation rejects invalid approximation methods."""
+    def test_valid_prox_logp_methods(self):
+        """Test that all valid prox_logp_method values work correctly."""
         from unittest.mock import MagicMock
 
         from areal.api.cli_args import PPOActorConfig
         from areal.engine.ppo.actor import PPOActor
 
-        config = PPOActorConfig(
-            use_decoupled_loss=True,
-            use_prox_approx=True,
-            prox_approx_method="invalid_method",
-            recompute_logprob=False,
-        )
+        # Test each valid method from the config
+        valid_methods = PROX_LOGP_METHODS_ALL
+        for method in valid_methods:
+            config = PPOActorConfig(
+                use_decoupled_loss=True,
+                prox_logp_method=method,
+            )
+            # Should not raise any errors
+            mock_engine = MagicMock()
+            mock_engine.module.config = MagicMock()
+            actor = PPOActor(config, mock_engine)
+            assert actor.config.prox_logp_method == method
 
-        mock_engine = MagicMock()
-        mock_engine.module.config = MagicMock()
-
-        with pytest.raises(ValueError) as exc_info:
-            PPOActor(config, mock_engine)
-
-        error_msg = str(exc_info.value)
-        assert "Invalid prox_approx_method" in error_msg
-        assert "invalid_method" in error_msg
-        assert "linear" in error_msg  # Should list valid methods
-
-    def test_validation_uses_metadata_choices(self):
-        """Test that validation dynamically retrieves choices from dataclass metadata."""
+    def test_prox_logp_method_metadata_choices(self):
+        """Test that prox_logp_method has correct choices in metadata."""
         from dataclasses import fields as dataclass_fields
 
         from areal.api.cli_args import PPOActorConfig
@@ -698,37 +617,45 @@ class TestConfigValidation:
         # Get the actual choices from the dataclass
         config_choices = None
         for f in dataclass_fields(PPOActorConfig):
-            if f.name == "prox_approx_method":
+            if f.name == "prox_logp_method":
                 config_choices = f.metadata.get("choices", [])
                 break
 
-        assert config_choices is not None, "prox_approx_method field should exist"
-        assert len(config_choices) > 0, "choices should not be empty"
-        assert "linear" in config_choices, "linear should be in choices"
-        assert "harmonic" in config_choices, "harmonic should be in choices"
-        assert "quadratic" in config_choices, "quadratic should be in choices"
-        assert "identity" in config_choices, "identity should be in choices"
+        assert config_choices is not None, "prox_logp_method field should exist"
+        expected_choices = PROX_LOGP_METHODS_ALL
+        expected_count = len(expected_choices)
+        if len(config_choices) != expected_count:
+            assert False, f"Should have exactly {expected_count} choices"
+        if set(config_choices) != set(expected_choices):
+            assert False, f"Expected {expected_choices}, got {config_choices}"
 
-    def test_metadata_matches_validation_fallback(self):
-        """Test that config metadata choices match the fallback hardcoded list."""
+    def test_prox_logp_method_default(self):
+        """Test that prox_logp_method has correct default value."""
+        from areal.api.cli_args import PPOActorConfig
+
+        config = PPOActorConfig()
+        expected_default = PROX_LOGP_METHOD_RECOMPUTE
+        if config.prox_logp_method != expected_default:
+            assert False, f"Default should be '{expected_default}'"
+
+    def test_old_config_fields_removed(self):
+        """Test that old config fields have been removed."""
         from dataclasses import fields as dataclass_fields
 
         from areal.api.cli_args import PPOActorConfig
 
-        # Get choices from dataclass metadata
-        config_choices = None
-        for f in dataclass_fields(PPOActorConfig):
-            if f.name == "prox_approx_method":
-                config_choices = f.metadata.get("choices", [])
-                break
+        field_names = {f.name for f in dataclass_fields(PPOActorConfig)}
 
-        # Hardcoded fallback list in actor.py:93
-        fallback_list = ["linear", "harmonic", "quadratic", "identity"]
+        # Old fields should not exist
+        if "use_prox_approx" in field_names:
+            assert False, "use_prox_approx should be removed"
+        if "prox_approx_method" in field_names:
+            assert False, "prox_approx_method should be removed"
+        if "log_prox_approx_metrics" in field_names:
+            assert False, "log_prox_approx_metrics should be removed"
 
-        # Verify metadata exists
-        assert config_choices is not None
-        # Verify choices match fallback list
-        assert set(config_choices) == set(fallback_list)
+        # New field should exist
+        assert "prox_logp_method" in field_names, "prox_logp_method should exist"
 
 
 if __name__ == "__main__":

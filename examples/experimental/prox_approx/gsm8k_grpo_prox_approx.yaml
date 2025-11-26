@@ -70,10 +70,8 @@ actor:
     mean_level: batch
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
-  # Proximal approximation settings
-  use_prox_approx: true
-  prox_approx_method: linear
-  log_prox_approx_metrics: false
+  # Proximal log-probability computation method
+  prox_logp_method: loglinear  # Use log-linear approximation (fast, recommended)
 
 ref:
   experiment_name: ${experiment_name}

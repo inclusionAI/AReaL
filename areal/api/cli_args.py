@@ -16,6 +16,10 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, pkg_version
+from areal.utils.constants import (
+    PROX_LOGP_METHOD_RECOMPUTE,
+    PROX_LOGP_METHODS_ALL,
+)
 from areal.utils.pkg_version import is_version_less
 
 uvloop.install()
@@ -635,33 +639,16 @@ class PPOActorConfig(TrainEngineConfig):
             "choices": ["token", "sequence"],
         },
     )
-    # Proximal Log-Probability Approximation
-    use_prox_approx: bool = field(
-        default=False,
+    # Proximal Log-Probability Computation Method
+    prox_logp_method: str = field(
+        default=PROX_LOGP_METHOD_RECOMPUTE,
         metadata={
-            "help": "Use approximation for proximal policy log-probabilities instead of recomputation. "
-            "Only effective when use_decoupled_loss=True. Reduces computational cost but may introduce approximation error."
-        },
-    )
-    prox_approx_method: str = field(
-        default="linear",
-        metadata={
-            "help": "Method for approximating proximal policy log-probabilities. "
-            "Options: 'linear' (recommended, interpolates in log-space), "
-            "'harmonic' (interpolates in probability space, more conservative), "
-            "'quadratic' (adds second-order correction), "
-            "'identity' (uses behavior policy as-is, baseline).",
-            "choices": ["linear", "harmonic", "quadratic", "identity"],
-        },
-    )
-    log_prox_approx_metrics: bool = field(
-        default=False,
-        metadata={
-            "help": "Log detailed approximation quality metrics (comparison with ground truth). "
-            "When True, proximal policy will be recomputed for comparison even when using approximation. "
-            "When False, skips recomputation entirely for maximum performance. "
-            "Only effective when use_prox_approx=True. "
-            "Recommended: False for production, True for evaluation/research."
+            "help": "Method for computing proximal policy log-probabilities in decoupled PPO. "
+            "Only effective when use_decoupled_loss=True. Options: "
+            "'recompute' (default): Standard decoupled PPO, recompute proximal policy via forward pass. "
+            "'loglinear': Use log-linear interpolation to approximate proximal policy (skip forward pass). "
+            "'metrics': Like 'recompute', but also compute approximation metrics for evaluation.",
+            "choices": PROX_LOGP_METHODS_ALL,
         },
     )
     # Advanced Options

@@ -29,33 +29,28 @@ where $v$ denotes the policy version when each token was generated.
 ## Algorithm Core Parameters
 
 - `actor.use_decoupled_loss`: Must be `true` to enable decoupled PPO (required for approximation)
-- `actor.use_prox_approx`: Enable proximal log-probability approximation (default: `false`)
-- `actor.prox_approx_method`: Approximation method - `"linear"` (recommended) or `"harmonic"` (default: `"linear"`)
-- `actor.recompute_logprob`: When `false` with approximation enabled, skips forward pass entirely; when `true`, computes ground truth for comparison (default: `false`)
-- `actor.log_prox_approx_metrics`: Log detailed approximation quality metrics (default: `false`)
+- `actor.prox_logp_method`: Method for computing proximal policy log-probabilities (default: `"recompute"`)
+  - `"recompute"`: Standard decoupled PPO, recompute proximal policy via forward pass
+  - `"rollout"`: Use behavior policy from rollout as proximal policy (skip forward pass)
+  - `"loglinear"`: Use log-linear interpolation to approximate proximal policy (fast, recommended)
+  - `"metrics"`: Like recompute, but also compute loglinear approximation and log comparison metrics
 
 ## Example Usage
 
 ### Production Configuration (Maximum Speed)
 
-**Linear method (recommended for best eval reward):**
+**Log-linear method (recommended for best eval reward):**
 ```yaml
 actor:
   use_decoupled_loss: true
-  use_prox_approx: true
-  prox_approx_method: linear
-  recompute_logprob: false  # Skip forward pass entirely
-  log_prox_approx_metrics: false
+  prox_logp_method: loglinear  # Enables approximation, skips forward pass
 ```
 
-**Harmonic method (alternative, better task reward):**
+**Rollout method (uses behavior policy as-is):**
 ```yaml
 actor:
   use_decoupled_loss: true
-  use_prox_approx: true
-  prox_approx_method: harmonic
-  recompute_logprob: false  # Skip forward pass entirely
-  log_prox_approx_metrics: false
+  prox_logp_method: rollout  # Uses π_behave as π_proximal
 ```
 
 Run with:
@@ -69,10 +64,7 @@ python -m areal.launcher.local examples/math/gsm8k_grpo.py \
 ```yaml
 actor:
   use_decoupled_loss: true
-  use_prox_approx: true
-  prox_approx_method: linear
-  recompute_logprob: true  # Compute ground truth for comparison
-  log_prox_approx_metrics: true  # Log approximation quality metrics
+  prox_logp_method: metrics  # Compute ground truth + approximation metrics
 ```
 
 For more examples, see `examples/experimental/prox_approx/`.
@@ -90,13 +82,13 @@ Based on GSM8K experiments with Qwen2.5-1.5B-Instruct:
 | Method | Training Time | Final Task Reward | Final Eval Reward | Speedup |
 |--------|---------------|-------------------|-------------------|---------|
 | Standard Decoupled PPO (Recompute) | 207 min | 0.954 | 0.795 | 1.0× (baseline) |
-| + Proximal Approximation (Linear) | 163 min | 0.937 | **0.799** | **1.27×** |
-| + Proximal Approximation (Harmonic) | ~163 min | 0.944 | 0.796 | **1.27×** |
+| + Proximal Approximation (loglinear) | 163 min | 0.937 | **0.799** | **1.27×** |
+| + Proximal Approximation (linear) | ~163 min | 0.944 | 0.796 | **1.27×** |
 
 **Key findings:**
 - **27% faster**: Both approximation methods save ~44 minutes over 300 steps
-- **Linear method**: Best evaluation reward (0.799), slightly lower task reward (0.937)
-- **Harmonic method**: Better task reward (0.944), matches baseline eval reward (0.796)
+- **loglinear method**: Best evaluation reward (0.799), slightly lower task reward (0.937). Linear interpolation in log-space.
+- **linear method**: Better task reward (0.944), matches baseline eval reward (0.796). Linear interpolation in probability space.
 - **Comparable performance**: Both methods within 2% of recompute baseline on all metrics
 - **Stable training**: Smooth convergence with 8-step staleness (off-policy scenario)
 - **Proven effective**: Works well in realistic off-policy settings
@@ -109,19 +101,24 @@ Based on GSM8K experiments with Qwen2.5-1.5B-Instruct:
 
 ### Approximation Methods
 
-**`"linear"` (Recommended)**
+**`"loglinear"` (Recommended)**
 - Formula: $\log \pi_{prox} = \log \pi_{behave} + \alpha \cdot (\log \pi_{\theta} - \log \pi_{behave})$
+- Linear interpolation in log-space (geometric mean in probability space)
 - Simple, fast, stable
 - Best evaluation reward (0.799 on GSM8K)
 - Proven effective on GSM8K with Qwen2.5-1.5B-Instruct
 
-**`"harmonic"` (Alternative)**
+**`"linear"` (Alternative)**
 - Formula: $\log \pi_{prox} = \log[(1-\alpha) \cdot \pi_{behave} + \alpha \cdot \pi_{\theta}]$
-- Weighted arithmetic mean in probability space, then converts to log space
+- Linear interpolation in probability space (arithmetic mean), then converts to log space
 - Better task reward (0.944 on GSM8K)
 - Also proven effective on GSM8K with Qwen2.5-1.5B-Instruct
 
-**Note**: Other methods (`quadratic`, `identity`) are implemented but not yet tested in production scenarios.
+**`"rollout"` (Metrics Baseline)**
+- Formula: $\log \pi_{prox} = \log \pi_{behave}$
+- Uses behavior policy directly as proximal policy (no interpolation)
+- Only used internally for metrics comparison when `prox_logp_method="metrics"`
+- Not available as a user-facing configuration option (use `use_decoupled_loss=false` for similar behavior)
 
 ### Configuration Logic
 
