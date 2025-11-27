@@ -101,7 +101,6 @@ tir:
 # Dataset configuration
 train_dataset:
   batch_size: 32
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: /tmp/areal/torl_data/train.parquet

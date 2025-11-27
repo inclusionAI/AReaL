@@ -18,22 +18,14 @@ jobs:
       - name: Install Python dependencies
         run: |
           python3 -m pip install --upgrade pip
-          pip install ruff==0.14.1 black==25.1.0 clang-format==19.1.7 autoflake==2.3.1
+          pip install ruff==0.14.1 clang-format==19.1.7
 
-      - name: Check autoflake formatting
+      - name: Check Python formatting and linting with ruff
         run: |
-          autoflake --check -r areal/
-          autoflake --check -r examples/
-          autoflake --check -r docs/
-
-      - name: Check Python formatting with ruff
-        run: |
-          ruff check --select I areal/
-          ruff check --select I examples/
-          ruff check --select I docs/
-
-      - name: Check Python formatting with black
-        run: black --check .
+          ruff check areal/
+          ruff check examples/
+          ruff format --check areal/
+          ruff format --check examples/
 
       - name: Check C++ formatting
         run: |

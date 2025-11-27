@@ -96,14 +96,12 @@ sglang:
 train_dataset:
   path: inclusionAI/AReaL-boba-Data
   batch_size: 32
-  shuffle: true
   pin_memory: true
   type: rl
 
 valid_dataset:
   path: inclusionAI/AReaL-boba-Data
   batch_size: 16
-  shuffle: true
   pin_memory: true
   type: rl
 

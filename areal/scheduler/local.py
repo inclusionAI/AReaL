@@ -618,6 +618,41 @@ class LocalScheduler(Scheduler):
         except Exception as e:
             return f"[Could not read log file: {e}]"
 
+    async def set_worker_env(self, worker_id: str, env: dict[str, str]) -> None:
+        """Set environment variables on a worker before engine creation."""
+        worker_info = self._verify_worker_alive(worker_id)
+        if not env:
+            return
+
+        payload = {"env": env}
+        port = int(worker_info.worker.worker_ports[0])
+        url = f"http://{worker_info.worker.ip}:{port}/set_env"
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=30.0)
+            async with aiohttp.ClientSession(
+                timeout=timeout,
+                connector=get_default_connector(),
+            ) as session:
+                async with session.post(
+                    url,
+                    data=orjson.dumps(payload),
+                    headers={"Content-Type": "application/json"},
+                ) as response:
+                    if response.status == 200:
+                        return
+                    detail = (await response.json()).get("error", "Unknown error")
+                    raise SchedulerError(
+                        worker_id,
+                        f"Failed to set env on worker (status={response.status}): {detail}",
+                    )
+        except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:
+            raise RPCConnectionError(
+                worker_id, worker_info.worker.ip, port, str(e)
+            ) from e
+        except asyncio.TimeoutError as e:
+            raise SchedulerError(worker_id, f"set_env timed out: {e}") from e
+
     async def create_engine(
         self,
         worker_id: str,

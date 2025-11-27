@@ -1,6 +1,5 @@
 import time
 import uuid
-from typing import Optional
 
 import torch.distributed as dist
 from torch.distributed.distributed_c10d import _get_default_store
@@ -27,7 +26,7 @@ class DistributedLock:
     def acquire(self, timeout=None):
         start = time.perf_counter()
         sleep = self.backoff
-        my_token = f"{dist.get_rank()}:{uuid.uuid4()}".encode("utf-8")
+        my_token = f"{dist.get_rank()}:{uuid.uuid4()}".encode()
 
         while True:
             try:
@@ -79,7 +78,7 @@ class DistributedLock:
             self._rollback_counter()
             raise RuntimeError("Failed to record lock owner") from exc
 
-    def _get_owner(self) -> Optional[bytes]:
+    def _get_owner(self) -> bytes | None:
         try:
             value = self.store.get(self.key_owner)
             return value if value else None

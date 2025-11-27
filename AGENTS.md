@@ -204,8 +204,8 @@ Reference docs:
   validate it before returning; filter/trim sequences with tokenizer-aware checks when
   `max_length` is provided.
 - Expose configuration knobs (path, split, type, max_length, processor/tokenizer
-  requirements) via the `DatasetConfig` dataclass in `areal/api/cli_args.py`, then
-  reference them in the relevant `examples/**/conf` YAML.
+  requirements) via the `TrainDatasetConfig` and `ValidDatasetConfig` dataclasses in
+  `areal/api/cli_args.py`, then reference them in the relevant `examples/**/conf` YAML.
 - If preprocessing or external storage is required, add a short note beside the loader
   or under `examples/<recipe>/README.md` so other agents know how to stage data.
 

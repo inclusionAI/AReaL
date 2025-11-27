@@ -17,21 +17,21 @@ def test_adv_norm_config_inheritance():
     adv_config = NormConfig()
 
     # Verify that NormConfig has expected attributes
-    assert hasattr(
-        adv_config, "mean_level"
-    ), "NormConfig should have mean_level attribute"
-    assert hasattr(
-        adv_config, "std_level"
-    ), "NormConfig should have std_level attribute"
-    assert hasattr(
-        adv_config, "group_size"
-    ), "NormConfig should have group_size attribute"
-    assert hasattr(
-        adv_config, "mean_leave1out"
-    ), "NormConfig should have mean_leave1out attribute"
-    assert hasattr(
-        adv_config, "std_unbiased"
-    ), "NormConfig should have std_unbiased attribute"
+    assert hasattr(adv_config, "mean_level"), (
+        "NormConfig should have mean_level attribute"
+    )
+    assert hasattr(adv_config, "std_level"), (
+        "NormConfig should have std_level attribute"
+    )
+    assert hasattr(adv_config, "group_size"), (
+        "NormConfig should have group_size attribute"
+    )
+    assert hasattr(adv_config, "mean_leave1out"), (
+        "NormConfig should have mean_leave1out attribute"
+    )
+    assert hasattr(adv_config, "std_unbiased"), (
+        "NormConfig should have std_unbiased attribute"
+    )
 
     # Verify default values
     assert adv_config.mean_level == "batch", "Default mean_level should be 'batch'"
