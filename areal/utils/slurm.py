@@ -1,5 +1,5 @@
 import subprocess
-from typing import List, Literal, Optional
+from typing import Literal
 
 from areal.utils import logging
 from areal.utils.launcher import (
@@ -149,16 +149,14 @@ APPTAINER_CMD_TEMPLATE: str = """singularity exec --no-home --writable-tmpfs --n
 
 
 def cancel_jobs(
-    slurm_names: Optional[List[str]] = None,
-    slurm_ids: Optional[List[int]] = None,
+    slurm_names: list[str] | None = None,
+    slurm_ids: list[int] | None = None,
     signal: Literal["SIGINT", "SIGKILL"] = "SIGKILL",
 ):
-    assert (
-        slurm_names is not None or slurm_ids is not None
-    ), "Must specify slurm_names or slurm_ids."
-    assert not (
-        slurm_names and slurm_ids
-    ), "Cannot specify both slurm_names and slurm_ids."
+    if slurm_names is None and slurm_ids is None:
+        raise RuntimeError("Must specify slurm_names or slurm_ids.")
+    if slurm_names and slurm_ids:
+        raise RuntimeError("Cannot specify both slurm_names and slurm_ids.")
     cmd = ["scancel", "-s", signal]
     if slurm_names is not None:
         cmd += ["-n", ",".join(slurm_names)]
@@ -175,11 +173,11 @@ def cancel_jobs(
 
 
 def query_jobs(
-    slurm_names: Optional[List[str]] = None,
-    slurm_ids: Optional[List[int]] = None,
+    slurm_names: list[str] | None = None,
+    slurm_ids: list[int] | None = None,
     status: str = "all",
     delimiter: str = "__PSI__",
-) -> List[JobInfo]:
+) -> list[JobInfo]:
     squeue_format = f":.{delimiter},".join(SQUEUE_FIELDS)
     cmd = ["squeue", "-O", squeue_format, f"-t{status}"]
     if slurm_names is not None:
@@ -208,7 +206,7 @@ def query_jobs(
     return rs
 
 
-def parse_slurm_nodelist(nodelist: str) -> List[str]:
+def parse_slurm_nodelist(nodelist: str) -> list[str]:
     return (
         subprocess.check_output(
             [

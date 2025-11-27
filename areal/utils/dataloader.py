@@ -1,4 +1,4 @@
-from typing import Callable
+from collections.abc import Callable
 
 from torch.utils.data import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
