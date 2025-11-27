@@ -70,7 +70,7 @@ class PPOTrainer:
             self.critic = self._create_critic(config.critic)
         self.ref = None
         if config.actor.kl_ctl > 0 and config.ref is not None:
-            self.ref = self._create_actor(config.ref, init_proc_group=False)
+            self.ref = self._create_actor(config.ref)
 
         # Create dataloaders
         self.train_dataset = train_dataset
@@ -362,7 +362,7 @@ class PPOTrainer:
             dataset_config=dataset_config,
         )
 
-    def _create_actor(self, actor_config: PPOActorConfig, init_proc_group: bool = True):
+    def _create_actor(self, actor_config: PPOActorConfig):
         if self.allocation_mode.train_backend == "fsdp":
             actor = FSDPPPOActor(config=actor_config)
         elif self.allocation_mode.train_backend == "megatron":
@@ -371,8 +371,7 @@ class PPOTrainer:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
-        if init_proc_group:
-            actor.create_process_group(parallel_strategy=self.allocation_mode.train)
+        actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
     def _create_critic(self, critic_config: PPOCriticConfig):
@@ -384,6 +383,7 @@ class PPOTrainer:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
+        critic.create_process_group(parallel_strategy=self.allocation_mode.train)
         return critic
 
     def _init_rollout(

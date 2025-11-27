@@ -9,11 +9,11 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
     DatasetConfig,
-    PPOActorConfig,
     SFTConfig,
+    TrainEngineConfig,
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo
-from areal.engine.sft.lm_engine import FSDPLMEngine
+from areal.engine.sft.lm_engine import FSDPLMEngine, MegatronLMEngine
 from areal.platforms import current_platform
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
@@ -106,8 +106,6 @@ class SFTTrainer:
             self.evaluator,
             self.stats_logger,
             self.train_dataloader,
-            inference_engine=self.rollout,
-            weight_update_meta=self.weight_update_meta,
         )
 
     def train(self):
@@ -235,17 +233,16 @@ class SFTTrainer:
             dataset_config=dataset_config,
         )
 
-    def _create_actor(self, actor_config: PPOActorConfig, init_proc_group: bool = True):
+    def _create_actor(self, actor_config: TrainEngineConfig):
         if self.allocation_mode.train_backend == "fsdp":
             actor = FSDPLMEngine(config=actor_config)
         elif self.allocation_mode.train_backend == "megatron":
-            actor = FSDPLMEngine(config=actor_config)
+            actor = MegatronLMEngine(config=actor_config)
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
-        if init_proc_group:
-            actor.create_process_group(parallel_strategy=self.allocation_mode.train)
+        actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
