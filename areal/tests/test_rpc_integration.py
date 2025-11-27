@@ -138,3 +138,11 @@ class TestSyncRPCServer:
         stats_data = stats_resp.get_json()
         assert stats_data["status"] == "success"
         assert stats_data["result"] == {"loss": 0.1}
+
+    def test_set_env_endpoint(self, client):
+        resp = client.post("/set_env", json={"env": {"RANK": 0, "WORLD_SIZE": 1}})
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "success"
+
+        bad_resp = client.post("/set_env", json={})
+        assert bad_resp.status_code == 400
