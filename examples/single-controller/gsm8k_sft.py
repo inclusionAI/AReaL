@@ -109,7 +109,9 @@ def main(args):
                     steps_per_epoch=len(train_dataloader),
                 )
 
-                with (stats_tracker.record_timing("train_step"),):
+                with (
+                    stats_tracker.record_timing("train_step"),
+                ):
                     engine.train_lm(DistributedBatchMemory.from_dict(data))
                     engine.step_lr_scheduler()
 
