@@ -232,6 +232,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 model_response=response,  # Should not deepcopy response because of tokenizer
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
                 chat_template_type=self.chat_template_type,
+                eos_token_id=self.tokenizer.eos_token_id,
+                pad_token_id=self.tokenizer.pad_token_id,
             )
         return chat_completion
 
@@ -510,6 +512,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 deepcopy(input) if not is_omitted(input) else ""
             ),  # Store a copy of the input data
             chat_template_type=self.chat_template_type,
+            eos_token_id=self.tokenizer.eos_token_id,
+            pad_token_id=self.tokenizer.pad_token_id,
         )
 
         return response

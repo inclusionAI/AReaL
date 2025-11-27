@@ -408,11 +408,7 @@ def main(args):
                                     "generated",
                                 ),
                                 rollout_stat_scope="rollout",
-                                export_style=(
-                                    "concat"
-                                    if config.export_style == "concat"
-                                    else "hf"
-                                ),
+                                export_style=config.export_style,
                             )
                             if config.async_training:
                                 batch = rollout.prepare_batch(

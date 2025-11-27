@@ -51,6 +51,10 @@ class LLMResponse:
     def output_len(self) -> int:
         return len(self.output_tokens)
 
+    @property
+    def output_versions(self) -> list[int]:
+        return [self.output_version] * self.output_len
+
 
 @dataclass
 class ModelRequest:

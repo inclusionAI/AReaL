@@ -19,6 +19,55 @@ from areal.utils import datapack, logging
 logger = logging.getLogger("data utils")
 
 
+def concat_list_of_dicts_along_seq(
+    dict_list: list[dict[str, torch.Tensor]],
+) -> dict[str, torch.Tensor]:
+    """Concatenate tensors from multiple dictionaries along the sequence dimension (dim=1).
+
+    This function is useful for combining multiple completions from the same session
+    into a single trajectory. Each tensor in the input dicts should have shape [1, seq_len],
+    and the result will have shape [1, total_seq_len].
+
+    Args:
+        dict_list: List of dictionaries containing tensors with shape [1, seq_len].
+
+    Returns:
+        A dictionary with concatenated tensors along the sequence dimension.
+        Each tensor has shape [1, sum(seq_lens)].
+        For 1D tensors, only the maximum value is kept.
+    """
+    if not dict_list:
+        return {}
+
+    common_keys = set(dict_list[0].keys())
+    for d in dict_list[1:]:
+        common_keys &= set(d.keys())
+
+    result = {}
+    for key in common_keys:
+        tensors = [d[key] for d in dict_list]
+
+        # For 1D tensors, only keep the maximum value
+        if all(len(tensor.shape) == 1 for tensor in tensors):
+            all_values = torch.cat(tensors, dim=0)
+            result[key] = torch.max(all_values).unsqueeze(
+                0
+            )  # Keep as 1D tensor with single value
+            continue
+
+        # For 2D+ tensors, concat along sequence dimension (dim=1)
+        if tensors:
+            # Verify all tensors have same batch size (should be 1)
+            batch_sizes = [tensor.shape[0] for tensor in tensors]
+            assert all(bs == batch_sizes[0] for bs in batch_sizes), (
+                f"All tensors for key '{key}' must have same batch size, "
+                f"got batch sizes: {batch_sizes}"
+            )
+            result[key] = torch.cat(tensors, dim=1)
+
+    return result
+
+
 def get_batch_size(data: dict[str, Any]) -> int:
     if not data:
         return 0
@@ -319,9 +368,9 @@ def pack_tensor_dict(data: dict[str, Any]) -> dict[str, Any]:
 def pad_and_stack_tensors_along_first_dim(tensor_list: list[torch.Tensor]):
     max_length = max(tensor.shape[0] for tensor in tensor_list)
     n_dim = tensor_list[0].ndim
-    assert all(
-        tensor.ndim == n_dim for tensor in tensor_list
-    ), "All tensors must have the same number of dimensions."
+    assert all(tensor.ndim == n_dim for tensor in tensor_list), (
+        "All tensors must have the same number of dimensions."
+    )
 
     padded_tensors = []
     for tensor in tensor_list:
@@ -420,9 +469,9 @@ def split_padded_tensor_dict_into_mb_list(
         MicroBatchList: A structure containing the split micro-batches and metadata.
     """
     # TODO: should align sequences first and then split, needs refactor
-    assert (
-        "attention_mask" in data
-    ), "Input data must be padded and contain 'attention_mask' key."
+    assert "attention_mask" in data, (
+        "Input data must be padded and contain 'attention_mask' key."
+    )
     if mb_spec.max_tokens_per_mb is None:
         mb_spec = MicroBatchSpec.new(
             mb_spec, max_tokens_per_mb=DEFAULT_MAX_TOKENS_PER_MB
@@ -556,9 +605,9 @@ def pad_packed_tensor_dict(
     sequence_padded_data = {}
     align_to_length = None
     if align_sequences:
-        assert (
-            align_to_multiple_of is not None
-        ), "align_to_multiple_of must be specified when align_sequences is True."
+        assert align_to_multiple_of is not None, (
+            "align_to_multiple_of must be specified when align_sequences is True."
+        )
         input_lens = cu_seqlens[1:] - cu_seqlens[:-1]
         batch_size = input_lens.shape[0]
         # Align sequences to an integer multiple of align_to_multiple_of
@@ -645,9 +694,9 @@ def pad_packed_tensor_dict(
 
     # Pad batch
     pad_length = pad_to_length - total_length
-    assert (
-        pad_length >= 0
-    ), f"pad_to_length {pad_to_length} must be greater than or equal to total length {total_length}."
+    assert pad_length >= 0, (
+        f"pad_to_length {pad_to_length} must be greater than or equal to total length {total_length}."
+    )
     new_cu_seqlens = F.pad(cu_seqlens, (0, 1), value=pad_to_length)
     new_max_seqlen = max(max_seqlen, pad_length)
     padded_data = {}
@@ -708,9 +757,9 @@ def pad_mb_list(
         MicroBatchList: The padded micro-batch list.
     """
     if align_sequences:
-        assert (
-            align_to_multiple_of is not None
-        ), "align_to_multiple_of must be specified when align_sequences is True."
+        assert align_to_multiple_of is not None, (
+            "align_to_multiple_of must be specified when align_sequences is True."
+        )
     padded_mb_inputs, pad_lengths = [], []
     pad_to_lengths = []
     old_cu_seqlens_list = []

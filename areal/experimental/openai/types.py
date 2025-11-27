@@ -32,6 +32,11 @@ class InteractionWithTokenLogpReward:
     response: Response | None = None
     input_data: str | ResponseInputParam = field(default_factory=lambda: "")
 
+    # Optional fields for compatibility with rlvr workflow
+    task_id: int = 4  # Task ID for multi-task training
+    eos_token_id: int | None = None  # EOS token ID for seq_no_eos_mask calculation
+    pad_token_id: int | None = None  # PAD token ID for seq_no_eos_mask calculation
+
     @property
     def is_completion(self) -> bool:
         return self.completion is not None
@@ -71,7 +76,9 @@ class InteractionWithTokenLogpReward:
             parent_loss_mask = parent_res["loss_mask"].squeeze(0).tolist()
             parent_versions = parent_res["versions"].squeeze(0).tolist()
             parent_len = len(parent_logprobs)
-            assert parent_len == len(parent_loss_mask) == len(parent_versions)
+            assert parent_len == len(parent_loss_mask) == len(parent_versions), (
+                f"parent_len: {parent_len}, parent_loss_mask len: {len(parent_loss_mask)}, parent_versions len: {len(parent_versions)}"
+            )
             if resp.input_len > parent_len:
                 logprobs = (
                     parent_logprobs
@@ -111,15 +118,39 @@ class InteractionWithTokenLogpReward:
             loss_mask = [0] * resp.input_len + [1] * resp.output_len
             versions = [-1] * resp.input_len + resp.output_versions
         reward = self.reward if self.reward is not None else 0.0
+
+        # Calculate seq_no_eos_mask: True if sequence doesn't end with EOS or PAD
+        seq_no_eos_mask = True
+        if seq and (self.eos_token_id is not None or self.pad_token_id is not None):
+            last_token = seq[-1]
+            ends_with_eos = (
+                self.eos_token_id is not None and last_token == self.eos_token_id
+            )
+            ends_with_pad = (
+                self.pad_token_id is not None and last_token == self.pad_token_id
+            )
+            seq_no_eos_mask = not (ends_with_eos or ends_with_pad)
+
+        # Calculate prompt_mask: 1 for prompt tokens, 0 for output tokens
+        # This is the inverse of loss_mask
+        prompt_mask = [1 - m for m in loss_mask]
+
         result = dict(
             # unsqueeze to add an additional batch dimension
             input_ids=torch.tensor(seq).unsqueeze(0),
             loss_mask=torch.tensor(loss_mask).unsqueeze(0),
+            prompt_mask=torch.tensor(prompt_mask).unsqueeze(0),
             logprobs=torch.tensor(logprobs).unsqueeze(0),
             versions=torch.tensor(versions).unsqueeze(0),
             attention_mask=torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
             # reward
             rewards=torch.tensor([float(reward)]),
+            # seqlen
+            seqlen=torch.tensor([len(seq)]),
+            # task_ids
+            task_ids=torch.tensor([self.task_id]),
+            # seq_no_eos_mask
+            seq_no_eos_mask=torch.tensor([seq_no_eos_mask]),
         )
         self._cache = result
         return result

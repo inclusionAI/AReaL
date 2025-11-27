@@ -23,7 +23,6 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.workflow_api import RolloutWorkflow
-from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.extension.asystem.api.cli_args import RemoteHybridInferenceConfig
 from areal.extension.asystem.utils.util import wait_future_ordered
 from areal.utils import logging, seeding
@@ -666,28 +665,8 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 self.result_cache[:count],
                 self.result_cache[count:],
             )
-        print(f"wait accepted results: {results}")
-
-        if isinstance(results, list) and all(
-            isinstance(v, dict) for v in results
-        ) and all(
-            isinstance(v, InteractionWithTokenLogpReward) for v in results[0].values()
-        ):
-            tensor_results = []
-            for res in results: # res is one trajectory
-                assert len(res) == 1, f"len of trajectories greater than 1 not supported yet, res: {res}"
-                assert all(
-                    isinstance(v, InteractionWithTokenLogpReward) for v in res.values()
-                ), res
-                tensor_results.append(
-                    v.to_tensor_dict() for v in res.values()
-                )
-            results = concat_padded_tensors(tensor_results)
-        else:
-            results = concat_padded_tensors(results)
-
-        assert results is None or isinstance(results, dict), results
-        return results
+        print(f"wait results num accepted: {len(results)}")
+        return concat_padded_tensors(results)
 
     def rollout(  # only dp head accept this request
         self, data: list[dict[str, Any]], workflow: "RolloutWorkflow", *args, **kwargs

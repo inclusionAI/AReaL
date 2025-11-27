@@ -18,7 +18,12 @@ from areal.experimental.openai.proxy import (
     ProxyServer,
     ProxySession,
 )
+from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, stats_tracker
+from areal.utils.data import (
+    concat_list_of_dicts_along_seq,
+    concat_padded_tensors,
+)
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports
 
@@ -161,13 +166,21 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
         for reward in rewards:
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        completions = await self.proxy_server.get_completions(
-            session_ids=session_ids, style=self.export_style, discount=0.9
-        )
+        completions: dict[str, list[InteractionWithTokenLogpReward]] = {}
+        for session_id in session_ids:
+            completion_dict = await self.proxy_server.get_completions(
+                session_ids=[session_id], style=self.export_style, discount=0.9
+            )
+            completions[session_id] = list(completion_dict.values())
+            print(
+                f"session_id: {session_id}, completions num: {len(completions[session_id])}"
+            )
 
         if self.dump_dir is not None:
-            for session_id, completion in completions.items():
-                version = completion.model_response.output_version
+            for session_id, completion_list in completions.items():
+                if len(completion_list) == 0:
+                    continue
+                version = completion_list[0].model_response.output_version
 
                 dump_path = os.path.join(self.dump_dir, str(version))
                 await aiofiles.os.makedirs(dump_path, exist_ok=True)
@@ -182,7 +195,18 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                 # Dump rollout to file
                 file_path = os.path.join(dump_path, f"{qid}.txt")
                 async with aiofiles.open(file_path, "a") as f:
-                    info = "\n".join([f"completion is: {completion}"])
+                    info = "\n".join([f"completion is: {completion_list}"])
                     await f.write(info + "\n")
 
-        return completions
+        trajs = []
+        for session_id, completion_list in completions.items():
+            assert all(
+                isinstance(v, InteractionWithTokenLogpReward) for v in completion_list
+            ), completion_list
+
+            traj = concat_list_of_dicts_along_seq(
+                [v.to_tensor_dict() for v in completion_list]
+            )
+            trajs.append(traj)
+        results = concat_padded_tensors(trajs)
+        return results
