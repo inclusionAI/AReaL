@@ -1329,7 +1329,7 @@ class TrainDatasetConfig(_DatasetConfig):
 class ValidDatasetConfig(_DatasetConfig):
     """Configuration for validation dataset loading and preprocessing.
 
-    It has different default values with `TrainDatasetConfig`.
+    It has different default values with the config for training.
     `shuffle` and `drop_last` default to False.
     """
 

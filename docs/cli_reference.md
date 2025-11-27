@@ -608,7 +608,7 @@ Configuration for training dataset loading and preprocessing.
 
 Configuration for validation dataset loading and preprocessing.
 
-It has different default values with `TrainDatasetConfig`. `shuffle` and `drop_last`
+It has different default values with the config for training. `shuffle` and `drop_last`
 default to False.
 
 | Parameter     | Type            | Default      | Description                                                                      |
