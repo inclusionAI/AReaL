@@ -151,12 +151,12 @@ def compute_score(
     split = extra_info["split"]
     is_test = split == "test"
     
-    reward_type = Any
+    reward_type = "mix"
     if is_test:
         reward_type = "eval"
 
-    alpha = Any
-    iou_threshold = Any
+    alpha = 0.5
+    iou_threshold =0.5
 
     if alpha is None or iou_threshold is None or reward_type is None:
         raise ValueError("Missing required parameters: reward_type, alpha, threshold.")
