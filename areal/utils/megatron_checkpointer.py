@@ -146,15 +146,14 @@ class MegatronCheckpointManager:
         use_dist_checkpointing: bool = True,
         async_save: bool = False,
     ):
-
         self.model = model
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
 
         self.use_distributed_optimizer = use_distributed_optimizer
-        assert (
-            self.use_distributed_optimizer
-        ), "MegatronCheckpointManager now only support distributed optimizer"
+        assert self.use_distributed_optimizer, (
+            "MegatronCheckpointManager now only support distributed optimizer"
+        )
         self.use_checkpoint_opt_param_scheduler = use_checkpoint_opt_param_scheduler
         self.rank = torch.distributed.get_rank()
         self.use_dist_checkpointing = use_dist_checkpointing
@@ -322,9 +321,9 @@ class MegatronCheckpointManager:
         with_rng: bool = True,
     ):
         if local_path is not None:
-            assert os.path.exists(
-                local_path
-            ), f"Checkpoint path {local_path} does not exist."
+            assert os.path.exists(local_path), (
+                f"Checkpoint path {local_path} does not exist."
+            )
         dist_checkpoint_path = local_path
 
         # Get State Dict for loading
@@ -342,14 +341,16 @@ class MegatronCheckpointManager:
                 assert "model" in state_dict or any(
                     f"model{vpp_rank}" in state_dict
                     for vpp_rank in range(len(self.model))
-                ), f"Model state dict not found in {state_dict.keys()}. Please check the checkpoint file {local_path}."
+                ), (
+                    f"Model state dict not found in {state_dict.keys()}. Please check the checkpoint file {local_path}."
+                )
                 for vpp_rank, model in enumerate(self.model):
                     if len(self.model) == 1:
                         model_state_dict = state_dict["model"]
                     else:
-                        assert (
-                            f"model{vpp_rank}" in state_dict
-                        ), f"model{vpp_rank} not found in state_dict"
+                        assert f"model{vpp_rank}" in state_dict, (
+                            f"model{vpp_rank} not found in state_dict"
+                        )
                         model_state_dict = state_dict[f"model{vpp_rank}"]
                     mpu.set_virtual_pipeline_model_parallel_rank(vpp_rank)
                     self.model[vpp_rank].load_state_dict(model_state_dict)
@@ -361,9 +362,9 @@ class MegatronCheckpointManager:
                 raise NotImplementedError("Please use dist checkpointing!")
 
         if with_optimizer:
-            assert (
-                "optimizer" in state_dict
-            ), f"Optimizer state dict not found in {state_dict.keys()}. Please check the checkpoint file {local_path}."
+            assert "optimizer" in state_dict, (
+                f"Optimizer state dict not found in {state_dict.keys()}. Please check the checkpoint file {local_path}."
+            )
             optimizer_state_dict = state_dict["optimizer"]
             self.optimizer.load_state_dict(optimizer_state_dict)
             log_with_rank(
@@ -384,9 +385,9 @@ class MegatronCheckpointManager:
                     )
 
         if with_rng:
-            assert (
-                "rng_state" in state_dict
-            ), f"RNG state dict not found in {state_dict.keys()}. Please check the checkpoint file {local_path}."
+            assert "rng_state" in state_dict, (
+                f"RNG state dict not found in {state_dict.keys()}. Please check the checkpoint file {local_path}."
+            )
             rng_state = state_dict["rng_state"]
             self.load_rng_states(rng_state)
             log_with_rank(f"Loaded RNG states from {local_path}", rank=self.rank)
@@ -398,7 +399,6 @@ class MegatronCheckpointManager:
         with_optimizer=True,
         with_rng: bool = True,
     ):
-
         dist_checkpoint_path = local_path
 
         if self.use_dist_checkpointing:
@@ -413,9 +413,9 @@ class MegatronCheckpointManager:
 
             # Synchronize all async save requests
             if not self.async_save:
-                assert (
-                    async_save_request is None
-                ), "Async save request should be None when not using async save."
+                assert async_save_request is None, (
+                    "Async save request should be None when not using async save."
+                )
                 torch.distributed.barrier()
         else:
             raise NotImplementedError("Please use dist checkpointing!")
