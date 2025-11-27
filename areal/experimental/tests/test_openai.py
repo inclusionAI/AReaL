@@ -719,3 +719,132 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         + [0] * (c_b1_input_len - (c_b_input_len + c_b_output_len))
         + [1] * c_b1_output_len
     )
+
+
+@pytest.mark.asyncio
+async def test_multi_step_tool_calling_concat_style(openai_client):
+    """Test multi-round conversation with tool calling and concat-style export.
+
+    This test ensures that when using `export_completions(style="concat")`,
+    the conversation history correctly handles tool calls while stripping
+    <think> tags, and the resulting loss masks are correct for the
+    concatenated trajectories.
+    """
+    openai_client: ArealOpenAI
+    openai_client.chat_template_type = "concat"
+    openai_client.chat.completions.chat_template_type = "concat"
+
+    # Base conversation
+    base = [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant with calculation abilities.",
+        },
+    ]
+
+    # Branch A: root -> a -> a1 (with tool call)
+    msgs_a = base + [
+        {"role": "user", "content": "Calculate 25 * 4"},
+    ]
+    c_a = await openai_client.chat.completions.create(
+        messages=msgs_a, tools=tools, tool_choice="auto"
+    )
+    # cleaned_a_content = strip_thinking_tags(c_a.choices[0].message.content)
+    cleaned_a_content = c_a.choices[0].message.content
+    assert c_a.choices[0].message.tool_calls is not None
+    assert c_a.choices[0].finish_reason == "tool_calls"
+
+    # Leaf A1
+    msgs_a1 = msgs_a + [
+        {
+            "role": "assistant",
+            "content": cleaned_a_content,
+            "tool_calls": c_a.choices[0].message.tool_calls,
+        },
+        {"role": "tool", "content": "100", "tool_call_id": "mock_id_a1"},
+    ]
+    c_a1 = await openai_client.chat.completions.create(messages=msgs_a1, tools=tools, tool_choice="auto")
+
+    # Branch B: root -> b -> b1 (with tool call)
+    msgs_b = base + [
+        {"role": "user", "content": "What is 120 / 3?"},
+    ]
+    c_b = await openai_client.chat.completions.create(
+        messages=msgs_b, tools=tools, tool_choice="auto"
+    )
+    # cleaned_b_content = strip_thinking_tags(c_b.choices[0].message.content)
+    cleaned_b_content = c_b.choices[0].message.content
+    assert c_b.choices[0].message.tool_calls is not None
+    assert c_b.choices[0].finish_reason == "tool_calls"
+
+    # Leaf B1
+    msgs_b1 = msgs_b + [
+        {
+            "role": "assistant",
+            "content": cleaned_b_content,
+            "tool_calls": c_b.choices[0].message.tool_calls,
+        },
+        {"role": "tool", "content": "40", "tool_call_id": "mock_id_b1"},
+    ]
+    c_b1 = await openai_client.chat.completions.create(messages=msgs_b1, tools=tools, tool_choice="auto")
+
+    # Set rewards for leaf nodes
+    openai_client.set_reward(c_a1.id, 2.0)
+    openai_client.set_reward(c_b1.id, 3.0)
+
+    # Export completions
+    leaf_completions = openai_client.export_completions(style="concat")
+    all_completions = openai_client.export_completions(style="individual")
+
+    # Verify exports
+    assert set(leaf_completions.keys()) == {c_a1.id, c_b1.id}
+    assert set(all_completions.keys()) == {
+        c_a.id,
+        c_a1.id,
+        c_b.id,
+        c_b1.id,
+    }
+
+    def wrapped_completion(chat_completion):
+        return all_completions[chat_completion.id]
+
+    # Verify tree structure
+    assert wrapped_completion(c_a1).parent is wrapped_completion(c_a)
+    assert wrapped_completion(c_a).parent is None
+    assert wrapped_completion(c_b1).parent is wrapped_completion(c_b)
+    assert wrapped_completion(c_b).parent is None
+
+    # Verify rewards (no propagation in concat style)
+    assert wrapped_completion(c_a1).reward == 2.0
+    assert wrapped_completion(c_b1).reward == 3.0
+    assert wrapped_completion(c_a).reward is None
+    assert wrapped_completion(c_b).reward is None
+
+
+    # Loss mask for c_a1
+    c_a_input_len = wrapped_completion(c_a).model_response.input_len
+    c_a_output_len = wrapped_completion(c_a).model_response.output_len
+    c_a1_input_len = wrapped_completion(c_a1).model_response.input_len
+    c_a1_output_len = wrapped_completion(c_a1).model_response.output_len
+    c_a1_loss_mask = wrapped_completion(c_a1).to_tensor_dict()["loss_mask"].squeeze(0)
+
+    assert c_a1_loss_mask.tolist() == (
+        [0] * (c_a_input_len)
+        + [1] * c_a_output_len
+        + [0] * (c_a1_input_len - (c_a_input_len + c_a_output_len))
+        + [1] * c_a1_output_len
+    )
+
+    # Loss mask for c_b1
+    c_b_input_len = wrapped_completion(c_b).model_response.input_len
+    c_b_output_len = wrapped_completion(c_b).model_response.output_len
+    c_b1_input_len = wrapped_completion(c_b1).model_response.input_len
+    c_b1_output_len = wrapped_completion(c_b1).model_response.output_len
+    c_b1_loss_mask = wrapped_completion(c_b1).to_tensor_dict()["loss_mask"].squeeze(0)
+
+    assert c_b1_loss_mask.tolist() == (
+        [0] * c_b_input_len
+        + [1] * c_b_output_len
+        + [0] * (c_b1_input_len - (c_b_input_len + c_b_output_len))
+        + [1] * c_b1_output_len
+    )

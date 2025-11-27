@@ -39,6 +39,8 @@ def sync_run_task(
             try:
                 reward = await run_agent_return_reward(data)
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 logger.warning(f"Error in sync_run_task: {e}")
                 reward = 0.0
 
@@ -167,14 +169,6 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
         completions: dict[str, list[InteractionWithTokenLogpReward]] = {}
-        for session_id in session_ids:
-            completion_dict = await self.proxy_server.get_completions(
-                session_ids=[session_id], style=self.export_style, discount=0.9
-            )
-            completions[session_id] = list(completion_dict.values())
-            print(
-                f"session_id: {session_id}, completions num: {len(completions[session_id])}"
-            )
 
         if self.dump_dir is not None:
             for session_id, completion_list in completions.items():
@@ -197,6 +191,17 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                 async with aiofiles.open(file_path, "a") as f:
                     info = "\n".join([f"completion is: {completion_list}"])
                     await f.write(info + "\n")
+
+        for session_id in session_ids:
+            completion_dict = await self.proxy_server.get_completions(
+                session_ids=[session_id], style=self.export_style, discount=0.9
+            )
+            completions[session_id] = list(completion_dict.values())
+            
+            print(
+                f"session_id: {session_id}, completions num: {len(completions[session_id])}"
+            )
+            assert len(completions[session_id]) == 1, f"len(completions[session_id])={len(completions[session_id])} not supported yet, we only support multi-step and not multi-turn."
 
         trajs = []
         for session_id, completion_list in completions.items():

@@ -109,26 +109,35 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             extra_body = {}
         # Convert messages to prompt format
         tools = tools if not is_omitted(tools) else None
-        if self.chat_template_type == "hf":
-            prompt_token_ids = self.tokenizer.apply_chat_template(
-                messages_list,
-                tools=tools,
-                add_generation_prompt=True,
-                tokenize=True,
-                **extra_body.get("chat_template_kwargs", {}),
-            )
-        elif self.chat_template_type == "concat":
-            # By default, follows Qwen3 chat template.
-            start, end = self.messages_delimiter_start, self.messages_delimiter_end
-            message_strs = []
-            for msg in messages_list:
-                message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
-            message_strs.append(f"{start}assistant\n")
-            prompt_token_ids = self.tokenizer.encode("".join(message_strs))
-        else:
-            raise ValueError(
-                f"Unsupported chat_template_type {self.chat_template_type}"
-            )
+        
+        prompt_token_ids = self.tokenizer.apply_chat_template(
+            messages_list,
+            tools=tools,
+            add_generation_prompt=True,
+            tokenize=True,
+            **extra_body.get("chat_template_kwargs", {}),
+        )
+
+        # if self.chat_template_type == "hf":
+        #     prompt_token_ids = self.tokenizer.apply_chat_template(
+        #         messages_list,
+        #         tools=tools,
+        #         add_generation_prompt=True,
+        #         tokenize=True,
+        #         **extra_body.get("chat_template_kwargs", {}),
+        #     )
+        # elif self.chat_template_type == "concat":
+        #     # By default, follows Qwen3 chat template.
+        #     start, end = self.messages_delimiter_start, self.messages_delimiter_end
+        #     message_strs = []
+        #     for msg in messages_list:
+        #         message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
+        #     message_strs.append(f"{start}assistant\n")
+        #     prompt_token_ids = self.tokenizer.encode("".join(message_strs))
+        # else:
+        #     raise ValueError(
+        #         f"Unsupported chat_template_type {self.chat_template_type}"
+        #     )
 
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
         max_new_tokens = 512
