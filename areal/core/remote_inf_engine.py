@@ -383,13 +383,13 @@ class RemoteInfEngine(InferenceEngine):
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
             self.logger.info("Get server addresses from the `addr` argument.")
+        elif len(self.local_server_processes) > 0:
+            self.addresses = [f"{s.host}:{s.port}" for s in self.local_server_processes]
+            self.logger.info("Get server addresses from the local subprocess.")
         elif os.getenv("AREAL_LLM_SERVER_ADDRS"):
             # When addr is not provided, fallback to reading addrs from env var
             self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
             self.logger.info("Get server addresses from environment variable.")
-        elif len(self.local_server_processes) > 0:
-            self.addresses = [f"{s.host}:{s.port}" for s in self.local_server_processes]
-            self.logger.info("Get server addresses from the local subprocess.")
         else:
             if (
                 self.config.experiment_name is not None
