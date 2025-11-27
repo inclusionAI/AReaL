@@ -755,14 +755,15 @@ class vLLMConfig:
         # handle lora modules separately
         lm = args.get("lora_modules")
         if lm:
+            if isinstance(lm, str):
+                lm = [lm]
             if isinstance(lm, (list, tuple)):
-                args["lora_modules"] = [
-                    json.dumps(json.loads(s), separators=(",", ":")) for s in lm
-                ]
-            elif isinstance(lm, str):
-                args["lora_modules"] = [
-                    json.dumps(json.loads(lm), separators=(",", ":"))
-                ]
+                try:
+                    args["lora_modules"] = [
+                        json.dumps(json.loads(s), separators=(",", ":")) for s in lm
+                    ]
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON string in lora_modules: {e}") from e
         return args
 
     @staticmethod

@@ -51,7 +51,6 @@ class VLLMWorkerExtension:
         try:
             # load lora weight
             self.model_runner.lora_manager.remove_adapter(lora_int_id)
-            # list_of_adapters = self.model_runner.lora_manager.list_adapters()
             lora_request = LoRARequest(
                 lora_name=lora_name,
                 lora_int_id=lora_int_id,
@@ -62,8 +61,6 @@ class VLLMWorkerExtension:
             self.model_runner.add_lora(lora_request)
 
             self.sync()
-            torch.distributed.barrier()
-            current_platform.synchronize()
             return True, "Success"
         except Exception as e:
             error_msg = f"failed to upload lora weights! {e}"

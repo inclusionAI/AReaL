@@ -80,29 +80,25 @@ class VLLMBackend:
         self, meta: WeightUpdateMeta, lora_initialized: bool
     ) -> WeightUpdateRequests:
         """Build vLLM disk weight update requests."""
-        if lora_initialized and meta.use_lora:
-            return WeightUpdateRequests(
-                requests=[
-                    HttpRequest(
-                        endpoint="/areal_update_weights_lora",
-                        payload={
-                            "lora_model_path": str(meta.path),
-                            "lora_name": str(meta.lora_name),
-                            "lora_int_id": meta.lora_int_id,
-                            "base_model_name": str(meta.base_model_name),
-                        },
-                    )
-                ]
-            )
+        if meta.use_lora:
+            if not lora_initialized:
+                raise ValueError(
+                    "LoRA update requested, but LoRA is not enabled/initialized in the vLLM engine."
+                )
+            endpoint = "/areal_update_weights_lora"
+            payload = {
+                "lora_model_path": str(meta.path),
+                "lora_name": str(meta.lora_name),
+                "lora_int_id": meta.lora_int_id,
+                "base_model_name": str(meta.base_model_name),
+            }
         else:
-            return WeightUpdateRequests(
-                requests=[
-                    HttpRequest(
-                        endpoint="/areal_update_weights",
-                        payload={"model_path": str(meta.path)},
-                    )
-                ]
-            )
+            endpoint = "/areal_update_weights"
+            payload = {"model_path": str(meta.path)}
+
+        return WeightUpdateRequests(
+            requests=[HttpRequest(endpoint=endpoint, payload=payload)]
+        )
 
     def build_distributed_weight_update_requests(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]

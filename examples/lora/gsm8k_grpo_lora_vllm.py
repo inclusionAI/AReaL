@@ -88,7 +88,7 @@ def main(args):
         config.saver.fileroot,
         use_lora=config.actor.use_lora,
         lora_name=config.gconfig.lora_name,
-        lora_int_id=1,
+        lora_int_id=1,  # hard coded for the single lora example
         base_model_name=config.actor.path,
     )
 

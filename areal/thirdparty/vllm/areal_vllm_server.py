@@ -109,7 +109,7 @@ async def update_weight(request: UpdateWeightsRequest, raw_request: Request):
 @router.post("/areal_update_weights_lora")
 async def update_weight_lora(request: UpdateWeightsRequestLora, raw_request: Request):
     logger.info(
-        f"API server starts update_weight_lora, lora_model_path{request.lora_model_path}, lora_name-{request.lora_name}, lora_int_id-{request.lora_int_id}, base_model_name-{request.base_model_name}"
+        f"API server starts update_weight_lora, lora_model_path-{request.lora_model_path}, lora_name-{request.lora_name}, lora_int_id-{request.lora_int_id}, base_model_name-{request.base_model_name}"
     )
     llm = raw_request.app.state.engine_client
     ret_list = await llm.engine_core.call_utility_async(
