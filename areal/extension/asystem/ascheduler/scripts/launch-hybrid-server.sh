@@ -47,4 +47,4 @@ log_to_both_files `uname -a`
 CMD="python -m asystem_runtime.engine_server --worker-type ${WORKER_TYPE} --worker-index ${WORKER_INDEX}"
 
 echo "before start." >> ${WORKER_LOG_FILE}
-singularity --debug exec --nv --no-home --writable-tmpfs --bind /storage:/storage --bind /home/admin/logs:/home/admin/logs "${IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${ENGINE_PACKAGE_PATH}:/home/admin/antllm:/home/admin/Megatron-LM:/home/admin/Megatron-LM/ant_utils/dcp_utils:/root/workdir/astra-build/Asystem-HybridEngine/astra_cache/astra-client/python:$PYTHONPATH;$CMD" 2>&1 | tee -a ${WORKER_ANTLOGS_LOG_FILE} >> ${WORKER_LOG_FILE}
+singularity --debug exec --nv --no-home --writable-tmpfs --bind /storage:/storage --bind /home/admin/logs:/home/admin/logs "${IMAGE}" bash -c "export PATH=/opt/conda/bin:$PATH; export PYTHONPATH=${EXTRA_PYTHONPATH}:/home/admin/antllm:/home/admin/Megatron-LM:/home/admin/Megatron-LM/ant_utils/dcp_utils:/root/workdir/astra-build/Asystem-HybridEngine/astra_cache/astra-client/python:$PYTHONPATH;$CMD" 2>&1 | tee -a ${WORKER_ANTLOGS_LOG_FILE} >> ${WORKER_LOG_FILE}

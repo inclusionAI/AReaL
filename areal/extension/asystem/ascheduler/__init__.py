@@ -59,6 +59,8 @@ class AsystemScheduler(Scheduler):
     def __init__(self, config: dict[str, Any]):
         self.real_package_path = os.environ.get("REAL_PACKAGE_PATH", "")
         assert self.real_package_path != ""
+        self.extra_pythonpath = os.environ.get("EXTRA_PYTHONPATH", "")
+
         self.submitted_jobs = {}  # role -> job_uid
         self.extra_envs = config.get("extra_envs", {})
 
@@ -88,6 +90,7 @@ class AsystemScheduler(Scheduler):
             f"{self.storage_prefix}/experiments/logs/root/{self.expr_name}/{self.trial_name}"
         )
         self.extra_envs["REAL_PACKAGE_PATH"] = self.real_package_path
+        self.extra_envs["EXTRA_PYTHONPATH"] = self.extra_pythonpath
 
         # 信号捕获是为了手动跑 trainer.py 增加的功能，用来在 trainer 退出时清理相关 Job
         signal.signal(signal.SIGINT, self.batch_cleanup_jobs)
