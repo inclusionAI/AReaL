@@ -96,7 +96,6 @@ sglang:
 # datasets
 train_dataset:
   batch_size: 128
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
@@ -105,7 +104,6 @@ train_dataset:
 
 valid_dataset:
   batch_size: 128
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k

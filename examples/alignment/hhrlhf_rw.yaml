@@ -40,7 +40,6 @@ model:
 
 train_dataset:
   batch_size: 256
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: Anthropic/hh-rlhf
@@ -48,7 +47,6 @@ train_dataset:
 
 valid_dataset:
   batch_size: 256
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: Anthropic/hh-rlhf

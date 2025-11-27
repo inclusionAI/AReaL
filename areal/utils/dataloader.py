@@ -3,14 +3,14 @@ from collections.abc import Callable
 from torch.utils.data import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import DatasetConfig
+from areal.api.cli_args import _DatasetConfig
 
 
 def create_dataloader(
     dataset,
     rank: int,
     world_size: int,
-    dataset_config: DatasetConfig,
+    dataset_config: _DatasetConfig,
     collate_fn: Callable | None = None,
 ) -> StatefulDataLoader:
     """Create a stateful dataloader for a dataset with distributed sampler.

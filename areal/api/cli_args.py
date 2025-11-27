@@ -1281,7 +1281,7 @@ class SchedulerConfig:
 
 
 @dataclass
-class DatasetConfig:
+class _DatasetConfig:
     """Configuration for dataset loading and preprocessing."""
 
     path: str = field(
@@ -1317,6 +1317,27 @@ class DatasetConfig:
         metadata={
             "help": "Maximum token length of sequences in dataset. Longer sequences are filtered out."
         },
+    )
+
+
+@dataclass
+class TrainDatasetConfig(_DatasetConfig):
+    """Configuration for training dataset loading and preprocessing."""
+
+
+@dataclass
+class ValidDatasetConfig(_DatasetConfig):
+    """Configuration for validation dataset loading and preprocessing.
+
+    It has different default values with `TrainDatasetConfig`.
+    `shuffle` and `drop_last` default to False.
+    """
+
+    shuffle: bool = field(
+        default=False, metadata={"help": "Whether to shuffle the dataset"}
+    )
+    drop_last: bool = field(
+        default=False, metadata={"help": "Drop the last incomplete batch"}
     )
 
 
@@ -1446,8 +1467,8 @@ class BaseExperimentConfig:
         metadata={"help": "Path to the tokenizer."},
     )
 
-    train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
-    valid_dataset: DatasetConfig | None = field(default=None)
+    train_dataset: TrainDatasetConfig = field(default_factory=TrainDatasetConfig)
+    valid_dataset: ValidDatasetConfig | None = field(default=None)
 
     saver: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)

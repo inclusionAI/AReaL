@@ -37,7 +37,6 @@ model:
 
 train_dataset:
   batch_size: 128
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: BUAADreamer/clevr_count_70k
@@ -45,7 +44,6 @@ train_dataset:
 
 valid_dataset:
   batch_size: 128
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: BUAADreamer/clevr_count_70k
