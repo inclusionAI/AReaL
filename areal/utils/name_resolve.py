@@ -140,7 +140,7 @@ class NameRecordRepository:
 
     def watch_names(
         self,
-        names: list,
+        names: list[str],
         call_back: Callable,
         poll_frequency=15,
         wait_timeout=300,
