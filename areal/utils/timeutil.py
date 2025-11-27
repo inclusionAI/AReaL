@@ -3,7 +3,6 @@ import math
 import threading
 from abc import ABC
 from datetime import datetime
-from typing import List
 
 import torch
 import torch.distributed as dist
@@ -202,7 +201,6 @@ class Scheduler(ABC):
 
 @dataclasses.dataclass
 class ConstantScheduler(Scheduler):
-
     def _get(self, *args, **kwargs) -> float:
         return self.init_value
 
@@ -244,7 +242,7 @@ class CosineDecayScheduler(Scheduler):
 
 @dataclasses.dataclass
 class ChainedScheduler:
-    schedulers: List[Scheduler]
+    schedulers: list[Scheduler]
 
     @property
     def total_iters(self):
@@ -268,7 +266,7 @@ class ChainedScheduler:
                 raise ValueError(
                     f"Values should be consecutive between "
                     f"the {i}-th ({type(self.schedulers[i])}) and "
-                    f"the {i+1}-th {type(self.schedulers[i+1])} schedulers! "
+                    f"the {i + 1}-th {type(self.schedulers[i + 1])} schedulers! "
                     f"End value is {self.schedulers[i].final_value} and the "
                     f"next init value is {self.schedulers[i + 1].get(0)}."
                 )

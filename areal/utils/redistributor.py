@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -14,13 +14,13 @@ from areal.utils.datapack import ffd_allocate
 
 @dataclass
 class RedistributedData:
-    all_data: List[Dict[str, Any]]
-    data: Dict[str, Any]
+    all_data: list[dict[str, Any]]
+    data: dict[str, Any]
     rank: int
-    group_indices: List[List[int]]
+    group_indices: list[list[int]]
 
 
-def _slice_tensor_dict(data: Dict[str, Any], start: int, end: int) -> Dict[str, Any]:
+def _slice_tensor_dict(data: dict[str, Any], start: int, end: int) -> dict[str, Any]:
     """Slices tensors in a dictionary along the first dimension."""
     sliced_data = {}
     batch_size = -1
@@ -35,7 +35,7 @@ def _slice_tensor_dict(data: Dict[str, Any], start: int, end: int) -> Dict[str, 
 
 
 def redistribute(
-    data: Dict[str, Any], granularity: int = 1, group=None
+    data: dict[str, Any], granularity: int = 1, group=None
 ) -> RedistributedData:
     """Redistribute a batch across a process group.
 
@@ -59,7 +59,7 @@ def redistribute(
 
     # Remove pad positions
     for d in all_data:
-        l = d["attention_mask"].sum(-1).max().item()
+        _length = d["attention_mask"].sum(-1).max().item()
         attn_mask_shape = d["attention_mask"].shape
         for k, v in d.items():
             if (
@@ -67,7 +67,7 @@ def redistribute(
                 and len(v.shape) >= 2
                 and v.shape[:2] == attn_mask_shape[:2]
             ):
-                d[k] = v[:, :l]
+                d[k] = v[:, :_length]
 
     # No capacity limit leads to balanced partition across this group
     group_indices = ffd_allocate(

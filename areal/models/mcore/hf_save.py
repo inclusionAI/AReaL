@@ -3,13 +3,11 @@ import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import numpy as np
 import torch
 import torch.distributed as dist
 from mbridge.core import Bridge
-from mbridge.core.bridge import Bridge
 from mbridge.core.util import unwrap_model
 from megatron.core import parallel_state as mpu
 from safetensors.torch import save_file
@@ -51,7 +49,7 @@ def copy_hf_configs(src_model_dir, dst_model_dir):
                 logger.info(f"copied {file} from {src_model_dir} to {dst_model_dir}")
 
 
-def split_state_dict_into_shards(state_dict: Dict, n_shards: int) -> List[Dict]:
+def split_state_dict_into_shards(state_dict: dict, n_shards: int) -> list[dict]:
     if n_shards == 1:
         return [state_dict]
 
@@ -78,7 +76,7 @@ class McoreDistributedWeightSpec:
     param: torch.Tensor
     local_name: str
     global_name: str
-    local_shape: List[int]
+    local_shape: list[int]
     dtype: str
     tensor_model_parallel: bool
     pp_rank: int
@@ -98,9 +96,9 @@ def save_weights_to_hf_with_mbridge_fast(
     bridge: Bridge,
     models: list,
     weights_path: str,
-    base_model_path: Optional[str] = None,
+    base_model_path: str | None = None,
     max_shard_size_byte: int = int(3e9),
-    max_workers: Optional[int] = None,
+    max_workers: int | None = None,
 ):
     # 1. Prepare some global metadata required for saving the model.
     models = [unwrap_model(model) for model in models]

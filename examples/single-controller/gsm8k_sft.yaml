@@ -1,8 +1,7 @@
-experiment_name: gsm8k-sft-megatron
+experiment_name: gsm8k-sft
 trial_name: trial0
 
 seed: 1
-enable_offload: false
 total_train_epochs: 1
 tokenizer_path: ${model.path}
 
@@ -14,7 +13,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: d2p2t2
+allocation_mode: d8p1t1
 
 model:
   experiment_name: ${experiment_name}
@@ -34,9 +33,15 @@ model:
     eps: 1e-5
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
+  scheduling_spec:
+    - type: worker
+      port_count: 2
+      gpu: 1
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 train_dataset:
   batch_size: 128
+  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
@@ -44,6 +49,7 @@ train_dataset:
 
 valid_dataset:
   batch_size: 128
+  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
@@ -71,8 +77,8 @@ evaluator:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  freq_epochs: 1
-  freq_steps: null
+  freq_epochs: null
+  freq_steps: 1
   freq_secs: null
 
 stats_logger:
@@ -81,9 +87,3 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
-
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768

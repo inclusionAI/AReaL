@@ -7,7 +7,8 @@ import shutil
 import threading
 import time
 import uuid
-from typing import TYPE_CHECKING, Callable, List, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import ray
 
@@ -37,7 +38,6 @@ class NameEntryNotFoundError(Exception):
 
 
 class NameRecordRepository:
-
     def __del__(self):
         try:
             self.reset()
@@ -140,7 +140,7 @@ class NameRecordRepository:
 
     def watch_names(
         self,
-        names: List,
+        names: list[str],
         call_back: Callable,
         poll_frequency=15,
         wait_timeout=300,
@@ -280,7 +280,6 @@ class MemoryNameRecordRepository(NameRecordRepository):
 
 
 class NfsNameRecordRepository(NameRecordRepository):
-
     def __init__(self, record_root="", **kwargs):
         self.__to_delete = set()
         self.record_root = record_root
@@ -288,7 +287,7 @@ class NfsNameRecordRepository(NameRecordRepository):
     def __dir_path(self, name):
         if not self.record_root:
             raise RuntimeError(
-                f"The `record_root` of NfsNameRecordRepository is not properly reconfigured."
+                "The `record_root` of NfsNameRecordRepository is not properly reconfigured."
             )
         return os.path.join(self.record_root, name)
 
@@ -355,14 +354,14 @@ class NfsNameRecordRepository(NameRecordRepository):
         for _ in range(100):
             # HACK: dealing with the possible OSError: Stale file handle
             try:
-                with open(path, "r") as f:
+                with open(path) as f:
                     return f.read().strip()
             except OSError as e:
                 if e.errno == 116:
                     time.sleep(5e-3)
                     continue
                 raise e
-        raise RuntimeError("Failed to read value for %s" % name)
+        raise RuntimeError(f"Failed to read value for {name}")
 
     def get_subtree(self, name_root):
         dir_path = self.__dir_path(name_root)
@@ -403,7 +402,7 @@ class NfsNameRecordRepository(NameRecordRepository):
         for name in list(self.__to_delete):
             try:
                 self.delete(name)
-            except:
+            except Exception:
                 pass
         self.__to_delete = set()
 
@@ -420,9 +419,9 @@ class Etcd3NameRecordRepository(NameRecordRepository):
     @dataclasses.dataclass
     class _Entry:
         value: str
-        lease_id: Optional[int] = None
-        keepalive_ttl: Optional[int] = None
-        keeper: Optional[timeutil.FrequencyControl] = None
+        lease_id: int | None = None
+        keepalive_ttl: int | None = None
+        keeper: timeutil.FrequencyControl | None = None
 
     def __init__(self, host=None, port=None, user=None, password=None, **kwargs):
         """Initialize the etcd3 name record repository.
@@ -707,7 +706,7 @@ class Etcd3NameRecordRepository(NameRecordRepository):
 
     def watch_names(
         self,
-        names: List,
+        names: list[str],
         call_back: Callable,
         poll_frequency=15,
         wait_timeout=300,
@@ -785,7 +784,7 @@ class DistributedKVStore:
         self.lease_store = {}  # key -> lease_id
         self.lease_counter = 0
 
-    def put(self, key: str, value: str, lease_id: Optional[int] = None):
+    def put(self, key: str, value: str, lease_id: int | None = None):
         """Store a key-value pair with optional lease."""
         self.store[key] = value
         if lease_id is not None:
@@ -887,9 +886,9 @@ class RayNameResolveRepository:
     @dataclasses.dataclass
     class _Entry:
         value: str
-        lease_id: Optional[int] = None
-        keepalive_ttl: Optional[int] = None
-        keeper: Optional[timeutil.FrequencyControl] = None
+        lease_id: int | None = None
+        keepalive_ttl: int | None = None
+        keeper: timeutil.FrequencyControl | None = None
 
     def __init__(self, actor_name: str = "distributed_kv_store", **kwargs):
         """Initialize Ray-based name record repository.
@@ -943,7 +942,7 @@ class RayNameResolveRepository:
         name: str,
         value: str,
         delete_on_exit: bool = True,
-        keepalive_ttl: Optional[int] = None,
+        keepalive_ttl: int | None = None,
         replace: bool = False,
     ):
         """Add a key-value pair to the distributed store.
@@ -1089,9 +1088,7 @@ class RayNameResolveRepository:
             keys = [key for key, value in pairs]
             return sorted(keys)
 
-    def wait(
-        self, name: str, timeout: Optional[float] = None, poll_frequency: float = 1
-    ):
+    def wait(self, name: str, timeout: float | None = None, poll_frequency: float = 1):
         """Wait until a name appears.
 
         Raises:
@@ -1132,7 +1129,7 @@ class RayNameResolveRepository:
 
     def watch_names(
         self,
-        names: List[str],
+        names: list[str],
         call_back: Callable,
         poll_frequency: float = 15,
         wait_timeout: float = 300,
@@ -1238,7 +1235,17 @@ watch_names = DEFAULT_REPOSITORY.watch_names
 
 def reconfigure(config: "NameResolveConfig"):
     global DEFAULT_REPOSITORY
-    global add, add_subentry, delete, clear_subtree, get, get_subtree, find_subtree, wait, reset, watch_names
+    global \
+        add, \
+        add_subentry, \
+        delete, \
+        clear_subtree, \
+        get, \
+        get_subtree, \
+        find_subtree, \
+        wait, \
+        reset, \
+        watch_names
     DEFAULT_REPOSITORY = make_repository(config)
     add = DEFAULT_REPOSITORY.add
     add_subentry = DEFAULT_REPOSITORY.add_subentry

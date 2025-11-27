@@ -12,7 +12,7 @@ from areal.utils.network import find_free_ports
 
 
 def assert_tensor_container_close(x1, x2):
-    assert type(x1) == type(x2), (type(x1), type(x2))
+    assert type(x1) is type(x2), (type(x1), type(x2))
     if torch.is_tensor(x1):
         assert_close(x1, x2)
         return
