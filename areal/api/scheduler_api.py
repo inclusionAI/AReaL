@@ -156,6 +156,19 @@ class Scheduler(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    async def set_worker_env(self, worker_id: str, env: dict[str, str]) -> None:
+        """Set environment variables on a worker before engine creation.
+
+        Parameters
+        ----------
+        worker_id : str
+            ID of the worker to configure (e.g., "rollout/0")
+        env : dict[str, str]
+            Mapping of environment variable names to their values
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     def call_engine(self, worker_id: str, method: str, *args, **kwargs) -> Any:
         """Call a method on an engine instance running on a worker (data plane operation).
 

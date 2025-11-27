@@ -1,4 +1,5 @@
 import argparse
+import os
 import traceback
 from concurrent.futures import Future
 
@@ -69,6 +70,42 @@ def configure():
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
+@app.route("/set_env", methods=["POST"])
+def set_env():
+    """Set environment variables for the worker process."""
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON in request body"}), 400
+
+        env_payload = data.get("env")
+        if env_payload is None:
+            return jsonify({"error": "Missing 'env' field in request"}), 400
+        if not isinstance(env_payload, dict):
+            return jsonify({"error": "'env' must be a dictionary"}), 400
+
+        for key, value in env_payload.items():
+            if not isinstance(key, str):
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                f"Environment variable name must be str, got {type(key)}"
+                            )
+                        }
+                    ),
+                    400,
+                )
+            os.environ[key] = str(value)
+            logger.info(f"Set {key}={value}")
+
+        return jsonify({"status": "success"})
+
+    except Exception as e:
+        logger.error(f"Unexpected error in set_env: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
 @app.route("/create_engine", methods=["POST"])
 def create_engine():
     """
@@ -78,8 +115,14 @@ def create_engine():
     {
         "engine": "areal.engine.ppo.actor.FSDPPPOActor",  # Import path
         "init_args": [...],  # Positional arguments
-        "init_kwargs": {...}  # Keyword arguments
+        "init_kwargs": {
+            "config": ...,  # Engine config
+        }
     }
+
+    Distributed training environment variables (RANK, WORLD_SIZE, MASTER_ADDR,
+    MASTER_PORT, LOCAL_RANK, etc.) should be configured via the `/set_env`
+    endpoint before invoking this endpoint.
     """
     global _engine
 

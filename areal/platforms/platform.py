@@ -81,7 +81,7 @@ class Platform:
             return getattr(device, key)
         else:
             logger.warning(
-                "Current platform %s does not have '%s'" " attribute.",
+                "Current platform %s does not have '%s' attribute.",
                 self.device_type,
                 key,
             )

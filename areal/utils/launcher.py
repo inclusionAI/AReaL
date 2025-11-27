@@ -42,9 +42,11 @@ BASE_ENVIRONS = {
 }
 NA132_ENVIRONS = {
     "NCCL_SOCKET_IFNAME": "bond0",
+    "NCCL_IB_DISABLE": "0",
+    "NCCL_NET": "IB",
     "NCCL_NET_PLUGIN": "",
     "NCCL_IB_GID_INDEX": "3",
-    "NCCL_IB_TIMEOUT": "2",
+    "NCCL_IB_TIMEOUT": "22",
     "NCCL_IB_RETRY_CNT": "7",
     "NCCL_IB_SL": "5",
     "NCCL_IB_TC": "136",
@@ -52,7 +54,6 @@ NA132_ENVIRONS = {
     "NCCL_IB_QPS_PER_CONNECTION": "8",
     "NCCL_SET_THREAD_NAME": "1",
     "NCCL_DEBUG": "WARN",
-    "NCCL_DEBUG_SUBSYS": "INIT,TUNING,GRAPH",
 }
 
 

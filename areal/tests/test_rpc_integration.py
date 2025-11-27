@@ -129,3 +129,11 @@ class TestSyncRPCServer:
         health_resp = client.get("/health")
         assert health_resp.status_code == 200
         assert health_resp.get_json()["engine_initialized"] is True
+
+    def test_set_env_endpoint(self, client):
+        resp = client.post("/set_env", json={"env": {"RANK": 0, "WORLD_SIZE": 1}})
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "success"
+
+        bad_resp = client.post("/set_env", json={})
+        assert bad_resp.status_code == 400

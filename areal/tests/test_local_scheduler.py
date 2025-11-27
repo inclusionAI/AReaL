@@ -1257,6 +1257,39 @@ class TestLogFileHandling:
         assert "Line 3" in tail
 
 
+class TestSetEnv:
+    """Test configuring worker environment variables."""
+
+    def test_set_env_success(self, scheduler, tmp_path):
+        worker = create_worker_info(log_file=str(tmp_path / "test.log"))
+        scheduler._workers["test"] = [worker]
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.__aenter__.return_value = mock_response
+        mock_response.__aexit__.return_value = None
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.__aexit__.return_value = None
+        mock_session.post = Mock(return_value=mock_response)
+
+        with patch(
+            "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session
+        ):
+            asyncio.run(
+                scheduler.set_worker_env("test/0", {"RANK": "0", "WORLD_SIZE": "1"})
+            )
+
+            mock_session.post.assert_called_once()
+
+    def test_set_env_worker_not_found(self, scheduler):
+        with pytest.raises(WorkerNotFoundError):
+            asyncio.run(
+                scheduler.set_worker_env("missing/0", {"RANK": "0", "WORLD_SIZE": "1"})
+            )
+
+
 class TestEngineCreation:
     """Test engine creation on workers."""
 
