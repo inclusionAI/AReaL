@@ -361,7 +361,7 @@ class NfsNameRecordRepository(NameRecordRepository):
                     time.sleep(5e-3)
                     continue
                 raise e
-        raise RuntimeError("Failed to read value for name")
+        raise RuntimeError(f"Failed to read value for {name}")
 
     def get_subtree(self, name_root):
         dir_path = self.__dir_path(name_root)
