@@ -118,7 +118,6 @@ class LocalScheduler(Scheduler):
         self._workers: dict[str, list[WorkerInfo]] = {}
         self._gpu_counter = 0
         self._allocated_ports = set()
-        self._http_client = requests.Session()
 
         logger.info(
             f"LocalScheduler initialized with GPU devices: {self.gpu_devices}, "
@@ -471,7 +470,7 @@ class LocalScheduler(Scheduler):
         url = f"http://{worker_info.worker.ip}:{port}/health"
 
         try:
-            response = self._http_client.get(url, timeout=2.0)
+            response = requests.get(url, timeout=2.0)
             return response.status_code == 200
         except Exception:
             return False
@@ -485,7 +484,7 @@ class LocalScheduler(Scheduler):
         url = f"http://{worker_info.worker.ip}:{port}/configure"
 
         try:
-            response = self._http_client.post(
+            response = requests.post(
                 url,
                 data=orjson.dumps(
                     serialize_value(
@@ -800,6 +799,7 @@ class LocalScheduler(Scheduler):
         worker_id: str,
         method: str,
         *args,
+        http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
         **kwargs,
@@ -871,10 +871,10 @@ class LocalScheduler(Scheduler):
                     f"Calling method '{method}' on worker '{worker_id}' (attempt {attempt})"
                 )
 
-                response = self._http_client.post(
+                response = requests.post(
                     url,
                     json=payload,
-                    timeout=7200.0,  # 2 hours for long-running operations
+                    timeout=http_timeout,
                 )
 
                 result, should_retry, error_msg = self._handle_call_response(
@@ -915,6 +915,7 @@ class LocalScheduler(Scheduler):
         worker_id: str,
         method: str,
         *args,
+        http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
         **kwargs,
@@ -985,16 +986,18 @@ class LocalScheduler(Scheduler):
                     f"Async calling method '{method}' on worker '{worker_id}' (attempt {attempt})"
                 )
 
-                timeout = aiohttp.ClientTimeout(total=7200.0)
+                timeo = aiohttp.ClientTimeout(
+                    total=http_timeout, sock_connect=http_timeout, connect=http_timeout
+                )
                 async with aiohttp.ClientSession(
-                    timeout=timeout,
+                    timeout=timeo,
                     read_bufsize=1024 * 1024 * 10,
                     connector=get_default_connector(),
                 ) as session:
                     async with session.post(
                         url,
-                        data=orjson.dumps(payload),
-                        headers={"Content-Type": "application/json"},
+                        json=payload,
+                        timeout=timeo,
                     ) as response:
                         # Handle response inline since aiohttp json() is async
                         if response.status == 200:
@@ -1135,9 +1138,5 @@ class LocalScheduler(Scheduler):
     def __del__(self):
         try:
             self.delete_workers()
-        except Exception:
-            pass
-        try:
-            self._http_client.close()
         except Exception:
             pass

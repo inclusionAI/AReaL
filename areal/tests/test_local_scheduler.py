@@ -177,14 +177,6 @@ class TestLocalSchedulerInitialization:
         assert log_dir.exists()
         assert scheduler.log_dir == log_dir
 
-    def test_init_creates_http_clients(self, tmp_path):
-        """Should initialize both sync and async HTTP clients."""
-        scheduler = LocalScheduler(
-            log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
-        )
-
-        assert isinstance(scheduler._http_client, requests.Session)
-
 
 class TestGPUAllocation:
     """Test GPU allocation strategies."""
@@ -915,7 +907,7 @@ class TestWorkerHealthCheck:
         worker_info = create_worker_info(log_file=str(tmp_path / "test.log"))
         mock_response = create_mock_http_response(status_code=status_code)
 
-        with patch.object(scheduler._http_client, "get", return_value=mock_response):
+        with patch.object(requests, "get", return_value=mock_response):
             assert scheduler._is_worker_ready(worker_info) is expected
 
     def test_is_worker_ready_connection_error(self, scheduler, tmp_path):
@@ -923,7 +915,7 @@ class TestWorkerHealthCheck:
         worker_info = create_worker_info(log_file=str(tmp_path / "test.log"))
 
         with patch.object(
-            scheduler._http_client,
+            requests,
             "get",
             side_effect=requests.exceptions.ConnectionError("Connection refused"),
         ):
@@ -1504,7 +1496,7 @@ class TestEngineMethodCalls:
             status_code=200, json_data={"result": 42}
         )
 
-        with patch.object(scheduler._http_client, "post", return_value=mock_response):
+        with patch.object(requests, "post", return_value=mock_response):
             result = scheduler.call_engine("test/0", "compute", arg1=10, arg2=20)
 
             assert result == 42
@@ -1535,7 +1527,7 @@ class TestEngineMethodCalls:
             status_code=400, json_data={"detail": "Method 'nonexistent' not found"}
         )
 
-        with patch.object(scheduler._http_client, "post", return_value=mock_response):
+        with patch.object(requests, "post", return_value=mock_response):
             with pytest.raises(EngineCallError) as exc_info:
                 scheduler.call_engine("test/0", "nonexistent")
 
@@ -1554,7 +1546,7 @@ class TestEngineMethodCalls:
         )
 
         with patch.object(
-            scheduler._http_client,
+            requests,
             "post",
             side_effect=[mock_response_503, mock_response_200],
         ):
@@ -1571,7 +1563,7 @@ class TestEngineMethodCalls:
 
         mock_response = create_mock_http_response(status_code=503)
 
-        with patch.object(scheduler._http_client, "post", return_value=mock_response):
+        with patch.object(requests, "post", return_value=mock_response):
             with pytest.raises(EngineCallError) as exc_info:
                 scheduler.call_engine("test/0", "method", max_retries=3)
 
@@ -1588,7 +1580,7 @@ class TestEngineMethodCalls:
 
         mock_response = create_mock_http_response(status_code=503)
 
-        with patch.object(scheduler._http_client, "post", return_value=mock_response):
+        with patch.object(requests, "post", return_value=mock_response):
             try:
                 scheduler.call_engine(
                     "test/0", "method", max_retries=3, retry_delay=1.0
@@ -1717,13 +1709,6 @@ class TestSchedulerCleanup:
             scheduler.__del__()
 
             mock_delete.assert_called_once()
-
-    def test_destructor_closes_http_clients(self, scheduler):
-        """Should close HTTP clients when scheduler is destroyed."""
-        with patch.object(scheduler._http_client, "close") as mock_close:
-            scheduler.__del__()
-
-            mock_close.assert_called_once()
 
     def test_destructor_handles_errors_gracefully(self, scheduler):
         """Should handle errors gracefully in destructor."""

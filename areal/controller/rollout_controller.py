@@ -171,7 +171,7 @@ class RolloutController:
         if self._dispatcher is not None:
             self._dispatcher.destroy()
 
-        self._collective_rpc("destroy")
+        self._collective_rpc("destroy", http_timeout=60.0)
 
         # Delete workers via scheduler
         try:
@@ -240,12 +240,13 @@ class RolloutController:
             # NOTE: No need to call `on_rollout_submitted` here.
             # This function will be passed to `BatchTaskDispather` where
             # `on_rollout_submitted` will be called upon dispatching
-            self.scheduler.call_engine(
+            await self.scheduler.async_call_engine(
                 worker.id,
                 "submit",
                 data=pending_task.data,
                 workflow=pending_task.workflow,
                 workflow_kwargs=pending_task.workflow_kwargs,
+                http_timeout=60.0,
             )
 
             task_id = pending_task.task_id
@@ -267,6 +268,7 @@ class RolloutController:
                         count=1,
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
+                        http_timeout=30.0,
                     )
 
                 # TimeourError will be catched below
@@ -453,7 +455,7 @@ class RolloutController:
     def set_version(self, version: int) -> None:
         with self._version_lock:
             self._version = version
-            self._collective_rpc("set_version", version=version)
+            self._collective_rpc("set_version", version=version, http_timeout=60.0)
 
     def get_version(self) -> int:
         with self._version_lock:
@@ -461,14 +463,14 @@ class RolloutController:
 
     def pause(self):
         self.dispatcher.pause()
-        self._collective_rpc("pause")
+        self._collective_rpc("pause", http_timeout=60.0)
 
     def resume(self):
-        self._collective_rpc("resume")
+        self._collective_rpc("resume", http_timeout=60.0)
         self.dispatcher.resume()
 
     def export_stats(self) -> dict[str, float]:
-        all_raw_stats = asyncio.run(self._collective_rpc_async(method="export_stats"))
+        all_raw_stats = self._collective_rpc(method="export_stats", http_timeout=60.0)
         stats = defaultdict(float)
         counts = defaultdict(int)
 

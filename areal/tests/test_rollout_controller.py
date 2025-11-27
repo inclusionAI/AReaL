@@ -73,6 +73,20 @@ class MockScheduler:
         self.call_count += 1
         if method == "agenerate":
             return Mock()
+        # Handle submit method - add a result to pending results
+        elif method == "submit":
+            if worker_id not in self._pending_results:
+                self._pending_results[worker_id] = []
+            # Simulate a successful rollout result
+            result = {
+                "input_ids": torch.randint(0, 100, (1, 10)),
+                "attention_mask": torch.ones(1, 10, dtype=torch.bool),
+                "loss_mask": torch.tensor(
+                    [0] * 5 + [1] * 5, dtype=torch.bool
+                ).unsqueeze(0),
+                "rewards": torch.randn(1),
+            }
+            self._pending_results[worker_id].append(result)
         elif method == "wait":
             # Return a result from pending results if available
             count = kwargs["count"]
@@ -952,6 +966,7 @@ def test_rollout_controller_integration(tmp_path, model_path):
             max_head_offpolicyness=1,
             max_concurrent_rollouts=5,
             setup_timeout=300,
+            enable_rollout_tracing=True,
         ),
         scheduler=scheduler,
     )
