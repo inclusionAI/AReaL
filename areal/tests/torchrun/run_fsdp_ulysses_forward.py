@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -51,7 +51,7 @@ def mock_input(
     batch_size=128,
     min_seqlen=1,
     max_seqlen=1024,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -128,9 +128,8 @@ def test_ulysses(model_type: str):
     logits_list = [torch.empty_like(logits) for _ in range(world_size)]
     dist.all_gather(logits_list, logits, group=dist.group.WORLD)
 
-    assert all(
-        torch.equal(logits, logits_list[0]) for logits in logits_list
-    ), "Logits should be the same across all model parallel ranks."
+    for logits in logits_list:
+        assert torch.equal(logits, logits_list[0])
 
     engine_golden.eval()
     logits_golden = engine_golden.forward(
@@ -155,16 +154,16 @@ def test_ulysses(model_type: str):
         masked_diff = diff.masked_fill(logits == 0, torch.finfo(logits.dtype).max)
         print(f"logits non-zero count: {torch.count_nonzero(logits)}")
         print(
-            f"diff < 10 count: {torch.count_nonzero(masked_diff < 10)}, {torch.count_nonzero(masked_diff < 10) * 100/non_zero_logits:.2f} percent."
+            f"diff < 10 count: {torch.count_nonzero(masked_diff < 10)}, {torch.count_nonzero(masked_diff < 10) * 100 / non_zero_logits:.2f} percent."
         )
         print(
-            f"diff < 1 count: {torch.count_nonzero(masked_diff < 1)}, {torch.count_nonzero(masked_diff < 1) * 100/non_zero_logits:.2f} percent."
+            f"diff < 1 count: {torch.count_nonzero(masked_diff < 1)}, {torch.count_nonzero(masked_diff < 1) * 100 / non_zero_logits:.2f} percent."
         )
         print(
-            f"diff < 0.1 count: {torch.count_nonzero(masked_diff < 0.1)}, {torch.count_nonzero(masked_diff < 0.1) * 100/non_zero_logits:.2f} percent."
+            f"diff < 0.1 count: {torch.count_nonzero(masked_diff < 0.1)}, {torch.count_nonzero(masked_diff < 0.1) * 100 / non_zero_logits:.2f} percent."
         )
         print(
-            f"diff < 0.01 count: {torch.count_nonzero(masked_diff < 0.01)}, {torch.count_nonzero(masked_diff < 0.01) * 100/non_zero_logits:.2f} percent."
+            f"diff < 0.01 count: {torch.count_nonzero(masked_diff < 0.01)}, {torch.count_nonzero(masked_diff < 0.01) * 100 / non_zero_logits:.2f} percent."
         )
         try:
             torch.testing.assert_close(

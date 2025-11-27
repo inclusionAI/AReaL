@@ -105,7 +105,11 @@ class DistributedBatchMemory(DistributedBatch):
         """
         total_size = self._get_total_size()
         if total_size % group_size != 0:
-            raise RuntimeError("tensor length must be devided by group_size")
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "Total size must be divisible by group_size",
+            )
 
         # Handle seqlen calculation for both tensor and scalar types
         if "seqlen" in self.dataset.keys():

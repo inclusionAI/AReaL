@@ -7,7 +7,7 @@ import torch.distributed as dist
 from torch.testing import assert_close
 
 from areal.api.cli_args import TrainEngineConfig
-from areal.engine.base_hf_engine import BaseHFEngine
+from areal.engine.fsdp_engine import FSDPEngine
 from areal.platforms import current_platform
 from areal.utils.data import concat_padded_tensors, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
@@ -72,7 +72,7 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
         init_from_scratch=True,
         optimizer=None,
     )
-    engine = BaseHFEngine(config)
+    engine = FSDPEngine(config)
     engine.create_process_group()
     engine.create_device_model()
     engine.initialized = True
@@ -239,7 +239,7 @@ def test_vlm_consistency(model_path):
         optimizer=None,
     )
 
-    engine = BaseHFEngine(config)
+    engine = FSDPEngine(config)
     engine.create_process_group()
     engine.create_device_model()
     engine.initialized = True

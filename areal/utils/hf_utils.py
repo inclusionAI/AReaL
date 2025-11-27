@@ -1,5 +1,4 @@
 from functools import lru_cache
-from typing import Optional, Tuple
 
 import transformers
 
@@ -12,7 +11,7 @@ logger = logging.getLogger("HF Utility")
 def load_hf_tokenizer(
     model_name_or_path: str,
     fast_tokenizer=True,
-    padding_side: Optional[str] = None,
+    padding_side: str | None = None,
 ) -> transformers.PreTrainedTokenizerFast:
     kwargs = {}
     if padding_side is not None:
@@ -33,8 +32,8 @@ def load_hf_tokenizer(
 def load_hf_processor_and_tokenizer(
     model_name_or_path: str,
     fast_tokenizer=True,
-    padding_side: Optional[str] = None,
-) -> Tuple["transformers.ProcessorMixin | None", transformers.PreTrainedTokenizerFast]:
+    padding_side: str | None = None,
+) -> tuple["transformers.ProcessorMixin | None", transformers.PreTrainedTokenizerFast]:
     """Load a tokenizer and processor from Hugging Face."""
     # NOTE: use the raw type annoation will trigger cuda initialization
     tokenizer = load_hf_tokenizer(model_name_or_path, fast_tokenizer, padding_side)
@@ -93,7 +92,7 @@ def load_hf_or_local_file(path: str) -> str:
     """
     path = str(path)
     if path.startswith("hf://") or path.startswith("hf-dataset://"):
-        repo_type = "dataset" if path.startswith("hf-dataset://") else "model"
+        # repo_type = "dataset" if path.startswith("hf-dataset://") else "model"
         hf_path = path.strip().split("://")[1]
         hf_org, hf_repo, filename = hf_path.split("/", 2)
         repo_id = f"{hf_org}/{hf_repo}"

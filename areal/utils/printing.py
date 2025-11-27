@@ -1,10 +1,7 @@
-from typing import Dict
-
 from tabulate import tabulate
 
 
-def tabulate_stats(data: Dict[str, float], col=4, floatfmt=".4e") -> str:
-
+def tabulate_stats(data: dict[str, float], col=4, floatfmt=".4e") -> str:
     items = list(data.items())
     # Calculate how many rows we'll need
     row_count = (len(items) + col - 1) // col
