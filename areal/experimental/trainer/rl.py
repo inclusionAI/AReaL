@@ -157,7 +157,7 @@ class PPOTrainer:
     def train(
         self,
         workflow: RolloutWorkflow,
-        eval_workflow: RolloutWorkflow,
+        eval_workflow: RolloutWorkflow | None = None,
         dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ):
         config = self.config
@@ -466,12 +466,12 @@ class PPOTrainer:
 
     def _evaluate(
         self,
-        eval_workflow: RolloutWorkflow,
+        eval_workflow: RolloutWorkflow | None,
         epoch: int,
         epoch_step: int,
         global_step: int,
     ):
-        if self.valid_dataloader is None:
+        if self.valid_dataloader is None or eval_workflow is None:
             return
         self.evaluator.evaluate(
             functools.partial(self._evaluate_fn, eval_workflow=eval_workflow),
