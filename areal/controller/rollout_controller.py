@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any
 
-from dataclass import asdict
+from dataclasses import asdict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
