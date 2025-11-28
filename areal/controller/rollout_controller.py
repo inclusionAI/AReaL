@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any
 
+from dataclass import asdict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import InferenceEngineConfig
+from areal.api.cli_args import InferenceEngineConfig, SchedulingSpec
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Job, Scheduler, Worker
@@ -20,6 +22,7 @@ from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,7 @@ class _RemoteRolloutTaskInput:
     data: dict[str, Any]
     workflow: str
     workflow_kwargs: dict[str, Any]
+    should_accept_fn: str
     task_id: int | None = None
 
 
@@ -84,14 +88,19 @@ class RolloutController:
         # Schedule inference engines in the granularity of instance sizes,
         # usually TP x PP.
         self._worker_role = role
-        self.config.scheduling_spec[0].cpu *= alloc_mode.gen_instance_size
-        self.config.scheduling_spec[0].mem *= alloc_mode.gen_instance_size
-        self.config.scheduling_spec[0].gpu = alloc_mode.gen_instance_size
+
+        # The first element of `self.config.scheduling_spec` is the resource spec
+        # of workers, aka the RPC server process. Since a worker exactly matches
+        # to a single engine instance in the local environment, we can dirrectly
+        # use the spec of engines  as the spec of workers here. Engine scheduling
+        # specs are ignored.
+        sch_spec = SchedulingSpec(**asdict(self.config.scheduling_spec[0]))
+        sch_spec.cpu *= alloc_mode.gen_instance_size
+        sch_spec.mem *= alloc_mode.gen_instance_size
+        sch_spec.gpu = alloc_mode.gen_instance_size
         job = Job(
             replicas=alloc_mode.gen.dp_size,
-            tasks=[
-                self.config.scheduling_spec[0] for _ in range(alloc_mode.gen.dp_size)
-            ],
+            tasks=[sch_spec for _ in range(alloc_mode.gen.dp_size)],
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
         )
@@ -223,6 +232,22 @@ class RolloutController:
         else:
             raise ValueError(f"Invalid workflow type: {type(workflow)}")
 
+    def _resolve_should_accept_fn(
+        self, should_accept_fn: Callable[[dict[str, Any]], bool] | str | None
+    ):
+        if callable(should_accept_fn):
+            raise RuntimeError(
+                "If given, `should_accept_fn` must be an importable string path, e.g., 'my_module.filter_func'."
+            )
+        if should_accept_fn is not None:
+            try:
+                import_from_string(should_accept_fn)
+            except Exception:
+                raise RuntimeError(
+                    f"Failed to import `should_accept_fn` from string path: {should_accept_fn}"
+                )
+        return should_accept_fn
+
     def _rollout_stats(self) -> str:
         stats = self._staleness_manager.get_stats()
         return (
@@ -246,6 +271,7 @@ class RolloutController:
                 data=pending_task.data,
                 workflow=pending_task.workflow,
                 workflow_kwargs=pending_task.workflow_kwargs,
+                should_accept_fn=pending_task.should_accept_fn,
                 http_timeout=60.0,
             )
 
@@ -312,8 +338,10 @@ class RolloutController:
         data: dict[str, Any],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: str | None = None,
     ) -> None:
         workflow_str = self._resolve_workflow_str(workflow)
+        should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         if workflow_kwargs is None:
             workflow_kwargs = {}
 
@@ -324,6 +352,7 @@ class RolloutController:
             data=data,
             workflow=workflow_str,
             workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
             # NOTE: For now we don't trace tasks at the controller level
             task_id=None,
         )
@@ -347,6 +376,7 @@ class RolloutController:
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: str | None = None,
     ) -> dict[str, Any]:
         perf_tracer.instant(
             "rollout_controller.rollout_batch",
@@ -358,6 +388,7 @@ class RolloutController:
                 data=item,
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
+                should_accept_fn=should_accept_fn,
             )
         results = self.wait(count=len(data))
         # Concatenate into batch tensor format
@@ -373,6 +404,7 @@ class RolloutController:
         dataloader: StatefulDataLoader,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: str | None = None,
     ):
         """Prepare a batch with controlled staleness.
 
@@ -393,6 +425,7 @@ class RolloutController:
                         data=item,
                         workflow=workflow_str,
                         workflow_kwargs=workflow_kwargs,
+                        should_accept_fn=should_accept_fn,
                         task_id=None,
                     )
 
