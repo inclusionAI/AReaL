@@ -16,6 +16,10 @@ from transformers import PreTrainedTokenizerFast
 
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, pkg_version
+from areal.utils.constants import (
+    PROX_LOGP_METHOD_RECOMPUTE,
+    PROX_LOGP_METHODS_ALL,
+)
 from areal.utils.pkg_version import is_version_less
 
 uvloop.install()
@@ -637,6 +641,18 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Level at which to compute importance sampling ratios. 'token': per-token ratios (standard PPO). 'sequence': sequence-level geometric mean of per-token ratios (GSPO).",
             "choices": ["token", "sequence"],
+        },
+    )
+    # Proximal Log-Probability Computation Method
+    prox_logp_method: str = field(
+        default=PROX_LOGP_METHOD_RECOMPUTE,
+        metadata={
+            "help": "Method for computing proximal policy log-probabilities in decoupled PPO. "
+            "Only effective when use_decoupled_loss=True. Options: "
+            "'recompute' (default): Standard decoupled PPO, recompute proximal policy via forward pass. "
+            "'loglinear': Use log-linear interpolation to approximate proximal policy (skip forward pass). "
+            "'metrics': Like 'recompute', but also compute approximation metrics for evaluation.",
+            "choices": PROX_LOGP_METHODS_ALL,
         },
     )
     # Advanced Options
