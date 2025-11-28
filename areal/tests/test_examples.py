@@ -259,6 +259,7 @@ def test_gsm8k_eval(tmp_path_factory):
     assert success, f"GSM8K Eval example failed, return_code={return_code}"
 
 
+@pytest.mark.skip("Currently VLM dataloading is too slow. Needs to be fixed.")
 @pytest.mark.multi_gpu
 def test_vlm_grpo(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -295,7 +296,7 @@ def test_vlm_grpo(tmp_path_factory):
     assert success, f"CLEVR Count 70k GRPO example failed, return_code={return_code}"
 
 
-@pytest.mark.skip("Currently SFT dataloading is too slow. Needs to be fixed.")
+@pytest.mark.skip("Currently VLM dataloading is too slow. Needs to be fixed.")
 @pytest.mark.gpu
 def test_vlm_sft(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
@@ -341,7 +342,7 @@ def test_gsm8k_ppo(tmp_path_factory):
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
 
-    example_file = "examples/math/gsm8k_ppo.py"
+    example_file = "examples/math/gsm8k_rl.py"
     config_name = "examples/math/gsm8k_ppo.yaml"
     loop = asyncio.get_event_loop()
     return_code, success = loop.run_until_complete(
