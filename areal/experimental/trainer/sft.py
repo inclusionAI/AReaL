@@ -312,7 +312,7 @@ class SFTTrainer:
 
     def _export_and_commit_stats(self, epoch: int, epoch_step: int, global_step: int):
         # Upload statistics to the logger (e.g., wandb)
-        stats = stats_tracker.export_all(reduce_group=self.actor.data_parallel_group)
+        stats = self.actor.export_stats()
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
         dist.barrier(device_ids=[self.actor.device.index])
