@@ -160,6 +160,10 @@ class GenerationHyperparameters:
             )
         },
     )
+    lora_name: str = field(
+        default="",
+        metadata={"help": "Lora name to be used for this generation."},
+    )
 
     def new(self, **kwargs):
         args = asdict(self)
@@ -732,6 +736,8 @@ class vLLMConfig:
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
+    enable_lora: bool = False
+    lora_modules: str = ""
 
     @staticmethod
     def build_args(
@@ -756,6 +762,18 @@ class vLLMConfig:
             args["port"] = port
         if host is not None:
             args["host"] = host
+        # handle lora modules separately
+        lm = args.get("lora_modules")
+        if lm:
+            if isinstance(lm, str):
+                lm = [lm]
+            if isinstance(lm, (list, tuple)):
+                try:
+                    args["lora_modules"] = [
+                        json.dumps(json.loads(s), separators=(",", ":")) for s in lm
+                    ]
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON string in lora_modules: {e}") from e
         return args
 
     @staticmethod
@@ -1024,6 +1042,10 @@ class InferenceEngineConfig:
             "help": "The scheduling strategy of this TrainEngine, either separation or colocation. "
             "Currently only used by the RolloutController."
         },
+    )
+    use_lora: bool = field(
+        default=False,
+        metadata={"help": "Whether to use LoRA. Should be same as actors LORA option."},
     )
 
     def __post_init__(self):
