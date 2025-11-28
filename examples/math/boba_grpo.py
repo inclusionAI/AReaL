@@ -296,7 +296,7 @@ def main(args):
             category=Category.INSTR,
             args={"global_step": global_step},
         ):
-            stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+            stats = actor.export_stats()
             stats_logger.commit(epoch, step, global_step, stats)
 
         current_platform.synchronize()

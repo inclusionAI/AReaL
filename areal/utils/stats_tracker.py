@@ -210,6 +210,7 @@ class DistributedStatsTracker:
                 dist.all_reduce(value, group=reduce_group)
                 dist.all_reduce(cnt, group=reduce_group)
             result[key] = float(value / cnt)
+            result[key + "__count"] = int(cnt)
         else:
             raise ValueError(f"Unknown reduce type: {reduce_type}")
 

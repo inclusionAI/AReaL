@@ -164,7 +164,7 @@ def main(args):
             current_platform.synchronize()
             dist.barrier(group=engine.cpu_group)
 
-            stats = stats_tracker.export_all(reduce_group=mpu.get_data_parallel_group())
+            stats = engine.export_stats()
             stats_logger.commit(epoch, step, global_step, stats)
             global_step += 1
 
