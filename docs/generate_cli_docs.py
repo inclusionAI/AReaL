@@ -18,11 +18,11 @@ from typing import Any, Union, get_args, get_origin
 import mdformat
 from omegaconf import MISSING as OMEGACONF_MISSING
 
-import areal.api.cli_args as cli_args_module
-
 # Add the project root to the path so we can import areal
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+import areal.api.cli_args as cli_args_module  # noqa: E402
 
 
 def discover_dataclasses() -> dict[str, Any]:
