@@ -1074,6 +1074,29 @@ class InferenceEngineConfig:
 
 
 @dataclass
+class ScalingConfig:
+    """Configuration for dynamic scaling of inference/training servers."""
+
+    enable_scaling: bool = field(
+        default=False,
+        metadata={"help": "Whether scaling is enabled (True/False)."},
+    )
+
+    mode: str = field(
+        default="manual",
+        metadata={
+            "help": "Scaling mode — can be 'manual' or 'auto'.",
+            "choices": ["manual", "auto"],
+        },
+    )
+
+    scaling_controller_port: int = field(
+        default=8899,
+        metadata={"help": "HTTP port for the scale-up service endpoint."},
+    )
+
+
+@dataclass
 class _Timer:
     experiment_name: str = MISSING
     trial_name: str = MISSING
@@ -1522,6 +1545,8 @@ class BaseExperimentConfig:
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+
+    scaling: ScalingConfig = field(default_factory=ScalingConfig)
 
 
 @dataclass
