@@ -8,9 +8,10 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
-    DatasetConfig,
     SFTConfig,
+    TrainDatasetConfig,
     TrainEngineConfig,
+    ValidDatasetConfig,
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.engine.sft.lm_engine import FSDPLMEngine, MegatronLMEngine
@@ -222,7 +223,7 @@ class SFTTrainer:
     def _create_dataloader(
         self,
         dataset: Dataset,
-        dataset_config: DatasetConfig,
+        dataset_config: TrainDatasetConfig | ValidDatasetConfig,
         rank: int,
         world_size: int,
     ) -> StatefulDataLoader:
