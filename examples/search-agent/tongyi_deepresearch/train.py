@@ -21,6 +21,7 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
 from areal.experimental.trainer import PPOTrainer
 from areal.utils import logging, stats_tracker
+from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 
 try:  # Package-style relative import (works if executed via -m with package context)
@@ -175,8 +176,10 @@ def main(args):
         f"config.actor.group_size ({config.actor.group_size}) must equal config.n_trajs ({config.n_trajs})"
     )
 
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
+
     # Load dataset
-    train_dataset = get_search_dataset(config.train_dataset.path, tokenizer=None)
+    train_dataset = get_search_dataset(config.train_dataset.path, tokenizer=tokenizer)
 
     judge_engine = RemoteSGLangEngine(config.judge_engine)
     try:

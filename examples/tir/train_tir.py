@@ -6,6 +6,7 @@ from areal.dataset import get_custom_dataset
 from areal.experimental.trainer import PPOTrainer
 from areal.reward.math_parser import process_results
 from areal.utils import logging
+from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 
 from tir_workflow import TIRGRPOConfig, TIRWorkflow  # isort: skip
@@ -32,12 +33,14 @@ def main(args):
     logger.info(f"Model: {config.actor.path}")
     logger.info(f"Batch size: {config.train_dataset.batch_size}")
 
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
+
     # Load datasets
     train_dataset = get_custom_dataset(
-        split="train", dataset_config=config.train_dataset, tokenizer=None
+        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
     valid_dataset = get_custom_dataset(
-        split="test", dataset_config=config.valid_dataset, tokenizer=None
+        split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
     )
 
     # Create trainer

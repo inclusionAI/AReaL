@@ -39,12 +39,14 @@ def main(args):
     train_dataset = get_custom_dataset(
         split="train",
         dataset_config=config.train_dataset,
+        tokenizer=tokenizer,
         processor=processor,
     )
 
     valid_dataset = get_custom_dataset(
         split="test",
         dataset_config=config.valid_dataset,
+        tokenizer=tokenizer,
         processor=processor,
     )
 

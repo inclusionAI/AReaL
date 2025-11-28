@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.experimental.trainer import PPOTrainer
+from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 
 
@@ -39,9 +40,11 @@ class AgentRLConfig(GRPOConfig):
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
 
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
+
     # Load dataset
     train_dataset = get_custom_dataset(
-        split="train", dataset_config=config.train_dataset, tokenizer=None
+        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
 
     # Create trainer (no valid_dataset for this example)
