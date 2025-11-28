@@ -4,11 +4,10 @@ import asyncio
 import time
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from threading import Lock
 from typing import Any
 
-from dataclasses import asdict
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
