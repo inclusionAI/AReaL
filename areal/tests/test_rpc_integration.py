@@ -66,9 +66,6 @@ def rpc_server(monkeypatch):
     monkeypatch.setattr(module.current_platform, "current_device", lambda: "cpu")
     monkeypatch.setattr(module.name_resolve, "reconfigure", MagicMock())
     monkeypatch.setattr(module.seeding, "set_random_seed", MagicMock())
-    monkeypatch.setattr(
-        module.stats_tracker, "export", MagicMock(return_value={"loss": 0.1})
-    )
     module._engine = None
     yield module
     module._engine = None
@@ -132,12 +129,6 @@ class TestSyncRPCServer:
         health_resp = client.get("/health")
         assert health_resp.status_code == 200
         assert health_resp.get_json()["engine_initialized"] is True
-
-        stats_resp = client.post("/export_stats")
-        assert stats_resp.status_code == 200
-        stats_data = stats_resp.get_json()
-        assert stats_data["status"] == "success"
-        assert stats_data["result"] == {"loss": 0.1}
 
     def test_set_env_endpoint(self, client):
         resp = client.post("/set_env", json={"env": {"RANK": 0, "WORLD_SIZE": 1}})

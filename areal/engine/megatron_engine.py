@@ -36,7 +36,7 @@ from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names
+from areal.utils import logging, name_resolve, names, stats_tracker
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchList,
@@ -1252,3 +1252,16 @@ class MegatronEngine(TrainEngine):
         log_gpu_stats("after onload model")
 
         self.is_offload = False
+
+    def export_stats(self) -> dict[str, float]:
+        data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        if mpu.get_pipeline_model_parallel_world_size() > 1:
+            # Some log info only exist in last pipeline rank
+            data_list = [data]
+            dist.broadcast_object_list(
+                data_list,
+                src=mpu.get_pipeline_model_parallel_last_rank(),
+                group=mpu.get_pipeline_model_parallel_group(),
+            )
+            data.update(data_list[0])
+        return data
