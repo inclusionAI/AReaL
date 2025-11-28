@@ -322,7 +322,7 @@ class TrainEngine(abc.ABC):
         Note
         ----
         Statistics will be all-reduced across the data parallel group
-        and broadcasted from the last pipelien parallel stage.
+        and broadcasted from the last pipeline parallel stage.
 
         Returns
         -------
