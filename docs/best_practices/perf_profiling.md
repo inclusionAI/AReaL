@@ -35,7 +35,7 @@ perf_tracer:
     flush_threshold: 100               # Buffer 100 sessions before flushing
 ```
 
-See `examples/tracer/gsm8k_grpo.yaml` for a complete example.
+Configure the tracer in your YAML configuration file.
 
 ### 2. Initialize the tracer
 
@@ -57,7 +57,7 @@ Execute your training script as usual. The tracer automatically writes events to
 produces its own file.
 
 ```bash
-python examples/tracer/gsm8k_grpo.py --config examples/tracer/gsm8k_grpo.yaml
+python -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml
 ```
 
 ### 4. View traces in Perfetto
@@ -105,7 +105,7 @@ Chrome Trace output.
 - `with trace_scope(name, category, args)`: Sync context
 - `async with atrace_scope(name, category, args)`: Async context
 
-**Example** (from `examples/tracer/gsm8k_grpo.py`):
+**Example**:
 
 ```python
 from areal.utils import perf_tracer

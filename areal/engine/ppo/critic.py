@@ -6,6 +6,7 @@ import torch
 from areal.api.cli_args import MicroBatchSpec, PPOCriticConfig
 from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
+from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import ppo_critic_loss_fn
@@ -59,6 +60,19 @@ class PPOCritic:
 
 
 class FSDPPPOCritic(FSDPEngine):
+    def __init__(self, config: PPOCriticConfig):
+        super().__init__(config)
+        self.critic = PPOCritic(config, self)
+
+    @torch.no_grad()
+    def compute_values(self, *args, **kwargs) -> torch.Tensor:
+        return self.critic.compute_values(*args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.critic.ppo_update(*args, **kwargs)
+
+
+class MegatronPPOCritic(MegatronEngine):
     def __init__(self, config: PPOCriticConfig):
         super().__init__(config)
         self.critic = PPOCritic(config, self)

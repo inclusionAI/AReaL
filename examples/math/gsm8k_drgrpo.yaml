@@ -65,7 +65,7 @@ actor:
   dynamic_sampling: false
   reward_norm:
     mean_level: group
-    std_level: batch
+    std_level: null
     group_size: ${gconfig.n_samples}
   adv_norm:
     mean_level: batch
@@ -91,6 +91,14 @@ sglang:
   max_running_requests: null
   context_length: 32768
   mem_fraction_static: 0.8
+
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: 32768
+  gpu_memory_utilization: 0.9
 
 # datasets
 train_dataset:

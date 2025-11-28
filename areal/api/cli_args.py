@@ -1539,22 +1539,23 @@ class RWConfig(BaseExperimentConfig):
 
 
 @dataclass
-class GRPOConfig(BaseExperimentConfig):
-    """Configuration for Group Relative Policy Optimization (GRPO) reinforcement learning experiments."""
+class PPOConfig(BaseExperimentConfig):
+    """Configuration for Proximal Policy Optimization (PPO) reinforcement learning experiments."""
 
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
-    ref: PPOActorConfig = field(default_factory=PPOActorConfig)
+    ref: PPOActorConfig | None = field(default=None)
+    critic: PPOCriticConfig | None = field(default=None)
 
 
 @dataclass
-class PPOConfig(GRPOConfig):
-    """Configuration for Proximal Policy Optimization (PPO) reinforcement learning experiments."""
+class GRPOConfig(PPOConfig):
+    """A dummy place holder of GRPO config for backward compatibility."""
 
-    critic: PPOCriticConfig = field(default_factory=PPOCriticConfig)
+    pass
 
 
 def parse_cli_args(argv: list[str]):

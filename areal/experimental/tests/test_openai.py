@@ -102,7 +102,7 @@ async def test_single_turn_rollout(openai_client):
         ]
     )
     openai_client.set_reward(c.id, reward=0.5)
-    completions = openai_client.export_completions(style="individual")
+    completions = openai_client.export_interactions(style="individual")
     assert len(completions) == 1
     assert completions[c.id].reward == 0.5
 
@@ -136,7 +136,7 @@ async def test_multi_round_conversation(openai_client):
     openai_client.apply_reward_discount(turn_discount=0.9)
 
     # Export completions with reward backpropagation
-    completions = openai_client.export_completions(style="individual")
+    completions = openai_client.export_interactions(style="individual")
 
     # Verify structure
     assert len(completions) == 3
@@ -266,7 +266,7 @@ async def test_single_round_tool_calling(openai_client):
     assert c.choices[0].finish_reason == "tool_calls"
 
     openai_client.set_reward(c.id, reward=1.5)
-    completions = openai_client.export_completions(style="individual")
+    completions = openai_client.export_interactions(style="individual")
 
     assert len(completions) == 1
     assert completions[c.id].reward == 1.5
@@ -331,7 +331,7 @@ async def test_multi_round_tool_calling(openai_client):
     openai_client.set_reward(c3.id, reward=2.0)
     openai_client.apply_reward_discount(turn_discount=0.8)
 
-    completions = openai_client.export_completions(style="individual")
+    completions = openai_client.export_interactions(style="individual")
 
     assert len(completions) == 3
     # c3 is leaf: gets explicit reward
@@ -395,7 +395,7 @@ async def test_parallel_tool_calling(openai_client):
 
     openai_client.set_reward(c2.id, reward=2.0)
     openai_client.apply_reward_discount(turn_discount=0.9)
-    completions = openai_client.export_completions(style="individual")
+    completions = openai_client.export_interactions(style="individual")
 
     assert len(completions) == 2
     # c2 is leaf
@@ -469,7 +469,7 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     openai_client.set_reward(c3.id, reward=2.5)
 
     openai_client.apply_reward_discount(turn_discount=0.85)
-    completions = openai_client.export_completions(style="individual")
+    completions = openai_client.export_interactions(style="individual")
 
     assert len(completions) == 3
     # c3 is leaf
@@ -561,7 +561,7 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
     openai_client.set_reward(c3.id, reward=1.5)
 
     openai_client.apply_reward_discount(turn_discount=0.9)
-    completions = openai_client.export_completions(style="individual")
+    completions = openai_client.export_interactions(style="individual")
 
     assert len(completions) == 3
     # c3 is leaf
@@ -639,8 +639,8 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
     openai_client.set_reward(c_b1.id, 3)
 
     # Export completions of leaf nodes, check whether all leaves are present
-    leaf_completions = openai_client.export_completions(style="concat")
-    all_completions = openai_client.export_completions(style="individual")
+    leaf_completions = openai_client.export_interactions(style="concat")
+    all_completions = openai_client.export_interactions(style="individual")
     assert set(leaf_completions.keys()) == {c_a1.id, c_a2.id, c_b1.id}
     assert set(all_completions.keys()) == {
         c_root.id,

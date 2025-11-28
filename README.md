@@ -85,18 +85,18 @@ state-of-the-art 7B and 32B models for mathematical reasoning. Check out our
 
 ### 🧠 Algorithms
 
-| Algorithm                | Documentation                         | Paper                                          | Configuration                                                  |
-| ------------------------ | ------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------- |
-| **GRPO**                 | [📖 Docs](docs/algorithms/grpo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)              |
-| **GSPO**                 | [📖 Docs](docs/algorithms/gspo.md)    | [📄 Paper](https://arxiv.org/abs/2507.18071)   | [🔗 GSM8K Example](examples/experimental/gspo/gsm8k_gspo.yaml) |
-| **PPO**                  | -                                     | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)               |
-| **DAPO**                 | [📖 Docs](docs/algorithms/dapo.md)    | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/experimental/dapo/gsm8k_dapo.py)   |
-| **LitePPO**              | [📖 Docs](docs/algorithms/litePPO.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | -                                                              |
-| **Dr.GRPO**              | [📖 Docs](docs/algorithms/dr.GRPO.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | -                                                              |
-| **REINFORCE++**          | -                                     | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)         |
-| **RLOO**                 | [📖 Docs](docs/algorithms/rloo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)              |
-| **RLHF Reward Modeling** | -                                     | -                                              | [🔗 RLHF Example](examples/alignment/)                         |
-| **SFT**                  | -                                     | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)                 |
+| Algorithm                | Documentation                         | Paper                                          | Configuration                                                |
+| ------------------------ | ------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| **GRPO**                 | [📖 Docs](docs/algorithms/grpo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.03300)   | [🔗 GSM8K Example](examples/math/gsm8k_grpo.yaml)            |
+| **GSPO**                 | [📖 Docs](docs/algorithms/gspo.md)    | [📄 Paper](https://arxiv.org/abs/2507.18071)   | [🔗 GSM8K Example](examples/math/gsm8k_gspo.yaml)            |
+| **PPO**                  | -                                     | [📄 Paper](https://arxiv.org/pdf/2203.02155)   | [🔗 GSM8K Example](examples/math/gsm8k_ppo.yaml)             |
+| **DAPO**                 | [📖 Docs](docs/algorithms/dapo.md)    | [📄 Paper](https://arxiv.org/abs/2503.14476)   | [🔗 GSM8K Example](examples/math/gsm8k_dapo_dynamic_bs.yaml) |
+| **LitePPO**              | [📖 Docs](docs/algorithms/litePPO.md) | [📄 Paper](https://arxiv.org/abs/2508.08221)   | [🔗 GSM8K Example](examples/math/gsm8k_liteppo.yaml)         |
+| **Dr.GRPO**              | [📖 Docs](docs/algorithms/dr.GRPO.md) | [📄 Paper](https://arxiv.org/abs/2503.20783)   | [🔗 GSM8K Example](examples/math/gsm8k_drgrpo.yaml)          |
+| **REINFORCE++**          | -                                     | [📄 Paper](https://arxiv.org/pdf/2501.03262)   | [🔗 GSM8K Example](examples/math/gsm8k_reinforce.yaml)       |
+| **RLOO**                 | [📖 Docs](docs/algorithms/rloo.md)    | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)            |
+| **RLHF Reward Modeling** | -                                     | -                                              | [🔗 RLHF Example](examples/alignment/)                       |
+| **SFT**                  | -                                     | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)               |
 
 ### Models
 
@@ -130,7 +130,7 @@ model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
 
 ```bash
 python3 -m areal.launcher.local \
-  examples/math/gsm8k_grpo.py \
+  examples/math/gsm8k_rl.py \
   --config examples/math/gsm8k_grpo.yaml
 ```
 
@@ -139,7 +139,7 @@ the YAML file to point to your shared storage):
 
 ```bash
 python3 -m areal.launcher.ray \
-  examples/math/gsm8k_grpo.py \
+  examples/math/gsm8k_rl.py \
   --config examples/math/gsm8k_grpo.yaml \
   cluster.n_nodes=2 \
   cluster.n_gpus_per_node=8
