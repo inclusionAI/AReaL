@@ -17,51 +17,6 @@ def kill_process_tree(
     skip_pid: int | None = None,
     graceful: bool = True,
 ) -> None:
-    """Terminate a process and all its children recursively.
-
-    By default, this function performs graceful termination by sending SIGTERM first,
-    waiting for the specified timeout, then force-killing any remaining processes with SIGKILL.
-    For immediate termination, set graceful=False to skip the graceful shutdown attempt.
-
-    Args:
-        parent_pid: Process ID to terminate. If None, defaults to current process (os.getpid())
-                   and sets include_parent=False.
-        timeout: Seconds to wait for graceful termination before force-killing (only used when graceful=True).
-                Default is 5 seconds.
-        include_parent: Whether to terminate the parent process itself. If False, only children are terminated.
-                       Default is True.
-        skip_pid: Optional child PID to skip during termination. This child will not be sent any signals.
-                 Default is None (no children skipped).
-        graceful: If True (default), attempts graceful shutdown with SIGTERM before SIGKILL.
-                 If False, immediately sends SIGKILL to all processes.
-
-    Notes:
-        - When killing the current process (parent_pid == os.getpid()), the function will
-          call sys.exit(0) after sending the kill signal in aggressive mode.
-        - For processes that cannot be killed with SIGKILL (e.g., PID=1 in Kubernetes),
-          a SIGQUIT signal is also sent as a fallback in aggressive mode.
-        - The SIGCHLD signal handler is reset to avoid spammy logs (only in main thread).
-        - All psutil.NoSuchProcess exceptions are caught and ignored (process already terminated).
-
-    Examples:
-        # Graceful termination with default 5s timeout
-        kill_process_tree(1234)
-
-        # Graceful termination with custom 10s timeout
-        kill_process_tree(1234, timeout=10)
-
-        # Immediate force-kill
-        kill_process_tree(1234, graceful=False)
-
-        # Kill only children, not parent
-        kill_process_tree(1234, include_parent=False)
-
-        # Skip specific child process
-        kill_process_tree(1234, skip_pid=5678)
-
-        # Graceful shutdown of current process
-        kill_process_tree(None, graceful=True)
-    """
     # Remove sigchld handler to avoid spammy logs (only in main thread)
     if threading.current_thread() is threading.main_thread():
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
@@ -102,8 +57,8 @@ def kill_process_tree(
             try:
                 parent.terminate()
             except psutil.NoSuchProcess:
-                logger.info(f"Process {parent_pid} already terminated")
-                return
+                # Parent is already gone, but we still need to wait for children.
+                pass
 
         # Wait for graceful shutdown
         procs_to_wait = children + ([parent] if include_parent else [])
