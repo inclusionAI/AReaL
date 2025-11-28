@@ -321,8 +321,8 @@ class TrainEngine(abc.ABC):
 
         Note
         ----
-        This method should be only called by the controller.
-        Statistics will be all-reduced across the data parallel group.
+        Statistics will be all-reduced across the data parallel group
+        and broadcasted from the last pipeline parallel stage.
 
         Returns
         -------

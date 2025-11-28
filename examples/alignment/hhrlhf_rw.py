@@ -171,7 +171,7 @@ def main(args):
                 epoch,
                 step,
                 global_step,
-                stats_tracker.export(reduce_group=engine.data_parallel_group),
+                engine.export_stats(),
             )
             global_step += 1
 

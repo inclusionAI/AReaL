@@ -1,18 +1,18 @@
 import os
 import sys
+import warnings
 from copy import deepcopy
 
-import torch
 import torch.distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import load_expr_config
+from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
-from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.reward.math_parser import process_results
-from areal.utils import logging, seeding, stats_tracker
+from areal.engine.vllm_remote import RemotevLLMEngine
+from areal.platforms import current_platform
+from areal.utils import seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
@@ -20,44 +20,34 @@ from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+from areal.workflow.rlvr import RLVRWorkflow
 
-from tir_workflow import TIRGRPOConfig, TIRWorkflow  # isort: skip
-
-logger = logging.getLogger("TIR Training")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-def math_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    # tool_using = 0.01 if 'tool_using' in kwargs and kwargs['tool_using'] else 0
-    # tool_success = 0.05 if 'tool_status' in kwargs and kwargs['tool_status'] else 0
+def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
+    from areal.reward.math_parser import process_results
 
-    retval, (extracted_answer, extracted_solution) = process_results(
-        completions, answer
-    )
-
-    return int(retval)
+    return int(process_results(completions, answer)[0])
 
 
 def main(args):
-    config, _ = load_expr_config(args, TIRGRPOConfig)
+    config, _ = load_expr_config(args, GRPOConfig)
+    config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
-
-    logger.info("Starting TIR training")
-    logger.info(f"Configuration: {config.experiment_name}")
-    logger.info(f"Model: {config.actor.path}")
-    logger.info(f"Batch size: {config.train_dataset.batch_size}")
-
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     seeding.set_random_seed(config.seed, key=f"trainer{rank}")
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
+    assert parallel_strategy is not None
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
     actor.create_process_group(parallel_strategy=parallel_strategy)
 
-    # Load datasets
+    # Create dataset and dataloaders
     train_dataset = get_custom_dataset(
         split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
@@ -65,7 +55,6 @@ def main(args):
         split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
     )
 
-    # Create dataloaders
     train_dataloader = create_dataloader(
         train_dataset,
         rank=actor.data_parallel_rank,
@@ -78,7 +67,6 @@ def main(args):
         world_size=actor.data_parallel_world_size,
         dataset_config=config.valid_dataset,
     )
-
     ft_spec = FinetuneSpec(
         total_train_epochs=config.total_train_epochs,
         dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
@@ -86,14 +74,23 @@ def main(args):
     )
 
     # Initialize inference engine
-    rollout = RemoteSGLangEngine(config.rollout)
+    rollout = RemotevLLMEngine(config.rollout)
+    eval_rollout = RemotevLLMEngine(deepcopy(config.rollout))
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
-    eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
+    # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize()
 
-    # Weight update meta
-    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+    # weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+    weight_update_meta = WeightUpdateMeta.from_disk(
+        config.saver.experiment_name,
+        config.saver.trial_name,
+        config.saver.fileroot,
+        use_lora=config.actor.use_lora,
+        lora_name=config.gconfig.lora_name,
+        lora_int_id=1,  # hard coded for the single lora example
+        base_model_name=config.actor.path,
+    )
 
     actor.initialize(None, ft_spec)
     actor.connect_engine(rollout, weight_update_meta)
@@ -104,25 +101,24 @@ def main(args):
         ref.create_process_group(parallel_strategy=parallel_strategy)
         ref.initialize(None, ft_spec)
 
-    reward_fn = math_reward_fn
-
-    # Create TIR workflow
-    workflow = TIRWorkflow(
-        reward_fn=reward_fn,
+    # Create rollout workflow
+    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
+        config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
+    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
+        config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
+    workflow = RLVRWorkflow(
+        reward_fn=gsm8k_reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
-        tir_config=config.tir,
         enable_thinking=False,
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
     )
-
-    eval_workflow = TIRWorkflow(
-        reward_fn=reward_fn,
+    eval_workflow = RLVRWorkflow(
+        reward_fn=gsm8k_reward_fn,
         gconfig=config.gconfig.new(temperature=0.6),
         tokenizer=tokenizer,
-        tir_config=config.tir,
         enable_thinking=False,
         rollout_stat_scope="eval-rollout",
         dump_dir=os.path.join(
@@ -130,7 +126,7 @@ def main(args):
         ),
     )
 
-    # Run training
+    # Run training.
     saver = Saver(config.saver, ft_spec)
     stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
@@ -188,8 +184,11 @@ def main(args):
             actor.compute_advantages(batch)
             log_gpu_stats("compute advantages")
 
-        with stats_tracker.record_timing("train_step"):
-            actor.ppo_update(batch)
+        with (
+            stats_tracker.record_timing("train_step"),
+            stats_tracker.scope("grpo_actor"),
+        ):
+            stats = actor.ppo_update(batch)
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
@@ -198,30 +197,12 @@ def main(args):
 
         with stats_tracker.record_timing("update_weights"):
             actor.update_weights(weight_update_meta)
-
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
             eval_rollout.set_version(global_step + 1)
 
         with stats_tracker.record_timing("save"):
             saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
-
-        with stats_tracker.record_timing("eval"):
-
-            def evaluate_fn():
-                cnt = 0
-                for data in valid_dataloader:
-                    for item in data:
-                        eval_rollout.submit(item, eval_workflow)
-                        cnt += 1
-                eval_rollout.wait(cnt, timeout=None)
-
-            evaluator.evaluate(
-                evaluate_fn,
-                epoch,
-                step,
-                global_step,
-            )
 
         with stats_tracker.record_timing("checkpoint_for_recover"):
             recover_handler.dump(
@@ -234,20 +215,42 @@ def main(args):
                 tokenizer=tokenizer,
             )
 
-        torch.cuda.synchronize()
-        dist.barrier(group=actor.cpu_group)
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
 
-        # Upload statistics to the logger
+        with stats_tracker.record_timing("eval"):
+
+            def evaluate_fn():
+                if actor.is_data_parallel_head():
+                    cnt = 0
+                    for data in valid_dataloader:
+                        for item in data:
+                            eval_rollout.submit(item, eval_workflow)
+                            cnt += 1
+                    eval_rollout.wait(cnt, timeout=None)
+                dist.barrier(device_ids=[actor.device.index])
+                current_platform.synchronize()
+
+            evaluator.evaluate(
+                evaluate_fn,
+                epoch,
+                step,
+                global_step,
+            )
+
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
+
+        # Upload statistics to the logger (e.g., wandb)
         stats = actor.export_stats()
         stats_logger.commit(epoch, step, global_step, stats)
 
-        torch.cuda.synchronize()
-        dist.barrier(group=actor.cpu_group)
+        dist.barrier(device_ids=[actor.device.index])
+        current_platform.synchronize()
 
         # Resume rollout
         rollout.resume()
 
-    # Cleanup
     stats_logger.close()
     eval_rollout.destroy()
     rollout.destroy()

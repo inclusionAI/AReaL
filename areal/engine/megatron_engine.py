@@ -1254,4 +1254,14 @@ class MegatronEngine(TrainEngine):
         self.is_offload = False
 
     def export_stats(self) -> dict[str, float]:
-        return stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        if mpu.get_pipeline_model_parallel_world_size() > 1:
+            # Some log info only exist in last pipeline rank
+            data_list = [data]
+            dist.broadcast_object_list(
+                data_list,
+                src=mpu.get_pipeline_model_parallel_last_rank(),
+                group=mpu.get_pipeline_model_parallel_group(),
+            )
+            data.update(data_list[0])
+        return data

@@ -204,7 +204,7 @@ def main(args):
         dist.barrier(group=actor.cpu_group)
 
         # Upload statistics to the logger (e.g., wandb)
-        stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+        stats = actor.export_stats()
         stats_logger.commit(epoch, step, global_step, stats)
 
         current_platform.synchronize()

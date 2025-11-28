@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Optional
 
 from datasets.distributed import split_dataset_by_node
 
-from areal.api.cli_args import DatasetConfig
+from areal.api.cli_args import _DatasetConfig
 from areal.utils import logging
 
 if TYPE_CHECKING:
@@ -140,7 +140,7 @@ def get_custom_dataset_legacy(
 
 def get_custom_dataset(
     split: str | None = None,
-    dataset_config: DatasetConfig | None = None,
+    dataset_config: _DatasetConfig | None = None,
     tokenizer: Optional["PreTrainedTokenizerFast"] = None,
     processor: Optional["ProcessorMixin"] = None,
     **kwargs,
