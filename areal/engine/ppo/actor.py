@@ -347,9 +347,10 @@ def grpo_loss_fn(
     advantages = input_data["advantages"]
     # Use full loss_mask. Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
     loss_mask = input_data.get("full_loss_mask", input_data["loss_mask"]).bool()
-    prox_logp = input_data["prox_logp"]
+    # prox_logp = input_data["prox_logp"]
 
     logprobs, entropy = gather_logprobs_entropy(logits, labels, temperature)
+    prox_logp = logprobs.clone().detach()  # only for minibatch = 1
     entropy = entropy.detach()
 
     # If m2_threshold is set, use M2PO loss function.
