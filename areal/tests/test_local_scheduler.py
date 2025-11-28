@@ -1,5 +1,4 @@
 import asyncio
-import gc
 import os
 import time
 from unittest.mock import AsyncMock, Mock, call, patch
@@ -29,6 +28,7 @@ from areal.scheduler.exceptions import (
     WorkerTimeoutError,
 )
 from areal.scheduler.local import LocalScheduler, WorkerInfo
+from areal.utils.proc import kill_process_tree
 
 # ============================================================================
 # Fixtures and Helper Functions
@@ -980,7 +980,7 @@ class TestDeleteWorkers:
         scheduler._workers["role2"] = [worker2]
         scheduler._allocated_ports = {8000, 8001}
 
-        with patch.object(scheduler, "_terminate_process_tree"):
+        with patch("areal.scheduler.local.kill_process_tree"):
             scheduler.delete_workers("role1")
 
         # role1 should be deleted, role2 should remain
@@ -1008,7 +1008,7 @@ class TestDeleteWorkers:
         scheduler._workers["role2"] = [worker2]
         scheduler._allocated_ports = {8000, 8001}
 
-        with patch.object(scheduler, "_terminate_process_tree"):
+        with patch("areal.scheduler.local.kill_process_tree"):
             scheduler.delete_workers(None)
 
         # All workers should be deleted
@@ -1027,7 +1027,7 @@ class TestDeleteWorkers:
         )
         scheduler._allocated_ports = {8000, 8001, 8002}
 
-        with patch.object(scheduler, "_terminate_process_tree"):
+        with patch("areal.scheduler.local.kill_process_tree"):
             scheduler._cleanup_workers([worker])
 
         # Ports 8000 and 8001 should be released
@@ -1043,9 +1043,8 @@ class TestDeleteWorkers:
         )
 
         # First termination fails, second succeeds
-        with patch.object(
-            scheduler,
-            "_terminate_process_tree",
+        with patch(
+            "areal.scheduler.local.kill_process_tree",
             side_effect=[Exception("Failed to terminate"), None],
         ):
             # Should not raise, just log error
@@ -1055,152 +1054,72 @@ class TestDeleteWorkers:
 class TestProcessTermination:
     """Test process termination functionality."""
 
-    @patch("areal.scheduler.local.psutil.Process")
-    @patch("areal.scheduler.local.psutil.wait_procs")
-    def test_terminate_process_tree_graceful(
-        self, mock_wait_procs, mock_process_class, tmp_path
-    ):
+    @patch("areal.utils.proc.psutil.Process")
+    @patch("areal.utils.proc.psutil.wait_procs")
+    def test_kill_process_tree_graceful(self, mock_wait_procs, mock_process_class):
         """Should gracefully terminate process tree."""
-        # Force garbage collection to clean up any lingering schedulers from previous tests
-        gc.collect()
-
         # Mock parent process
         mock_parent = Mock()
         mock_child1 = Mock()
         mock_child2 = Mock()
 
         mock_parent.children.return_value = [mock_child1, mock_child2]
-
-        # Return mock_parent only when called with pid=1234, otherwise raise NoSuchProcess
-        # This prevents interference from __del__ cleanup of previous test's schedulers
-        def process_side_effect(pid):
-            if pid == 1234:
-                return mock_parent
-            raise psutil.NoSuchProcess(pid)
-
-        mock_process_class.side_effect = process_side_effect
+        mock_process_class.return_value = mock_parent
 
         # All processes terminate gracefully
         mock_wait_procs.return_value = ([], [])  # (gone, alive)
 
-        scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
-        )
-        try:
-            # Reset mock call counts to ignore any calls from previous tests' cleanup
-            mock_child1.reset_mock()
-            mock_child2.reset_mock()
-            mock_parent.reset_mock()
+        kill_process_tree(1234, timeout=3, graceful=True)
 
-            scheduler._terminate_process_tree(1234)
+        # Verify termination sequence
+        mock_child1.terminate.assert_called_once()
+        mock_child2.terminate.assert_called_once()
+        mock_parent.terminate.assert_called_once()
 
-            # Verify termination sequence
-            mock_child1.terminate.assert_called_once()
-            mock_child2.terminate.assert_called_once()
-            mock_parent.terminate.assert_called_once()
+        # Should not call kill since all terminated gracefully
+        mock_child1.kill.assert_not_called()
+        mock_child2.kill.assert_not_called()
+        mock_parent.kill.assert_not_called()
 
-            # Should not call kill since all terminated gracefully
-            mock_child1.kill.assert_not_called()
-            mock_child2.kill.assert_not_called()
-            mock_parent.kill.assert_not_called()
-        finally:
-            # Explicitly clean up to prevent destructor from interfering with other tests
-            del scheduler
-            gc.collect()
-
-    @patch("areal.scheduler.local.psutil.Process")
-    @patch("areal.scheduler.local.psutil.wait_procs")
-    def test_terminate_process_tree_force_kill(
-        self, mock_wait_procs, mock_process_class, tmp_path
-    ):
+    @patch("areal.utils.proc.psutil.Process")
+    @patch("areal.utils.proc.psutil.wait_procs")
+    def test_kill_process_tree_force_kill(self, mock_wait_procs, mock_process_class):
         """Should force kill processes that don't terminate gracefully."""
-        # Force garbage collection to clean up any lingering schedulers from previous tests
-        gc.collect()
-
         mock_parent = Mock()
         mock_child = Mock()
 
         mock_parent.children.return_value = [mock_child]
-
-        # Return mock_parent only when called with pid=1234, otherwise raise NoSuchProcess
-        # This prevents interference from __del__ cleanup of previous test's schedulers
-        def process_side_effect(pid):
-            if pid == 1234:
-                return mock_parent
-            raise psutil.NoSuchProcess(pid)
-
-        mock_process_class.side_effect = process_side_effect
+        mock_process_class.return_value = mock_parent
 
         # Child doesn't terminate gracefully
         mock_wait_procs.return_value = ([], [mock_child])  # (gone, alive)
 
-        scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
-        )
-        try:
-            # Reset mock call counts to ignore any calls from previous tests' cleanup
-            mock_child.reset_mock()
-            mock_parent.reset_mock()
+        kill_process_tree(1234, timeout=3, graceful=True)
 
-            scheduler._terminate_process_tree(1234)
+        # Verify force kill was called
+        mock_child.terminate.assert_called_once()
+        mock_child.kill.assert_called_once()
 
-            # Verify force kill was called
-            mock_child.terminate.assert_called_once()
-            mock_child.kill.assert_called_once()
-        finally:
-            # Explicitly clean up to prevent destructor from interfering with other tests
-            del scheduler
-            gc.collect()
-
-    @patch("areal.scheduler.local.psutil.Process")
-    def test_terminate_process_tree_no_such_process(self, mock_process_class, tmp_path):
+    @patch("areal.utils.proc.psutil.Process")
+    def test_kill_process_tree_no_such_process(self, mock_process_class):
         """Should handle gracefully when process doesn't exist."""
-        # Force garbage collection to clean up any lingering schedulers from previous tests
-        gc.collect()
-
         mock_process_class.side_effect = psutil.NoSuchProcess(1234)
 
-        scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
-        )
-        try:
-            # Should not raise
-            scheduler._terminate_process_tree(1234)
-        finally:
-            del scheduler
-            gc.collect()
+        # Should not raise
+        kill_process_tree(1234, timeout=3, graceful=True)
 
-    @patch("areal.scheduler.local.psutil.Process")
-    def test_terminate_process_tree_handles_child_no_such_process(
-        self, mock_process_class, tmp_path
-    ):
+    @patch("areal.utils.proc.psutil.Process")
+    def test_kill_process_tree_handles_child_no_such_process(self, mock_process_class):
         """Should handle when child process disappears during termination."""
-        # Force garbage collection to clean up any lingering schedulers from previous tests
-        gc.collect()
-
         mock_parent = Mock()
         mock_child = Mock()
         mock_child.terminate.side_effect = psutil.NoSuchProcess(1235)
 
         mock_parent.children.return_value = [mock_child]
+        mock_process_class.return_value = mock_parent
 
-        # Return mock_parent only when called with pid=1234, otherwise raise NoSuchProcess
-        def process_side_effect(pid):
-            if pid == 1234:
-                return mock_parent
-            raise psutil.NoSuchProcess(pid)
-
-        mock_process_class.side_effect = process_side_effect
-
-        scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
-        )
-        try:
-            # Should not raise
-            scheduler._terminate_process_tree(1234)
-        finally:
-            del scheduler
-            gc.collect()
+        # Should not raise
+        kill_process_tree(1234, timeout=3, graceful=True)
 
 
 class TestLogFileHandling:

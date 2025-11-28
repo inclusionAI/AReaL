@@ -11,7 +11,6 @@ from typing import Any
 
 import aiohttp
 import orjson
-import psutil
 import requests
 
 from areal.api.cli_args import BaseExperimentConfig
@@ -38,6 +37,7 @@ from areal.utils.launcher import (
     get_env_vars,
 )
 from areal.utils.network import find_free_ports, gethostip
+from areal.utils.proc import kill_process_tree
 
 logger = logging.getLogger("LocalScheduler")
 
@@ -584,7 +584,7 @@ class LocalScheduler(Scheduler):
                 for port_str in worker_info.worker.worker_ports:
                     self._allocated_ports.discard(int(port_str))
 
-                self._terminate_process_tree(worker_info.process.pid)
+                kill_process_tree(worker_info.process.pid, timeout=3, graceful=True)
 
                 logger.debug(f"Cleaned up worker {worker_info.worker.id}")
             except Exception as e:
@@ -592,45 +592,6 @@ class LocalScheduler(Scheduler):
                     f"Error cleaning up worker {worker_info.worker.id}: {e}",
                     exc_info=True,
                 )
-
-    def _terminate_process_tree(self, pid: int):
-        try:
-            parent = psutil.Process(pid)
-            children = parent.children(recursive=True)
-
-            # Try graceful termination first
-            for child in children:
-                try:
-                    child.terminate()
-                except psutil.NoSuchProcess:
-                    pass
-
-            try:
-                parent.terminate()
-            except psutil.NoSuchProcess:
-                return
-
-            # Wait for graceful termination
-            _, alive = psutil.wait_procs([parent] + children, timeout=3)
-
-            # Force kill remaining processes
-            for proc in alive:
-                try:
-                    proc.kill()
-                except psutil.NoSuchProcess:
-                    pass
-
-        except psutil.NoSuchProcess:
-            # Process already gone
-            pass
-        except psutil.Error as e:
-            logger.warning(f"Error terminating process tree {pid}: {e}", exc_info=True)
-        except Exception:
-            import traceback
-
-            logger.warning(
-                f"Error terminating process tree {pid}: {traceback.format_exc()}"
-            )
 
     def _read_log_tail(self, log_file: str, lines: int = 50) -> str:
         try:

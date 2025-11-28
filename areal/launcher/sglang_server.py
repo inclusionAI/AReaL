@@ -1,14 +1,11 @@
 import os
-import signal
 import subprocess
 import sys
-import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 
-import psutil
 import requests
 
 from areal.api.alloc_mode import AllocationMode
@@ -23,48 +20,9 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH, apply_sglang_patch
 from areal.utils.network import find_free_ports, gethostip
+from areal.utils.proc import kill_process_tree
 
 logger = logging.getLogger("SGLangServer Wrapper")
-
-
-# Copied from SGLang
-def kill_process_tree(parent_pid, include_parent: bool = True, skip_pid: int = None):
-    """Kill the process and all its child processes."""
-    # Remove sigchld handler to avoid spammy logs.
-    if threading.current_thread() is threading.main_thread():
-        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-
-    if parent_pid is None:
-        parent_pid = os.getpid()
-        include_parent = False
-
-    try:
-        itself = psutil.Process(parent_pid)
-    except psutil.NoSuchProcess:
-        return
-
-    children = itself.children(recursive=True)
-    for child in children:
-        if child.pid == skip_pid:
-            continue
-        try:
-            child.kill()
-        except psutil.NoSuchProcess:
-            pass
-
-    if include_parent:
-        try:
-            if parent_pid == os.getpid():
-                itself.kill()
-                sys.exit(0)
-
-            itself.kill()
-
-            # Sometime processes cannot be killed with SIGKILL (e.g, PID=1 launched by kubernetes),
-            # so we send an additional signal to kill them.
-            itself.send_signal(signal.SIGQUIT)
-        except psutil.NoSuchProcess:
-            pass
 
 
 def launch_server_cmd(command: list[str]) -> subprocess.Popen:
@@ -217,8 +175,7 @@ class SGLangServerWrapper:
             if not all_alive:
                 for i, process in enumerate(server_processes):
                     if process.poll() is None:
-                        process.terminate()
-                        process.wait()
+                        kill_process_tree(process.pid, graceful=True)
                         logger.info(
                             f"SGLang server process{server_addresses[i]} terminated."
                         )
@@ -262,7 +219,7 @@ def main(argv):
     try:
         launch_sglang_server(argv)
     finally:
-        kill_process_tree(os.getpid())
+        kill_process_tree(os.getpid(), graceful=True)
 
 
 if __name__ == "__main__":
