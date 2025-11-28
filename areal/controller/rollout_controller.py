@@ -272,7 +272,7 @@ class RolloutController:
                 workflow=pending_task.workflow,
                 workflow_kwargs=pending_task.workflow_kwargs,
                 should_accept_fn=pending_task.should_accept_fn,
-                http_timeout=60.0,
+                http_timeout=self.config.request_timeout,
             )
 
             task_id = pending_task.task_id
@@ -294,7 +294,7 @@ class RolloutController:
                         count=1,
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
-                        http_timeout=30.0,
+                        http_timeout=self.config.request_timeout,
                     )
 
                 # TimeourError will be catched below
