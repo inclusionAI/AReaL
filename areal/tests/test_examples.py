@@ -108,9 +108,9 @@ def test_countdown_example(tmp_path_factory):
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     tmp_path = tmp_path_factory.mktemp("countdown_data")
     data_path = tmp_path / "data/countdown/qwen"
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     os.makedirs(data_path, exist_ok=True)
     test_file_path = data_path / "test_e.jsonl"
     train_file_path = data_path / "train_e.jsonl"
@@ -160,9 +160,9 @@ def test_countdown_example(tmp_path_factory):
 def test_gsm8k_grpo(tmp_path_factory, alloc_mode):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
@@ -230,9 +230,9 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode):
 def test_gsm8k_eval(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
@@ -334,9 +334,9 @@ def test_vlm_sft(tmp_path_factory):
 def test_gsm8k_ppo(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
@@ -371,9 +371,9 @@ def test_gsm8k_ppo(tmp_path_factory):
 def test_gsm8k_grpo_lora(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
@@ -406,9 +406,9 @@ def test_gsm8k_grpo_lora(tmp_path_factory):
 def test_multi_turn_math(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
@@ -475,9 +475,9 @@ def test_hhrlhf_rw(tmp_path_factory):
 def test_tir_grpo(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
@@ -511,13 +511,13 @@ def test_tir_grpo(tmp_path_factory):
 def test_search_agent_deepresearch(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if current_platform.device_count() < 3:
         pytest.skip(
             "This test requires at least 3 GPUs (1 for LLM judge, 2 for RL) to run."
         )
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/inclusionAI__Asearcher-train-data/ASearcher-LRM-35k.jsonl"
     if not os.path.exists(dataset_path):
         pytest.skip("Tongyi DeepResearch dataset not available")
@@ -601,9 +601,9 @@ def test_search_agent_deepresearch(tmp_path_factory):
 def test_openai_agents(tmp_path_factory, agent_type):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
@@ -638,9 +638,9 @@ def test_openai_agents(tmp_path_factory, agent_type):
 def test_camel(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
+    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
+        model_path = "Qwen/Qwen3-0.6B"
     dataset_path = "/storage/openpsi/data/gsm8k"
     if not os.path.exists(dataset_path):
         dataset_path = "openai/gsm8k"
