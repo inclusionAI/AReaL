@@ -1,0 +1,172 @@
+experiment_name: xss-tau2-megatron
+trial_name: trial0
+allocation_mode: sglang:d4t8+megatron:(attn:d1p12t4c1|ffn:d1p12t1e4) # 只有p需要一样，t和c一般比较慢
+max_context_length: 32768
+reward_type: db
+dynamic_filtering: true
+n_trajs: 8
+cluster:
+  cluster_name: na132
+  fileroot: /storage/openpsi/experiments
+  n_nodes: 10
+  n_gpus_per_node: 8
+  name_resolve:
+    type: nfs
+    nfs_record_root: /storage/openpsi/experiments/name_resolve/xss
+seed: 1
+total_train_epochs: 100
+tokenizer_path: ${actor.path}
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 512
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
+  enable_rollout_tracing: true
+  setup_timeout: 600
+
+gconfig:
+  n_samples: 1
+  min_new_tokens: 0
+  max_new_tokens: 8192
+  greedy: false
+  temperature: 1.0
+
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: /storage/openpsi/models/Qwen__Qwen3-30B-A3B
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: ${max_context_length}
+  pad_to_maximum: true
+  optimizer:
+    type: adam
+    lr: 5e-6
+    weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    lr_scheduler_type: constant
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.001
+
+  group_size: ${gconfig.n_samples}
+  adv_norm: 
+    group_size: ${gconfig.n_samples}
+  eps_clip: 0.4
+  temperature: ${gconfig.temperature}
+  reward_scaling: 1.0
+  reward_bias: 0.0
+  kl_ctl: 0.0
+  ppo_n_minibatches: 1
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behav_imp_weight_cap: 5.0
+  megatron:
+    use_deterministic_algorithms: true
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    distribute_saved_activations: null
+    recompute_modules: null
+
+ref:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  mb_spec:
+    max_tokens_per_mb: ${max_context_length}
+  pad_to_maximum: true
+  optimizer: null
+
+# SGLang
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: true
+  dtype: ${actor.dtype}
+  max_running_requests: null
+  context_length: ${max_context_length}
+  mem_fraction_static: 0.8
+  # enable_dp_attention: True
+  # dp_size: 8
+  # ep_size: 8
+
+# datasets
+train_dataset:
+  batch_size: 64
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: "/storage/openpsi/users/xushusheng.xss/data/agent_eval/airline_repeat.jsonl"
+  type: rl
+
+valid_dataset:
+  batch_size: 16
+  shuffle: false
+  pin_memory: true
+  num_workers: 4
+  path: "/storage/openpsi/users/xushusheng.xss/data/agent_eval/airline.jsonl"
+  type: rl
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: 10
+  freq_secs: null
+
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: 20
+  freq_secs: null
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: 4
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: offline
+
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: true
+  session_tracer:
+    enabled: true
+
+launcher:
+  inference_server_cpus_per_gpu: 4
+  inference_server_mem_per_gpu: 81920
+  trainer_cpus_per_gpu: 4
+  trainer_mem_per_gpu: 81920
+  trainer_env_vars: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,NCCL_DEBUG=WARN,NCCL_TIMEOUT=1800,WANDB_API_KEY=local-e94a768686930cfc13051e562b807fc2d56bc4dd,WANDB_BASE_URL=http://8.150.1.98:8080
+  slurm:
+    mount: /storage:/storage
+    trainer_image: /storage/openpsi/images/areal-latest.sif
+    inference_server_image: /storage/openpsi/images/areal-latest.sif
+    additional_bash_cmds: ["which torchrun", "nvidia-smi", "pip install openai==1.99.6 addict deepdiff docstring_parser loguru", "which python3", "which torchrun"]

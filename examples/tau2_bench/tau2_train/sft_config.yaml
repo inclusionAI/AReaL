@@ -1,0 +1,130 @@
+experiment_name: xss-tau2-megatron
+trial_name: trial0
+allocation_mode: sglang:d1p1t8+megatron:d4p2t2c2e2
+max_context_length: 32768
+reward_type: db
+n_trajs: 4
+
+cluster:
+  cluster_name: na132
+  fileroot: /storage/openpsi/experiments
+  n_nodes: 5
+  n_gpus_per_node: 8
+  name_resolve:
+    type: nfs
+    nfs_record_root: /storage/openpsi/experiments/name_resolve/xss
+seed: 1
+total_train_epochs: 100
+tokenizer_path: ${model.path}
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 128
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 0
+  enable_rollout_tracing: false
+  setup_timeout: 600
+
+gconfig:
+  n_samples: 1
+  min_new_tokens: 0
+  max_new_tokens: 8192
+  greedy: false
+  temperature: 1.0
+
+model:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: Qwen/Qwen3-1.7B
+  init_from_scratch: false
+  gradient_checkpointing: false
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 32768
+  optimizer:
+    type: adam
+    lr: 1e-5
+    weight_decay: 0.05
+    beta1: 0.9
+    beta2: 0.95
+    eps: 1e-5
+    lr_scheduler_type: cosine
+    gradient_clipping: 1.0
+  backend: megatron
+
+# SGLang
+sglang:
+  model_path: ${model.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: true
+  dtype: ${model.dtype}
+  max_running_requests: null
+  context_length: ${max_context_length}
+  mem_fraction_static: 0.8
+  # enable_dp_attention: True
+  # dp_size: 8
+  # ep_size: 8
+
+# datasets
+train_dataset:
+  batch_size: 64
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: "/storage/openpsi/users/xushusheng.xss/data/agent_eval/airline_repeat.jsonl"
+  type: sft
+  max_length: 32768
+
+valid_dataset:
+  batch_size: 16
+  shuffle: false
+  pin_memory: true
+  num_workers: 4
+  path: "/storage/openpsi/users/xushusheng.xss/data/agent_eval/airline.jsonl"
+  type: sft
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: auto
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: online
+
+launcher:
+  inference_server_cpus_per_gpu: 4
+  inference_server_mem_per_gpu: 81920
+  trainer_cpus_per_gpu: 4
+  trainer_mem_per_gpu: 81920
+  trainer_env_vars: NCCL_DEBUG=WARN,NCCL_TIMEOUT=1800,WANDB_API_KEY=local-b12dd3e0df637c92fc312ad1a797986f8b8a012f,WANDB_BASE_URL=http://8.150.1.98:8080
+  slurm:
+    mount: /storage:/storage
+    trainer_image: /storage/openpsi/images/areal-25.08-v0.3.3-v3.sif
+    inference_server_image: /storage/openpsi/images/areal-25.08-v0.3.3-v3.sif
