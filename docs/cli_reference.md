@@ -465,6 +465,7 @@ Controls text generation behavior for rollout.
 | `stop_token_ids`    | list of integer        | **Required** | Stop generation when encountering these token IDs.                                                                                    |
 | `stop`              | list of string \| None | `None`       | One or multiple stop words. Generation will stop if one of these words is sampled.                                                    |
 | `frequency_penalty` | float                  | `0.0`        | Penalizes tokens based on their frequency in generation so far. Must be between -2 and 2 where negative numbers encourage repetition. |
+| `lora_name`         | string                 | `""`         | Lora name to be used for this generation.                                                                                             |
 
 (section-inference-engine)=
 
@@ -489,6 +490,7 @@ Configuration for inference servers, including offpolicyness control.
 | `pause_grace_period`      | float                                               | `0.0`           | The grace period after calling /pause_generation. Wait until all requests have been dropped.                                                                                                                                                                                         |
 | `scheduling_spec`         | `tuple`                                             | **Required**    | inference engine schedule specs. Can accept 1 or 2 SchedulingSpec: if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; if 2 specs provided, first one is for worker, second one is for engine. Currently only used by the RolloutController. |
 | `scheduling_strategy`     | [`SchedulingStrategy`](section-scheduling-strategy) | **Required**    | The scheduling strategy of this TrainEngine, either separation or colocation. Currently only used by the RolloutController.                                                                                                                                                          |
+| `use_lora`                | boolean                                             | `False`         | Whether to use LoRA. Should be same as actors LORA option.                                                                                                                                                                                                                           |
 
 (section-sg-lang)=
 
@@ -585,6 +587,8 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 | `worker_extension_cls`         | string          | `"areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"` | -           |
 | `enable_sleep_mode`            | boolean         | `False`                                                             | -           |
 | `uvicorn_log_level`            | string          | `"warning"`                                                         | -           |
+| `enable_lora`                  | boolean         | `False`                                                             | -           |
+| `lora_modules`                 | string          | `""`                                                                | -           |
 
 (section-train-dataset)=
 
