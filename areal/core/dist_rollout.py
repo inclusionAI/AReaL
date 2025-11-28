@@ -34,7 +34,9 @@ def _slice_tensor_dict(data: dict[str, Any], start: int, end: int) -> dict[str, 
     if "attention_mask" in data:
         batch_size = data["attention_mask"].shape[0]
     for key, value in data.items():
-        if torch.is_tensor(value) and value.shape[0] == batch_size:
+        if key == 'multi_modal_input':
+            sliced_data[key] = value[start:end]
+        elif torch.is_tensor(value) and value.shape[0] == batch_size:
             sliced_data[key] = value[start:end]
         else:
             sliced_data[key] = value
