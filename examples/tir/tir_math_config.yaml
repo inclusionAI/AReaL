@@ -91,6 +91,14 @@ sglang:
   context_length: 4096
   mem_fraction_static: 0.8
 
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: 32768
+  gpu_memory_utilization: 0.9
+
 # Tool-Integrated Reasoning configuration
 tir:
   max_turns: 2

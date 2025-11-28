@@ -95,6 +95,14 @@ sglang:
   mem_fraction_static: 0.8
   attention_backend: fa3
 
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: 32768
+  gpu_memory_utilization: 0.9
+
 # datasets
 train_dataset:
   batch_size: 128
