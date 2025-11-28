@@ -5,9 +5,11 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
+import psutil
 import pytest
 
 from areal.platforms import current_platform
@@ -508,17 +510,57 @@ def test_tir_grpo(tmp_path_factory):
     assert success, f"TIR GRPO example failed, return_code={return_code}"
 
 
+# TODO: check all sglang/vllm process termination logic
+def kill_process_tree(parent_pid, include_parent: bool = True, skip_pid: int = None):
+    """Kill the process and all its child processes."""
+    # Remove sigchld handler to avoid spammy logs.
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+
+    if parent_pid is None:
+        parent_pid = os.getpid()
+        include_parent = False
+
+    try:
+        itself = psutil.Process(parent_pid)
+    except psutil.NoSuchProcess:
+        return
+
+    children = itself.children(recursive=True)
+    for child in children:
+        if child.pid == skip_pid:
+            continue
+        try:
+            child.kill()
+        except psutil.NoSuchProcess:
+            pass
+
+    if include_parent:
+        try:
+            if parent_pid == os.getpid():
+                itself.kill()
+                sys.exit(0)
+
+            itself.kill()
+
+            # Sometime processes cannot be killed with SIGKILL (e.g, PID=1 launched by kubernetes),
+            # so we send an additional signal to kill them.
+            itself.send_signal(signal.SIGQUIT)
+        except psutil.NoSuchProcess:
+            pass
+
+
 @pytest.mark.multi_gpu
 def test_search_agent_deepresearch(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
-    model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
+    model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
     if current_platform.device_count() < 3:
         pytest.skip(
             "This test requires at least 3 GPUs (1 for LLM judge, 2 for RL) to run."
         )
     if not os.path.exists(model_path):
-        model_path = "Qwen/Qwen3-0.6B"
+        model_path = "Qwen/Qwen2.5-1.5B-Instruct"
     dataset_path = "/storage/openpsi/data/inclusionAI__Asearcher-train-data/ASearcher-LRM-35k.jsonl"
     if not os.path.exists(dataset_path):
         pytest.skip("Tongyi DeepResearch dataset not available")
@@ -589,12 +631,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
             )
     finally:
         # Ensure cleanup happens even if test fails
-        llm_judge_proc.terminate()
-        try:
-            llm_judge_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            llm_judge_proc.kill()
-            llm_judge_proc.wait()
+        kill_process_tree(llm_judge_proc.pid)
 
 
 @pytest.mark.multi_gpu
@@ -637,6 +674,10 @@ def test_openai_agents(tmp_path_factory, agent_type):
 
 @pytest.mark.multi_gpu
 def test_camel(tmp_path_factory):
+    try:
+        import camel.agents  # noqa
+    except ImportError:
+        pytest.skip("camel-ai is not installed. Skipping camel example test.")
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = "/storage/openpsi/models/Qwen__Qwen3-0.6B"

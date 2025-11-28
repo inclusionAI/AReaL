@@ -18,7 +18,7 @@ class RWEngine:
         self.engine = engine
 
     @trace_perf("rw_engine.train_rw", category="compute")
-    @stats_tracker.scope_class_wrapper("rw")
+    @stats_tracker.scope_func_wrapper("rw")
     def train_rw(self, data: dict[str, Any]):
         """Train on a batch(reward model)"""
         self.engine.train()
@@ -33,7 +33,7 @@ class RWEngine:
         )
 
     @trace_perf("rw_engine.evaluate_rw", category="compute")
-    @stats_tracker.scope_class_wrapper("rw-eval")
+    @stats_tracker.scope_func_wrapper("rw-eval")
     def evaluate_rw(self, data: dict[str, Any]):
         self.engine.eval()
         return self.engine.eval_batch(

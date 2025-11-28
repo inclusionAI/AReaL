@@ -138,7 +138,7 @@ class MultiturnRLVRWorkflow(RolloutWorkflow):
         completions_with_reward = {}
         for client in clients:
             client.apply_reward_discount(turn_discount=0.9)
-            completions = client.export_completions(style="individual")
+            completions = client.export_interactions(style="individual")
             completions_with_reward.update(completions)
         return completions_with_reward
 

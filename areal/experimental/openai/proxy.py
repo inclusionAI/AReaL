@@ -335,7 +335,7 @@ class ProxyServer:
 
             if self.session_cache[session_id].completed:
                 completions.update(
-                    self.session_cache[session_id].export_completions(
+                    self.session_cache[session_id].export_interactions(
                         discount=discount, style=style
                     )
                 )
