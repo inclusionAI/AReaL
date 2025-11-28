@@ -9,6 +9,7 @@ from areal.utils.batch_utils import (
     convert_list_to_dict,
     validate_dict_dataset,
 )
+from areal.utils.data import concat_padded_tensors
 from areal.utils.datapack import ffd_allocate
 from areal.utils.errors import FrameworkError
 
@@ -256,24 +257,7 @@ class DistributedBatchMemory(DistributedBatch):
             batch.dataset = {}
             return batch
 
-        merged_data = {}
-        for batch in data:
-            for k, v in batch.dataset.items():
-                if k in merged_data:
-                    if isinstance(merged_data[k], torch.Tensor) and isinstance(
-                        v, torch.Tensor
-                    ):
-                        merged_data[k] = torch.cat([merged_data[k], v], dim=0)
-                    elif isinstance(merged_data[k], list) and isinstance(v, list):
-                        merged_data[k] = merged_data[k] + v
-                    else:
-                        # Handle mixed types or scalar values
-                        if isinstance(merged_data[k], list):
-                            merged_data[k].append(v)
-                        else:
-                            merged_data[k] = [merged_data[k], v]
-                else:
-                    merged_data[k] = v
+        merged_data = concat_padded_tensors([k.dataset for k in data])
         result = DistributedBatchMemory.__new__(DistributedBatchMemory)
         result.dataset = merged_data
         return result
