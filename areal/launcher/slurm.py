@@ -27,7 +27,6 @@ from areal.utils.launcher import (
     get_env_vars,
     wait_llm_server_addrs,
 )
-from areal.utils.offload import get_tms_env_vars
 from areal.utils.recover import check_if_recover
 from areal.utils.slurm import (
     APPTAINER_CMD_TEMPLATE,
@@ -597,6 +596,7 @@ def slurm_main(config, run_id: int = 0):
         return trainer_cmds
 
     if config.get("enable_offload", False):
+        from areal.utils.offload import get_tms_env_vars
         tms_env_vars = get_tms_env_vars()
     else:
         tms_env_vars = {}
