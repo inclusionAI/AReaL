@@ -380,8 +380,15 @@ def main():
     
     if args.latest_only:
         # Find latest baseline and trained logs
-        baseline_logs = sorted(log_dir.glob("test_model_baseline_*.log"), key=os.path.getmtime, reverse=True)
-        trained_logs = sorted(log_dir.glob("test_model_trained_*.log"), key=os.path.getmtime, reverse=True)
+        # Support both GRPO (test_model_*) and reasoning (test_reasoning_*) log patterns
+        baseline_logs = (
+            sorted(log_dir.glob("test_model_baseline_*.log"), key=os.path.getmtime, reverse=True) +
+            sorted(log_dir.glob("test_reasoning_baseline_*.log"), key=os.path.getmtime, reverse=True)
+        )
+        trained_logs = (
+            sorted(log_dir.glob("test_model_trained_*.log"), key=os.path.getmtime, reverse=True) +
+            sorted(log_dir.glob("test_reasoning_trained_*.log"), key=os.path.getmtime, reverse=True)
+        )
         log_files = []
         if baseline_logs:
             log_files.append(str(baseline_logs[0]))

@@ -74,7 +74,8 @@ def test_reasoning_model(
         log_dir = os.path.join("/workspace", "outputs", "grpo", "test_logs")
     os.makedirs(log_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(log_dir, f"test_reasoning_{ts}.log")
+    # Include model_name in filename to distinguish baseline vs trained (like GRPO test script)
+    log_path = os.path.join(log_dir, f"test_reasoning_{model_name.lower()}_{ts}.log")
     
     def _log(msg: str):
         # Print directly to stdout/stderr (unbuffered) so it shows in terminal immediately
