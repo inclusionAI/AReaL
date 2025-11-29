@@ -76,7 +76,6 @@ dependencies = [
     "tabulate",
     "pybase64",
     "msgspec",
-    "latex2sympy2",
     "math-verify==0.8.0",
     "dotenv",
     "json5",
@@ -135,6 +134,10 @@ fa = [
     "flash-attn==2.8.3",
 ]
 
+npu = [
+    "torch-npu==2.8.0",
+]
+
 sglang = [
     "sglang==0.5.5.post1",
 ]
@@ -174,6 +177,10 @@ docs = [
     "jupyter-book<2",
 ]
 
+eval = [
+    "latex2sympy2",
+]
+
 all = [
     "areal[fa]",
     "areal[vllm]",
@@ -182,6 +189,15 @@ all = [
     "areal[megatron]",
     "areal[dev]",
     "areal[docs]",
+    "areal[eval]",
+]
+
+all_npu = [
+    "areal[npu]",
+    "areal[vllm]",
+    "areal[dev]",
+    "areal[docs]",
+    "areal[eval]",
 ]
 
 [project.urls]
@@ -205,7 +221,7 @@ override-dependencies=[
 ]
 
 [tool.uv.sources]
-latex2sympy2 = { path = "./evaluation/latex2sympy" }
+latex2sympy2 = { path = "./evaluation/latex2sympy", extra = "eval" }
 
 [tool.uv.extra-build-dependencies]
 flash-attn = ["torch==2.8.0"]
