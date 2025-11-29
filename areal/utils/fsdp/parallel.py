@@ -10,11 +10,17 @@ from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     ParallelStyle,
     PrepareModuleInput,
-    PrepareModuleInputOutput,
     RowwiseParallel,
     SequenceParallel,
     parallelize_module,
 )
+
+from areal.utils import pkg_version
+
+if pkg_version.is_version_greater_or_equal("torch", "2.8.0"):
+    from torch.distributed.tensor.parallel import PrepareModuleInputOutput
+else:
+    PrepareModuleInputOutput = None
 from torch.distributed.tensor.placement_types import Placement
 from transformers import PretrainedConfig
 

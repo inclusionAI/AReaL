@@ -26,7 +26,14 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
-from torch_memory_saver import torch_memory_saver
+
+from areal.utils import pkg_version
+
+if pkg_version.is_version_greater_or_equal("torch", "2.8.0"):
+    import torch_memory_saver
+else:
+    torch_memory_saver = None
+
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     AutoConfig,

@@ -6,7 +6,12 @@ properly with LD_PRELOAD hooks.
 
 import os
 
-import torch_memory_saver
+from areal.utils import pkg_version
+
+if pkg_version.is_version_greater_or_equal("torch", "2.8.0"):
+    import torch_memory_saver
+else:
+    torch_memory_saver = None
 
 
 def get_tms_env_vars() -> dict[str, str]:
