@@ -648,6 +648,57 @@ def main(args):
                     else:
                         print(f"⚠️  Some tests may have failed. Check logs above for details.")
                     print(f"{'='*80}\n")
+                    
+                    # Auto-upload logs if configured
+                    upload_method = os.environ.get("AUTO_UPLOAD_LOGS_METHOD")
+                    if upload_method:
+                        print(f"\n{'='*80}")
+                        print(f"📤 Auto-uploading test logs via {upload_method}...")
+                        print(f"{'='*80}\n")
+                        try:
+                            upload_script = os.path.join(script_dir, "upload_logs.py")
+                            upload_cmd = [
+                                sys.executable,
+                                upload_script,
+                                "--log-dir", test_log_dir,
+                                "--method", upload_method,
+                                "--latest-only",  # Only upload latest baseline and trained logs
+                            ]
+                            
+                            # Add method-specific arguments from environment
+                            if upload_method == "email":
+                                if os.environ.get("AUTO_UPLOAD_EMAIL_TO"):
+                                    upload_cmd.extend(["--email-to", os.environ.get("AUTO_UPLOAD_EMAIL_TO")])
+                            elif upload_method == "gdrive":
+                                if os.environ.get("AUTO_UPLOAD_GDRIVE_FOLDER_ID"):
+                                    upload_cmd.extend(["--gdrive-folder-id", os.environ.get("AUTO_UPLOAD_GDRIVE_FOLDER_ID")])
+                            elif upload_method == "s3":
+                                if os.environ.get("AUTO_UPLOAD_S3_BUCKET"):
+                                    upload_cmd.extend(["--s3-bucket", os.environ.get("AUTO_UPLOAD_S3_BUCKET")])
+                                if os.environ.get("AUTO_UPLOAD_S3_PREFIX"):
+                                    upload_cmd.extend(["--s3-prefix", os.environ.get("AUTO_UPLOAD_S3_PREFIX")])
+                            elif upload_method == "hf":
+                                if os.environ.get("AUTO_UPLOAD_HF_REPO_ID"):
+                                    upload_cmd.extend(["--hf-repo-id", os.environ.get("AUTO_UPLOAD_HF_REPO_ID")])
+                            elif upload_method == "wandb":
+                                if os.environ.get("AUTO_UPLOAD_WANDB_PROJECT"):
+                                    upload_cmd.extend(["--wandb-project", os.environ.get("AUTO_UPLOAD_WANDB_PROJECT")])
+                                if os.environ.get("AUTO_UPLOAD_WANDB_RUN_NAME"):
+                                    upload_cmd.extend(["--wandb-run-name", os.environ.get("AUTO_UPLOAD_WANDB_RUN_NAME")])
+                            elif upload_method == "webhook":
+                                if os.environ.get("AUTO_UPLOAD_WEBHOOK_URL"):
+                                    upload_cmd.extend(["--webhook-url", os.environ.get("AUTO_UPLOAD_WEBHOOK_URL")])
+                            
+                            upload_result = subprocess.run(upload_cmd, check=False, capture_output=True)
+                            if upload_result.returncode == 0:
+                                print(f"✅ Logs uploaded successfully via {upload_method}!")
+                            else:
+                                print(f"⚠️  Log upload failed: {upload_result.stderr.decode() if upload_result.stderr else 'Unknown error'}")
+                        except Exception as upload_error:
+                            print(f"⚠️  Failed to upload logs: {upload_error}")
+                            print(f"   You can manually upload logs using:")
+                            print(f"   python {upload_script} --log-dir {test_log_dir} --method {upload_method} ...")
+                        print(f"{'='*80}\n")
                 except Exception as e:
                     print(f"\n{'='*80}")
                     print(f"⚠️  Failed to run test: {e}")
