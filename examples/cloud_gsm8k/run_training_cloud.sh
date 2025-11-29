@@ -532,34 +532,37 @@ if [ $TRAINING_EXIT_CODE -eq 0 ]; then
             
             # Auto-upload logs if configured
             if [ -n "$AUTO_UPLOAD_LOGS_METHOD" ]; then
+                # Normalize method to lowercase (handle EMAIL -> email, etc.)
+                UPLOAD_METHOD=$(echo "$AUTO_UPLOAD_LOGS_METHOD" | tr '[:upper:]' '[:lower:]')
+                
                 echo ""
                 echo "=========================================="
-                echo "📤 Auto-uploading test logs via $AUTO_UPLOAD_LOGS_METHOD..."
+                echo "📤 Auto-uploading test logs via $UPLOAD_METHOD..."
                 echo "=========================================="
                 
                 UPLOAD_SCRIPT="examples/cloud_gsm8k/upload_logs.py"
-                UPLOAD_CMD="python3 $UPLOAD_SCRIPT --log-dir /workspace/outputs/grpo/test_logs --method $AUTO_UPLOAD_LOGS_METHOD --latest-only"
+                UPLOAD_CMD="python3 $UPLOAD_SCRIPT --log-dir /workspace/outputs/grpo/test_logs --method $UPLOAD_METHOD --latest-only"
                 
                 # Add method-specific arguments from environment
-                if [ "$AUTO_UPLOAD_LOGS_METHOD" = "email" ] && [ -n "$AUTO_UPLOAD_EMAIL_TO" ]; then
+                if [ "$UPLOAD_METHOD" = "email" ] && [ -n "$AUTO_UPLOAD_EMAIL_TO" ]; then
                     UPLOAD_CMD="$UPLOAD_CMD --email-to $AUTO_UPLOAD_EMAIL_TO"
-                elif [ "$AUTO_UPLOAD_LOGS_METHOD" = "gdrive" ] && [ -n "$AUTO_UPLOAD_GDRIVE_FOLDER_ID" ]; then
+                elif [ "$UPLOAD_METHOD" = "gdrive" ] && [ -n "$AUTO_UPLOAD_GDRIVE_FOLDER_ID" ]; then
                     UPLOAD_CMD="$UPLOAD_CMD --gdrive-folder-id $AUTO_UPLOAD_GDRIVE_FOLDER_ID"
-                elif [ "$AUTO_UPLOAD_LOGS_METHOD" = "s3" ] && [ -n "$AUTO_UPLOAD_S3_BUCKET" ]; then
+                elif [ "$UPLOAD_METHOD" = "s3" ] && [ -n "$AUTO_UPLOAD_S3_BUCKET" ]; then
                     UPLOAD_CMD="$UPLOAD_CMD --s3-bucket $AUTO_UPLOAD_S3_BUCKET"
                     if [ -n "$AUTO_UPLOAD_S3_PREFIX" ]; then
                         UPLOAD_CMD="$UPLOAD_CMD --s3-prefix $AUTO_UPLOAD_S3_PREFIX"
                     fi
-                elif [ "$AUTO_UPLOAD_LOGS_METHOD" = "hf" ] && [ -n "$AUTO_UPLOAD_HF_REPO_ID" ]; then
+                elif [ "$UPLOAD_METHOD" = "hf" ] && [ -n "$AUTO_UPLOAD_HF_REPO_ID" ]; then
                     UPLOAD_CMD="$UPLOAD_CMD --hf-repo-id $AUTO_UPLOAD_HF_REPO_ID"
-                elif [ "$AUTO_UPLOAD_LOGS_METHOD" = "wandb" ]; then
+                elif [ "$UPLOAD_METHOD" = "wandb" ]; then
                     if [ -n "$AUTO_UPLOAD_WANDB_PROJECT" ]; then
                         UPLOAD_CMD="$UPLOAD_CMD --wandb-project $AUTO_UPLOAD_WANDB_PROJECT"
                     fi
                     if [ -n "$AUTO_UPLOAD_WANDB_RUN_NAME" ]; then
                         UPLOAD_CMD="$UPLOAD_CMD --wandb-run-name $AUTO_UPLOAD_WANDB_RUN_NAME"
                     fi
-                elif [ "$AUTO_UPLOAD_LOGS_METHOD" = "webhook" ] && [ -n "$AUTO_UPLOAD_WEBHOOK_URL" ]; then
+                elif [ "$UPLOAD_METHOD" = "webhook" ] && [ -n "$AUTO_UPLOAD_WEBHOOK_URL" ]; then
                     UPLOAD_CMD="$UPLOAD_CMD --webhook-url $AUTO_UPLOAD_WEBHOOK_URL"
                     if [ -n "$AUTO_UPLOAD_WEBHOOK_API_KEY" ]; then
                         UPLOAD_CMD="$UPLOAD_CMD --webhook-api-key $AUTO_UPLOAD_WEBHOOK_API_KEY"

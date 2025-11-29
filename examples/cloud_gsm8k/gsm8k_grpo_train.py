@@ -652,6 +652,8 @@ def main(args):
                     # Auto-upload logs if configured
                     upload_method = os.environ.get("AUTO_UPLOAD_LOGS_METHOD")
                     if upload_method:
+                        # Normalize method to lowercase (handle EMAIL -> email, etc.)
+                        upload_method = upload_method.lower()
                         print(f"\n{'='*80}")
                         print(f"📤 Auto-uploading test logs via {upload_method}...")
                         print(f"{'='*80}\n")

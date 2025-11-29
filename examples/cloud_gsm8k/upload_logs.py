@@ -309,6 +309,17 @@ def upload_via_webhook(
             os.remove(tar_path)
 
 
+def normalize_method(value):
+    """Normalize method name to lowercase and validate."""
+    value = value.lower()
+    valid_methods = ["email", "gdrive", "s3", "hf", "wandb", "webhook"]
+    if value not in valid_methods:
+        raise argparse.ArgumentTypeError(
+            f"Invalid method '{value}'. Choose from: {', '.join(valid_methods)}"
+        )
+    return value
+
+
 def main():
     parser = argparse.ArgumentParser(description="Upload test logs to cloud services or email")
     parser.add_argument(
@@ -319,11 +330,12 @@ def main():
     )
     parser.add_argument(
         "--method",
-        type=str,
+        type=normalize_method,
         required=True,
-        choices=["email", "gdrive", "s3", "hf", "wandb", "webhook"],
-        help="Upload method",
+        help="Upload method (case-insensitive: email, gdrive, s3, hf, wandb, webhook)",
     )
+    
+    args = parser.parse_args()
     
     # Email options
     parser.add_argument("--email-to", type=str, help="Email recipient")
