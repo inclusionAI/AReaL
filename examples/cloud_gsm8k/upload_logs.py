@@ -335,8 +335,6 @@ def main():
         help="Upload method (case-insensitive: email, gdrive, s3, hf, wandb, webhook)",
     )
     
-    args = parser.parse_args()
-    
     # Email options
     parser.add_argument("--email-to", type=str, help="Email recipient")
     parser.add_argument("--email-from", type=str, help="Email sender (or set EMAIL_FROM env var)")
