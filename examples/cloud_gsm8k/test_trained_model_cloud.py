@@ -70,8 +70,14 @@ def test_model(
     test_all: bool = False,
     temperature: float = 0.0,
     model_name: str = "Model",
+    batch_size: int = 8,
 ):
-    """Test the model on GSM8K samples."""
+    """Test the model on GSM8K samples.
+    
+    Args:
+        batch_size: Number of samples to process in parallel (default: 8). 
+                   Larger batches are faster but use more GPU memory.
+    """
     
     # Prepare logging - save to network volume so it persists after pod stops
     if log_dir is None:
@@ -125,28 +131,46 @@ def test_model(
     results = []
     correct = 0
     
-    for i, sample in enumerate(dataset.select(range(num_samples))):
-        question = sample["question"]
-        correct_answer = sample["answer"]
+    # Process samples in batches for faster inference
+    dataset_subset = list(dataset.select(range(num_samples)))
+    _log(f"Processing {num_samples} samples in batches of {batch_size}...")
+    
+    for batch_start in range(0, num_samples, batch_size):
+        batch_end = min(batch_start + batch_size, num_samples)
+        batch_samples = dataset_subset[batch_start:batch_end]
+        batch_size_actual = len(batch_samples)
         
-        # Note: process_results expects the answer in its original format from the dataset
-        # It will extract the answer from both the ground truth and generated text
-        # So we should NOT modify the correct_answer format - let process_results handle it
-        # The dataset's answer field contains the full solution with #### prefix, which process_results can handle
+        # Prepare batch data
+        batch_questions = []
+        batch_correct_answers = []
+        batch_messages = []
         
-        # Format prompt: simple user message format (no system prompt for standard GRPO)
-        messages = [
-            {"role": "user", "content": f"{question}\nPlease put your final answer within \\boxed{{}}."}
-        ]
+        for sample in batch_samples:
+            question = sample["question"]
+            correct_answer = sample["answer"]
+            batch_questions.append(question)
+            batch_correct_answers.append(correct_answer)
+            
+            # Format prompt: simple user message format (no system prompt for standard GRPO)
+            messages = [
+                {"role": "user", "content": f"{question}\nPlease put your final answer within \\boxed{{}}."}
+            ]
+            batch_messages.append(messages)
         
-        # Tokenize
-        inputs = tokenizer.apply_chat_template(
-            messages,
+        # Tokenize batch (with padding)
+        tokenizer.padding_side = "left"  # Left padding for generation
+        batch_inputs = tokenizer.apply_chat_template(
+            batch_messages,
             add_generation_prompt=True,
-            return_tensors="pt"
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
         ).to(device)
         
-        # Generate
+        # Store input lengths for decoding
+        input_lengths = (batch_inputs != tokenizer.pad_token_id).sum(dim=1).cpu().tolist()
+        
+        # Generate in batch
         with torch.no_grad():
             gen_kwargs = {
                 "max_new_tokens": max_new_tokens,
@@ -157,63 +181,69 @@ def test_model(
             }
             # Remove None values
             gen_kwargs = {k: v for k, v in gen_kwargs.items() if v is not None}
-            outputs = model.generate(inputs, **gen_kwargs)
+            batch_outputs = model.generate(batch_inputs, **gen_kwargs)
         
-        # Decode
-        input_len = inputs.shape[-1]
-        generated_token_ids = outputs[0][input_len:]
-        generated_text = tokenizer.decode(generated_token_ids, skip_special_tokens=True)
-        
-        # Check correctness using AReaL's math parser
-        # Note: process_results(answer, solution) where answer is ground truth, solution is generated
-        is_correct = False
-        parser_error = None
-        extracted_answers = (None, None)
-        try:
-            # Debug: log what we're passing to process_results
-            _log(f"[DEBUG] Sample {i+1}: correct_answer length={len(correct_answer)}, generated_text length={len(generated_text)}")
-            _log(f"[DEBUG] Sample {i+1}: correct_answer preview={correct_answer[:100]}...")
-            _log(f"[DEBUG] Sample {i+1}: generated_text preview={generated_text[:100]}...")
+        # Decode each output separately
+        for batch_idx, (sample_idx, sample) in enumerate(zip(range(batch_start, batch_end), batch_samples)):
+            i = sample_idx
+            question = batch_questions[batch_idx]
+            correct_answer = batch_correct_answers[batch_idx]
             
-            parser_result, extracted_answers = process_results(correct_answer, generated_text)
-            is_correct = bool(parser_result)
+            # Extract generated tokens (skip input tokens)
+            input_len = input_lengths[batch_idx]
+            generated_token_ids = batch_outputs[batch_idx][input_len:]
+            generated_text = tokenizer.decode(generated_token_ids, skip_special_tokens=True)
             
-            _log(f"[DEBUG] Sample {i+1}: parser_result={parser_result}, extracted_answers={extracted_answers}")
-        except Exception as e:
-            parser_error = str(e)
-            _log(f"Warning: Parser failed for sample {i+1}: {e}")
-            import traceback
-            _log(f"Traceback: {traceback.format_exc()}")
+            # Check correctness using AReaL's math parser
+            # Note: process_results(answer, solution) where answer is ground truth, solution is generated
+            is_correct = False
+            parser_error = None
+            extracted_answers = (None, None)
+            try:
+                # Debug: log what we're passing to process_results
+                _log(f"[DEBUG] Sample {i+1}: correct_answer length={len(correct_answer)}, generated_text length={len(generated_text)}")
+                _log(f"[DEBUG] Sample {i+1}: correct_answer preview={correct_answer[:100]}...")
+                _log(f"[DEBUG] Sample {i+1}: generated_text preview={generated_text[:100]}...")
+                
+                parser_result, extracted_answers = process_results(correct_answer, generated_text)
+                is_correct = bool(parser_result)
+                
+                _log(f"[DEBUG] Sample {i+1}: parser_result={parser_result}, extracted_answers={extracted_answers}")
+            except Exception as e:
+                parser_error = str(e)
+                _log(f"Warning: Parser failed for sample {i+1}: {e}")
+                import traceback
+                _log(f"Traceback: {traceback.format_exc()}")
+            
+            if is_correct:
+                correct += 1
+            
+            results.append({
+                "question": question,
+                "correct_answer": correct_answer,
+                "generated": generated_text,
+                "correct": is_correct,
+                "parser_error": parser_error,
+            })
+            
+            # Log detailed info for all samples with correct answer comparison
+            _log(f"\n{'='*80}")
+            _log(f"Sample {i+1}/{num_samples}")
+            _log(f"{'='*80}")
+            _log(f"Question:\n{question}")
+            _log(f"\n{'─'*80}")
+            _log(f"Generated Response:\n{generated_text}")
+            _log(f"\n{'─'*80}")
+            _log(f"Correct Answer:\n{correct_answer}")
+            _log(f"\n{'─'*80}")
+            _log(f"Result: {'✅ CORRECT' if is_correct else '❌ INCORRECT'}")
+            if parser_error:
+                _log(f"Parser Error: {parser_error}")
+            _log(f"{'='*80}")
         
-        if is_correct:
-            correct += 1
-        
-        results.append({
-            "question": question,
-            "correct_answer": correct_answer,
-            "generated": generated_text,
-            "correct": is_correct,
-            "parser_error": parser_error,
-        })
-        
-        # Log detailed info for all samples with correct answer comparison
-        _log(f"\n{'='*80}")
-        _log(f"Sample {i+1}/{num_samples}")
-        _log(f"{'='*80}")
-        _log(f"Question:\n{question}")
-        _log(f"\n{'─'*80}")
-        _log(f"Generated Response:\n{generated_text}")
-        _log(f"\n{'─'*80}")
-        _log(f"Correct Answer:\n{correct_answer}")
-        _log(f"\n{'─'*80}")
-        _log(f"Result: {'✅ CORRECT' if is_correct else '❌ INCORRECT'}")
-        if parser_error:
-            _log(f"Parser Error: {parser_error}")
-        _log(f"{'='*80}")
-        
-        # Log progress every 10 samples or for first/last
-        if (i + 1) % 10 == 0 or i == 0 or i == num_samples - 1:
-            _log(f"Progress: {i+1}/{num_samples} | Correct: {correct}/{i+1} | Accuracy: {correct/(i+1)*100:.2f}%")
+        # Log progress every batch or for first/last
+        if (batch_end) % 10 == 0 or batch_start == 0 or batch_end >= num_samples:
+            _log(f"Progress: {batch_end}/{num_samples} | Correct: {correct}/{batch_end} | Accuracy: {correct/batch_end*100:.2f}%")
     
     accuracy = correct / len(results) * 100
     _log(f"\n{'='*80}")
@@ -284,6 +314,12 @@ def main():
         default="Model",
         help="Name for logging (e.g., 'Baseline' or 'Trained')",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Batch size for faster inference (default: 8). Larger batches are faster but use more GPU memory.",
+    )
     
     args = parser.parse_args()
     
@@ -316,6 +352,7 @@ def main():
         test_all=test_all,
         temperature=args.temperature,
         model_name=args.model_name,
+        batch_size=args.batch_size,
     )
 
 

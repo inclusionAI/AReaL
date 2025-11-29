@@ -472,6 +472,9 @@ def main(args):
                 # Save logs to network volume (persists after pod stops)
                 test_log_dir = os.path.join(config.cluster.fileroot, "test_logs")
                 
+                # Use configurable batch size (default: 16 for faster testing)
+                test_batch_size = os.environ.get("TEST_BATCH_SIZE", "16")
+                
                 if is_reasoning:
                     # Use reasoning test script
                     test_script = os.path.join(script_dir, "test_reasoning_model_cloud.py")
@@ -488,6 +491,7 @@ def main(args):
                         "--max-new-tokens", max_new_tokens,  # Use config value
                         "--log-dir", test_log_dir,
                         "--model-name", "BASELINE",
+                        "--batch-size", test_batch_size,
                     ]
                     
                     # Test trained model
@@ -502,6 +506,7 @@ def main(args):
                         "--max-new-tokens", max_new_tokens,  # Use config value
                         "--log-dir", test_log_dir,
                         "--model-name", "TRAINED",
+                        "--batch-size", test_batch_size,
                     ]
                 else:
                     # Use regular test script (supports both --model-path and --config)
@@ -519,6 +524,7 @@ def main(args):
                         "--max-new-tokens", str(max_new_tokens),
                         "--log-dir", test_log_dir,
                         "--model-name", "BASELINE",
+                        "--batch-size", test_batch_size,
                     ]
                     
                     # Test trained model
@@ -533,6 +539,7 @@ def main(args):
                         "--max-new-tokens", str(max_new_tokens),
                         "--log-dir", test_log_dir,
                         "--model-name", "TRAINED",
+                        "--batch-size", test_batch_size,
                     ]
                 
                 try:

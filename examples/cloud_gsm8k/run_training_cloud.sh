@@ -481,38 +481,48 @@ if [ $TRAINING_EXIT_CODE -eq 0 ]; then
             if [[ "$EXPERIMENT_NAME" == *"reasoning"* ]]; then
                 echo "Detected reasoning model."
                 echo "------------------------------------------"
-                echo "Testing BASELINE model (Qwen/Qwen2.5-0.5B-Instruct) - 50 samples..."
+                # Use configurable batch size (default: 16 for faster testing)
+                TEST_BATCH_SIZE=${TEST_BATCH_SIZE:-16}
+                echo "Testing BASELINE model (Qwen/Qwen2.5-0.5B-Instruct) - 50 samples (batch size: $TEST_BATCH_SIZE)..."
                 python3 examples/cloud_gsm8k/test_reasoning_model_cloud.py \
                     --model-path "Qwen/Qwen2.5-0.5B-Instruct" \
                     --max-samples 50 \
                     --max-new-tokens 1024 \
-                    --model-name "Baseline"
+                    --model-name "Baseline" \
+                    --batch-size "$TEST_BATCH_SIZE"
                 BASELINE_TEST_CODE=$?
                 
                 echo "------------------------------------------"
-                echo "Testing TRAINED model - 50 samples..."
+                echo "Testing TRAINED model - 50 samples (batch size: $TEST_BATCH_SIZE)..."
                 python3 examples/cloud_gsm8k/test_reasoning_model_cloud.py \
                     --model-path "$LATEST_CHECKPOINT" \
                     --max-samples 50 \
                     --max-new-tokens 1024 \
-                    --model-name "Trained"
+                    --model-name "Trained" \
+                    --batch-size "$TEST_BATCH_SIZE"
                 TRAINED_TEST_CODE=$?
             else
                 echo "Running standard validation (Base vs Trained Model)"
                 echo "------------------------------------------"
-                echo "Testing BASELINE model (Qwen/Qwen2.5-0.5B-Instruct) - 50 samples..."
-                python3 examples/docker_gsm8k/test_trained_model.py \
+                # Use configurable batch size (default: 16 for faster testing)
+                TEST_BATCH_SIZE=${TEST_BATCH_SIZE:-16}
+                echo "Testing BASELINE model (Qwen/Qwen2.5-0.5B-Instruct) - 50 samples (batch size: $TEST_BATCH_SIZE)..."
+                python3 examples/cloud_gsm8k/test_trained_model_cloud.py \
                     --model-path "Qwen/Qwen2.5-0.5B-Instruct" \
                     --max-samples 50 \
-                    --log-dir "/workspace/outputs/grpo/test_logs"
+                    --log-dir "/workspace/outputs/grpo/test_logs" \
+                    --model-name "Baseline" \
+                    --batch-size "$TEST_BATCH_SIZE"
                 BASELINE_TEST_CODE=$?
                 
                 echo "------------------------------------------"
-                echo "Testing TRAINED model - 50 samples..."
-                python3 examples/docker_gsm8k/test_trained_model.py \
+                echo "Testing TRAINED model - 50 samples (batch size: $TEST_BATCH_SIZE)..."
+                python3 examples/cloud_gsm8k/test_trained_model_cloud.py \
                     --model-path "$LATEST_CHECKPOINT" \
                     --max-samples 50 \
-                    --log-dir "/workspace/outputs/grpo/test_logs"
+                    --log-dir "/workspace/outputs/grpo/test_logs" \
+                    --model-name "Trained" \
+                    --batch-size "$TEST_BATCH_SIZE"
                 TRAINED_TEST_CODE=$?
             fi
             
