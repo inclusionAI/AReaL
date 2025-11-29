@@ -6,7 +6,10 @@ properly with LD_PRELOAD hooks.
 
 import os
 
-import torch_memory_saver
+try:
+    import torch_memory_saver
+except ImportError:
+    torch_memory_saver = None
 
 
 def get_tms_env_vars() -> dict[str, str]:

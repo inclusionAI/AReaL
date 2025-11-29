@@ -22,7 +22,11 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
 from torch import nn
-from torch_memory_saver import torch_memory_saver
+
+try:
+    from torch_memory_saver import torch_memory_saver
+except ImportError:
+    torch_memory_saver = None
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
