@@ -1,5 +1,5 @@
 [build-system]
-requires = [ "setuptools", "build>=1.2.1"]
+requires = [ "setuptools<80,>=77.0.3", "build>=1.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -26,7 +26,6 @@ classifiers = [
     #   4 - Beta
     #   5 - Production/Stable
     "Development Status :: 2 - Pre-Alpha",
-    "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.2",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
@@ -50,7 +49,6 @@ dependencies = [
     "transformers==4.57.1",
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
-    "sglang==0.5.5.post1",
     "vllm==0.11.0",
     "peft",
     "qwen_agent",
@@ -129,10 +127,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cuda = [
-    "flash-attn==2.8.3",
-]
-
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -184,7 +178,6 @@ override-dependencies=[
 latex2sympy2 = { path = "./evaluation/latex2sympy" }
 
 [tool.uv.extra-build-dependencies]
-flash-attn = ["torch==2.8.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
