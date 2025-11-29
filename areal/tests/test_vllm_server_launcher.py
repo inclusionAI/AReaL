@@ -8,10 +8,6 @@ Tests the port range calculation logic to ensure:
 4. Edge cases don't cause overflow errors
 """
 
-import os
-import sys
-from unittest.mock import MagicMock, Mock, patch
-
 import pytest
 
 
@@ -112,12 +108,10 @@ class TestPortAllocationLogic:
                 server_idx, n_servers_per_node
             )
 
-            assert (
-                0 <= min_port <= 65535
-            ), f"Server {server_idx} min_port {min_port} out of range"
-            assert (
-                0 <= max_port <= 65535
-            ), f"Server {server_idx} max_port {max_port} out of range"
+            if not (0 <= min_port <= 65535):
+                assert False, f"Server {server_idx} min_port {min_port} out of range"
+            if not (0 <= max_port <= 65535):
+                assert False, f"Server {server_idx} max_port {max_port} out of range"
             assert min_port < max_port, "Port range must be non-empty"
 
         # Check specific values
@@ -187,9 +181,8 @@ class TestPortAllocationLogic:
             min_port, max_port = self.calculate_port_range(
                 server_idx, n_servers_per_node
             )
-            assert (
-                max_port <= 65535
-            ), f"Node 0 server {server_idx} port overflow: {max_port}"
+            if not (max_port <= 65535):
+                assert False, f"Node 0 server {server_idx} port overflow: {max_port}"
 
         # Node 1: GPUs 8-15, servers 8-11 (global), but 0-3 (node-local after fix)
         visible_gpus_node1 = list(range(8, 16))
@@ -205,13 +198,11 @@ class TestPortAllocationLogic:
             min_port, max_port = self.calculate_port_range(
                 server_idx, n_servers_per_node
             )
-            assert (
-                max_port <= 65535
-            ), f"Node 1 server {server_idx} port overflow: {max_port}"
+            if not (max_port <= 65535):
+                assert False, f"Node 1 server {server_idx} port overflow: {max_port}"
 
     def test_tensor_parallelism_t2_port_allocation(self):
         """Test port allocation with tensor parallelism (d4t2)."""
-        gpus_per_server = 2  # t2
         n_servers_per_node = 8 // 2  # 4 servers per node
         ports_per_server = 40000 // n_servers_per_node  # 10000
 
@@ -226,7 +217,6 @@ class TestPortAllocationLogic:
 
     def test_tensor_parallelism_t4_port_allocation(self):
         """Test port allocation with high tensor parallelism (d2t4)."""
-        gpus_per_server = 4  # t4
         n_servers_per_node = 8 // 4  # 2 servers per node
         ports_per_server = 40000 // n_servers_per_node  # 20000
 
@@ -245,9 +235,7 @@ class TestPortAllocationLogic:
 
     def test_full_node_t8_port_allocation(self):
         """Test port allocation when one server uses all GPUs (d1t8)."""
-        gpus_per_server = 8  # t8
         n_servers_per_node = 1
-        ports_per_server = 40000
 
         min_port, max_port = self.calculate_port_range(0, n_servers_per_node)
 
@@ -274,7 +262,9 @@ class TestPortAllocationLogic:
         assert n_servers_per_proc == 2
 
         for local_idx in range(offset, offset + n_servers_per_proc):
-            min_port, max_port = self.calculate_port_range(local_idx, n_servers_per_node)
+            min_port, max_port = self.calculate_port_range(
+                local_idx, n_servers_per_node
+            )
             assert max_port <= 65535
 
     def test_ports_per_server_calculation(self):
@@ -288,9 +278,8 @@ class TestPortAllocationLogic:
 
         for n_servers_per_node, expected_ports in test_cases:
             ports_per_server = 40000 // n_servers_per_node
-            assert (
-                ports_per_server == expected_ports
-            ), f"Expected {expected_ports} ports for {n_servers_per_node} servers"
+            if not (ports_per_server == expected_ports):
+                assert False, f"Expected {expected_ports} ports, got {ports_per_server}"
 
     def test_multi_node_all_offsets_zero(self):
         """Test that all nodes have offset 0 with the fix."""
@@ -320,9 +309,8 @@ class TestResourceSetupCalculations:
 
         for tp, pp, expected_size in test_cases:
             gen_instance_size = tp * pp
-            assert (
-                gen_instance_size == expected_size
-            ), f"tp={tp}, pp={pp} should give {expected_size}"
+            if not (gen_instance_size == expected_size):
+                assert False, f"tp={tp}, pp={pp} should give {expected_size}"
 
     def test_servers_per_node(self):
         """Test calculation of number of servers per node."""
@@ -335,9 +323,10 @@ class TestResourceSetupCalculations:
 
         for n_gpus_per_node, gpus_per_server, expected_servers in test_cases:
             n_servers = max(1, n_gpus_per_node // gpus_per_server)
-            assert (
-                n_servers == expected_servers
-            ), f"{n_gpus_per_node} GPUs with {gpus_per_server} per server should give {expected_servers} servers"
+            if not (n_servers == expected_servers):
+                raise AssertionError(
+                    f"{n_gpus_per_node} GPUs with {gpus_per_server} per server should give {expected_servers} servers"
+                )
 
     def test_world_size_calculation(self):
         """Test world_size calculation."""
@@ -350,9 +339,10 @@ class TestResourceSetupCalculations:
 
         for dp, tp, pp, expected_world_size in test_cases:
             world_size = dp * tp * pp
-            assert (
-                world_size == expected_world_size
-            ), f"dp={dp}, tp={tp}, pp={pp} should give world_size={expected_world_size}"
+            if not (world_size == expected_world_size):
+                raise AssertionError(
+                    f"dp={dp}, tp={tp}, pp={pp} should give world_size={expected_world_size}"
+                )
 
     def test_nodes_required(self):
         """Test calculation of nodes required."""
@@ -367,9 +357,10 @@ class TestResourceSetupCalculations:
 
         for world_size, gpus_per_node, expected_nodes in test_cases:
             n_nodes = math.ceil(world_size / gpus_per_node)
-            assert (
-                n_nodes == expected_nodes
-            ), f"{world_size} GPUs with {gpus_per_node} per node should need {expected_nodes} nodes"
+            if not (n_nodes == expected_nodes):
+                raise AssertionError(
+                    f"{world_size} GPUs with {gpus_per_node} per node should need {expected_nodes} nodes"
+                )
 
 
 class TestEdgeCases:
@@ -392,21 +383,23 @@ class TestEdgeCases:
             min_port, max_port = self.calculate_port_range(
                 server_idx, n_servers_per_node
             )
-            assert 10000 <= min_port < 50000, f"min_port {min_port} out of [10000, 50000)"
-            assert 10000 < max_port <= 50000, f"max_port {max_port} out of (10000, 50000]"
+            if not (10000 <= min_port < 50000):
+                assert False, f"min_port {min_port} out of [10000, 50000)"
+            if not (10000 < max_port <= 50000):
+                assert False, f"max_port {max_port} out of (10000, 50000]"
 
     def test_first_server_port_range(self):
         """Test that first server always starts at 10000."""
         for n_servers in [1, 2, 4, 8]:
             min_port, _ = self.calculate_port_range(0, n_servers)
-            assert min_port == 10000, f"First server should always start at 10000"
+            assert min_port == 10000, "First server should always start at 10000"
 
     def test_last_server_port_range(self):
         """Test that last server on a node ends at 50000."""
         for n_servers in [1, 2, 4, 8]:
             last_idx = n_servers - 1
             _, max_port = self.calculate_port_range(last_idx, n_servers)
-            assert max_port == 50000, f"Last server should always end at 50000"
+            assert max_port == 50000, "Last server should always end at 50000"
 
     def test_no_port_overlap(self):
         """Test that server port ranges don't overlap."""
@@ -421,9 +414,10 @@ class TestEdgeCases:
 
         # Check no overlaps
         for i in range(len(ranges) - 1):
-            assert (
-                ranges[i][1] == ranges[i + 1][0]
-            ), f"Port ranges should be contiguous: {ranges[i]} and {ranges[i+1]}"
+            if not (ranges[i][1] == ranges[i + 1][0]):
+                raise AssertionError(
+                    f"Port ranges should be contiguous: {ranges[i]} and {ranges[i + 1]}"
+                )
 
 
 if __name__ == "__main__":
