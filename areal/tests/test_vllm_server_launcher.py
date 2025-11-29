@@ -8,6 +8,8 @@ Tests the port range calculation logic to ensure:
 4. Edge cases don't cause overflow errors
 """
 
+import math
+
 import pytest
 
 
@@ -346,7 +348,6 @@ class TestResourceSetupCalculations:
 
     def test_nodes_required(self):
         """Test calculation of nodes required."""
-        import math
 
         test_cases = [
             (8, 8, 1),  # 8 GPUs, 8 per node = 1 node
