@@ -26,7 +26,6 @@ classifiers = [
     #   4 - Beta
     #   5 - Production/Stable
     "Development Status :: 2 - Pre-Alpha",
-    "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.2",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
@@ -50,7 +49,6 @@ dependencies = [
     "transformers==4.57.1",
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
-    "torch_memory_saver==0.0.9",
     "peft",
     "qwen_agent",
     "openai-agents",
@@ -132,8 +130,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-fa = [
+cuda = [
     "flash-attn==2.8.3",
+    "torch_memory_saver==0.0.9",
 ]
 
 sglang = [
@@ -142,6 +141,10 @@ sglang = [
 
 vllm = [
     "vllm==0.11.0",
+]
+
+npu = [
+    "torch-npu==2.8.0",
 ]
 
 dev = [
@@ -165,10 +168,17 @@ docs = [
     "jupyter-book",
 ]
 
-all = [
-    "areal[fa]",
+all_cuda = [
+    "areal[cuda]",
     "areal[vllm]",
     "areal[sglang]",
+    "areal[dev]",
+    "areal[docs]",
+]
+
+all = [
+    "areal[npu]",
+    "areal[vllm]",
     "areal[dev]",
     "areal[docs]",
 ]
