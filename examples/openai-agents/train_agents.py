@@ -51,9 +51,15 @@ class OpenAIAgentWrapper:
         reward = await self.async_reward_fn(
             completions=result.final_output,
             answer=data["answer"],
-            prompt=None,
-            prompt_ids=None,
-            completion_ids=None,
+            prompt=data.get("prompt"),
+            prompt_ids=data.get("prompt_ids"),
+            completion_ids=data.get("completion_ids"),
+            **{
+                k: v
+                for k, v in data.items()
+                if k
+                not in ["messages", "answer", "prompt", "prompt_ids", "completion_ids"]
+            },
         )
         client.set_final_reward(reward)
         return reward
