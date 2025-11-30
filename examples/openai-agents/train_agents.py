@@ -66,10 +66,8 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         dump_dir: str | None = None,
         rollout_stat_scope: str = "rollout",
-        n_trajs: int = 1,
     ):
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
-        self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
@@ -77,7 +75,6 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
             os.makedirs(self.dump_dir, exist_ok=True)
 
         # Search hyper-parameters
-        self.n_trajs = n_trajs
         self.agent = OpenAIAgentWrapper(
             agent_builder_kwargs=agent_builder_kwargs,
             temperature=gconfig.temperature,
@@ -89,7 +86,7 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
     async def arun_episode(self, engine, data):
         clients = [
             ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-            for _ in range(self.n_trajs)
+            for _ in range(self.gconfig.n_samples)
         ]
 
         # Collect trajectories
@@ -99,7 +96,7 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
                     data=data,
                     client=clients[i],
                 )
-                for i in range(self.n_trajs)
+                for i in range(self.gconfig.n_samples)
             ]
         )
         for reward in rewards:
@@ -118,12 +115,6 @@ class AgentRLConfig(GRPOConfig):
     reward_fn_path: str = "areal.reward.gsm8k.gsm8k_reward_fn"
     agent_builder_path: str = "areal.workflow.openai_agent.math_agent.build_math_agent"
     agent_builder_kwargs: dict = field(default_factory=dict)
-    n_trajs: int = field(
-        default=1,
-        metadata={
-            "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
-        },
-    )
 
 
 def main(args):
@@ -154,7 +145,6 @@ def main(args):
             agent_builder_kwargs=config.agent_builder_kwargs,
             reward_fn_path=config.reward_fn_path,
             gconfig=config.gconfig,
-            n_trajs=config.n_trajs,
             tokenizer=tokenizer,
             dump_dir=os.path.join(
                 StatsLogger.get_log_path(config.stats_logger), "generated"
@@ -165,7 +155,6 @@ def main(args):
             agent_builder_kwargs=config.agent_builder_kwargs,
             reward_fn_path=config.reward_fn_path,
             gconfig=config.gconfig,
-            n_trajs=config.n_trajs,
             tokenizer=tokenizer,
             dump_dir=os.path.join(
                 StatsLogger.get_log_path(config.stats_logger), "generated-eval"
