@@ -1,7 +1,7 @@
 # Pad/unpad operations are modified from flash-attention under BSD-3 license.
 # Copyright (c) 2023, Tri Dao.
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -1367,3 +1367,92 @@ class KLEstimator:
         if apply_clamp:
             log_ratio = log_ratio.clamp(min=-10, max=10)
         return log_ratio
+
+
+class MicroBatchIterator:
+    """Wrapper for data iterator that carries metadata for Megatron pipeline parallel execution.
+
+    This wrapper encapsulates a data iterator and stores additional metadata (max sequence length
+    and number of micro-batches) that are required by Megatron's `forward_backward_func` for
+    pipeline parallel execution. It implements the iterator protocol, so it can be used directly
+    as an iterator while also providing access to the metadata.
+
+    Attributes
+    ----------
+    kwargs : dict[str, Any]
+        Contains the parameters processed during splitting micro-batches.
+    data_iterator : Iterator
+        The underlying data iterator (read-only property).
+    """
+
+    def __init__(self, data_iterable: Iterable, **kwargs):
+        self._data_iterator = iter(data_iterable)
+        self.kwargs = kwargs
+
+    def __iter__(self) -> Iterator:
+        return self
+
+    def __next__(self):
+        return next(self._data_iterator)
+
+    @property
+    def data_iterator(self):
+        return self._data_iterator
+
+
+def create_mb_iterator(
+    mb_list: MicroBatchList,
+    *,
+    mb_fields: list[str] | None = None,
+    **meta,
+) -> MicroBatchIterator:
+    """Build a micro-batch iterator and wrap it with metadata.
+
+    This helper keeps the per-micro-batch payload lightweight while allowing
+    callers to attach out-of-band metadata (e.g., hyperparameters) to the
+    iterator wrapper.
+
+    Args:
+        mb_list: Micro-batch list.
+        mb_fields: Which fields from `MicroBatchList` to copy into every payload.
+            Defaults to a comprehensive sublist (indices, lengths, inputs, spec).
+        **meta: Metadata to attach to the wrapper.
+
+    Returns:
+        MicroBatchIterator: Iterator wrapper with metadata stored in `kwargs`.
+    """
+    if mb_fields is None:
+        mb_fields = [
+            "forward_indices",
+            "backward_indices",
+            "group_lens",
+            "padding_lengths",
+            "padded_to_lengths",
+            "align_to_lengths",
+            "mb_spec",
+            "mbs",
+            "padded_mbs",
+            "old_cu_seqlens_list",
+            "data",
+        ]
+
+    # Infer num_mb: prefer mbs length, else first list field, else meta.
+    num_mb = len(mb_list.mbs) if getattr(mb_list, "mbs", None) else None
+    # Pre-filter usable fields while optionally deriving num_mb from the first list field.
+    processed_fields = []
+    for key in mb_fields:
+        value = getattr(mb_list, key, None)
+        if value is None:
+            continue
+        if num_mb is None and isinstance(value, list):
+            num_mb = len(value)
+        processed_fields.append((key, value))
+
+    def _data_iterator():
+        for idx in range(num_mb):
+            yield tuple(
+                value[idx] if isinstance(value, list) else value
+                for _, value in processed_fields
+            )
+
+    return MicroBatchIterator(_data_iterator(), **meta)

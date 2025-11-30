@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
-from megatron.core import parallel_state as mpu
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.io_struct import (
@@ -20,17 +19,23 @@ from areal.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
-from areal.utils.data import pack_tensor_dict, MicroBatchList, unpack_sequence, reorder_list, \
-    pad_and_stack_tensors_along_first_dim
-from areal.utils.ulysses import set_ulysses_sequence_parallel_group
+from areal.utils.data import (
+    MicroBatchList,
+    pack_tensor_dict,
+    pad_and_stack_tensors_along_first_dim,
+    reorder_list,
+    unpack_sequence,
+)
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
+
 
 @dataclass
 class ForwardBackwardOutputs:
     mb_outputs: list[torch.Tensor] | None
     losses: list[torch.Tensor] | None
+
 
 class TrainEngine(abc.ABC):
     def __init__(self):
@@ -218,33 +223,10 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def aggregate_result(
-        self,
-        result: torch.Tensor,
-    ) -> Any | None:
-        """Aggregate results across parallel ranks in distributed training.
-
-        In distributed settings (especially pipeline parallelism), results may only
-        exist on certain ranks (e.g., the last pipeline stage). This method handles
-        broadcasting or aggregating results to make them available on all ranks.
-
-        Parameters
-        ----------
-        result : torch.Tensor
-            The result tensor to aggregate.
-
-        Returns
-        -------
-        Any or None
-            The aggregated result tensor, broadcasted to all ranks if necessary.
-            Returns None if no result is available on any rank.
-        """
-        raise NotImplementedError()
-
-    def split_micro_batch(
+    def _split_micro_batch(
         self,
         input_: dict[str, Any],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor]| None = None,
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
     ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]:
         """Split input batch into micro-batches for gradient accumulation.
 
@@ -258,7 +240,7 @@ class TrainEngine(abc.ABC):
         input_ : dict[str, Any]
             The input batch dictionary.
         loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
-            A function to compute the loss weight for each micro-batch. 
+            A function to compute the loss weight for each micro-batch.
 
         Returns
         -------
@@ -272,7 +254,7 @@ class TrainEngine(abc.ABC):
     def _forward_compute_mb(
         self,
         mb_input: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        post_process_fn: Callable[[torch.Tensor, dict[str, Any]], Any],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
         **kwargs,
     ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
@@ -283,21 +265,19 @@ class TrainEngine(abc.ABC):
         closure is used by the training framework to compute loss and perform
         backward pass during gradient accumulation.
 
-        The exact structure of `mb_input` and the returned loss function depends
-        on the engine implementation, but the interface contract remains the same.
-
         Parameters
         ----------
         mb_input : dict[str, Any]
             A dictionary containing the micro-batch input data. The exact structure
             depends on the engine implementation, but typically includes packed/padded
             tensors, padding metadata, and total loss weight.
-        loss_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor]
+        loss_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor], optional
             A function that computes the normalized loss given model output and
-            input data.
-        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
+            input data. Optional for pure forward passes.
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
             A function that computes the weight for this micro-batch, typically
             the number of tokens. Used for proper loss scaling across micro-batches.
+            Optional when `loss_fn` is not provided.
         **kwargs
             Additional keyword arguments that may be used by specific implementations,
             such as model reference for pipeline parallel, batch type, post-processing
@@ -305,12 +285,13 @@ class TrainEngine(abc.ABC):
 
         Returns
         -------
-        tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]
+        tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]] | None]
             A tuple containing:
             - The model output tensor (logits) from the forward pass
             - A callable loss function that takes the output tensor and returns:
               - A loss tensor (scaled appropriately for gradient accumulation)
               - A dictionary with additional data
+              If `loss_fn` is None (e.g., pure forward pass), the callable can be None.
         """
         raise NotImplementedError()
 
@@ -376,8 +357,8 @@ class TrainEngine(abc.ABC):
     def forward_backward_batch(
         self,
         data_iterator: Iterable[dict[str, torch.Tensor]],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor]| None = None,
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor]| None = None,
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor] | None = None,
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
         output_post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
         return_outputs: bool = False,
         forward_only: bool = False,
@@ -392,9 +373,9 @@ class TrainEngine(abc.ABC):
         Parameters
         ----------
         data_iterator : Iterable[dict[str, torch.Tensor]]
-            An iterable of micro-batch dictionaries, typically produced by
-            `split_micro_batch`. Each dictionary contains micro-batch input data
-            and metadata (padding info, loss weights, etc.).
+            `data_iterator` is typically produced by converting a `MicroBatchList` into
+            an iterator (e.g., via `create_mb_iterator`), yielding per-micro-batch
+            payloads and any metadata computed during splitting for downstream use.
         loss_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor], optional
             A function that computes the normalized loss given model output and
             input data. Required when `forward_only=False` or when `return_outputs=False`
@@ -457,11 +438,9 @@ class TrainEngine(abc.ABC):
             Scalar statistics after training, e.g., the current learning rate,
             gradient norm, etc.
         """
-        if self.is_offload:
-            self.onload()
         self.optimizer_zero_grad()
-        _data_iterator, mb_list = self.split_micro_batch(input_,loss_weight_fn)
-        self.forward_backward_batch(_data_iterator,loss_fn,loss_weight_fn)
+        _data_iterator, _ = self._split_micro_batch(input_, loss_weight_fn)
+        self.forward_backward_batch(_data_iterator, loss_fn, loss_weight_fn)
         return self.optimizer_step()
 
     @torch.no_grad()
@@ -497,10 +476,10 @@ class TrainEngine(abc.ABC):
             A scalar loss or None. The evaluation statistics should be aggregated
             with `stats_tracker`.
         """
-        if self.is_offload:
-            self.onload()
-        _data_iterator, mb_list = self.split_micro_batch(input_,loss_weight_fn)
-        output = self.forward_backward_batch(_data_iterator, loss_fn, loss_weight_fn, forward_only=True)
+        _data_iterator, _ = self._split_micro_batch(input_, loss_weight_fn)
+        output = self.forward_backward_batch(
+            _data_iterator, loss_fn, loss_weight_fn, forward_only=True
+        )
         loss = torch.stack(output.losses).sum(dtype=torch.float32)
         dist.all_reduce(loss, group=self.dp_group)
         return loss
@@ -538,28 +517,26 @@ class TrainEngine(abc.ABC):
         Any or None
             The result produced by `post_hook` and `aggregate_fn`.
         """
-        if self.is_offload:
-            self.onload()
-
-        if self.parallel_helper.sp_size > 1:
-            set_ulysses_sequence_parallel_group(self.sp_group)
-
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
 
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
         assert output_seqlens is not None
 
-        _data_iterator, mb_list = self.split_micro_batch(input_)
+        _data_iterator, mb_list = self._split_micro_batch(input_)
 
-        result = self.forward_backward_batch(_data_iterator, forward_only=True,return_outputs=True,output_post_hook=post_hook)
+        result = self.forward_backward_batch(
+            _data_iterator,
+            forward_only=True,
+            return_outputs=True,
+            output_post_hook=post_hook,
+        )
 
         res = aggregate_fn(result.mb_outputs)
         output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
         unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
         reordered = reorder_list(unpacked, mb_list.backward_indices)
-        result =  pad_and_stack_tensors_along_first_dim(reordered)
-        return self.aggregate_result(result)
+        return pad_and_stack_tensors_along_first_dim(reordered)
 
     @torch.no_grad()
     def forward(
@@ -590,6 +567,9 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     def onload(self):
+        raise NotImplementedError()
+
+    def offload(self):
         raise NotImplementedError()
 
 
