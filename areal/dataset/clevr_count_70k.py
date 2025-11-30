@@ -199,7 +199,6 @@ def get_clevr_count_70k_rl_dataset(
             return {"messages": messages, "images": processed_images}
 
         dataset = dataset.map(process, num_proc=num_proc).remove_columns(["problem"])
-
         # Filter out sequences longer than max_length if max_length is provided
         if max_length is not None:
 

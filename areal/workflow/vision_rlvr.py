@@ -3,7 +3,8 @@ import os
 import uuid
 from collections.abc import Callable
 from typing import Any, cast
-
+from PIL import Image
+from io import BytesIO
 import aiofiles
 import aiofiles.os
 import colorama
@@ -117,7 +118,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             padding=False,
             return_tensors="pt",
         )
-
         input_ids: list[int] = processed_input["input_ids"].tolist()[0]
 
         n_samples = self.gconfig.n_samples

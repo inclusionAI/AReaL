@@ -1151,9 +1151,8 @@ class FSDPEngine(TrainEngine):
                 ]
                 if video_grid_thw_list:
                     video_grid_thw = torch.cat(video_grid_thw_list)
-
             position_ids, _ = self.model.model.get_rope_index(
-                input_ids, image_grid_thw, video_grid_thw, attn_mask
+                input_ids.long(), image_grid_thw, video_grid_thw, attn_mask
             )
             position_ids = torch.einsum("ijk->jki", position_ids)
             input_["position_ids"] = position_ids
