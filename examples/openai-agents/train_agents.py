@@ -18,7 +18,6 @@ from areal.utils import stats_tracker
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
-from areal.workflow.rlvr import RLVRWorkflow
 
 
 class OpenAIAgentWrapper:
@@ -28,13 +27,13 @@ class OpenAIAgentWrapper:
         agent_builder_kwargs: dict,
         reward_fn_path: str,
         temperature: float = 1.0,
-        max_completion_tokens: int = 512,
+        max_tokens: int = 512,
     ):
         self.agent_builder = import_from_string(agent_builder_path)
         self.agent_builder_kwargs = agent_builder_kwargs
         self.async_reward_fn = AsyncRewardWrapper(import_from_string(reward_fn_path))
         self.temperature = temperature
-        self.max_completion_tokens = max_completion_tokens
+        self.max_tokens = max_tokens
 
     async def run_agent(self, data, client: ArealOpenAI):
         agent: OpenAIAgent = self.agent_builder(**self.agent_builder_kwargs)
@@ -43,14 +42,18 @@ class OpenAIAgentWrapper:
             tracing_disabled=True,
             model_settings=ModelSettings(
                 temperature=self.temperature,
-                extra_args={"max_completion_tokens": self.max_completion_tokens},
+                max_tokens=self.max_tokens,
             ),
         )
         result = await OpenAIRunner.run(
             agent, input=data["messages"][-1]["content"], run_config=run_config
         )
         reward = await self.async_reward_fn(
-            result=result.final_output, answer=data["answer"]
+            completions=result.final_output,
+            answer=data["answer"],
+            prompt=None,
+            prompt_ids=None,
+            completion_ids=None,
         )
         client.set_final_reward(reward)
         return reward
@@ -78,7 +81,7 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
         self.agent = OpenAIAgentWrapper(
             agent_builder_kwargs=agent_builder_kwargs,
             temperature=gconfig.temperature,
-            max_completion_tokens=gconfig.max_new_tokens,
+            max_tokens=gconfig.max_tokens,
             agent_builder_path=agent_builder_path,
             reward_fn_path=reward_fn_path,
         )
@@ -150,7 +153,7 @@ def main(args):
                 StatsLogger.get_log_path(config.stats_logger), "generated"
             ),
         )
-        eval_workflow = RLVRWorkflow(
+        eval_workflow = OpenAIAgentWorkflow(
             agent_builder_path=config.agent_builder_path,
             agent_builder_kwargs=config.agent_builder_kwargs,
             reward_fn_path=config.reward_fn_path,

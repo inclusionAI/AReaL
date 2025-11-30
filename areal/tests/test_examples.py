@@ -768,8 +768,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
-@pytest.mark.parametrize("agent_type", ["math", "multi_agent_math"])
-def test_openai_agents(tmp_path_factory, agent_type):
+def test_openai_agents(tmp_path_factory):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B-Instruct"
@@ -786,23 +785,21 @@ def test_openai_agents(tmp_path_factory, agent_type):
             example_file,
             config_name,
             "allocation_mode=sglang:d1+fsdp:d1",
-            f"agent_type={agent_type}",
             "gconfig.n_samples=1",
-            "gconfig.max_new_tokens=256",
+            "gconfig.max_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=4096",
             "train_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
+            "valid_dataset.batch_size=16",
+            f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
-            "n_trajs=1",
         )
     )
     if not success:
-        raise RuntimeError(
-            f"OpenAI Agents {agent_type} example failed, return_code={return_code}"
-        )
+        raise RuntimeError(f"OpenAI Agents example failed, return_code={return_code}")
 
 
 @pytest.mark.multi_gpu
