@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
+from megatron.core import parallel_state as mpu
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.io_struct import (
@@ -18,12 +20,25 @@ from areal.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
+from areal.utils.data import pack_tensor_dict, MicroBatchList, unpack_sequence, reorder_list, \
+    pad_and_stack_tensors_along_first_dim
+from areal.utils.ulysses import set_ulysses_sequence_parallel_group
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
 
+@dataclass
+class ForwardBackwardOutputs:
+    mb_outputs: list[torch.Tensor] | None
+    losses: list[torch.Tensor] | None
 
 class TrainEngine(abc.ABC):
+    def __init__(self):
+        self.is_offload = None
+        self.sp_group = None
+        self.parallel_helper = None
+        self.dp_group = None
+
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Initialize PyTorch distributed communication groups.
 
@@ -203,12 +218,210 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def aggregate_result(
+        self,
+        result: torch.Tensor,
+    ) -> Any | None:
+        """Aggregate results across parallel ranks in distributed training.
+
+        In distributed settings (especially pipeline parallelism), results may only
+        exist on certain ranks (e.g., the last pipeline stage). This method handles
+        broadcasting or aggregating results to make them available on all ranks.
+
+        Parameters
+        ----------
+        result : torch.Tensor
+            The result tensor to aggregate.
+
+        Returns
+        -------
+        Any or None
+            The aggregated result tensor, broadcasted to all ranks if necessary.
+            Returns None if no result is available on any rank.
+        """
+        raise NotImplementedError()
+
+    def split_micro_batch(
+        self,
+        input_: dict[str, Any],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor]| None = None,
+    ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]:
+        """Split input batch into micro-batches for gradient accumulation.
+
+        This method prepares the input data for micro-batch processing by splitting
+        the batch according to the configured micro-batch specification, computing
+        total loss weights across all micro-batches, and creating an iterator that
+        yields micro-batch dictionaries with necessary metadata.
+
+        Parameters
+        ----------
+        input_ : dict[str, Any]
+            The input batch dictionary.
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
+            A function to compute the loss weight for each micro-batch. 
+
+        Returns
+        -------
+        tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]
+            A tuple containing:
+            - An iterable of micro-batch dictionaries.
+            - A MicroBatchList object containing metadata about the micro-batches.
+        """
+        raise NotImplementedError()
+
+    def _forward_compute_mb(
+        self,
+        mb_input: dict[str, Any],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        **kwargs,
+    ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
+        """Compute forward pass and prepare loss function for a single micro-batch.
+
+        This method performs the forward pass on a single micro-batch and returns
+        the output tensor along with a loss function closure. The loss function
+        closure is used by the training framework to compute loss and perform
+        backward pass during gradient accumulation.
+
+        The exact structure of `mb_input` and the returned loss function depends
+        on the engine implementation, but the interface contract remains the same.
+
+        Parameters
+        ----------
+        mb_input : dict[str, Any]
+            A dictionary containing the micro-batch input data. The exact structure
+            depends on the engine implementation, but typically includes packed/padded
+            tensors, padding metadata, and total loss weight.
+        loss_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor]
+            A function that computes the normalized loss given model output and
+            input data.
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
+            A function that computes the weight for this micro-batch, typically
+            the number of tokens. Used for proper loss scaling across micro-batches.
+        **kwargs
+            Additional keyword arguments that may be used by specific implementations,
+            such as model reference for pipeline parallel, batch type, post-processing
+            hooks, etc.
+
+        Returns
+        -------
+        tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]
+            A tuple containing:
+            - The model output tensor (logits) from the forward pass
+            - A callable loss function that takes the output tensor and returns:
+              - A loss tensor (scaled appropriately for gradient accumulation)
+              - A dictionary with additional data
+        """
+        raise NotImplementedError()
+
+    def optimizer_zero_grad(self):
+        """Zero out all gradients in the optimizer.
+
+        This method clears the gradients of all model parameters before starting
+        a new training step. For engines that use gradient accumulation across
+        micro-batches, this should be called once at the beginning of each training
+        step, not for each micro-batch.
+
+        Note
+        ----
+        This should be called before starting a new training step, typically
+        at the beginning of `train_batch`. For distributed engines, this may also
+        clear gradient buffers used for gradient accumulation.
+        """
+        raise NotImplementedError()
+
+    def optimizer_step(self):
+        """Perform a single optimization step.
+
+        This method executes one optimizer step, which typically includes gradient
+        clipping (if configured), the optimizer update (e.g., AdamW step), and may
+        integrate learning rate scheduling depending on the optimizer implementation.
+
+        Returns
+        -------
+        dict[str, float]
+            A dictionary containing training statistics:
+            - `update_successful`: 1.0 if the update succeeded, 0.0 otherwise
+              (e.g., if gradients were NaN/Inf and the update was skipped)
+            - `grad_norm`: The gradient norm after clipping, or NaN if gradient
+              clipping is disabled or not computed
+            - `lr`: The current learning rate after the step
+        """
+        raise NotImplementedError()
+
+    def lr_scheduler_step(self):
+        """Advance the learning rate scheduler by one step.
+
+        This method updates the learning rate according to the configured scheduler
+        (e.g., cosine decay, linear warmup). The scheduler step is typically called
+        after each optimizer step or periodically (e.g., once per PPO update).
+
+        Note
+        ----
+        For some optimizers (e.g., Megatron's integrated optimizer), the learning
+        rate scheduling may be integrated into the optimizer step, in which case
+        this method may advance a separate scheduler or be a no-op.
+        """
+        raise NotImplementedError()
+
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 
         Since PPO uses minibatch updates, this method should be called periodically
         (e.g., once per PPO step). It is separated from train_batch to allow
         for more flexible learning rate scheduling.
+        """
+        return self.lr_scheduler_step()
+
+    def forward_backward_batch(
+        self,
+        data_iterator: Iterable[dict[str, torch.Tensor]],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor]| None = None,
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor]| None = None,
+        output_post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
+        return_outputs: bool = False,
+        forward_only: bool = False,
+    ) -> ForwardBackwardOutputs:
+        """Process micro-batches through forward and optionally backward pass.
+
+        This method iterates over all micro-batches in the data iterator and processes
+        them through the model. For each micro-batch, it performs forward pass and
+        optionally backward pass (for training), collecting outputs or losses as
+        specified by the parameters.
+
+        Parameters
+        ----------
+        data_iterator : Iterable[dict[str, torch.Tensor]]
+            An iterable of micro-batch dictionaries, typically produced by
+            `split_micro_batch`. Each dictionary contains micro-batch input data
+            and metadata (padding info, loss weights, etc.).
+        loss_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor], optional
+            A function that computes the normalized loss given model output and
+            input data. Required when `forward_only=False` or when `return_outputs=False`
+            in forward-only mode. By default None.
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
+            A function that computes the weight for each micro-batch, typically
+            the number of tokens. Used for proper loss scaling. By default None.
+        output_post_hook : Callable[[torch.Tensor, dict[str, Any]], Any], optional
+            A post-processing function applied to model outputs when `return_outputs=True`.
+            This can be used to process outputs on-the-fly (e.g., computing log-probabilities)
+            to reduce peak memory usage. By default None.
+        return_outputs : bool, optional
+            If True, collect and return model outputs (logits) instead of losses.
+            Only used when `forward_only=True`. By default False.
+        forward_only : bool, optional
+            If True, only perform forward pass (no backward pass or gradient computation).
+            If False, perform both forward and backward passes for training. By default False.
+
+        Returns
+        -------
+        ForwardBackwardOutputs
+            A dataclass containing:
+            - `mb_outputs`: List of output tensors (one per micro-batch) when
+              `return_outputs=True` and `forward_only=True`. Each output may be
+              processed by `output_post_hook` if provided. None otherwise.
+            - `losses`: List of loss tensors (one per micro-batch) when collecting
+              losses (training or eval mode). None when `return_outputs=True`.
         """
         raise NotImplementedError()
 
@@ -244,7 +457,12 @@ class TrainEngine(abc.ABC):
             Scalar statistics after training, e.g., the current learning rate,
             gradient norm, etc.
         """
-        raise NotImplementedError()
+        if self.is_offload:
+            self.onload()
+        self.optimizer_zero_grad()
+        _data_iterator, mb_list = self.split_micro_batch(input_,loss_weight_fn)
+        self.forward_backward_batch(_data_iterator,loss_fn,loss_weight_fn)
+        return self.optimizer_step()
 
     @torch.no_grad()
     def eval_batch(
@@ -279,10 +497,16 @@ class TrainEngine(abc.ABC):
             A scalar loss or None. The evaluation statistics should be aggregated
             with `stats_tracker`.
         """
-        raise NotImplementedError()
+        if self.is_offload:
+            self.onload()
+        _data_iterator, mb_list = self.split_micro_batch(input_,loss_weight_fn)
+        output = self.forward_backward_batch(_data_iterator, loss_fn, loss_weight_fn, forward_only=True)
+        loss = torch.stack(output.losses).sum(dtype=torch.float32)
+        dist.all_reduce(loss, group=self.dp_group)
+        return loss
 
     @torch.no_grad()
-    def forward(
+    def forward_batch(
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
@@ -314,7 +538,41 @@ class TrainEngine(abc.ABC):
         Any or None
             The result produced by `post_hook` and `aggregate_fn`.
         """
-        raise NotImplementedError()
+        if self.is_offload:
+            self.onload()
+
+        if self.parallel_helper.sp_size > 1:
+            set_ulysses_sequence_parallel_group(self.sp_group)
+
+        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
+
+        if output_seqlens is None:
+            output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+        assert output_seqlens is not None
+
+        _data_iterator, mb_list = self.split_micro_batch(input_)
+
+        result = self.forward_backward_batch(_data_iterator, forward_only=True,return_outputs=True,output_post_hook=post_hook)
+
+        res = aggregate_fn(result.mb_outputs)
+        output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
+        unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
+        reordered = reorder_list(unpacked, mb_list.backward_indices)
+        result =  pad_and_stack_tensors_along_first_dim(reordered)
+        return self.aggregate_result(result)
+
+    @torch.no_grad()
+    def forward(
+        self,
+        input_: dict[str, Any],
+        output_seqlens: list[int] | None = None,
+        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
+        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
+    ) -> Any | None:
+        """
+        alias for forward_batch
+        """
+        return self.forward_batch(input_, output_seqlens, post_hook, aggregate_fn)
 
     def export_stats(self) -> dict[str, float]:
         """Export the statistics recorded in this engine process.
@@ -329,6 +587,9 @@ class TrainEngine(abc.ABC):
         dict[str, float]
             The exported scalar statistics.
         """
+        raise NotImplementedError()
+
+    def onload(self):
         raise NotImplementedError()
 
 

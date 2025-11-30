@@ -1,8 +1,9 @@
 import dataclasses
 import functools
 import gc
+import itertools
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future
 from contextlib import nullcontext
 from datetime import datetime
@@ -28,7 +29,7 @@ from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec, TrainEngineConfig
-from areal.api.engine_api import InferenceEngine, TrainEngine
+from areal.api.engine_api import InferenceEngine, TrainEngine, ForwardBackwardOutputs
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.dist_rollout import DistRolloutCoordinator
@@ -940,96 +941,123 @@ class MegatronEngine(TrainEngine):
             mb["max_seqlen"] = int(mb["max_seqlen"])
         return mb_list
 
-    def step_lr_scheduler(self):
-        assert self.lr_scheduler is not None, "LR Scheduler is not initialized."
-        self.lr_scheduler.step(1)
+    def aggregate_result(
+        self,
+        result: torch.Tensor,
+    ) -> Any | None:
+        res = None
+        if mpu.is_pipeline_last_stage():
+            res = result
+        # Broadcast the shape of the result tensor
+        res = broadcast_tensor(
+            res,
+            src_rank=mpu.get_pipeline_model_parallel_last_rank(),
+            group=mpu.get_pipeline_model_parallel_group(),
+        )
+        return res
 
-    @trace_perf("megatron_engine.train_batch", category="compute")
-    def train_batch(
+    def split_micro_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-    ) -> dict[str, float]:
-        if self.is_offload:
-            self.onload()
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor]| None = None,
+    ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]:
+        mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
 
+        if loss_weight_fn is not None:
+            total_loss_weight = (
+                torch.stack([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+                .sum()
+                .detach()
+                .clone()
+                .to(dtype=torch.float32)
+            )
+            assert total_loss_weight != 0
+            dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
+        else:
+            total_loss_weight = torch.tensor(1.0, device=self.device)
+
+        max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
+
+        def _data_iterator():
+            iterator = zip(
+                mb_list.padding_lengths,
+                mb_list.padded_mbs,
+                mb_list.mbs,
+                mb_list.old_cu_seqlens_list
+            )
+            for padding_lengths, padded_mbs, mbs, old_cu_seqlens_list in iterator:
+                yield {
+                    "padded_mb": padded_mbs,
+                    "orig_input": mbs,
+                    "padding_length": padding_lengths,
+                    "old_cu_seqlens": old_cu_seqlens_list,
+                    "total_loss_weight": total_loss_weight
+                }
+
+        wrapped_iterator = MegatronIteratorWrapper(_data_iterator(), max_total_len, len(mb_list.padded_mbs))
+        return wrapped_iterator, mb_list
+
+    def _forward_compute_mb(
+            self,
+            mb_input: dict[str, Any],
+            loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+            loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+            **kwargs,
+    ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
+        model = kwargs.get('model')
+        post_hook = kwargs.get('post_hook')
+        return_output = kwargs.get('return_output')
+        if model is None:
+            model = self.model[0] if isinstance(self.model, list) else self.model
+
+        padded_mb = mb_input["padded_mb"]
+        orig_input = mb_input["orig_input"]
+        padding_length = mb_input["padding_length"]
+        old_cu_seqlens = mb_input["old_cu_seqlens"]
+        total_loss_weight = mb_input["total_loss_weight"]
+        cu_seqlens = padded_mb["cu_seqlens"]
+
+        output = packed_context_parallel_forward(model, padded_mb)
+
+        model_vp_stage = getattr(model, "vp_stage", 0)
+        if mpu.is_pipeline_last_stage(ignore_virtual=False, vp_stage=model_vp_stage):
+            output = unpad_logits(
+                output,
+                padding_length=padding_length,
+                cu_seqlens=cu_seqlens,
+                old_cu_seqlens=old_cu_seqlens,
+            )
+
+        def _scaled_loss_fn(input_, output_):
+            loss = loss_fn(output_, input_)
+            loss_scale = loss_weight_fn(input_) / total_loss_weight
+            loss_scale *= mpu.get_data_parallel_world_size()
+            loss_scale *= self.optimizer.get_loss_scale().item()
+            loss *= loss_scale
+            return loss, {"loss": loss}
+
+        def _post_process_fn(input_, output_):
+            loss = torch.tensor(1.0, device=output_.device)
+            if post_hook is not None:
+                output_ = post_hook(output_, input_)
+            return loss, {"output": output_}
+
+        if return_output:
+            fn = _post_process_fn
+        else:
+            fn = _scaled_loss_fn
+
+        return output, functools.partial(fn, orig_input)
+
+    def optimizer_zero_grad(self):
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
         self.optimizer.zero_grad()
         for model in self.model:
             model.zero_grad_buffer()
-        # Assume input_ is identical across context and model parallel group
-        mb_list = self.prepare_mb_list(input_)
-        mb_list = mb_list.to(self.device)
 
-        total_loss_weight = (
-            torch.stack([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
-            .sum()
-            .detach()
-            .clone()
-            .to(dtype=torch.float32)
-        )
-        assert total_loss_weight != 0
-        dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
-        max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
-        micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
-        micro_batch_generator = [iter(b) for b in micro_batch_generator]
-        forward_step_counts = [0] * len(self.model)
-
-        def forward_step(batch_iter, model):
-            nonlocal forward_step_counts
-            batch = next(batch_iter)
-            model_vp_stage = getattr(model, "vp_stage", 0)
-            forward_step_count = forward_step_counts[model_vp_stage]
-            padding_length = mb_list.padding_lengths[forward_step_count]
-            orig_input = mb_list.mbs[forward_step_count]
-            cu_seqlens = batch["cu_seqlens"]
-            old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
-
-            forward_step_counts[model_vp_stage] += 1
-            output = packed_context_parallel_forward(model, batch)
-
-            if mpu.is_pipeline_last_stage(
-                ignore_virtual=False, vp_stage=model_vp_stage
-            ):
-                output = unpad_logits(
-                    output,
-                    padding_length=padding_length,
-                    cu_seqlens=cu_seqlens,
-                    old_cu_seqlens=old_cu_seqlens,
-                )
-
-            def _scaled_loss_fn(input_, output):
-                loss = loss_fn(output, input_)
-                loss_scale = loss_weight_fn(input_) / total_loss_weight
-                # Megatron will average gradients across DP ranks.
-                # If we normalize loss across micro batches of all DP ranks,
-                # we should revert the effect of gradient averaging in megatron
-                # to make sure loss from each token is scaled properly.
-                loss_scale *= mpu.get_data_parallel_world_size()
-                loss_scale *= self.optimizer.get_loss_scale().item()
-                loss *= loss_scale
-                return loss, {}
-
-            return output, functools.partial(_scaled_loss_fn, orig_input)
-
-        forward_backward_func = get_forward_backward_func()
-        with trace_scope("megatron_engine.train_batch.forward_backward"):
-            data_iterator = (
-                micro_batch_generator
-                if len(self.model) > 1
-                else micro_batch_generator[0]
-            )
-            forward_backward_func(
-                forward_step_func=forward_step,
-                data_iterator=data_iterator,
-                model=self.model if len(self.model) > 1 else self.model[0],
-                num_microbatches=len(mb_list.padded_mbs),
-                seq_length=max_total_len,  # no use when input_shapes was set
-                micro_batch_size=1,  # no use when input_shapes was set
-                forward_only=False,
-            )
+    def optimizer_step(self):
         with trace_scope("megatron_engine.train_batch.step"):
             update_successful, grad_norm, _ = self.optimizer.step()
         current_lr = self.optimizer.param_groups[0]["lr"]
@@ -1040,185 +1068,65 @@ class MegatronEngine(TrainEngine):
             lr=current_lr,
         )
 
-    @trace_perf("megatron_engine.eval_batch", category="compute")
-    @torch.no_grad()
-    def eval_batch(
+    def lr_scheduler_step(self):
+        assert self.lr_scheduler is not None, "LR Scheduler is not initialized."
+        self.lr_scheduler.step(1)
+
+    def forward_backward_batch(
         self,
-        input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-    ) -> torch.Tensor | None:
-        if self.is_offload:
-            self.onload()
+        data_iterator: dict[str, torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor]| None = None,
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor]| None = None,
+        output_post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
+        return_outputs: bool = False,
+        forward_only: bool = False,
+    ) -> ForwardBackwardOutputs:
+        if isinstance(data_iterator, MegatronIteratorWrapper):
+            max_seqlen = data_iterator.max_seqlen
+            num_microbatches = data_iterator.num_microbatches
+        else:
+            max_seqlen = self.config.mb_spec.max_tokens_per_mb
+            if hasattr(data_iterator, '__len__'):
+                num_microbatches = len(data_iterator)
+            elif isinstance(data_iterator, list) and len(data_iterator) > 0 and hasattr(data_iterator[0], '__len__'):
+                num_microbatches = len(data_iterator[0])
+            else:
+                num_microbatches = None
 
-        assert self.model is not None, "Model is not initialized."
-        # Assume input_ is identical across context and model parallel group
-        mb_list = self.prepare_mb_list(input_)
-        mb_list = mb_list.to(self.device)
-
-        total_loss_weight = (
-            torch.stack([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
-            .sum()
-            .detach()
-            .clone()
-            .to(dtype=torch.float32)
-        )
-        assert total_loss_weight != 0
-        dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
-        max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
-        micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
-        micro_batch_generator = [iter(b) for b in micro_batch_generator]
         forward_step_counts = [0] * len(self.model)
-
         def forward_step(batch_iter, model):
             nonlocal forward_step_counts
-            batch = next(batch_iter)
-            model_vp_stage = getattr(model, "vp_stage", 0)
-            forward_step_count = forward_step_counts[model_vp_stage]
-            padding_length = mb_list.padding_lengths[forward_step_count]
-            orig_input = mb_list.mbs[forward_step_count]
-            cu_seqlens = batch["cu_seqlens"]
-            old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
+            batch_ctx = next(batch_iter)
 
-            forward_step_counts[model_vp_stage] += 1
-            output = packed_context_parallel_forward(model, batch)
-
-            if mpu.is_pipeline_last_stage(
-                ignore_virtual=False, vp_stage=model_vp_stage
-            ):
-                output = unpad_logits(
-                    output,
-                    padding_length=padding_length,
-                    cu_seqlens=cu_seqlens,
-                    old_cu_seqlens=old_cu_seqlens,
-                )
-
-            def _scaled_loss_fn(input_, output):
-                # NOTE: Do not need to record loss here, will be
-                # automatically recorded by stats_tracker
-                loss = loss_fn(output, input_)
-                loss_scale = loss_weight_fn(input_) / total_loss_weight
-                # eval_batch does not run backward, the grad will not be averaged over DP group
-                # so we shouldn't multiple dp_size in loss_scale
-                loss *= loss_scale
-                return loss, {}
-
-            return output, functools.partial(_scaled_loss_fn, orig_input)
-
-        forward_backward_func = get_forward_backward_func()
-        with trace_scope("megatron_engine.eval_batch.forward"):
-            data_iterator = (
-                micro_batch_generator
-                if len(self.model) > 1
-                else micro_batch_generator[0]
+            return self._forward_compute_mb(
+                mb_input=batch_ctx,
+                loss_fn=loss_fn,
+                loss_weight_fn=loss_weight_fn,
+                model=model,
+                forward_step_counts=forward_step_counts
             )
-            forward_backward_func(
+
+        batch_type = "train_batch" if not forward_only else ("forward_batch" if return_outputs else "eval_batch")
+        forward_backward_func = get_forward_backward_func()
+        with trace_scope(f"megatron_engine.{batch_type}.forward_backward"):
+            if len(self.model) > 1:
+                data_iterator = list(itertools.tee(data_iterator.data_iterator, len(self.model)))
+            results = forward_backward_func(
                 forward_step_func=forward_step,
                 data_iterator=data_iterator,
                 model=self.model if len(self.model) > 1 else self.model[0],
-                num_microbatches=len(mb_list.padded_mbs),
-                seq_length=max_total_len,  # no use when input_shapes was set
+                num_microbatches=num_microbatches,
+                seq_length=max_seqlen,  # no use when input_shapes was set
                 micro_batch_size=1,  # no use when input_shapes was set
-                forward_only=True,
+                forward_only=forward_only
             )
-
-        return None
-
-    @trace_perf("megatron_engine.forward", category="compute")
-    @torch.no_grad()
-    def forward(
-        self,
-        input_: dict[str, Any],
-        output_seqlens: list[int] | None = None,
-        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
-        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
-    ) -> Any | None:
-        if self.is_offload:
-            self.onload()
-
-        assert self.model is not None, "Model is not initialized."
-        # Assume input_ is identical across context and model parallel group
-        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
-        mb_list = self.prepare_mb_list(input_)
-        mb_list = mb_list.to(self.device)
-
-        # NOTE: Move tensors to correct device, since dist.broadcast_object_list does not
-        # ensure the device of tensors in the object list
-        cu_seqlens: torch.Tensor = cu_seqlens.to(self.device)
-        mb_list: MicroBatchList = mb_list.to(self.device)
-
-        if output_seqlens is None:
-            output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
-
-        max_total_len = max(m["max_seqlen"] for m in mb_list.padded_mbs)
-        micro_batch_generator = [mb_list.padded_mbs] * len(self.model)
-        micro_batch_generator = [iter(b) for b in micro_batch_generator]
-        forward_step_counts = [0] * len(self.model)
-
-        def forward_step(batch_iter, model):
-            nonlocal forward_step_counts
-            batch = next(batch_iter)
-            model_vp_stage = getattr(model, "vp_stage", 0)
-            forward_step_count = forward_step_counts[model_vp_stage]
-            padding_length = mb_list.padding_lengths[forward_step_count]
-            orig_input = mb_list.mbs[forward_step_count]
-            cu_seqlens = batch["cu_seqlens"]
-            old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
-
-            forward_step_counts[model_vp_stage] += 1
-            output = packed_context_parallel_forward(model, batch)
-
-            if mpu.is_pipeline_last_stage(
-                ignore_virtual=False, vp_stage=model_vp_stage
-            ):
-                output = unpad_logits(
-                    output,
-                    padding_length=padding_length,
-                    cu_seqlens=cu_seqlens,
-                    old_cu_seqlens=old_cu_seqlens,
-                )
-
-            def _post_process_fn(input_, output):
-                loss = torch.tensor(1.0, device=output.device)
-                if post_hook is not None:
-                    output = post_hook(output, input_)
-                return loss, {"output": output}
-
-            return output, functools.partial(_post_process_fn, orig_input)
-
-        forward_backward_func = get_forward_backward_func()
-
-        with trace_scope("megatron_engine.forward.forward"):
-            data_iterator = (
-                micro_batch_generator
-                if len(self.model) > 1
-                else micro_batch_generator[0]
-            )
-            output_list = forward_backward_func(
-                forward_step_func=forward_step,
-                data_iterator=data_iterator,
-                model=self.model if len(self.model) > 1 else self.model[0],
-                num_microbatches=len(mb_list.padded_mbs),
-                seq_length=max_total_len,  # max # tokens across all micro-batches
-                micro_batch_size=1,  # should be 1 when using packed input
-                forward_only=True,
-            )
-
-        result = None
-        if mpu.is_pipeline_last_stage():
-            res = aggregate_fn([o["output"] for o in output_list])
-            output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
-            unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
-            reordered = reorder_list(unpacked, mb_list.backward_indices)
-            result = pad_and_stack_tensors_along_first_dim(reordered)
-
-        # Broadcast the shape of the result tensor
-        result = broadcast_tensor(
-            result,
-            src_rank=mpu.get_pipeline_model_parallel_last_rank(),
-            group=mpu.get_pipeline_model_parallel_group(),
-        )
-        return result
+        if forward_only:
+            if return_outputs:
+                return ForwardBackwardOutputs(mb_outputs=[item['output'] for item in results], losses=None)
+            else:
+                return ForwardBackwardOutputs(mb_outputs=None, losses=[item['loss'] for item in results])
+        else:
+            return ForwardBackwardOutputs(mb_outputs=None, losses=None)
 
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver.
@@ -1265,3 +1173,37 @@ class MegatronEngine(TrainEngine):
             )
             data.update(data_list[0])
         return data
+
+
+class MegatronIteratorWrapper:
+    """Wrapper for data iterator that carries metadata for Megatron pipeline parallel execution.
+
+    This wrapper encapsulates a data iterator and stores additional metadata (max sequence length
+    and number of micro-batches) that are required by Megatron's `forward_backward_func` for
+    pipeline parallel execution. It implements the iterator protocol, so it can be used directly
+    as an iterator while also providing access to the metadata.
+
+    Attributes
+    ----------
+    max_seqlen : int
+        Maximum sequence length across all micro-batches in the iterator.
+    num_microbatches : int
+        Total number of micro-batches in the iterator.
+    data_iterator : Iterator
+        The underlying data iterator (read-only property).
+    """
+
+    def __init__(self, data_iterable: Iterable, max_seqlen: int, num_microbatches: int):
+        self._data_iterator = iter(data_iterable)
+        self.max_seqlen = max_seqlen
+        self.num_microbatches = num_microbatches
+
+    def __iter__(self) -> Iterator:
+        return self
+
+    def __next__(self):
+        return next(self._data_iterator)
+
+    @property
+    def data_iterator(self):
+        return self._data_iterator
