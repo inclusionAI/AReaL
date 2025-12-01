@@ -48,15 +48,13 @@ def _create_engine(engine_type: str):
 
     if engine_type == "FSDP":
         engine = FSDPEngine(config)
-        extra_args = {}
     elif engine_type == "Megatron":
         engine = MegatronEngine(config)
-        extra_args = {"parallel_strategy": alloc_mode.train}
     else:
         raise ValueError(f"Unknown engine type: {engine_type}")
 
     engine.create_process_group(alloc_mode.train)
-    engine.initialize(addr=None, ft_spec=ft_spec, **extra_args)
+    engine.initialize(addr=None, ft_spec=ft_spec)
 
     print(f"{engine_type} engine initialized")
     return engine
