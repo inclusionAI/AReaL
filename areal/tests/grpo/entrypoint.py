@@ -1,25 +1,15 @@
 import json
 import os
 import sys
-from typing import cast
 
-import torch
 import torch.distributed as dist
-import torch.utils.data
-from torchdata.stateful_dataloader import StatefulDataLoader
 
-import areal.api.cli_args as cli_args
-import areal.dataset
-import areal.utils.seeding as seeding
-from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GRPOConfig
-from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
-from areal.engine.ppo.actor import FSDPPPOActor
-from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.platforms import current_platform
+from areal.api.cli_args import GRPOConfig, load_expr_config
+from areal.dataset import get_custom_dataset
+from areal.experimental.trainer import PPOTrainer
 from areal.reward.math_parser import process_results
-from areal.utils.data import broadcast_tensor_container, tensor_container_to
-from areal.utils.hf_utils import load_hf_processor_and_tokenizer
+from areal.utils import stats_tracker
+from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
@@ -28,117 +18,50 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
     return int(process_results(completions, answer)[0])
 
 
+class MinimalPPOTrainer(PPOTrainer):
+    """Trainer that collects stats to JSON for testing."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rewards_history = []
+
+    def _export_and_commit_stats(self, epoch, epoch_step, global_step):
+        # Collect stats before committing
+        stats = stats_tracker.export_all(reduce_group=self.actor.data_parallel_group)
+        self.rewards_history.append(stats["ppo_actor/task_reward/avg"])
+
+
 def main() -> None:
-    config, _ = cli_args.load_expr_config(sys.argv[1:], GRPOConfig)
-    assert isinstance(config, GRPOConfig)
+    config, _ = load_expr_config(sys.argv[1:], GRPOConfig)
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
-    rank = int(os.environ.get("RANK", "0"))
-
-    seeding.set_random_seed(config.seed, str(rank))
-    allocation_mode = AllocationMode.from_str(config.allocation_mode)
-    parallel_strategy = allocation_mode.train
-    assert parallel_strategy is not None
-
-    actor = FSDPPPOActor(config=config.actor)
-    actor.create_process_group(parallel_strategy=parallel_strategy)
-
-    processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
-
-    train_dataset = areal.dataset.get_custom_dataset(
-        path=config.train_dataset.path,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
-        type="rl",
+    train_dataset = get_custom_dataset(
         split="train",
+        dataset_config=config.train_dataset,
         tokenizer=tokenizer,
-        processor=processor,
     )
 
-    train_dataloader = StatefulDataLoader(
-        cast(torch.utils.data.Dataset, train_dataset),
-        batch_size=config.train_dataset.batch_size // actor.data_parallel_world_size,
-        collate_fn=lambda x: x,
-    )
-    assert train_dataloader.batch_size is not None
+    with MinimalPPOTrainer(
+        config,
+        train_dataset=train_dataset,
+        valid_dataset=None,
+    ) as trainer:
+        workflow = RLVRWorkflow(
+            reward_fn=gsm8k_reward_fn,
+            gconfig=config.gconfig,
+            tokenizer=trainer.tokenizer,
+            enable_thinking=False,
+            dump_dir=os.path.join(
+                StatsLogger.get_log_path(config.stats_logger), "generated"
+            ),
+        )
 
-    ft_spec = FinetuneSpec(
-        total_train_epochs=config.total_train_epochs,
-        dataset_size=len(train_dataloader) * train_dataloader.batch_size,
-        train_batch_size=train_dataloader.batch_size,
-    )
+        trainer.train(workflow)
 
-    rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
-
-    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
-
-    actor.initialize(None, ft_spec)
-    actor.connect_engine(rollout, weight_update_meta)
-
-    ref = FSDPPPOActor(config=config.ref)
-    ref.create_process_group(parallel_strategy=parallel_strategy)
-    ref.initialize(None, ft_spec)
-
-    workflow = RLVRWorkflow(
-        reward_fn=gsm8k_reward_fn,
-        gconfig=config.gconfig,
-        tokenizer=tokenizer,
-        enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
-    )
-
-    rewards: list[float] = []
-
-    global_step = 0
-    for epoch in range(config.total_train_epochs):
-        for step in range(len(train_dataloader)):
-            if (
-                config.total_train_steps is not None
-                and global_step >= config.total_train_steps
-            ):
-                break
-
-            batch = None
-            if actor.is_data_parallel_head():
-                batch = rollout.prepare_batch(train_dataloader, workflow=workflow)
-                batch = tensor_container_to(batch, actor.device)
-            batch = broadcast_tensor_container(
-                batch,
-                src_rank=actor.current_data_parallel_head(),
-                group=actor.context_and_model_parallel_group,
-            )
-
-            current_platform.synchronize()
-            dist.barrier(group=actor.cpu_group)
-
-            batch["prox_logp"] = actor.compute_logp(batch)
-            batch["ref_logp"] = ref.compute_logp(batch)
-
-            actor.compute_advantages(batch)
-
-            actor.ppo_update(batch)
-            actor.step_lr_scheduler()
-
-            rollout.pause()
-            actor.update_weights(weight_update_meta)
-            rollout.resume()
-            actor.set_version(global_step + 1)
-            rollout.set_version(global_step + 1)
-
-            stats = actor.export_stats()
-            rewards.append(stats["ppo_actor/task_reward/avg"])
-
-            global_step += 1
-
-    if dist.get_rank() == 0:
-        with open(os.path.join(config.cluster.fileroot, "rewards.json"), "w") as f:
-            json.dump(rewards, f)
-
-    rollout.destroy()
-    ref.destroy()
-    actor.destroy()
+        # Save rewards to JSON for test assertions
+        if dist.get_rank() == 0:
+            with open(os.path.join(config.cluster.fileroot, "rewards.json"), "w") as f:
+                json.dump(trainer.rewards_history, f)
 
 
 if __name__ == "__main__":

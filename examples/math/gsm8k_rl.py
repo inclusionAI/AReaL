@@ -3,7 +3,7 @@ import sys
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
-from areal.experimental.trainer.rl import GRPOTrainer
+from areal.experimental.trainer import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -31,16 +31,15 @@ def main(args):
         tokenizer=tokenizer,
     )
 
-    with GRPOTrainer(
+    with PPOTrainer(
         config,
         train_dataset=train_dataset,
         valid_dataset=valid_dataset,
-        tokenizer=tokenizer,
     ) as trainer:
         workflow = RLVRWorkflow(
             reward_fn=gsm8k_reward_fn,
             gconfig=config.gconfig,
-            tokenizer=tokenizer,
+            tokenizer=trainer.tokenizer,
             enable_thinking=False,
             dump_dir=os.path.join(
                 StatsLogger.get_log_path(config.stats_logger), "generated"
@@ -49,7 +48,7 @@ def main(args):
         eval_workflow = RLVRWorkflow(
             reward_fn=gsm8k_reward_fn,
             gconfig=config.gconfig.new(temperature=0.6),
-            tokenizer=tokenizer,
+            tokenizer=trainer.tokenizer,
             enable_thinking=False,
             rollout_stat_scope="eval-rollout",
             dump_dir=os.path.join(

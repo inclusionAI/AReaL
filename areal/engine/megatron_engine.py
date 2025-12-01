@@ -69,6 +69,7 @@ from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.offload import is_tms_enabled
 from areal.utils.perf_tracer import trace_perf, trace_scope
+from areal.utils.seeding import get_seed
 
 
 class _MegatronModelList(list):
@@ -119,16 +120,8 @@ class MegatronEngine(TrainEngine):
         self.own_global_group = False
         self.is_offload: bool = False
 
-    def initialize(
-        self,
-        addr: str | None,
-        ft_spec: FinetuneSpec,
-        parallel_strategy: ParallelStrategy,
-        seed: int = 0,
-    ):
-        if self.parallel_strategy is None:
-            self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
-        self.seed = seed
+    def initialize(self, addr: str | None, ft_spec: FinetuneSpec):
+        self.seed = get_seed()
 
         assert addr is None, "FSDPEngine does not support remote initialization."
 

@@ -1,6 +1,5 @@
 import asyncio
 import os
-import sys
 from dataclasses import dataclass, field
 
 from agents import Agent as OpenAIAgent
@@ -188,4 +187,6 @@ def main(args):
 
 
 if __name__ == "__main__":
+    import sys
+
     main(sys.argv[1:])

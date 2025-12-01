@@ -62,7 +62,7 @@ In the GRPO example, the loaded data is passed to the `InferenceEngine`, rather 
 `TrainEngine`:
 
 ```python
-# examples/math/gsm8k_ppo.py
+# examples/math/gsm8k_rl.py (simplified with PPOTrainer)
 def main(args):
     ...
     # Create dataset and dataloaders
@@ -70,7 +70,7 @@ def main(args):
         get_gsm8k_dataset("train", rank, world_size),
         collate_fn=lambda x: x,
     )
-    # Initialize inference engine
+    # Initialize inference engine (abstracted by PPOTrainer)
     rollout = RemoteSGLangEngine(config.rollout)
     workflow = RLVRWorkflow(
         reward_fn=gsm8k_reward_fn,
