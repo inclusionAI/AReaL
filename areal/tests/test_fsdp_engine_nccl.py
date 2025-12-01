@@ -51,7 +51,6 @@ def sglang_server():
         yield server_manager.launch_server(sglang_args)
     finally:
         # Cleanup using engine API
-        server_manager.teardown_server()
         server_manager.destroy()
 
 
