@@ -146,7 +146,7 @@ def main(args):
     )
     valid_dataset = load_dataset(
         path="json",
-        split="train",
+        split="test",
         data_files=config.valid_dataset.path,
     )
 
