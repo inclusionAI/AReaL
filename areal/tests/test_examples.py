@@ -589,7 +589,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
                 f"Search Agent DeepResearch example failed, return_code={return_code}"
             )
     finally:
-        kill_process_tree(llm_judge_proc.pid)
+        kill_process_tree(llm_judge_proc.pid, graceful=False)
 
 
 @pytest.mark.multi_gpu
