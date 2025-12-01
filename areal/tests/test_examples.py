@@ -12,6 +12,7 @@ import pytest
 
 from areal.platforms import current_platform
 from areal.utils import logging
+from areal.utils.proc import kill_process_tree
 
 logger = logging.getLogger(__name__)
 
@@ -758,13 +759,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
                 f"Search Agent DeepResearch example failed, return_code={return_code}"
             )
     finally:
-        # Ensure cleanup happens even if test fails
-        llm_judge_proc.terminate()
-        try:
-            llm_judge_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            llm_judge_proc.kill()
-            llm_judge_proc.wait()
+        kill_process_tree(llm_judge_proc.pid)
 
 
 @pytest.mark.multi_gpu

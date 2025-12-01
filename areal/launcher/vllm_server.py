@@ -7,7 +7,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 
-import psutil
 import requests
 
 from areal.api.cli_args import (
@@ -22,56 +21,9 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
+from areal.utils.proc import kill_process_tree
 
 logger = logging.getLogger("vLLMServer Wrapper")
-
-
-def terminate_process_tree(pid: int, timeout: int = 5) -> None:
-    """Terminate a process and all its children recursively.
-
-    Args:
-        pid: Process ID to terminate
-        timeout: Seconds to wait for graceful termination before forcing kill
-    """
-    try:
-        parent = psutil.Process(pid)
-        children = parent.children(recursive=True)
-
-        # First, try graceful termination
-        logger.info(f"Sending SIGTERM to process {pid} and {len(children)} children")
-        for child in children:
-            try:
-                child.terminate()
-            except psutil.NoSuchProcess:
-                pass
-
-        try:
-            parent.terminate()
-        except psutil.NoSuchProcess:
-            return
-
-        # Wait for graceful shutdown
-        gone, alive = psutil.wait_procs(children + [parent], timeout=timeout)
-
-        # Force kill any remaining processes
-        if alive:
-            logger.warning(
-                f"Force killing {len(alive)} processes that didn't terminate gracefully"
-            )
-            for proc in alive:
-                try:
-                    proc.kill()
-                except psutil.NoSuchProcess:
-                    pass
-
-            # Final wait
-            psutil.wait_procs(alive, timeout=1)
-
-        logger.info(f"Successfully cleaned up process tree for PID {pid}")
-    except psutil.NoSuchProcess:
-        logger.info(f"Process {pid} already terminated")
-    except Exception as e:
-        logger.error(f"Error terminating process tree for PID {pid}: {e}")
 
 
 def launch_server_cmd(
@@ -175,7 +127,7 @@ class vLLMServerWrapper:
         for i, process in enumerate(processes_to_clean):
             if process.poll() is None:  # Process is still running
                 logger.info(f"Terminating vLLM server process {i} (PID: {process.pid})")
-                terminate_process_tree(process.pid, timeout=10)
+                kill_process_tree(process.pid, timeout=10, graceful=True)
             else:
                 logger.info(f"vLLM server process {i} already terminated")
 
