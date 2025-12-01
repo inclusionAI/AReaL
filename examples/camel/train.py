@@ -143,11 +143,8 @@ def main(args):
             ),
         )
 
-        # Dummy eval workflow (not used since no valid_dataset)
-        eval_workflow = workflow
-
         # Run training
-        trainer.train(workflow, eval_workflow)
+        trainer.train(workflow, eval_workflow=None)
 
 
 if __name__ == "__main__":
