@@ -12,7 +12,7 @@ from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.dataset import get_custom_dataset
 from areal.experimental.openai import ArealOpenAI
-from areal.experimental.trainer.rl import GRPOTrainer
+from areal.experimental.trainer import PPOTrainer
 from areal.utils import stats_tracker
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -157,11 +157,10 @@ def main(args):
         tokenizer=tokenizer,
     )
 
-    with GRPOTrainer(
+    with PPOTrainer(
         config,
         train_dataset=train_dataset,
         valid_dataset=valid_dataset,
-        tokenizer=tokenizer,
     ) as trainer:
         workflow = OpenAIAgentWorkflow(
             agent_builder_path=config.agent_builder_path,

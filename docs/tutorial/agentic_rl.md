@@ -544,12 +544,12 @@ class OpenAIAgentWrapper:
         return reward
 ```
 
-#### Step 4: Run Training with GRPOTrainer
+#### Step 4: Run Training with PPOTrainer
 
-Use AReaL's `GRPOTrainer` for streamlined training:
+Use AReaL's `PPOTrainer` for streamlined training:
 
 ```python
-from areal.experimental.trainer.rl import GRPOTrainer
+from areal.experimental.trainer import PPOTrainer
 
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
@@ -567,11 +567,10 @@ def main(args):
         tokenizer=tokenizer,
     )
 
-    with GRPOTrainer(
+    with PPOTrainer(
         config,
         train_dataset=train_dataset,
         valid_dataset=valid_dataset,
-        tokenizer=tokenizer,
     ) as trainer:
         # Create workflow with config parameters
         workflow = OpenAIAgentWorkflow(
