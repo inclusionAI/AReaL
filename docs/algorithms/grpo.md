@@ -47,9 +47,9 @@ We recommend to change the parameter within the configuration file
 
 | Backend   | CMD                                                                                                                              |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_grpo.py --config examples/math/gsm8k_grpo.yaml --<other_args_to_overwrite>` |
-| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py --config examples/math/gsm8k_grpo.yaml --<other_args_to_overwrite>`   |
-| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py --config examples/math/gsm8k_grpo.yaml --<other_args_to_overwrite>` |
+| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml --<other_args_to_overwrite>` |
+| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml --<other_args_to_overwrite>`   |
+| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml --<other_args_to_overwrite>` |
 
 ## Baselines
 

@@ -138,7 +138,7 @@ for hyperparameter searches or experimental variations:
 
 ```bash
 # Launch with Ray launcher: 4 nodes (4 GPUs each), 3 nodes for generation, 1 for training
-python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
+python3 -m areal.launcher.ray examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your_experiment_name> \
     trial_name=<your_trial_name> \
@@ -147,7 +147,7 @@ python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
     cluster.n_gpus_per_node=4
 
 # Launch with Slurm launcher: 16 nodes (8 GPUs each), 12 for generation, 4 for training
-python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
+python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your_experiment_name> \
     trial_name=<your_trial_name> \

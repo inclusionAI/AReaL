@@ -83,7 +83,7 @@ You can override settings via CLI:
 
 ```bash
 # Example: change model and attention backend
-python -m areal.launcher.local examples/math/gsm8k_grpo.py \
+python -m areal.launcher.local examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     actor.path=Qwen/Qwen3-1.7B \
     +sglang.attention_backend=triton
