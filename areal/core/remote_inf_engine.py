@@ -431,6 +431,8 @@ class RemoteInfEngine(InferenceEngine):
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
+        if len(self.local_server_processes) > 0:
+            self.teardown_server()
         if hasattr(self, "workflow_executor"):
             self.workflow_executor.destroy()
         if hasattr(self, "executor"):

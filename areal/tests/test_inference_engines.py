@@ -113,7 +113,6 @@ def inference_engine(request):
         }
     finally:
         # Cleanup using engine API
-        server_manager.teardown_server()
         server_manager.destroy()
 
 
