@@ -12,6 +12,7 @@ from areal.api.cli_args import SGLangConfig
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import network, seeding
 from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.proc import kill_process_tree
 
 EXPR_NAME = "test_openai"
 TRIAL_NAME = "trial_0"
@@ -62,7 +63,7 @@ def sglang_server():
     if time.time() - tik > RUN_SERVER_TIMEOUT:
         raise RuntimeError("server launch failed")
     yield
-    process.terminate()
+    kill_process_tree(process.pid, graceful=True)
 
 
 @pytest.fixture(scope="module")

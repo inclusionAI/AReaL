@@ -38,6 +38,7 @@ from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
+from areal.utils.proc import kill_process_tree
 
 from .workflow_executor import WorkflowExecutor
 
@@ -434,6 +435,8 @@ class RemoteInfEngine(InferenceEngine):
             self.workflow_executor.destroy()
         if hasattr(self, "executor"):
             self.executor.shutdown()
+        if len(self.local_server_processes) > 0:
+            self.teardown_server()
 
     def set_version(self, version):
         """Set the current weight version."""
@@ -925,15 +928,7 @@ class RemoteInfEngine(InferenceEngine):
             self.addresses.remove(addr)
         if server_info.process.poll() is not None:
             return
-        server_info.process.terminate()
-        try:
-            server_info.process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.logger.warning(
-                f"Server process {server_info.process.pid} did not terminate gracefully. Killing it."
-            )
-            server_info.process.kill()
-            server_info.process.wait()
+        kill_process_tree(server_info.process.pid, graceful=True)
 
     def teardown_server(self):
         """Teardown all locally launched servers."""

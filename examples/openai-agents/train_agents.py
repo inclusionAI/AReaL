@@ -1,51 +1,142 @@
+import asyncio
 import os
 import sys
 from dataclasses import dataclass, field
 
-import torch.distributed as dist
+from agents import Agent as OpenAIAgent
+from agents import ModelSettings, OpenAIProvider, RunConfig
+from agents import Runner as OpenAIRunner
+from transformers import PreTrainedTokenizerFast
 
-from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GRPOConfig, load_expr_config
-from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
+from areal.api.reward_api import AsyncRewardWrapper
+from areal.api.workflow_api import RolloutWorkflow
 from areal.dataset import get_custom_dataset
-from areal.engine.ppo.actor import FSDPPPOActor
-from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.platforms import current_platform
-from areal.utils import seeding, stats_tracker
-from areal.utils.dataloader import create_dataloader
-from areal.utils.device import log_gpu_stats
-from areal.utils.evaluator import Evaluator
+from areal.experimental.openai import ArealOpenAI
+from areal.experimental.trainer.rl import GRPOTrainer
+from areal.utils import stats_tracker
+from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.recover import RecoverHandler
-from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+
+
+class OpenAIAgentWrapper:
+    def __init__(
+        self,
+        agent_builder_path: str,
+        agent_builder_kwargs: dict,
+        reward_fn_path: str,
+        temperature: float = 1.0,
+        max_tokens: int = 512,
+    ):
+        self.agent_builder = import_from_string(agent_builder_path)
+        self.agent_builder_kwargs = agent_builder_kwargs
+        self.async_reward_fn = AsyncRewardWrapper(import_from_string(reward_fn_path))
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+
+    async def run_agent(self, data, client: ArealOpenAI):
+        agent: OpenAIAgent = self.agent_builder(**self.agent_builder_kwargs)
+        run_config = RunConfig(
+            model_provider=OpenAIProvider(openai_client=client),
+            tracing_disabled=True,
+            model_settings=ModelSettings(
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            ),
+        )
+        result = await OpenAIRunner.run(
+            agent, input=data["messages"][-1]["content"], run_config=run_config
+        )
+        reward = await self.async_reward_fn(
+            completions=result.final_output,
+            answer=data["answer"],
+            prompt=data.get("prompt"),
+            prompt_ids=data.get("prompt_ids"),
+            completion_ids=data.get("completion_ids"),
+            **{
+                k: v
+                for k, v in data.items()
+                if k
+                not in ["messages", "answer", "prompt", "prompt_ids", "completion_ids"]
+            },
+        )
+        client.set_final_reward(reward)
+        return reward
+
+
+class OpenAIAgentWorkflow(RolloutWorkflow):
+    def __init__(
+        self,
+        agent_builder_path: str,
+        agent_builder_kwargs: dict,
+        reward_fn_path: str,
+        gconfig: GenerationHyperparameters,
+        tokenizer: PreTrainedTokenizerFast,
+        dump_dir: str | None = None,
+        rollout_stat_scope: str = "rollout",
+    ):
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
+        self.tokenizer = tokenizer
+        self.dump_dir = dump_dir
+        self.rollout_stat_scope = rollout_stat_scope
+        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
+            os.makedirs(self.dump_dir, exist_ok=True)
+
+        # Search hyper-parameters
+        self.agent = OpenAIAgentWrapper(
+            agent_builder_kwargs=agent_builder_kwargs,
+            temperature=gconfig.temperature,
+            max_tokens=gconfig.max_tokens,
+            agent_builder_path=agent_builder_path,
+            reward_fn_path=reward_fn_path,
+        )
+
+    async def arun_episode(self, engine, data):
+        clients = [
+            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+            for _ in range(self.gconfig.n_samples)
+        ]
+
+        # Collect trajectories
+        rewards = await asyncio.gather(
+            *[
+                self.agent.run_agent(
+                    data=data,
+                    client=clients[i],
+                )
+                for i in range(self.gconfig.n_samples)
+            ]
+        )
+        for reward in rewards:
+            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+
+        interactions_with_reward = {}
+        for client in clients:
+            client.apply_reward_discount(turn_discount=0.9)
+            interactions = client.export_interactions(style="individual")
+            interactions_with_reward.update(interactions)
+        return interactions_with_reward
 
 
 @dataclass
 class AgentRLConfig(GRPOConfig):
-    agent_type: str = field(
-        default="math",
+    reward_fn_path: str = field(
+        default="areal.reward.gsm8k.gsm8k_reward_fn",
         metadata={
-            "help": "Type of agent workflow to use.",
-            "choices": ["math", "multi_agent_math"],
+            "help": "The path to the reward function. Should follow the API in `areal/api/reward_api.py`."
         },
     )
-    n_trajs: int = field(
-        default=1,
+    agent_builder_path: str = field(
+        default="areal.workflow.openai_agent.math_agent.build_math_agent",
         metadata={
-            "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
+            "help": "The path to the OpenAI agent builder. The function should return an `Agent` object with OpenAI SDK."
         },
     )
-    max_turns: int = field(
-        default=8,
+    agent_builder_kwargs: dict = field(
+        default_factory=dict,
         metadata={
-            "help": "Maximum number of turns per trajectory. By default max_turns=8."
-        },
-    )
-    max_tokens_per_trajectory: int = field(
-        default=32768,
-        metadata={
-            "help": "Maximum number of tokens per trajectory. By default max_tokens_per_trajectory=32768."
+            "help": "The initialization arguments for the agent builder function."
         },
     )
 
@@ -53,169 +144,47 @@ class AgentRLConfig(GRPOConfig):
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
 
-    rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
-    seeding.set_random_seed(config.seed, key=f"trainer{rank}")
-    allocation_mode = AllocationMode.from_str(config.allocation_mode)
-    parallel_strategy = allocation_mode.train
-    assert parallel_strategy is not None
-
-    # Initialize train engine
-    actor = FSDPPPOActor(config=config.actor)
-    actor.create_process_group(parallel_strategy=parallel_strategy)
-
-    # Create dataset and dataloaders
     train_dataset = get_custom_dataset(
-        split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
-    )
-
-    train_dataloader = create_dataloader(
-        train_dataset,
-        rank=actor.data_parallel_rank,
-        world_size=actor.data_parallel_world_size,
+        split="train",
         dataset_config=config.train_dataset,
-    )
-    ft_spec = FinetuneSpec(
-        total_train_epochs=config.total_train_epochs,
-        dataset_size=len(train_dataloader) * config.train_dataset.batch_size,
-        train_batch_size=config.train_dataset.batch_size,
+        tokenizer=tokenizer,
     )
 
-    # Initialize inference engine
-    rollout = RemoteSGLangEngine(config.rollout)
-    rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
+    valid_dataset = get_custom_dataset(
+        split="test",
+        dataset_config=config.valid_dataset,
+        tokenizer=tokenizer,
+    )
 
-    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
-
-    actor.initialize(None, ft_spec)
-    actor.connect_engine(rollout, weight_update_meta)
-
-    # Create rollout workflow based on agent type
-    if config.agent_type == "math":
-        from math_workflow import RLVRAgentWorkflow
-
-        workflow = RLVRAgentWorkflow(
+    with GRPOTrainer(
+        config,
+        train_dataset=train_dataset,
+        valid_dataset=valid_dataset,
+        tokenizer=tokenizer,
+    ) as trainer:
+        workflow = OpenAIAgentWorkflow(
+            agent_builder_path=config.agent_builder_path,
+            agent_builder_kwargs=config.agent_builder_kwargs,
+            reward_fn_path=config.reward_fn_path,
             gconfig=config.gconfig,
             tokenizer=tokenizer,
-            n_trajs=config.n_trajs,
             dump_dir=os.path.join(
                 StatsLogger.get_log_path(config.stats_logger), "generated"
             ),
         )
-    elif config.agent_type == "multi_agent_math":
-        from multi_agent_math_workflow import MultiAgentRLVRAgentWorkflow
-
-        workflow = MultiAgentRLVRAgentWorkflow(
+        eval_workflow = OpenAIAgentWorkflow(
+            agent_builder_path=config.agent_builder_path,
+            agent_builder_kwargs=config.agent_builder_kwargs,
+            reward_fn_path=config.reward_fn_path,
             gconfig=config.gconfig,
             tokenizer=tokenizer,
-            n_trajs=config.n_trajs,
-            max_tokens=config.max_tokens_per_trajectory,
-            max_turns=config.max_turns,
             dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
+                StatsLogger.get_log_path(config.stats_logger), "generated-eval"
             ),
         )
-    else:
-        raise ValueError(f"Unknown agent_type: {config.agent_type}.")
-
-    # Run training.
-    saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config, ft_spec)
-    evaluator = Evaluator(config.evaluator, ft_spec)
-
-    recover_handler = RecoverHandler(config.recover, ft_spec)
-    recover_info = recover_handler.load(
-        actor,
-        saver,
-        evaluator,
-        stats_logger,
-        train_dataloader,
-        inference_engine=rollout,
-        weight_update_meta=weight_update_meta,
-    )
-    start_step = (
-        recover_info.last_step_info.next().global_step
-        if recover_info is not None
-        else 0
-    )
-
-    total_epochs = config.total_train_epochs
-    steps_per_epoch = len(train_dataloader)
-    max_steps = total_epochs * steps_per_epoch
-
-    for global_step in range(start_step, max_steps):
-        epoch = global_step // steps_per_epoch
-        step = global_step % steps_per_epoch
-        step_info = StepInfo(
-            global_step=global_step,
-            epoch=epoch,
-            epoch_step=step,
-            steps_per_epoch=steps_per_epoch,
-        )
-
-        with stats_tracker.record_timing("rollout"):
-            batch = actor.prepare_batch(
-                train_dataloader,
-                granularity=actor.config.group_size,
-                workflow=workflow,
-                should_accept_fn=lambda sample: True,
-            )
-
-        if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
-            with stats_tracker.record_timing("recompute_logp"):
-                logp = actor.compute_logp(batch)
-                batch["prox_logp"] = logp
-                log_gpu_stats("recompute logp")
-
-        with stats_tracker.record_timing("compute_advantage"):
-            actor.compute_advantages(batch)
-            log_gpu_stats("compute advantages")
-
-        with stats_tracker.record_timing("train_step"):
-            actor.ppo_update(batch)
-            actor.step_lr_scheduler()
-            log_gpu_stats("ppo update")
-
-        # pause inference for updating weights, save, and evaluation
-        rollout.pause()
-
-        with stats_tracker.record_timing("update_weights"):
-            actor.update_weights(weight_update_meta)
-
-            actor.set_version(global_step + 1)
-            rollout.set_version(global_step + 1)
-
-        with stats_tracker.record_timing("save"):
-            saver.save(actor, epoch, step, global_step, tokenizer=tokenizer)
-
-        with stats_tracker.record_timing("checkpoint_for_recover"):
-            recover_handler.dump(
-                actor,
-                step_info,
-                saver,
-                evaluator,
-                stats_logger,
-                train_dataloader,
-                tokenizer=tokenizer,
-            )
-
-        current_platform.synchronize()
-        dist.barrier(group=actor.cpu_group)
-
-        # Upload statistics to the logger (e.g., wandb)
-        stats = actor.export_stats()
-        stats_logger.commit(epoch, step, global_step, stats)
-
-        current_platform.synchronize()
-        dist.barrier(group=actor.cpu_group)
-
-        # Resume rollout
-        rollout.resume()
-
-    stats_logger.close()
-    rollout.destroy()
-    actor.destroy()
+        trainer.train(workflow, eval_workflow)
 
 
 if __name__ == "__main__":
