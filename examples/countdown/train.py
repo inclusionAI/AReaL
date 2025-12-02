@@ -144,17 +144,8 @@ def main(args):
         split="train",
         data_files=config.train_dataset.path,
     )
-    valid_dataset = load_dataset(
-        path="json",
-        split="test",
-        data_files=config.valid_dataset.path,
-    )
 
-    with PPOTrainer(
-        config,
-        train_dataset=train_dataset,
-        valid_dataset=valid_dataset,
-    ) as trainer:
+    with PPOTrainer(config, train_dataset=train_dataset) as trainer:
         workflow = CountDownWorkflow(
             gconfig=config.gconfig,
             tokenizer=trainer.tokenizer,
@@ -162,15 +153,7 @@ def main(args):
                 StatsLogger.get_log_path(config.stats_logger), "generated"
             ),
         )
-        eval_workflow = CountDownWorkflow(
-            gconfig=config.gconfig.new(temperature=1.0),
-            tokenizer=trainer.tokenizer,
-            rollout_stat_scope="eval-rollout",
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-            ),
-        )
-        trainer.train(workflow, eval_workflow)
+        trainer.train(workflow)
 
 
 if __name__ == "__main__":

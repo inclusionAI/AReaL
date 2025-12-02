@@ -27,7 +27,7 @@ async def run_example(
     *additional_args,
     timeout: int = 300,
     success_pattern=SUCCESS_PATTERN,
-) -> tuple[bool, str, str]:
+) -> bool:
     """
     Run a single example and return the result.
 
@@ -99,8 +99,8 @@ async def run_example(
             process.send_signal(signal.SIGINT)  # Gracefully terminate the process
             break
 
-    return_code = await process.wait()  # Wait for the child process to exit
-    return return_code, success
+    kill_process_tree(process.pid)
+    return success
 
 
 @pytest.mark.multi_gpu
@@ -133,7 +133,7 @@ def test_countdown_example(tmp_path_factory):
     example_file = "examples/countdown/train.py"
     config_name = "examples/countdown/train_config.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -151,7 +151,7 @@ def test_countdown_example(tmp_path_factory):
             f"actor.path={model_path}",
         )
     )
-    assert success, f"Countdown example failed, return_code={return_code}"
+    assert success, "Countdown example failed"
 
 
 # Just two random combinations
@@ -171,7 +171,7 @@ def test_gsm8k_grpo(tmp_path_factory, alloc_mode):
     example_file = "examples/math/gsm8k_rl.py"
     config_name = "examples/math/gsm8k_grpo.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -189,7 +189,7 @@ def test_gsm8k_grpo(tmp_path_factory, alloc_mode):
             f"actor.path={model_path}",
         )
     )
-    assert success, f"GSM8K GRPO example failed, return_code={return_code}"
+    assert success, "GSM8K GRPO example failed"
 
 
 @pytest.mark.parametrize("alloc_mode", ["fsdp:d1", "megatron:d1"])
@@ -208,7 +208,7 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode):
     example_file = "examples/math/gsm8k_sft.py"
     config_name = "examples/math/gsm8k_sft.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -224,7 +224,7 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode):
             f"model.path={model_path}",
         )
     )
-    assert success, f"GSM8K SFT example failed, return_code={return_code}"
+    assert success, "GSM8K SFT example failed"
 
 
 @pytest.mark.gpu
@@ -241,7 +241,7 @@ def test_gsm8k_eval(tmp_path_factory):
     example_file = "examples/math/gsm8k_eval.py"
     config_name = "examples/math/gsm8k_grpo.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -257,7 +257,7 @@ def test_gsm8k_eval(tmp_path_factory):
             success_pattern=re.compile(r"Evaluation results:\n"),
         )
     )
-    assert success, f"GSM8K Eval example failed, return_code={return_code}"
+    assert success, "GSM8K Eval example failed"
 
 
 @pytest.mark.skip("Currently VLM dataloading is too slow. Needs to be fixed.")
@@ -275,7 +275,7 @@ def test_vlm_grpo(tmp_path_factory):
     example_file = "examples/vlm/clevr_count_70k_grpo.py"
     config_name = "examples/vlm/clevr_count_70k_grpo.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -294,7 +294,7 @@ def test_vlm_grpo(tmp_path_factory):
             timeout=1800,
         )
     )
-    assert success, f"CLEVR Count 70k GRPO example failed, return_code={return_code}"
+    assert success, "CLEVR Count 70k GRPO example failed"
 
 
 @pytest.mark.skip("Currently VLM dataloading is too slow. Needs to be fixed.")
@@ -312,7 +312,7 @@ def test_vlm_sft(tmp_path_factory):
     example_file = "examples/vlm/clevr_count_70k_sft.py"
     config_name = "examples/vlm/clevr_count_70k_sft.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -329,7 +329,7 @@ def test_vlm_sft(tmp_path_factory):
             timeout=600,  # tokenizing the VLM dataset for SFT takes a long time
         )
     )
-    assert success, f"CLEVR Count 70k SFT example failed, return_code={return_code}"
+    assert success, "CLEVR Count 70k SFT example failed"
 
 
 @pytest.mark.multi_gpu
@@ -346,7 +346,7 @@ def test_gsm8k_ppo(tmp_path_factory):
     example_file = "examples/math/gsm8k_rl.py"
     config_name = "examples/math/gsm8k_ppo.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -366,7 +366,7 @@ def test_gsm8k_ppo(tmp_path_factory):
             f"critic.path={model_path}",
         )
     )
-    assert success, f"GSM8K PPO example failed, return_code={return_code}"
+    assert success, "GSM8K PPO example failed"
 
 
 @pytest.mark.multi_gpu
@@ -383,7 +383,7 @@ def test_gsm8k_grpo_lora(tmp_path_factory):
     example_file = "examples/lora/gsm8k_grpo_lora.py"
     config_name = "examples/lora/gsm8k_grpo_lora.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -401,7 +401,7 @@ def test_gsm8k_grpo_lora(tmp_path_factory):
             f"actor.path={model_path}",
         )
     )
-    assert success, f"GSM8K GRPO LoRA example failed, return_code={return_code}"
+    assert success, "GSM8K GRPO LoRA example failed"
 
 
 @pytest.mark.multi_gpu
@@ -418,7 +418,7 @@ def test_multi_turn_math(tmp_path_factory):
     example_file = "examples/multi-turn-math/train.py"
     config_name = "examples/multi-turn-math/config.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -436,7 +436,7 @@ def test_multi_turn_math(tmp_path_factory):
             "max_turns=2",
         )
     )
-    assert success, f"Multi-turn Math example failed, return_code={return_code}"
+    assert success, "Multi-turn Math example failed"
 
 
 @pytest.mark.gpu
@@ -453,7 +453,7 @@ def test_hhrlhf_rw(tmp_path_factory):
     example_file = "examples/alignment/hhrlhf_rw.py"
     config_name = "examples/alignment/hhrlhf_rw.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -470,7 +470,7 @@ def test_hhrlhf_rw(tmp_path_factory):
             timeout=1800,
         ),
     )
-    assert success, f"HH-RLHF Reward Modeling example failed, return_code={return_code}"
+    assert success, "HH-RLHF Reward Modeling example failed"
 
 
 @pytest.mark.multi_gpu
@@ -487,7 +487,7 @@ def test_tir_grpo(tmp_path_factory):
     example_file = "examples/tir/train_tir.py"
     config_name = "examples/tir/tir_math_config.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -506,7 +506,7 @@ def test_tir_grpo(tmp_path_factory):
             f"actor.path={model_path}",
         )
     )
-    assert success, f"TIR GRPO example failed, return_code={return_code}"
+    assert success, "TIR GRPO example failed"
 
 
 @pytest.mark.multi_gpu
@@ -564,7 +564,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
         time.sleep(20)
 
         loop = asyncio.get_event_loop()
-        return_code, success = loop.run_until_complete(
+        success = loop.run_until_complete(
             run_example(
                 example_file,
                 config_name,
@@ -585,9 +585,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
             )
         )
         if not success:
-            raise RuntimeError(
-                f"Search Agent DeepResearch example failed, return_code={return_code}"
-            )
+            raise RuntimeError("Search Agent DeepResearch example failed")
     finally:
         kill_process_tree(llm_judge_proc.pid, graceful=False)
 
@@ -605,7 +603,7 @@ def test_openai_agents(tmp_path_factory):
     example_file = "examples/openai-agents/train_agents.py"
     config_name = "examples/openai-agents/config.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -624,7 +622,7 @@ def test_openai_agents(tmp_path_factory):
         )
     )
     if not success:
-        raise RuntimeError(f"OpenAI Agents example failed, return_code={return_code}")
+        raise RuntimeError("OpenAI Agents example failed")
 
 
 @pytest.mark.multi_gpu
@@ -644,7 +642,7 @@ def test_camel(tmp_path_factory):
     example_file = "examples/camel/train.py"
     config_name = "examples/camel/config.yaml"
     loop = asyncio.get_event_loop()
-    return_code, success = loop.run_until_complete(
+    success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
@@ -662,4 +660,4 @@ def test_camel(tmp_path_factory):
         )
     )
     if not success:
-        raise RuntimeError(f"Camel Math example failed, return_code={return_code}")
+        raise RuntimeError("Camel Math example failed")
