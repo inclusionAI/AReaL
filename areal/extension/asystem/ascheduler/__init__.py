@@ -19,6 +19,10 @@ DEFAULT_ASYSTEM_SERVER_URL = "http://127.0.0.1:8081"
 API_BASE_PATH = "/api/v1"
 SCHEDULER_WAIT_CHECK_TIME_INTERVAL = 5  # Seconds
 
+# const for interacting with ASystem Scheduler. for resource reuse.
+ASYS_RESOURCE_REUSE_NS = "ASYS_RESOURCE_REUSE_NS"
+ASYS_RESOURCE_REUSE_JOB_NAME = "ASYS_RESOURCE_REUSE_JOB_NAME"
+
 default_envs = {
     "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     "USE_MAX_V2": "1",
@@ -91,6 +95,10 @@ class AsystemScheduler(Scheduler):
         )
         self.extra_envs["REAL_PACKAGE_PATH"] = self.real_package_path
         self.extra_envs["EXTRA_PYTHONPATH"] = self.extra_pythonpath
+
+        # 从 env 获取 ASys scheduler 设置的资源复用的字段 value
+        self.asys_resource_reuse_ns = os.environ.get(ASYS_RESOURCE_REUSE_NS, "")
+        self.asys_resource_reuse_job_name = os.environ.get(ASYS_RESOURCE_REUSE_JOB_NAME, "")
 
         # 信号捕获是为了手动跑 trainer.py 增加的功能，用来在 trainer 退出时清理相关 Job
         signal.signal(signal.SIGINT, self.batch_cleanup_jobs)
@@ -382,6 +390,8 @@ class AsystemScheduler(Scheduler):
             "scheduleStrategy": (
                 job.scheduling_strategy if job.scheduling_strategy else None
             ),
+            ASYS_RESOURCE_REUSE_NS: self.asys_resource_reuse_ns,
+            ASYS_RESOURCE_REUSE_JOB_NAME: self.asys_resource_reuse_job_name
         }
         if job.scheduling_strategy is not None:
             payload["scheduleStrategy"] = {
