@@ -336,7 +336,7 @@ class TrainEngine(abc.ABC):
     def train_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         """Update model parameters using provided batch and loss function."""
@@ -347,7 +347,6 @@ class TrainEngine(abc.ABC):
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
-        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Execute gradient-free forward pass for inference."""
@@ -375,16 +374,9 @@ class PPOActor:
         self,
         data: dict[str, Any],
     ) -> torch.Tensor | None:
-
-        def calc_logprobs(logits, input_data):
-            labels = torch.roll(input_data["input_ids"], shifts=-1, dims=-1)
-            logprobs = gather_logprobs(logits, labels, self.temperature)
-            return logprobs
-
         self.engine.eval()
         return self.engine.forward(
             input_=data,
-            post_hook=calc_logprobs,
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 

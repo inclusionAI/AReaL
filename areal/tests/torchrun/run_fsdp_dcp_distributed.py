@@ -59,9 +59,11 @@ def mock_input(
     )
 
 
-def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
+def mock_loss_fn(
+    logprobs: torch.Tensor, entropy: torch.Tensor, input_data: dict, **kwargs
+) -> torch.Tensor:
     """Mock loss function for testing."""
-    return torch.mean(logits)
+    return torch.mean(logprobs)
 
 
 def make_fsdp_engine(
