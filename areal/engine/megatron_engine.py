@@ -52,6 +52,7 @@ from areal.utils.data import (
 )
 from areal.utils.device import clear_memory, log_gpu_stats
 from areal.utils.distributed import init_custom_process_group
+from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
 from areal.utils.mcore.determinisitc import set_deterministic_algorithms
@@ -948,7 +949,7 @@ class MegatronEngine(TrainEngine):
     def train_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         if self.is_offload:
@@ -1001,7 +1002,11 @@ class MegatronEngine(TrainEngine):
                 )
 
             def _scaled_loss_fn(input_, output):
-                loss = loss_fn(output, input_)
+                labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
+                logprobs, entropy = gather_logprobs_entropy(
+                    output, labels, temperature=self.config.temperature
+                )
+                loss = loss_fn(logprobs, entropy, input_)
                 loss_scale = loss_weight_fn(input_) / total_loss_weight
                 # Megatron will average gradients across DP ranks.
                 # If we normalize loss across micro batches of all DP ranks,
@@ -1045,7 +1050,7 @@ class MegatronEngine(TrainEngine):
     def eval_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         if self.is_offload:
@@ -1096,7 +1101,11 @@ class MegatronEngine(TrainEngine):
             def _scaled_loss_fn(input_, output):
                 # NOTE: Do not need to record loss here, will be
                 # automatically recorded by stats_tracker
-                loss = loss_fn(output, input_)
+                labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
+                logprobs, entropy = gather_logprobs_entropy(
+                    output, labels, temperature=self.config.temperature
+                )
+                loss = loss_fn(logprobs, entropy, input_)
                 loss_scale = loss_weight_fn(input_) / total_loss_weight
                 # eval_batch does not run backward, the grad will not be averaged over DP group
                 # so we shouldn't multiple dp_size in loss_scale
@@ -1130,7 +1139,6 @@ class MegatronEngine(TrainEngine):
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
-        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         if self.is_offload:
@@ -1179,10 +1187,11 @@ class MegatronEngine(TrainEngine):
                 )
 
             def _post_process_fn(input_, output):
-                loss = torch.tensor(1.0, device=output.device)
-                if post_hook is not None:
-                    output = post_hook(output, input_)
-                return loss, {"output": output}
+                labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
+                logprobs = gather_logprobs(
+                    output, labels, temperature=self.config.temperature
+                )
+                return torch.tensor(1.0, device=logprobs.device), {"output": logprobs}
 
             return output, functools.partial(_post_process_fn, orig_input)
 

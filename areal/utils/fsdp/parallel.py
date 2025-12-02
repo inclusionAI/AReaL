@@ -10,7 +10,6 @@ from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     ParallelStyle,
     PrepareModuleInput,
-    PrepareModuleInputOutput,
     RowwiseParallel,
     SequenceParallel,
     parallelize_module,
@@ -43,13 +42,14 @@ class ReplicateParallel(ParallelStyle):
         self,
         *,
         input_layout: Placement | None = None,
+        desired_input_layout: Placement | None = None,
         output_layout: Placement | None = None,
         use_local_output: bool = True,
     ):
         super().__init__()
         self.input_layout = input_layout or Replicate()
         self.output_layout = output_layout or Replicate()
-        self.desired_input_layout = Replicate()
+        self.desired_input_layout = desired_input_layout or Replicate()
         self.use_local_output = use_local_output
 
     @staticmethod
@@ -353,15 +353,13 @@ def apply_non_moe_tp(
         )
     if hasattr(model, "score") and isinstance(model.score, nn.Module):
         # For PPO's critic model's score layer:
-        # 1. The input is sharded by sequence parallelism
-        # 2. `score` is a linear layer, but its weight is not a DTensor. Use local input.
-        # 3. All-gather the output along the sequence dimension to get the full results.
-        root_tp_plan["score"] = PrepareModuleInputOutput(
-            input_layouts=Shard(1),
-            desired_input_layouts=Shard(1),
-            use_local_input=True,
-            output_layouts=Shard(1),
-            desired_output_layouts=Replicate(),
+        # 1. The input is sharded by sequence parallelism (Shard(1))
+        # 2. `score` is a linear layer with replicated weights
+        # 3. All-gather the output along the sequence dimension to get the full results
+        root_tp_plan["score"] = ReplicateParallel(
+            input_layout=Shard(1),
+            desired_input_layout=Shard(1),
+            output_layout=Replicate(),
         )
 
     if is_valid_vision_model(model_config.model_type):

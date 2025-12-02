@@ -67,9 +67,14 @@ def get_engine(engine_type: str, model_path: str):
     return engine
 
 
-def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
+def mock_loss_fn(
+    logprobs: torch.Tensor,
+    entropy: torch.Tensor,
+    input_data: dict,
+    **kwargs,
+) -> torch.Tensor:
     """Mock loss function for testing."""
-    return torch.mean(logits)
+    return torch.mean(logprobs)
 
 
 @pytest.fixture(params=["fsdp"])
@@ -97,13 +102,20 @@ def engine(request):
 def test_forward_microbatch(engine, mock_input):
     engine.eval()
     engine.config.mb_spec = MicroBatchSpec(n_mbs=2, max_tokens_per_mb=100)
-    x2 = engine.forward(input_=mock_input).squeeze(0).mean(-1)
+    x2 = engine.forward(input_=mock_input)
     engine.config.mb_spec = MicroBatchSpec(n_mbs=1, max_tokens_per_mb=100)
-    x1 = engine.forward(input_=mock_input).squeeze(0).mean(-1)
-    input_ids = mock_input["input_ids"]
-    assert x1.shape[:1] == input_ids.shape[:1]
-    assert x2.shape[:1] == input_ids.shape[:1]
-    assert torch.allclose(x1, x2, atol=1e-1, rtol=1e-2), (x1 - x2).abs().max().item()
+    x1 = engine.forward(input_=mock_input)
+
+    attn_mask = mock_input["attention_mask"]
+    loss_mask = attn_mask.clone()
+    loss_mask[:, :-1] = attn_mask[:, :-1] & attn_mask[:, 1:]
+    loss_mask[:, -1] = False
+
+    x1_valid = x1[loss_mask]
+    x2_valid = x2[loss_mask]
+    assert torch.allclose(x1_valid, x2_valid, atol=1e-4, rtol=1e-3), (
+        (x1_valid - x2_valid).abs().max().item()
+    )
 
 
 @torch.no_grad()

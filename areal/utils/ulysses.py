@@ -249,10 +249,6 @@ def ulysses_prepare_inputs(
         if value.dim() >= 2 and value.shape[:2] == padded_input_ids.shape[:2]:
             # Please refer to ppo_loss_fn() in areal/engine/ppo/critic.py
             if key in {"values", "returns", "loss_mask"}:
-                # For loss_mask, also keep the full version for loss function
-                if key == "loss_mask":
-                    inputs["full_loss_mask"] = value.squeeze(0)
-
                 sliced_value = slice_input_tensor(value, dim=1, padding=True)
                 inputs[key] = sliced_value.squeeze(0)
             else:
