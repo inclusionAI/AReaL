@@ -125,6 +125,11 @@ class SFTTrainer:
         global_step = 0
         data_generator = cycle_dataloader(self.train_dataloader)
         for global_step in range(start_step, max_steps):
+            if (
+                config.total_train_steps is not None
+                and global_step >= config.total_train_steps
+            ):
+                break
             epoch = global_step // steps_per_epoch
             step = global_step % steps_per_epoch
 
