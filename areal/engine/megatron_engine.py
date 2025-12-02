@@ -121,7 +121,11 @@ class MegatronEngine(TrainEngine):
         self.is_offload: bool = False
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec):
-        self.seed = get_seed()
+        try:
+            self.seed = get_seed()
+        except ValueError:
+            self.logger.warning("Seed not set, using default seed 42.")
+            self.seed = 42
 
         assert addr is None, "FSDPEngine does not support remote initialization."
 
