@@ -315,7 +315,6 @@ class FSDPEngine(TrainEngine):
                 tokenizer.save_pretrained(path)
             if processor is not None:
                 processor.save_pretrained(path)
-
         dist.barrier(group=self.cpu_group)
 
     def _load_model_from_hf(self, path: str):

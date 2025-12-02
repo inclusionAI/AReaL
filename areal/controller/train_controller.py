@@ -1,7 +1,11 @@
 import asyncio
+import shutil
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import torch
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
@@ -11,12 +15,16 @@ from areal.api.io_struct import (
     AllocationMode,
     FinetuneSpec,
     SaveLoadMeta,
+    WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
+from areal.api.workflow_api import RolloutWorkflow
 from areal.controller.batch import DistributedBatchMemory
-from areal.utils import logging
+from areal.controller.rollout_controller import RolloutController
+from areal.platforms import current_platform
+from areal.utils import logging, name_resolve, names
 
-logger = logging.getLogger("TrainController")
+logger = logging.getLogger(__name__)
 
 
 class TrainController:
@@ -53,6 +61,9 @@ class TrainController:
 
         self._worker_role: str
 
+        self.rollout: RolloutController = None
+        self.weight_update_group_initialized = False
+
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Placeholder method for process group creation.
 
@@ -65,6 +76,7 @@ class TrainController:
         parallel_strategy : ParallelStrategy | None, optional
             Parallel strategy configuration (currently unused), by default None
         """
+        pass
 
     def initialize(
         self,
@@ -553,3 +565,160 @@ class TrainController:
             A scalar loss or None
         """
         return self._custom_function_call("evaluate_lm", input_, *args, **kwargs)
+
+    # =================== GRPO ========================================
+    def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
+        if self.rollout is not None and self.rollout != rollout:
+            logger.warning(
+                f"Connected rollout controller changed from {self.rollout} to {rollout}."
+            )
+        self.rollout = rollout
+
+        if (
+            meta.type == current_platform.communication_backend
+            and not self.weight_update_group_initialized
+        ):
+            self._init_weight_update_from_distributed(meta)
+            self.weight_update_group_initialized = True
+
+    def prepare_batch(
+        self,
+        dataloader: StatefulDataLoader,
+        workflow: str,
+        workflow_kwargs: dict[str, Any],
+        should_accept_fn: str | None = None,
+    ) -> DistributedBatch:
+        return self.rollout.prepare_batch(
+            dataloader=dataloader,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
+        )
+
+    def rollout_batch(
+        self,
+        data: list[dict[str, Any]],
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any],
+        should_accept_fn: str | None = None,
+    ) -> DistributedBatch:
+        return self.rollout.rollout_batch(
+            data=data,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
+        )
+
+    def compute_logp(
+        self,
+        *args,
+        **kwargs,
+    ):
+        """Compute log probabilities across workers.
+
+        Parameters
+        ----------
+        *args
+            Positional arguments passed to the engine
+        **kwargs
+            Keyword arguments passed to the engine
+
+        Returns
+        -------
+        Any
+            Log probabilities computed by the engine
+        """
+        return self._custom_function_call("compute_logp", *args, **kwargs)
+
+    def compute_advantages(
+        self,
+        *args,
+        **kwargs,
+    ):
+        """Compute advantages across workers.
+
+        Parameters
+        ----------
+        *args
+            Positional arguments passed to the engine
+        **kwargs
+            Keyword arguments passed to the engine
+
+        Returns
+        -------
+        Any
+            Advantages computed by the engine
+        """
+        return self._custom_function_call("compute_advantages", *args, **kwargs)
+
+    def ppo_update(
+        self,
+        input_: DistributedBatch,
+    ) -> dict[str, float]:
+        """Perform PPO update step with the given batch.
+
+        Parameters
+        ----------
+        input_ : DistributedBatch
+            The distributed input data containing trajectories for PPO update
+
+        Returns
+        -------
+        Dict[str, float]
+            Scalar statistics after PPO update
+        """
+        return self._custom_function_call("ppo_update", input_)
+
+    def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
+        raise NotImplementedError()
+
+    def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
+        raise NotImplementedError()
+
+    def _update_weights_from_disk(self, meta: WeightUpdateMeta):
+        # Update all LocalInfEngine's local weight
+        self.save(
+            SaveLoadMeta(
+                path=meta.path,
+                weight_format="hf",
+                with_optim=False,
+                tokenizer=None,
+                processor=None,
+            )
+        )
+        has_model_files = any(child.is_file() for child in Path(meta.path).iterdir())
+        assert has_model_files, f"No model files found in {meta.path} after saving."
+
+        update_name = names.update_weights_from_disk(
+            self.config.experiment_name,
+            self.config.trial_name,
+            self.get_version(),
+        )
+        name_resolve.add(
+            update_name,
+            str(datetime.now().timestamp()),
+            keepalive_ttl=120,
+            replace=True,
+        )
+
+        meta.clear_checkpoint = False
+        self._run_async_task(self.rollout.update_weights_from_disk(meta))
+        shutil.rmtree(meta.path, ignore_errors=True)
+
+    def _check_rollout_engine_connected(self):
+        """Validate that rollout engine has been connected via connect_engine()."""
+        if self.rollout is None:
+            raise RuntimeError(
+                "Rollout engine not connected. Call connect_engine()"
+                " before using rollout/update_weight methods."
+            )
+
+    def update_weights(self, meta: WeightUpdateMeta):
+        self._check_rollout_engine_connected()
+        if meta.type == current_platform.communication_backend:
+            assert self.weight_update_group_initialized
+            self._update_weights_from_distributed(meta)
+        elif meta.type == "disk":
+            self._update_weights_from_disk(meta)
+        else:
+            raise ValueError(f"Unknown weight update type {meta.type}")

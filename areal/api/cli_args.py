@@ -411,7 +411,7 @@ class SchedulingSpec:
     image: str = field(
         default="", metadata={"help": "Docker/Singularity container image to use"}
     )
-    type: str = field(
+    task_type: str = field(
         default="worker",
         metadata={
             "help": "Task type (e.g., worker, engine)",

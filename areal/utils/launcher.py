@@ -40,21 +40,6 @@ BASE_ENVIRONS = {
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
     "PYTHONPATH": PYTHONPATH,
 }
-NA132_ENVIRONS = {
-    "NCCL_SOCKET_IFNAME": "bond0",
-    "NCCL_IB_DISABLE": "0",
-    "NCCL_NET": "IB",
-    "NCCL_NET_PLUGIN": "",
-    "NCCL_IB_GID_INDEX": "3",
-    "NCCL_IB_TIMEOUT": "22",
-    "NCCL_IB_RETRY_CNT": "7",
-    "NCCL_IB_SL": "5",
-    "NCCL_IB_TC": "136",
-    "NCCL_IB_HCA": "mlx5_bond",
-    "NCCL_IB_QPS_PER_CONNECTION": "8",
-    "NCCL_SET_THREAD_NAME": "1",
-    "NCCL_DEBUG": "WARN",
-}
 
 
 def get_env_vars(
@@ -66,10 +51,8 @@ def get_env_vars(
         if additional_env_vars
         else dict()
     )
-    if cluster_name == "na132":
-        return {**BASE_ENVIRONS, **NA132_ENVIRONS, **_additional_env_vars}
-    else:
-        return {**BASE_ENVIRONS, **_additional_env_vars}
+
+    return {**BASE_ENVIRONS, **_additional_env_vars}
 
 
 class JobState(enum.Enum):
