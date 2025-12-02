@@ -10,14 +10,16 @@ from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
-from areal.utils import seeding, stats_tracker
+from areal.utils import name_resolve, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
+from areal.utils.scaling import handle_scale_up
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
@@ -38,6 +40,9 @@ def main(args):
     allocation_mode = AllocationMode.from_str(config.allocation_mode)
     parallel_strategy = allocation_mode.train
     assert parallel_strategy is not None
+    # Reconfig the name_resolve to connect exisisting name_resolve
+    name_resolve.reconfigure(config.cluster.name_resolve)
+    scale = config.scaling.enable_scaling
 
     # Initialize train engine
     actor = FSDPPPOActor(config=config.actor)
@@ -70,9 +75,14 @@ def main(args):
     )
 
     # Initialize inference engine
-    rollout = RemoteSGLangEngine(config.rollout)
+    if allocation_mode.gen_backend == "vllm":
+        rollout = RemotevLLMEngine(config.rollout)
+        eval_rollout = RemotevLLMEngine(deepcopy(config.rollout))
+    elif allocation_mode.gen_backend == "sglang":
+        rollout = RemoteSGLangEngine(config.rollout)
+        eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
     rollout.initialize(train_data_parallel_size=parallel_strategy.dp_size)
-    eval_rollout = RemoteSGLangEngine(deepcopy(config.rollout))
+
     # NOTE: eval does not have any offpolicyness control
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize()
@@ -174,6 +184,8 @@ def main(args):
 
         # pause inference for updating weights, save, and evaluation
         rollout.pause()
+        if dist.get_rank() == 0 and scale:
+            handle_scale_up(name_resolve, actor, rollout, weight_update_meta)
 
         with stats_tracker.record_timing("update_weights"):
             actor.update_weights(weight_update_meta)

@@ -129,6 +129,8 @@ class FSDPEngine(TrainEngine):
         self.rank: int
         self.dp_head: int
         self.dp_rank: int
+        self.scaling_count = 0
+        self.create_group_count = 0
 
         self.is_offload: bool = False
 
@@ -440,14 +442,21 @@ class FSDPEngine(TrainEngine):
             )
             self.weight_update_group = init_custom_process_group(
                 backend=current_platform.communication_backend,
-                world_size=meta.alloc_mode.gen.world_size + 1,
+                world_size=meta.alloc_mode.gen.world_size + 1 + self.scaling_count,
                 init_method=f"tcp://{meta.nccl_master_address}:{meta.nccl_master_port}",
                 rank=0,
-                group_name=meta.nccl_group_name,
+                group_name=meta.nccl_group_name + str(self.create_group_count),
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
 
+            self.create_group_count += 1
             fut.result()
+            self.rollout_engine._engine.backend.create_group_count += 1
+
+    def _re_init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
+        self.weight_update_group_initialized = False
+        self._init_weight_update_from_distributed(meta)
+        self.weight_update_group_initialized = True
 
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):

@@ -1,6 +1,8 @@
 import importlib.util
+import os
 import pathlib
 import re
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -18,6 +20,7 @@ from areal.api.cli_args import (
     ClusterSpecConfig,
     LauncherConfig,
     RecoverConfig,
+    ScalingConfig,
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
@@ -42,7 +45,23 @@ logger = logging.getLogger("RayLauncher")
 RAY_WAIT_CHECK_TIME_INTERVAL = 5  # seconds
 DEFAULT_MAIN_FUNC_NAME = "main"
 RAY_LAUNCHER = None
-RECOVER_TIME_INTERVAL = 10  # seconds
+RECOVER_TIME_INTERVAL = 10  # second
+
+
+def launch_scale_common(config_path: str):
+    """Launch scale_common.py as a background subprocess without blocking."""
+    script_path = str(
+        pathlib.Path(__file__).resolve().parent.joinpath("scaler/scaling_controller.py")
+    )
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    subprocess.Popen(
+        [sys.executable, script_path, config_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        start_new_session=True,
+    )
 
 
 def run_func(file_path, function_name, *args, **kwargs):
@@ -335,8 +354,15 @@ class RayLauncher:
 
 
 def main():
-    ray.init()
-    config, _ = parse_cli_args(sys.argv[1:])
+    ray.init(address="auto")
+    config, config_file = parse_cli_args(sys.argv[1:])
+    config.scaling = to_structured_cfg(config.scaling, ScalingConfig)
+    # Check whether enable scaling or not
+    if config.scaling.enable_scaling:
+        try:
+            launch_scale_common(str(config_file))
+        except Exception as e:
+            logger.info(f"[RayLauncher] Warning: Failed to scaler.py: {e}")
     ray_main(config, run_id=0)
 
 

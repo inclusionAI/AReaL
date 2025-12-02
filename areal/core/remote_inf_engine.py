@@ -291,6 +291,7 @@ class RemoteInfEngine(InferenceEngine):
 
         self.workflow_executor: WorkflowExecutor
         self.local_server_processes: list[LocalInfServerInfo] = []
+        self.update_servers = False
 
     def _create_session(self) -> aiohttp.ClientSession:
         """Create a ClientSession for the current asyncio coroutine.
@@ -448,6 +449,27 @@ class RemoteInfEngine(InferenceEngine):
         with self.lock:
             return self._version
 
+    def refresh_addresses(self, new_addresses: list[str]) -> None:
+        """
+        Refresh the list of available servers dynamically.
+
+        Args:
+            new_addresses (list[str]): Updated list of server addresses.
+        """
+        if not new_addresses:
+            raise RuntimeError("No servers provided when refreshing addresses.")
+
+        # Only log if there's an actual change
+        if new_addresses != self.addresses:
+            self.logger.info(f"Refreshing server addresses: {new_addresses}")
+
+            # Replace with the new set
+            self.addresses = new_addresses
+
+            # Clamp server_idx to valid range
+            if self.server_idx >= len(self.addresses):
+                self.server_idx = 0
+
     def choose_server(self) -> str:
         """Choose a server based on the scheduling policy.
 
@@ -461,7 +483,16 @@ class RemoteInfEngine(InferenceEngine):
         NotImplementedError
             If schedule policy other than round-robin is used
         """
+
+        if self.update_servers:
+            name = names.gen_servers(
+                self.config.experiment_name, self.config.trial_name
+            )
+            vllm_addrs = name_resolve.get_subtree(name)
+            self.refresh_addresses(vllm_addrs)
+            self.update_servers = False
         if self.config.schedule_policy == "round_robin":
+            self.server_idx %= len(self.addresses)
             server = self.addresses[self.server_idx]
             self.server_idx = (self.server_idx + 1) % len(self.addresses)
             return server
@@ -620,6 +651,12 @@ class RemoteInfEngine(InferenceEngine):
         """
         assert meta.type == current_platform.communication_backend
         assert not self.distributed_weight_update_initialized
+
+        # Refresh the gen servers if there is scale request
+        name = names.gen_servers(self.config.experiment_name, self.config.trial_name)
+        vllm_addrs = name_resolve.get_subtree(name)
+        if vllm_addrs != self.addresses:
+            self.refresh_addresses(vllm_addrs)
 
         fut = self.executor.submit(
             _init_weights_update_group_remote,
@@ -860,6 +897,8 @@ class RemoteInfEngine(InferenceEngine):
         """Pause request submission for async rollout.
         Used during evaluation to prevent data over generation.
         """
+        # Whenever pause for update weight, make update_servers True to dispatch request to new servers
+        self.update_servers = True
         return self.workflow_executor.pause()
 
     def resume(self):
