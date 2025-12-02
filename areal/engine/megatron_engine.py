@@ -832,6 +832,40 @@ class MegatronEngine(TrainEngine):
             return
         perf_tracer.configure(config, rank=rank, role=role)
 
+    def _check_and_apply_fp8_config(self):
+        if self.mcore_config.fp8 is not None:
+            self.tf_config.fp8 = self.mcore_config.fp8
+            self.tf_config.fp8_recipe = self.mcore_config.fp8_recipe
+            self.tf_config.fp8_param = self.mcore_config.fp8_param
+            self.tf_config.fp8_margin = self.mcore_config.fp8_margin
+            self.tf_config.fp8_amax_history_len = self.mcore_config.fp8_amax_history_len
+            self.tf_config.fp8_amax_compute_algo = (
+                self.mcore_config.fp8_amax_compute_algo
+            )
+            self.tf_config.fp8_wgrad = self.mcore_config.fp8_wgrad
+            self.tf_config.fp8_dot_product_attention = (
+                self.mcore_config.fp8_dot_product_attention
+            )
+            self.tf_config.fp8_multi_head_attention = (
+                self.mcore_config.fp8_multi_head_attention
+            )
+            self.tf_config.tp_only_amax_red = self.mcore_config.tp_only_amax_red
+            self.tf_config.first_last_layers_bf16 = (
+                self.mcore_config.first_last_layers_bf16
+            )
+            self.tf_config.num_layers_at_start_in_bf16 = (
+                self.mcore_config.num_layers_at_start_in_bf16
+            )
+            self.tf_config.num_layers_at_end_in_bf16 = (
+                self.mcore_config.num_layers_at_end_in_bf16
+            )
+            self.logger.info(
+                f"FP8 training enabled: fp8={self.mcore_config.fp8}, "
+                f"fp8_recipe={self.mcore_config.fp8_recipe}, "
+                f"fp8_param={self.mcore_config.fp8_param}"
+            )
+            # fp8_param_gather is passed from make_mcore_model()
+
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
     ) -> MegatronParallelStrategy:
