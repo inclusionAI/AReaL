@@ -391,6 +391,94 @@ class MegatronEngineConfig:
     distribute_saved_activations: bool | None = None
     recompute_modules: list[str] | None = None
 
+    # FP8 Training Configuration
+    fp8: str | None = field(
+        default=None,
+        metadata={
+            "help": "Enable FP8 precision training. Options: "
+            "'e4m3' (uniform e4m3), "
+            "'hybrid' (e4m3 for activations/weights, e5m2 for output activation gradients)."
+        },
+    )
+
+    fp8_recipe: str = field(
+        default="delayed",
+        metadata={
+            "help": "FP8 scaling recipe. Options: 'tensorwise', 'delayed', 'mxfp8' (Blackwell only), 'blockwise'."
+        },
+    )
+
+    fp8_param: bool = field(
+        default=False,
+        metadata={
+            "help": "Keep parameters in FP8 precision to save memory. "
+            "Must be used together with fp8 mode. "
+            "Not all parameters will be converted to fp8; for example, biases will remain unchanged."
+        },
+    )
+
+    fp8_margin: int = field(
+        default=0,
+        metadata={"help": "Margin for FP8 scaling factor computation."},
+    )
+
+    fp8_amax_history_len: int = field(
+        default=1,
+        metadata={
+            "help": "Length of amax history window for scaling factor computation."
+        },
+    )
+
+    fp8_amax_compute_algo: str = field(
+        default="most_recent",
+        metadata={
+            "help": "Algorithm for choosing amax value. Options: 'max' (largest in history window), 'most_recent'."
+        },
+    )
+
+    fp8_wgrad: bool = field(
+        default=True,
+        metadata={
+            "help": "When False, override FP8 config and compute weight gradients in higher precision."
+        },
+    )
+
+    fp8_dot_product_attention: bool = field(
+        default=False,
+        metadata={"help": "Use FP8 implementation of Dot Product Attention."},
+    )
+
+    fp8_multi_head_attention: bool = field(
+        default=False,
+        metadata={"help": "Use FP8 implementation of Multi Head Attention."},
+    )
+
+    tp_only_amax_red: bool = field(
+        default=False,
+        metadata={"help": "Reduce FP8 AMAX only in TP or TP-CP domain."},
+    )
+
+    first_last_layers_bf16: bool = field(
+        default=False,
+        metadata={
+            "help": "Retain first and last N TransformerBlocks in BF16 instead of FP8."
+        },
+    )
+
+    num_layers_at_start_in_bf16: int = field(
+        default=1,
+        metadata={
+            "help": "Number of layers at start to keep in BF16 when first_last_layers_bf16 is True."
+        },
+    )
+
+    num_layers_at_end_in_bf16: int = field(
+        default=1,
+        metadata={
+            "help": "Number of layers at end to keep in BF16 when first_last_layers_bf16 is True."
+        },
+    )
+
 
 @dataclass
 class SchedulingStrategy:
