@@ -28,6 +28,7 @@ from areal.extension.asystem.remote_hybrid_train_worker import RemoteHybridTrain
 from areal.extension.asystem.utils.align_tools import summarize_rewards
 from areal.extension.asystem.utils.util import ShuffleSampler, wait_future_ordered
 from areal.utils import logging, stats_tracker
+from areal.utils.data import cycle_dataloader
 from areal.utils.stats_logger import StatsLogger
 
 logger = logging.getLogger("Trainer")
@@ -96,8 +97,6 @@ def main(args):
                 "asystem_train_config"
             ] = asystem_hybrid_config
 
-        step_num = config.total_train_steps
-        epoch_num = config.total_train_epochs
         global_step = 0
         os.environ["WANDB_API_KEY"] = config.stats_logger.wandb.wandb_api_key
         os.environ["WANDB_BASE_URL"] = config.stats_logger.wandb.wandb_base_url
@@ -119,7 +118,10 @@ def main(args):
             batch_size=config.train_dataset.batch_size,
             sampler=ShuffleSampler(train_dataset),
             collate_fn=lambda x: x,
+            drop_last=config.train_dataset.drop_last,
         )
+        epoch_num = config.total_train_epochs
+        steps_per_epoch = len(dataloader)
         ############################## recover #########################################
         recover_meta_info_path = config.recover.recover_meta_info_path
         enable_recover = True
@@ -167,7 +169,7 @@ def main(args):
             ft_spec,
         )
 
-        logger.info(f"total_epochs={epoch_num} step_per_epoch={step_num}")
+        logger.info(f"total_epochs={epoch_num} step_per_epoch={steps_per_epoch}")
 
         inference_config = config.rollout
         inference_config.dp_size = allocate_mode.gen.dp_size  # TODO: use allocate_mode
@@ -290,15 +292,15 @@ def main(args):
             alloc_mode=None,
         )
         for epoch in range(recover_epoch, epoch_num):
-            data_generator = iter(dataloader)
+            data_generator = cycle_dataloader(dataloader)
             start_step = recover_step if can_recover and epoch == recover_epoch else 0
-            for step in range(start_step, step_num):
+            for step in range(start_step, steps_per_epoch):
                 with (
                     stats_tracker.record_timing("e2e"),
                     stats_tracker.scope("grpo_actor"),
                 ):
-                    rollout.set_version(step)
-                    logger.info(f"rollout set_version: {step} succeeded")
+                    rollout.set_version(global_step)
+                    logger.info(f"rollout set_version: {global_step} succeeded")
 
                     with (
                         stats_tracker.record_timing("weights_update_step"),
@@ -307,10 +309,10 @@ def main(args):
                         logger.info(
                             f"start to update weight, step: {step}, epoch: {epoch}"
                         )
-                        weight_update_config.path = f"{config.storage_prefix}/checkpoints/{config.experiment_name}/{config.trial_name}/{step}"
+                        weight_update_config.path = f"{config.storage_prefix}/checkpoints/{config.experiment_name}/{config.trial_name}/{global_step}"
                         if weight_update_config.type == "disk":
                             actor.upload_weights(weight_update_config)
-                            weight_update_config.path = f"{config.storage_prefix}/checkpoints/{config.experiment_name}/{config.trial_name}/{step}"
+                            weight_update_config.path = f"{config.storage_prefix}/checkpoints/{config.experiment_name}/{config.trial_name}/{global_step}"
                             rollout.update_weights(weight_update_config)
                             logger.info(
                                 f"disk mode update weight succeeded, step: {step}, epoch: {epoch}"
@@ -328,7 +330,7 @@ def main(args):
                                 )
                                 wait_future_ordered([upload_future, update_future])
                             logger.info(
-                                f"{weight_update_config.type} update weight succeeded, step: {step}"
+                                f"{weight_update_config.type} update weight succeeded, step: {step}, epoch: {epoch}"
                             )
 
                     with (
@@ -341,7 +343,7 @@ def main(args):
                             logger.info(
                                 f"start to notify_rollout_start_event, step: {step}, epoch: {epoch}"
                             )
-                            rollout.notify_event("rollout_start", step)
+                            rollout.notify_event("rollout_start", global_step)
                             logger.info(
                                 f"notify_rollout_start_event succeeded, step: {step}, epoch: {epoch}"
                             )
@@ -387,11 +389,13 @@ def main(args):
                         "rollout batch reward summary: %s",
                         summarize_rewards(batch["rewards"]),
                     )
-                    with (stats_tracker.record_timing("notify_rollout_end_event"),):
+                    with (
+                        stats_tracker.record_timing("notify_rollout_end_event"),
+                    ):
                         logger.info(
                             f"start to notify_rollout_end_event, step: {step}, epoch: {epoch}"
                         )
-                        rollout.notify_event("rollout_end", step)
+                        rollout.notify_event("rollout_end", global_step)
                         logger.info(
                             f"notify_rollout_end_event succeeded, step: {step}, epoch: {epoch}"
                         )
@@ -415,7 +419,9 @@ def main(args):
                         stats_tracker.record_timing("train_step"),
                         stats_tracker.scope("train"),
                     ):
-                        with (stats_tracker.record_timing("notify_train_start_event"),):
+                        with (
+                            stats_tracker.record_timing("notify_train_start_event"),
+                        ):
                             logger.info(
                                 f"start to notify_train_start_event, step: {step}, epoch: {epoch}"
                             )
@@ -424,7 +430,9 @@ def main(args):
                                 f"notify_train_start_event succeeded, step: {step}, epoch: {epoch}"
                             )
 
-                        with (stats_tracker.record_timing("train_distributed_batch"),):
+                        with (
+                            stats_tracker.record_timing("train_distributed_batch"),
+                        ):
                             logger.info(f"start to train, step: {step}, epoch: {epoch}")
                             actor.train_batch(
                                 batch,
@@ -482,7 +490,9 @@ def main(args):
                                     f"[Trainer] periodic_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
                                 )
 
-                        with (stats_tracker.record_timing("notify_train_end_event"),):
+                        with (
+                            stats_tracker.record_timing("notify_train_end_event"),
+                        ):
                             logger.info(
                                 f"start to notify_train_end_event, step: {step}, epoch: {epoch}"
                             )

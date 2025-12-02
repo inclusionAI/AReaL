@@ -103,7 +103,7 @@ rollout:
     show_time_cost: false
   scheduling_specs:
     - type: worker
-      image: /storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif
+      image: /storage/openpsi/images/areal-from-gcp-20251124.sif
     - type: engine
       gpu: 1
       # you can customize environment variables here
@@ -283,7 +283,7 @@ actor: &actor_ref
       kl_ctl: 0.0
   scheduling_specs:
     - type: worker
-      image: /storage/openpsi/images/areal-25.01-sglang-bf16-editable-metrics-xccl-20250716.sif
+      image: /storage/openpsi/images/areal-from-gcp-20251124.sif
     - type: engine
       gpu: 1
       # you can customize environment variables here
