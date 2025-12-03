@@ -1,4 +1,4 @@
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 
 from openai.types.responses.response_input_param import ResponseInputParam
 
@@ -108,7 +108,6 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 if _is_prefix(parent.current_data, child.current_data):
                     child.parent = parent
                     break
-
 
     def export_interactions(
         self, style: str, reward_discount: float | None = None
