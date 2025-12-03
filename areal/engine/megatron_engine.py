@@ -1,6 +1,7 @@
 import dataclasses
 import functools
 import gc
+import math
 import os
 from collections.abc import Callable
 from concurrent.futures import Future
@@ -118,6 +119,8 @@ class MegatronEngine(TrainEngine):
         self.seed = 0
         self.own_global_group = False
         self.is_offload: bool = False
+        self.enable_fp8: bool = self.config.megatron.fp8 is not None
+        self.fp8_align_size: int = 16
 
     def initialize(
         self,
@@ -951,6 +954,11 @@ class MegatronEngine(TrainEngine):
         # 2. Align sequence lengths to integer multiples of `align_to_multiple_of=tp_size*cp_size*2`
         #    to satisfy the requirement of Megatron parallelism.
         align_to_multiple_of = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+        align_to_multiple_of = (
+            math.lcm(align_to_multiple_of, self.fp8_align_size)
+            if self.enable_fp8
+            else align_to_multiple_of
+        )
         mb_list = pad_mb_list(
             mb_list,
             pad_value=0.0,
