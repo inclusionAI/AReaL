@@ -13,6 +13,7 @@ parts:
   - caption: Tutorial
     chapters:
     - file: tutorial/installation
+    - file: tutorial/installation_npu
     - file: tutorial/quickstart
     - file: tutorial/openai_workflows
     - file: tutorial/agentic_rl
