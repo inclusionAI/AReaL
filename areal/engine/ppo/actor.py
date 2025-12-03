@@ -27,6 +27,7 @@ from areal.utils.functional import (
     dynamic_sampling,
     ppo_actor_loss_fn,
     reward_overlong_penalty,
+    sapo_loss_fn,
 )
 from areal.utils.perf_tracer import trace_perf
 
@@ -439,8 +440,6 @@ def grpo_loss_fn(
 
     # Use SAPO or PPO loss
     if use_sapo_loss:
-        from areal.utils.functional import sapo_loss_fn
-
         loss, stat = sapo_loss_fn(
             logprobs=logprobs,
             old_logprobs=old_logp,
