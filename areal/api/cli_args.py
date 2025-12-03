@@ -486,7 +486,10 @@ class TrainEngineConfig:
         metadata={"help": "Optimizer configuration. None means no training."},
     )
 
-    weight_update_mode: str = field(default="disk")
+    weight_update_mode: str = field(
+        default="xccl",
+        metadata={"help": "Weight update backend type.", "choices": ["disk", "xccl"]},
+    )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
 

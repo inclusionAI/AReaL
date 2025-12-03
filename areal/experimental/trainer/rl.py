@@ -121,7 +121,7 @@ class PPOTrainer:
                 use_lora=config.actor.use_lora,
                 clear_checkpoint_after_load=True,
             )
-        else:
+        elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
             if isinstance(self.actor, MegatronEngine):
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
@@ -132,6 +132,10 @@ class PPOTrainer:
                 self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
                     self.allocation_mode
                 )
+        else:
+            raise ValueError(
+                f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
+            )
         self.actor.connect_engine(self.rollout, self.weight_update_meta)
 
         # Set up evaluation
