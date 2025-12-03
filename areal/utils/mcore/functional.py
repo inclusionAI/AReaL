@@ -1,6 +1,15 @@
+import functools
+
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
+from megatron.core import tensor_parallel
+
+from areal.utils.functional import (
+    chunked_apply,
+    chunked_gather_logprobs,
+    chunked_gather_logprobs_entropy,
+)
 
 
 # Copied from verl:
@@ -50,3 +59,89 @@ class _VocabParallelEntropy(torch.autograd.Function):
         vocab_parallel_logits.add_(sum_softmax_times_logits)
         softmax_logits.mul_(-1)
         return softmax_logits
+
+
+def _vocab_parallel_logprobs(
+    logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
+) -> torch.Tensor:
+    _logits = logits.float() / temperature
+    return -tensor_parallel.vocab_parallel_cross_entropy(
+        vocab_parallel_logits=_logits, target=labels
+    )  # type: ignore
+
+
+def _vocab_parallel_logprobs_entropy(
+    logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
+) -> tuple[torch.Tensor, torch.Tensor]:
+    _logits = logits.float() / temperature
+    entropy = _VocabParallelEntropy.apply(_logits)
+    logprobs = -tensor_parallel.vocab_parallel_cross_entropy(
+        vocab_parallel_logits=_logits, target=labels
+    )  # type: ignore
+    return logprobs, entropy
+
+
+def gather_logprobs(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    temperature: float = 1.0,
+    chunk_size: int = 1024,
+) -> torch.Tensor:
+    """Compute log probabilities with optional vocab parallelism for Megatron.
+
+    When tensor parallelism is enabled, uses Megatron's vocab_parallel_cross_entropy
+    to avoid gathering the full vocab dimension across TP ranks, which would
+    significantly increase GPU memory usage.
+
+    Args:
+        logits: Model logits with shape [..., vocab_size] or [..., vocab_size/tp]
+            when tensor parallelism is enabled.
+        labels: Token indices with shape [...] for which to compute log probabilities.
+        temperature: Softmax temperature scaling. Default is 1.0.
+        chunk_size: Chunk size for memory-efficient processing along the sequence
+            dimension. Default is 1024.
+
+    Returns:
+        Log probabilities at the label positions with shape [...].
+    """
+    if mpu.is_initialized() and mpu.get_tensor_model_parallel_world_size() > 1:
+        # NOTE: When tensor parallelism is enabled, logits are parallelized across TP ranks.
+        # If we explicitly gather logits, it will significantly increase GPU memory usage.
+        fn = functools.partial(_vocab_parallel_logprobs, temperature=temperature)
+        return chunked_apply(fn, logits, labels, chunk_size)
+
+    return chunked_gather_logprobs(logits, labels, temperature, chunk_size)
+
+
+def gather_logprobs_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    temperature: float = 1.0,
+    chunk_size: int = 1024,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute log probabilities and entropy with optional vocab parallelism for Megatron.
+
+    When tensor parallelism is enabled, uses Megatron's vocab_parallel_cross_entropy
+    and a custom _VocabParallelEntropy implementation to avoid gathering the full
+    vocab dimension across TP ranks.
+
+    Args:
+        logits: Model logits with shape [..., vocab_size] or [..., vocab_size/tp]
+            when tensor parallelism is enabled.
+        labels: Token indices with shape [...] for which to compute log probabilities.
+        temperature: Softmax temperature scaling. Default is 1.0.
+        chunk_size: Chunk size for memory-efficient processing along the sequence
+            dimension. Default is 1024.
+
+    Returns:
+        A tuple of (logprobs, entropy):
+            - logprobs: Log probabilities at the label positions with shape [...].
+            - entropy: Entropy of the probability distribution with shape [...].
+    """
+    if mpu.is_initialized() and mpu.get_tensor_model_parallel_world_size() > 1:
+        fn = functools.partial(
+            _vocab_parallel_logprobs_entropy, temperature=temperature
+        )
+        return chunked_apply(fn, logits, labels, chunk_size)
+
+    return chunked_gather_logprobs_entropy(logits, labels, temperature, chunk_size)

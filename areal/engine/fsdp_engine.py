@@ -65,10 +65,10 @@ from areal.utils.device import clear_memory, log_gpu_stats
 from areal.utils.distributed import init_custom_process_group, patch_dist_group_timeout
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.checkpoint import DCPState
+from areal.utils.fsdp.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
-from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
     disable_dropout_in_model,
@@ -635,7 +635,10 @@ class FSDPEngine(TrainEngine):
         if labels.ndim == 2 and labels.shape[0] == 1:
             labels = labels.squeeze(0)
         logprobs, entropy = gather_logprobs_entropy(
-            logits, labels, temperature=self.config.temperature
+            logits,
+            labels,
+            temperature=self.config.temperature,
+            parallel_helper=self.parallel_helper,
         )
         if self.parallel_helper.sp_size > 1:
             logprobs = self._sp_all_gather(logprobs)
@@ -659,7 +662,12 @@ class FSDPEngine(TrainEngine):
         # inputs (padded_mbs) has batch dim (1, seq_len), squeeze to match logits (seq_len,)
         if labels.ndim == 2 and labels.shape[0] == 1:
             labels = labels.squeeze(0)
-        logprobs = gather_logprobs(logits, labels, temperature=self.config.temperature)
+        logprobs = gather_logprobs(
+            logits,
+            labels,
+            temperature=self.config.temperature,
+            parallel_helper=self.parallel_helper,
+        )
         if self.parallel_helper.sp_size > 1:
             logprobs = self._sp_all_gather(logprobs)
             if ulysses_pad_size > 0:

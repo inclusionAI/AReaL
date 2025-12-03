@@ -1,15 +1,15 @@
 import functools
 import warnings
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import numpy as np
 import torch
 import torch.distributed as dist
-from megatron.core import parallel_state as mpu
-from megatron.core import tensor_parallel
 
 from areal.platforms import is_npu_available
-from areal.utils.mcore.functional import _VocabParallelEntropy
+
+T = TypeVar("T", torch.Tensor, tuple[torch.Tensor, torch.Tensor])
 
 
 def _gather_logprobs(
@@ -35,77 +35,46 @@ if not is_npu_available:
     _gather_logprobs_entropy = torch.compile(_gather_logprobs_entropy)
 
 
-def gather_logprobs(
+def chunked_apply(
+    fn: Callable[[torch.Tensor, torch.Tensor], T],
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    chunk_size: int = 1024,
+) -> T:
+    """Apply a function in chunks along the first dimension to reduce peak memory."""
+    total_seqlen = logits.shape[0]
+    results: list = []
+
+    for i in range(0, total_seqlen, chunk_size):
+        end_idx = min(i + chunk_size, total_seqlen)
+        chunk_result = fn(logits[i:end_idx], labels[i:end_idx])
+        results.append(chunk_result)
+
+    # Handle single tensor vs tuple of tensors
+    if isinstance(results[0], tuple):
+        num_outputs = len(results[0])
+        return tuple(torch.cat([r[i] for r in results]) for i in range(num_outputs))
+    return torch.cat(results)
+
+
+def chunked_gather_logprobs(
     logits: torch.Tensor,
     labels: torch.Tensor,
     temperature: float = 1.0,
     chunk_size: int = 1024,
-):
-    # Megatron path
-    if mpu.is_initialized() and mpu.get_tensor_model_parallel_world_size() > 1:
-        # NOTE: When tensor parallelism is enabled, logits are parallelized across TP ranks.
-        # If we explicitly gather logits, it will significantly increase GPU memory usage.
-        # Therefore here we use a utility function from megatron to avoid this.
-        _logits = logits.float() / temperature
-        logprobs = -tensor_parallel.vocab_parallel_cross_entropy(
-            vocab_parallel_logits=_logits, target=labels
-        )
-        return logprobs
-
-    batch_size = logits.shape[0]
-
-    log_probs_labels_list = []
-
-    for i in range(0, batch_size, chunk_size):
-        end_idx = min(i + chunk_size, batch_size)
-        chunk_logits = logits[i:end_idx]
-        chunk_labels = labels[i:end_idx]
-
-        chunk_log_probs = _gather_logprobs(chunk_logits, chunk_labels, temperature)
-
-        log_probs_labels_list.append(chunk_log_probs)
-
-    logprobs = torch.cat(log_probs_labels_list)
-
-    return logprobs
+) -> torch.Tensor:
+    fn = functools.partial(_gather_logprobs, temperature=temperature)
+    return chunked_apply(fn, logits, labels, chunk_size)
 
 
-def gather_logprobs_entropy(
+def chunked_gather_logprobs_entropy(
     logits: torch.Tensor,
     labels: torch.Tensor,
     temperature: float = 1.0,
     chunk_size: int = 1024,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    # Megatron path
-    if mpu.is_initialized() and mpu.get_tensor_model_parallel_world_size() > 1:
-        # TODO: check GPU memory usage
-        _logits = logits.float() / temperature
-        entropy = _VocabParallelEntropy.apply(_logits)
-        logprobs = -tensor_parallel.vocab_parallel_cross_entropy(
-            vocab_parallel_logits=_logits, target=labels
-        )
-        return logprobs, entropy
-
-    batch_size = logits.shape[0]
-    log_probs_labels_list = []
-    entropy_list = []
-
-    for i in range(0, batch_size, chunk_size):
-        end_idx = min(i + chunk_size, batch_size)
-        chunk_logits = logits[i:end_idx]
-        chunk_labels = labels[i:end_idx]
-
-        chunk_log_probs, chunk_entropy = _gather_logprobs_entropy(
-            chunk_logits, chunk_labels, temperature
-        )
-
-        log_probs_labels_list.append(chunk_log_probs)
-        entropy_list.append(chunk_entropy)
-
-    logprobs = torch.cat(log_probs_labels_list)
-    entropy = torch.cat(entropy_list)
-
-    return logprobs, entropy
+    fn = functools.partial(_gather_logprobs_entropy, temperature=temperature)
+    return chunked_apply(fn, logits, labels, chunk_size)
 
 
 @torch.no_grad()

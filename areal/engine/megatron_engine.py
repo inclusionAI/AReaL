@@ -52,10 +52,10 @@ from areal.utils.data import (
 )
 from areal.utils.device import clear_memory, log_gpu_stats
 from areal.utils.distributed import init_custom_process_group
-from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
 from areal.utils.mcore.determinisitc import set_deterministic_algorithms
+from areal.utils.mcore.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.mcore.packed_context_parallel import (
     packed_context_parallel_forward,
 )
