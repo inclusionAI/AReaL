@@ -262,6 +262,8 @@ def sapo_loss_fn(
     Returns:
         Tuple of (loss, statistics dict compatible with PPO)
     """
+    if tau_pos <= 0 or tau_neg <= 0:
+        raise ValueError("SAPO temperatures (tau_pos, tau_neg) must be positive.")
     loss_mask_count = loss_mask.count_nonzero() or 1
     advantages = advantages.detach()
     log_ratio = logprobs - old_logprobs
