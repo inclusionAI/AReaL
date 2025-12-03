@@ -118,7 +118,7 @@ def _load_weight_with_bridge_worker(
         hf_names = local_to_hf_map[local_name]
         param = state_dict[local_name]
 
-        if "experts" in local_name:
+        if "experts" in local_name and "shared_experts" not in local_name:
             tp_size = mpu.get_expert_tensor_parallel_world_size()
             tp_rank = mpu.get_expert_tensor_parallel_rank()
         else:
