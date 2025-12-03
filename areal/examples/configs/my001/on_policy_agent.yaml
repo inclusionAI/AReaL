@@ -128,7 +128,6 @@ actor: &actor_ref
       n_minibatches: 1
       kl_ctl: 0.0
       recompute_logp: false
-      adv_norm: false
       discount: 1.0
       gae_lambda: 1.0
       eps_clip: 0.2
@@ -151,7 +150,9 @@ actor: &actor_ref
       group_size: 8
       generation_size: null
       mask_no_eos_with_zero: false
-      group_adv_norm: true
+      adv_norm:
+        mean_level: batch
+        std_level: batch
       mask_too_long: false
       use_dense_reward: false
       reward_delta: true

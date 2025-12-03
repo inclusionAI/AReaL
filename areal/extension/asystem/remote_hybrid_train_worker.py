@@ -18,7 +18,7 @@ from realhf.api.core.data_api import (  # 需要引擎侧也要修改
 from realhf.impl.model.utils import ppo_functional
 from realhf.impl.model.utils.functional import masked_normalization
 
-from areal.api.cli_args import TrainEngineConfig
+from areal.extension.asystem.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import (
     SaveLoadMeta,
     TrainEngine,
@@ -341,7 +341,6 @@ class RemoteHybridTrainWorker(TrainEngine):
             batch["ref_logprobs"] = train_datas["ref_logprobs"]
 
         batch_size = int(input_["seqlen"].shape[0])
-        logger.info(f"dzq_debug train batch: {batch}")
         flat_input = SequenceSample.from_default(
             ids=list(range(batch_size)),
             data=batch,
@@ -598,9 +597,15 @@ class RemoteHybridTrainWorker(TrainEngine):
         new_reward_score = reward_score
 
         if (
-            not self.config.wrap_policy.adv_norm
-            and self.config.wrap_policy.group_adv_norm
+            self.config.wrap_policy.adv_norm.mean_level == "group"
         ):
+            if self.config.wrap_policy.adv_norm.std_level != "group":
+                logger.warning(
+                    "When using group-level mean normalization, "
+                    "std normalization should also be at group level. "
+                    "Overriding std_level to 'group'."
+                )
+                self.config.wrap_policy.adv_norm.std_level = "group"
             n_seqs = len(input_lens)
             reward_score_grpo = reward_score.clone().detach()
             new_reward_score = reward_score_grpo
@@ -618,8 +623,30 @@ class RemoteHybridTrainWorker(TrainEngine):
                 ] = normed_rewards
 
             logger.info(
-                f"[RemoteHypridTrainWorker] process_training_data new_reward_score: {new_reward_score}"
+                f"[RemoteHypridTrainWorker] process_training_data by group norm new_reward_score: {new_reward_score}"
             )
+
+        elif self.config.wrap_policy.adv_norm.mean_level == "batch":
+            if self.config.wrap_policy.adv_norm.std_level != "batch":
+                logger.warning(
+                    "When using batch-level mean normalization, "
+                    "std normalization should also be at batch level. "
+                    "Overriding std_level to 'batch'."
+                )
+                self.config.wrap_policy.adv_norm.std_level = "batch"
+
+            new_reward_score = reward_score.clone().detach()
+
+            grouped_std = reward_score.std(dim=-1)
+            normed_rewards = (
+                new_reward_score - new_reward_score.mean(-1, keepdim=True)
+            ) / (grouped_std + 1e-9)
+            new_reward_score = normed_rewards
+
+            logger.info(
+                f"[RemoteHypridTrainWorker] process_training_data by batch norm new_reward_score: {new_reward_score}"
+            )
+
 
         # Compute rewards and GAEs.
         use_kl_in_loss = self.config.loss_configs.get("use_kl_in_loss", False)
@@ -671,9 +698,9 @@ class RemoteHybridTrainWorker(TrainEngine):
         if self.config.wrap_policy.value_norm:
             self.rms.update(returns, mask=loss_mask)
         if self.config.wrap_policy.adv_norm:
-            if not self.config.wrap_policy.group_adv_norm:
+            if self.config.wrap_policy.adv_norm.mean_level == "batch":
                 advantages = masked_normalization(advantages, loss_mask)
-            else:
+            elif self.config.wrap_policy.adv_norm.mean_level == "group":
                 logger.info(f"adv_shape: {advantages.shape}")
                 logger.info(f"prompt_mask_shape: {prompt_mask.shape}")
                 n_samples = len(cu_seqlens) - 1

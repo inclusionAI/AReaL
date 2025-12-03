@@ -68,6 +68,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         cache: CompletionCache,
+        engine_max_tokens: int | None = None,
         tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -78,6 +79,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
         self._cache = cache
+        self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
         self.messages_delimiter_start = messages_delimiter_start
         self.messages_delimiter_end = messages_delimiter_end
@@ -118,35 +120,20 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             **extra_body.get("chat_template_kwargs", {}),
         )
 
-        # if self.chat_template_type == "hf":
-        #     prompt_token_ids = self.tokenizer.apply_chat_template(
-        #         messages_list,
-        #         tools=tools,
-        #         add_generation_prompt=True,
-        #         tokenize=True,
-        #         **extra_body.get("chat_template_kwargs", {}),
-        #     )
-        # elif self.chat_template_type == "concat":
-        #     # By default, follows Qwen3 chat template.
-        #     start, end = self.messages_delimiter_start, self.messages_delimiter_end
-        #     message_strs = []
-        #     for msg in messages_list:
-        #         message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
-        #     message_strs.append(f"{start}assistant\n")
-        #     prompt_token_ids = self.tokenizer.encode("".join(message_strs))
-        # else:
-        #     raise ValueError(
-        #         f"Unsupported chat_template_type {self.chat_template_type}"
-        #     )
-
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
-        max_new_tokens = 512
+        max_new_tokens = 4096 * 1024
+        model_max_tokens = 4096 * 1024
+
+        if self.engine_max_tokens is not None:
+            model_max_tokens = min(model_max_tokens, self.engine_max_tokens)
         if not is_omitted(max_tokens):
-            max_new_tokens = max_tokens - len(prompt_token_ids)
-            if max_new_tokens <= 0:
-                raise RuntimeError(
-                    "max_tokens must be greater than the number of prompt tokens"
-                )
+            model_max_tokens = min(model_max_tokens, max_tokens)
+
+        max_new_tokens = model_max_tokens - len(prompt_token_ids)
+        if max_new_tokens <= 0:
+            raise RuntimeError(
+                "max_tokens must be greater than the number of prompt tokens"
+            )
         if not is_omitted(max_completion_tokens):
             max_new_tokens = min(max_new_tokens, max_completion_tokens)
 
@@ -256,6 +243,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         cache: CompletionCache,
+        engine_max_tokens: int | None = None,
         tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -266,6 +254,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
         self._cache = cache
+        self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
         self.messages_delimiter_start = messages_delimiter_start
         self.messages_delimiter_end = messages_delimiter_end
@@ -392,9 +381,20 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         # Map sampling params
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
         top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
-        max_new_tokens = 512
+
+        max_new_tokens = 4096 * 1024
+        model_max_tokens = 4096 * 1024
+
+        if self.engine_max_tokens is not None:
+            model_max_tokens = min(model_max_tokens, self.engine_max_tokens)
+
+        max_new_tokens = model_max_tokens - len(prompt_token_ids)
+        if max_new_tokens <= 0:
+            raise RuntimeError(
+                "max_tokens must be greater than the number of prompt tokens"
+            )
         if not is_omitted(max_output_tokens):
-            max_new_tokens = max_output_tokens
+            max_new_tokens = min(max_new_tokens, max_output_tokens)
 
         stop = kwargs.get("stop", None)
         frequency_penalty = kwargs.get("frequency_penalty", 0.0)
@@ -555,6 +555,7 @@ class ArealOpenAI(AsyncOpenAI):
         self,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
+        engine_max_tokens: int | None = None,
         tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -564,6 +565,7 @@ class ArealOpenAI(AsyncOpenAI):
         super().__init__(**kwargs)
         self.engine = engine
         self.tokenizer = tokenizer
+        self.engine_max_tokens = engine_max_tokens
         self.tool_call_parser = tool_call_parser
 
         # Use an ordered dict to maintain insertion order of completions/responses
@@ -575,6 +577,7 @@ class ArealOpenAI(AsyncOpenAI):
             engine,
             tokenizer,
             self._cache,
+            engine_max_tokens=self.engine_max_tokens,
             tool_call_parser=self.tool_call_parser,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,
@@ -587,6 +590,7 @@ class ArealOpenAI(AsyncOpenAI):
             engine,
             tokenizer,
             self._cache,
+            engine_max_tokens=self.engine_max_tokens,
             tool_call_parser=self.tool_call_parser,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,

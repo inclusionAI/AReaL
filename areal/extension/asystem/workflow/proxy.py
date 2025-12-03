@@ -80,12 +80,14 @@ class ProxyServerSingletonWarpper:
         self,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
+        engine_max_tokens: int | None = None,
         tool_call_parser: str | None = None,
         chat_template_type: str = "hf",
     ):
         self.client = ArealOpenAI(
             engine=engine,
             tokenizer=tokenizer,
+            engine_max_tokens=engine_max_tokens,
             tool_call_parser=tool_call_parser,
             chat_template_type=chat_template_type,
         )
@@ -142,6 +144,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
         self.proxy_server_warpper = ProxyServerSingletonWarpper(
             engine=engine,
             tokenizer=self.tokenizer,
+            engine_max_tokens=self.gconfig.max_tokens,
             tool_call_parser=self.tool_call_parser,
             chat_template_type=self.chat_template_type,
         )
@@ -179,7 +182,6 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
             print(
                 f"session_id: {session_id}, completions num: {len(completions[session_id])}"
             )
-            assert len(completions[session_id]) == 1, f"len(completions[session_id])={len(completions[session_id])} not supported yet, we only support multi-step and not multi-turn, completions: {completions[session_id]}"
 
         if self.dump_dir is not None:
             for session_id, completion_list in completions.items():
@@ -195,6 +197,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                     qid = data.get(key, None)
                     if qid is not None:
                         break
+                qid = str(qid)
                 qid = qid + f"_{session_id}" if qid is not None else session_id
 
                 # Dump rollout to file
@@ -209,9 +212,8 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                 isinstance(v, InteractionWithTokenLogpReward) for v in completion_list
             ), completion_list
 
-            traj = concat_list_of_dicts_along_seq(
+            trajs.extend(
                 [v.to_tensor_dict() for v in completion_list]
             )
-            trajs.append(traj)
         results = concat_padded_tensors(trajs)
         return results

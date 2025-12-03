@@ -315,6 +315,7 @@ def masked_normalization(
     meansq = x_sum_sq / factor
     var = meansq - mean**2
     if unbiased:
+        assert factor > 1
         var *= factor / (factor - 1)
     return ((x - mean) / (var.sqrt() + eps)).float()
 

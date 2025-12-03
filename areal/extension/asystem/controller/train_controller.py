@@ -86,7 +86,7 @@ class TrainController(BaseTrainController):
         self.dp_size = self.parallel_strategy.dp_size
         self.tp_size = self.parallel_strategy.tp_size
         self.pp_size = self.parallel_strategy.pp_size
-        self.group_size = kwargs.get("group_size")
+        self.group_size: int = kwargs.get("group_size")
         self.enable_colocate_mode = kwargs.get("enable_colocate_mode")
 
         # Create job for scheduler
@@ -277,8 +277,10 @@ class TrainController(BaseTrainController):
 
         # NOTE: group normalization should be done in workflow
         if rebalance:
+            self.config: TrainEngineConfig
+            is_group = self.config.hybrid_engine.wrap_policy.adv_norm.mean_level == "group"
             inputs = input_.chunk_by_ffd(
-                self.group_size, self.parallel_strategy.dp_size
+                self.group_size if is_group else 1, self.parallel_strategy.dp_size
             )
         else:
             inputs = input_.chunk(self.parallel_strategy.dp_size)
