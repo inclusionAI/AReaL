@@ -208,7 +208,7 @@ class FSDPEngine(TrainEngine):
     def initialize(
         self,
         addr: str | None,
-        ft_spec: FinetuneSpec | None,
+        ft_spec: FinetuneSpec,
     ):
         # Initialize distributed enviroments and load model.
         assert addr is None, "FSDPEngine does not support remote initialization."

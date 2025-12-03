@@ -47,7 +47,7 @@ The client automatically tracks completions and supports reward assignment:
 client.set_reward(completion.id, reward_value)
 
 # Export all completions with propagated rewards
-completions_with_rewards = client.export_completions(turn_discount=0.9)
+completions_with_rewards = client.export_interactions(turn_discount=0.9)
 ```
 
 ## Creating OpenAI-Compatible Workflows
@@ -75,7 +75,7 @@ class MyOpenAIWorkflow(RolloutWorkflow):
         # ... workflow logic here ...
 
         # Export completions with rewards
-        return client.export_completions()
+        return client.export_interactions()
 ```
 
 ### Multi-Turn Conversation Example
@@ -121,7 +121,7 @@ async def _run_one_episode(self, engine, data, rid):
     # Set final reward
     client.set_reward(completion.id, reward * discount)
 
-    return client.export_completions(), comp_data
+    return client.export_interactions(), comp_data
 ```
 
 ## Important Parameters and Options
@@ -216,7 +216,7 @@ becomes the parent node.
 
 ```python
 # Export with turn-level discounting
-completions = client.export_completions(turn_discount=0.9)
+completions = client.export_interactions(turn_discount=0.9)
 
 # Access reward data
 for completion_id, comp_data in completions.items():

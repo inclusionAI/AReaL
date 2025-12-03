@@ -87,7 +87,7 @@ def make_engine(model_type, allocation_mode, mb_spec, vpp_size=1, init_optimizer
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine = MegatronEngine(config)
     engine.create_process_group(parallel_strategy=alloc_mode.train)
-    engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
+    engine.initialize(addr=None, ft_spec=ft_spec)
     return engine
 
 

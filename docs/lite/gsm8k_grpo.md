@@ -2,10 +2,14 @@
 
 This guide walks you through how AReaL runs the GRPO algorithm on the GSM8K dataset.
 We'll use the example training script
-[`examples/math/gsm8k_grpo.py`](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_grpo.py)
+[`examples/math/gsm8k_rl.py`](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_rl.py)
 and configuration file
 [`examples/math/gsm8k_grpo.yaml`](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_grpo.yaml)
 to explain the key concepts step by step.
+
+> **Note**: The current training script uses `PPOTrainer` to abstract the infrastructure
+> setup. This guide documents the low-level components (FSDPPPOActor,
+> RemoteSGLangEngine) for advanced users who want to understand the internals.
 
 ## Overview: How AReaL Works
 
@@ -79,7 +83,7 @@ You can override settings via CLI:
 
 ```bash
 # Example: change model and attention backend
-python -m areal.launcher.local examples/math/gsm8k_grpo.py \
+python -m areal.launcher.local examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     actor.path=Qwen/Qwen3-1.7B \
     +sglang.attention_backend=triton
