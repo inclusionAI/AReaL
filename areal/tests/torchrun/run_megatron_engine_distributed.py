@@ -29,7 +29,6 @@ MODEL_PATHS = {
 }
 HF_MODEL_PATHS = {
     "qwen3": "Qwen/Qwen3-0.6B",
-    # TODO: switch Qwen3MoE to smaller model initialized from scratch
     "qwen3moe": "Qwen/Qwen3-30B-A3B",
 }
 for model_type, path in MODEL_PATHS.items():
@@ -43,17 +42,6 @@ def write_result(out: str, succ: bool):
             f.write("Passed")
         else:
             f.write("Failed")
-
-
-def all_gather_logits(logits, input_data):
-    """Gather logits across model parallel group and concatenate them."""
-    logits_list = [
-        torch.empty_like(logits)
-        for _ in range(mpu.get_tensor_model_parallel_world_size())
-    ]
-    dist.all_gather(logits_list, logits, group=mpu.get_tensor_model_parallel_group())
-    logits = torch.cat(logits_list, dim=-1)
-    return logits
 
 
 def mock_input(
@@ -140,60 +128,55 @@ def test_forward(
         src_rank=engine.current_data_parallel_head(),
         group=engine.context_and_model_parallel_group,
     )
-    logits = engine.forward(
+    logprobs = engine.forward(
         input_=bcasted_input,
-        post_hook=all_gather_logits,
         aggregate_fn=lambda xs: torch.cat(xs, dim=0),
     )
 
-    print(f"final rank {rank} result shape: {logits.shape}")
-    print(f"final rank {rank} result: {logits}")
+    print(f"final rank {rank} result: shape: {logprobs.shape}, logprobs: {logprobs}")
 
-    # All ranks in the model parallel group should have the same logits
+    # All ranks in the model parallel group should have the same logprobs
     dist.barrier()
     model_parallel_group = mpu.get_model_parallel_group()
     model_parallel_world_size = len(dist.get_process_group_ranks(model_parallel_group))
-    logits_list = [torch.empty_like(logits) for _ in range(model_parallel_world_size)]
-    dist.all_gather(logits_list, logits, group=model_parallel_group)
+    logprobs_list = [
+        torch.empty_like(logprobs) for _ in range(model_parallel_world_size)
+    ]
+    dist.all_gather(logprobs_list, logprobs, group=model_parallel_group)
 
-    is_equal = all(torch.equal(logits, logits_list[0]) for logits in logits_list)
-    assert is_equal, "Logits should be the same across all model parallel ranks."
+    is_equal = all(
+        torch.equal(logprobs, logprobs_list[0]) for logprobs in logprobs_list
+    )
+    assert is_equal, "Logprobs should be the same across all model parallel ranks."
 
     # make FSDP engine, and check if the difference between FSDP and megatron engine
     fsdp_engine = make_fsdp_engine("qwen3", alloc_mode, mb_spec)
-    fsdp_logits = fsdp_engine.forward(
+    fsdp_logprobs = fsdp_engine.forward(
         input_=input_,
-        post_hook=None,
         aggregate_fn=lambda xs: torch.cat(xs, dim=0),
     )
     print(
-        f"rank {rank} logits.shape={logits.shape} fsdp_logits.shape={fsdp_logits.shape}"
+        f"rank {rank} logprobs.shape={logprobs.shape} fsdp_logprobs.shape={fsdp_logprobs.shape}"
     )
     # only compare results on data parallel head
     failed = False
     if engine.is_data_parallel_head():
-        diff = torch.abs(logits - fsdp_logits)
+        diff = torch.abs(logprobs - fsdp_logprobs)
         print(
-            f"rank {rank} diff between megatron and fsdp logits: {diff}, max(diff)={torch.max(diff)} avg(diff)={torch.mean(diff)}"
+            f"rank {rank} diff between megatron and fsdp logprobs: {diff}, max(diff)={torch.max(diff)} avg(diff)={torch.mean(diff)}"
         )
-        # statistics
-        non_zero_logits = torch.count_nonzero(logits)
-        masked_diff = diff.masked_fill(logits == 0, torch.finfo(logits.dtype).max)
-        print(f"logits non-zero count: {torch.count_nonzero(logits)}")
-        for threshold in [10, 1, 0.1, 0.01]:
-            count = torch.count_nonzero(masked_diff < threshold)
-            percentage = count * 100 / non_zero_logits
-            print(f"diff < {threshold} count: {count}, {percentage:.2f} percent.")
-        try:
-            torch.testing.assert_close(
-                logits.to(torch.float32),
-                fsdp_logits.to(torch.float32),
-                rtol=0.2,
-                atol=100,
+
+        cosine_sim = torch.nn.functional.cosine_similarity(
+            logprobs.flatten().to(torch.float32),
+            fsdp_logprobs.flatten().to(torch.float32),
+            dim=0,
+        )
+        print(f"Cosine Similarity: {cosine_sim.item()}")
+
+        if cosine_sim < 0.99:
+            raise AssertionError(
+                f"Cosine similarity {cosine_sim.item()} is less than 0.99"
             )
-        except AssertionError as e:
-            failed = True
-            print(f"AssertionError in torch.testing.assert_close: {e}")
 
     current_platform.synchronize()
     dist.barrier()
@@ -205,14 +188,10 @@ def test_forward(
         write_result(output, not failed)
 
 
-def mock_loss_fn(logits: torch.Tensor, input_data) -> torch.Tensor:
+def mock_loss_fn(
+    logprobs: torch.Tensor, entropy: torch.Tensor, input_data: dict, **kwargs
+) -> torch.Tensor:
     """Mock loss function for testing."""
-    from megatron.core import tensor_parallel
-
-    labels = input_data["input_ids"]
-    logprobs = -tensor_parallel.vocab_parallel_cross_entropy(
-        vocab_parallel_logits=logits, target=labels
-    )
     return torch.mean(logprobs)
 
 

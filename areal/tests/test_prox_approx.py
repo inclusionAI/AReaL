@@ -238,7 +238,8 @@ class TestProximalApproximationIntegration:
         from areal.engine.ppo.actor import grpo_loss_fn
 
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -250,9 +251,9 @@ class TestProximalApproximationIntegration:
 
         # With prox_logp_method != "metrics", metrics should not be logged
         loss = grpo_loss_fn(
-            logits=logits,
+            logprobs=logprobs,
+            entropy=entropy,
             input_data=input_data,
-            temperature=1.0,
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
@@ -346,7 +347,8 @@ class TestGrpoLossFnNoneHandling:
 
         # Create dummy inputs with prox_logp=None
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)  # vocab_size=100
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -361,9 +363,9 @@ class TestGrpoLossFnNoneHandling:
             ValueError, match="prox_logp is None but prox_logp_method='recompute'"
         ):
             grpo_loss_fn(
-                logits=logits,
+                logprobs=logprobs,
+                entropy=entropy,
                 input_data=input_data,
-                temperature=1.0,
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
@@ -378,7 +380,8 @@ class TestGrpoLossFnNoneHandling:
 
         # Create dummy inputs with prox_logp=None but no versions
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -394,9 +397,9 @@ class TestGrpoLossFnNoneHandling:
             match=r"prox_logp is None with prox_logp_method='loglinear' but versions not available",
         ):
             grpo_loss_fn(
-                logits=logits,
+                logprobs=logprobs,
+                entropy=entropy,
                 input_data=input_data,
-                temperature=1.0,
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
@@ -411,7 +414,8 @@ class TestGrpoLossFnNoneHandling:
 
         # Create valid inputs with prox_logp=None
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -423,9 +427,9 @@ class TestGrpoLossFnNoneHandling:
 
         # Should successfully compute approximation
         loss = grpo_loss_fn(
-            logits=logits,
+            logprobs=logprobs,
+            entropy=entropy,
             input_data=input_data,
-            temperature=1.0,
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
@@ -444,7 +448,8 @@ class TestGrpoLossFnNoneHandling:
 
         # Create valid inputs with prox_logp as tensor (normal case)
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -456,9 +461,9 @@ class TestGrpoLossFnNoneHandling:
 
         # Should work normally
         loss = grpo_loss_fn(
-            logits=logits,
+            logprobs=logprobs,
+            entropy=entropy,
             input_data=input_data,
-            temperature=1.0,
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
@@ -476,7 +481,8 @@ class TestGrpoLossFnNoneHandling:
 
         # Create inputs with prox_logp=None and metrics enabled
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -488,9 +494,9 @@ class TestGrpoLossFnNoneHandling:
         }
 
         loss = grpo_loss_fn(
-            logits=logits,
+            logprobs=logprobs,
+            entropy=entropy,
             input_data=input_data,
-            temperature=1.0,
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
@@ -668,7 +674,8 @@ class TestComputeLogpMetricsLogging:
         from areal.engine.ppo.actor import grpo_loss_fn
 
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -692,9 +699,9 @@ class TestComputeLogpMetricsLogging:
             mock_tracker.denominator = MagicMock()
 
             loss = grpo_loss_fn(
-                logits=logits,
+                logprobs=logprobs,
+                entropy=entropy,
                 input_data=input_data,
-                temperature=1.0,
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
@@ -721,7 +728,8 @@ class TestComputeLogpMetricsLogging:
         from areal.engine.ppo.actor import grpo_loss_fn
 
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -744,9 +752,9 @@ class TestComputeLogpMetricsLogging:
             mock_tracker.denominator = MagicMock()
 
             loss = grpo_loss_fn(
-                logits=logits,
+                logprobs=logprobs,
+                entropy=entropy,
                 input_data=input_data,
-                temperature=1.0,
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
@@ -771,7 +779,8 @@ class TestComputeLogpMetricsLogging:
         from areal.utils.constants import PROX_APPROX_METHODS_ALL
 
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -794,9 +803,9 @@ class TestComputeLogpMetricsLogging:
             mock_tracker.denominator = MagicMock()
 
             loss = grpo_loss_fn(
-                logits=logits,
+                logprobs=logprobs,
+                entropy=entropy,
                 input_data=input_data,
-                temperature=1.0,
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
@@ -835,7 +844,8 @@ class TestComputeLogpMetricsLogging:
         from areal.engine.ppo.actor import grpo_loss_fn
 
         batch_size, seq_len = 2, 4
-        logits = torch.randn(batch_size, seq_len, 100)
+        logprobs = torch.randn(batch_size, seq_len)
+        entropy = torch.randn(batch_size, seq_len)
         input_data = {
             "input_ids": torch.randint(0, 100, (batch_size, seq_len)),
             "logprobs": torch.randn(batch_size, seq_len),
@@ -858,9 +868,9 @@ class TestComputeLogpMetricsLogging:
             mock_tracker.denominator = MagicMock()
 
             loss = grpo_loss_fn(
-                logits=logits,
+                logprobs=logprobs,
+                entropy=entropy,
                 input_data=input_data,
-                temperature=1.0,
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
