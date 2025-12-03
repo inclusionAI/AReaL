@@ -463,7 +463,18 @@ class FSDPEngine(TrainEngine):
         buffer_size = 0
         named_tensors = []
 
-        for name, param in self.get_model_name_parameters():
+        if meta.use_lora:
+            # For LoRA, only iterate over trainable LoRA parameters
+            param_iterator = (
+                (name, param)
+                for name, param in self.model.named_parameters()
+                if param.requires_grad
+            )
+        else:
+            # For full model, iterate over all parameters
+            param_iterator = self.get_model_name_parameters()
+
+        for name, param in param_iterator:
             if isinstance(param.data, DTensor):
                 tensor = param.data.full_tensor()
             else:
