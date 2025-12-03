@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -157,9 +158,36 @@ class RemoteHybridInferenceWorker(InferenceEngine):
 
         self.rollout_tasks: dict[str, asyncio.Task] = {}
         self.executor = ProcessPoolExecutor(max_workers=1)
-        self.rollout_thread = threading.Thread(target=self._rollout_thread)
+        self.rollout_thread = threading.Thread(
+            target=self._rollout_thread, name="rollout_thread", daemon=False
+        )
         self.rollout_thread.start()
+        # Start thread monitor to detect thread failures
+        self._start_thread_monitor()
         logger.info("initialize exec success.")
+
+    def _start_thread_monitor(self):
+        """Start a daemon thread to monitor rollout_thread health."""
+        monitor_thread = threading.Thread(
+            target=self._monitor_rollout_thread,
+            name="rollout_thread_monitor",
+            daemon=True,
+        )
+        monitor_thread.start()
+        logger.info("Started rollout thread monitor")
+
+    def _monitor_rollout_thread(self):
+        """Monitor rollout_thread and exit process if thread dies unexpectedly."""
+        while not self.exiting.is_set():
+            time.sleep(5.0)  # Check every 5 seconds
+            if not self.rollout_thread.is_alive():
+                # Thread has died, check if it was expected (exiting flag set)
+                if not self.exiting.is_set():
+                    logger.critical(
+                        "[RemoteHybridInferenceWorker] Rollout thread died unexpectedly "
+                        "(not due to normal shutdown), exiting main process"
+                    )
+                    os._exit(1)
 
     def destroy(self):
         self.executor.shutdown()
@@ -203,7 +231,12 @@ class RemoteHybridInferenceWorker(InferenceEngine):
         try:
             uvloop.run(self._rollout_thread_async())
         except Exception as e:
-            raise EngineError("InferenceEngineError", "RolloutError", e)
+            logger.critical(
+                f"[RemoteHybridInferenceWorker] Rollout thread encountered fatal error: {e}",
+                exc_info=True,
+            )
+            # Raise with exception chaining to preserve original traceback
+            raise EngineError("InferenceEngineError", "RolloutError", e) from e
 
     async def _rollout_thread_async(self):
         rollout_tasks = self.rollout_tasks

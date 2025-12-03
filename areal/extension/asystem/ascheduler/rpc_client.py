@@ -179,6 +179,14 @@ class RPCClient:
             return loop.run_until_complete(
                 self.async_call_engine(worker_id, method, max_retries, *args, **kwargs)
             )
+        except Exception as exc:
+            logger.error(
+                "call_engine failed for worker %s method %s: %s",
+                worker_id,
+                method,
+                exc,
+            )
+            raise
         finally:
             try:
                 loop.close()
@@ -350,9 +358,9 @@ class RPCClient:
             EngineCallError: If non-retryable error
         """
         if isinstance(e, httpx.ConnectError):
-            return f"Connection error: {e}"
+            raise f"Connection error: {e}" from e
         elif isinstance(e, httpx.TimeoutException):
-            raise f"Timeout: {e}"
+            raise f"Timeout: {e}" from e
         elif isinstance(e, EngineCallError):
             raise
         else:

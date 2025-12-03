@@ -355,6 +355,8 @@ class RolloutController:
             )
         except TaskQueueFullError:
             raise queue.Full("Input queue full")
+        except Exception as e:
+            raise
 
         # Notify staleness manager AFTER successful submission
         self.staleness_manager.on_rollout_submitted()
@@ -442,6 +444,9 @@ class RolloutController:
                 self._pending_results.extend(accepted)
             except TimeoutError:
                 pass
+            except Exception as e:
+                self.logger.error(f"wait error: {e}")
+                raise
 
         if self.config.enable_rollout_tracing:
             self.logger.info("Rollout results are ready!")
@@ -554,6 +559,9 @@ class RolloutController:
                 return self.wait(dataloader.batch_size, timeout=1)
             except TimeoutError:
                 pass
+            except Exception as e:
+                self.logger.error(f"prepare_batch wait error: {e}")
+                raise
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.
@@ -641,6 +649,7 @@ class RolloutController:
                 )
             except Exception as e:
                 self.logger.error(f"Error setting version for worker {worker.id}: {e}")
+                raise
 
     def get_version(self) -> int:
         """Get the current weight version in the inference engine.
@@ -665,6 +674,7 @@ class RolloutController:
                 )
             except Exception as e:
                 self.logger.error(f"Error pausing worker {worker.id}: {e}")
+                raise
 
     def resume(self):
         """Resume request submission for async rollout across all workers."""
@@ -676,6 +686,7 @@ class RolloutController:
                 )
             except Exception as e:
                 self.logger.error(f"Error resuming worker {worker.id}: {e}")
+                raise
 
     def export_stats(self):
         async def _call_all():
