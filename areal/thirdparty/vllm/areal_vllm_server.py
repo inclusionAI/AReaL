@@ -74,6 +74,16 @@ class UpdateWeightsFromXcclRequest(OpenAIBaseModel):
     group_name: str
 
 
+class UpdateWeightsFromXcclRequestLora(OpenAIBaseModel):
+    names: list[str]
+    dtypes: list[str]
+    shapes: list[list[int]]
+    lora_name: str
+    lora_int_id: int
+    base_model_name: str
+    group_name: str
+
+
 def to_json_response(success, message):
     content = {"success": success, "message": message}
     if success:
@@ -132,6 +142,16 @@ async def update_weight_xccl(raw_request: Request):
     return build_response(ret_list)
 
 
+@router.post("/areal_update_weights_lora_xccl")
+async def update_weight_lora_xccl(raw_request: Request):
+    logger.info("API server starts update_weight_lora via XCCL")
+    llm = raw_request.app.state.engine_client
+    ret_list = await llm.engine_core.call_utility_async(
+        "areal_injected_update_weight_lora_xccl",
+    )
+    return build_response(ret_list)
+
+
 @router.post("/areal_init_weights_update_group")
 async def init_weights_update_group(request: UpdateGroupRequest, raw_request: Request):
     logger.info("API server starts init_weights_update_group")
@@ -162,6 +182,28 @@ async def set_weight_meta_xccl(
             request.names,
             request.dtypes,
             request.shapes,
+        ),
+    )
+    return build_response(ret_list)
+
+
+@router.post("/areal_set_update_weight_meta_lora")
+async def set_weight_meta_xccl_lora(
+    request: UpdateWeightsFromXcclRequestLora, raw_request: Request
+):
+    logger.info(
+        f"API server starts upload lora meta for {request.lora_name} with id {request.lora_int_id}"
+    )
+    llm = raw_request.app.state.engine_client
+    ret_list = await llm.collective_rpc(
+        "set_weight_meta_lora",
+        args=(
+            request.names,
+            request.dtypes,
+            request.shapes,
+            request.lora_name,
+            request.lora_int_id,
+            request.base_model_name,
         ),
     )
     return build_response(ret_list)
@@ -281,6 +323,11 @@ def areal_injected_update_weight_xccl(self):
     return self.collective_rpc("update_weight_xccl")
 
 
+def areal_injected_update_weight_lora_xccl(self):
+    self.abort_all_reqs()
+    return self.collective_rpc("update_weight_lora_xccl")
+
+
 def hook():
     setattr(EngineCore, "abort_all_reqs", abort_all_reqs)
     setattr(EngineCore, "areal_injected_update_weight", areal_injected_update_weight)
@@ -293,6 +340,11 @@ def hook():
         EngineCore,
         "areal_injected_update_weight_xccl",
         areal_injected_update_weight_xccl,
+    )
+    setattr(
+        EngineCore,
+        "areal_injected_update_weight_lora_xccl",
+        areal_injected_update_weight_lora_xccl,
     )
 
 

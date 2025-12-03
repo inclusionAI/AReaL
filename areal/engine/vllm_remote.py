@@ -137,23 +137,45 @@ class VLLMBackend:
     ) -> WeightUpdateRequests:
         """Build vLLM distributed weight update requests."""
         # vLLM uses two-step process: set metadata, then update
-        return WeightUpdateRequests(
-            requests=[
-                HttpRequest(
-                    endpoint="/areal_set_update_weight_meta",
-                    payload={
-                        "names": [pspec.name for pspec in param_specs],
-                        "dtypes": [pspec.dtype for pspec in param_specs],
-                        "shapes": [pspec.shape for pspec in param_specs],
-                        "group_name": meta.nccl_group_name,
-                    },
-                ),
-                HttpRequest(
-                    endpoint="/areal_update_weights_xccl",
-                    payload={},
-                ),
-            ]
-        )
+        if meta.use_lora:
+            return WeightUpdateRequests(
+                requests=[
+                    HttpRequest(
+                        endpoint="/areal_set_update_weight_meta_lora",
+                        payload={
+                            "names": [pspec.name for pspec in param_specs],
+                            "dtypes": [pspec.dtype for pspec in param_specs],
+                            "shapes": [pspec.shape for pspec in param_specs],
+                            "lora_name": meta.lora_name,
+                            "lora_int_id": meta.lora_int_id,
+                            "base_model_name": meta.base_model_name,
+                            "group_name": meta.nccl_group_name,
+                        },
+                    ),
+                    HttpRequest(
+                        endpoint="/areal_update_weights_lora_xccl",
+                        payload={},
+                    ),
+                ]
+            )
+        else:
+            return WeightUpdateRequests(
+                requests=[
+                    HttpRequest(
+                        endpoint="/areal_set_update_weight_meta",
+                        payload={
+                            "names": [pspec.name for pspec in param_specs],
+                            "dtypes": [pspec.dtype for pspec in param_specs],
+                            "shapes": [pspec.shape for pspec in param_specs],
+                            "group_name": meta.nccl_group_name,
+                        },
+                    ),
+                    HttpRequest(
+                        endpoint="/areal_update_weights_xccl",
+                        payload={},
+                    ),
+                ]
+            )
 
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta

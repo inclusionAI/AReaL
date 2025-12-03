@@ -873,6 +873,21 @@ class FSDPEngine(TrainEngine):
             for name, tensor in named_tensors
         ]
 
+        if self.config.use_lora:
+            if not self.config.target_modules or self.config.target_modules == [
+                "all-linear"
+            ]:
+                target_modules = "all-linear"
+            else:
+                target_modules = self.config.target_modules
+
+            meta.peft_config = {
+                "r": self.config.lora_rank,
+                "lora_alpha": self.config.lora_alpha,
+                "target_modules": target_modules,
+                "bias": "none",
+            }
+
         fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
 
         handles = []
@@ -931,7 +946,18 @@ class FSDPEngine(TrainEngine):
         buffer_size = 0
         named_tensors: list[tuple[str, torch.Tensor]] = []
 
-        for name, param in self._get_model_name_parameters():
+        if meta.use_lora:
+            # For LoRA, only iterate over trainable LoRA parameters
+            param_iterator = (
+                (name, param)
+                for name, param in self.model.named_parameters()
+                if param.requires_grad
+            )
+        else:
+            # For full model, iterate over all parameters
+            param_iterator = self.get_model_name_parameters()
+
+        for name, param in param_iterator:
             tensor = self._get_full_tensor(param)
 
             # Ranks other than 0 only help to get the full tensor
