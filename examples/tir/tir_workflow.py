@@ -56,7 +56,7 @@ class TIRWorkflow(RolloutWorkflow):
     ):
         super().__init__()
         self.reward_fn = reward_fn
-        self.gconfig = gconfig
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
         self.tool_manager = ToolManager(
             tir_config.tool_timeout, tir_config.enable_tools, debug_mode=False

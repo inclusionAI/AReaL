@@ -48,7 +48,7 @@ GSPO shares most parameters with GRPO, with one key addition:
 
 ## Example Usage
 
-We recommend reusing PPO-like training scripts, and changing parameters within the configuration file (e.g., `gsm8k_grpo.py` + `gsm8k_gspo.yaml`). 
+We recommend reusing PPO-like training scripts, and changing parameters within the configuration file (e.g., `gsm8k_grpo.py` + `gsm8k_gspo.yaml`).
 
 | Backend   | CMD                                                                                                                              |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |

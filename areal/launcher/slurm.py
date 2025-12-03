@@ -27,6 +27,7 @@ from areal.utils.launcher import (
     get_env_vars,
     wait_llm_server_addrs,
 )
+from areal.utils.offload import get_tms_env_vars
 from areal.utils.recover import check_if_recover
 from areal.utils.slurm import (
     APPTAINER_CMD_TEMPLATE,
@@ -592,8 +593,13 @@ def slurm_main(config, run_id: int = 0):
                 f"Trainer commands for the first trainer node:\n{trainer_cmds[0]}"
             )
         else:
-            logger.warn("No trainer commands")
+            logger.warning("No trainer commands")
         return trainer_cmds
+
+    if config.get("enable_offload", False):
+        tms_env_vars = get_tms_env_vars()
+    else:
+        tms_env_vars = {}
 
     if allocation_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         # launch trainers
@@ -628,6 +634,7 @@ def slurm_main(config, run_id: int = 0):
                     config.launcher.trainer_env_vars,
                 ),
                 **_env_vars,
+                **tms_env_vars,
             ),
         )
 

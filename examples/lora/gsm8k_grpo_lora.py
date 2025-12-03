@@ -50,7 +50,6 @@ def bcast_and_split_from_rank0(batch: dict | None, granularity: int) -> dict:
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
@@ -118,10 +117,6 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     # Create rollout workflow
-    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
     workflow = RLVRWorkflow(
         reward_fn=gsm8k_reward_fn,
         gconfig=config.gconfig,
@@ -195,8 +190,8 @@ def main(args):
             )
 
         # Create barrier to synchronize all rollout processes.
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
             with stats_tracker.record_timing("recompute_logp"):
@@ -242,8 +237,8 @@ def main(args):
                 tokenizer=tokenizer,
             )
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         with stats_tracker.record_timing("eval"):
 
@@ -257,8 +252,8 @@ def main(args):
                             eval_rollout.submit(item, eval_workflow)
                             cnt += 1
                     eval_rollout.wait(cnt, timeout=None)
-                dist.barrier(device_ids=[actor.device.index])
                 current_platform.synchronize()
+                dist.barrier(group=actor.cpu_group)
 
             evaluator.evaluate(
                 evaluate_fn,
@@ -267,15 +262,15 @@ def main(args):
                 global_step,
             )
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Upload statistics to the logger (e.g., wandb)
-        stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+        stats = actor.export_stats()
         stats_logger.commit(epoch, step, global_step, stats)
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Resume rollout
         rollout.resume()

@@ -4,7 +4,7 @@ import os
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import uvloop
 import yaml
@@ -12,14 +12,21 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
+from transformers import PreTrainedTokenizerFast
 
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, pkg_version
+from areal.utils.constants import (
+    PROX_LOGP_METHOD_RECOMPUTE,
+    PROX_LOGP_METHODS_ALL,
+)
 from areal.utils.pkg_version import is_version_less
 
 uvloop.install()
 
 logger = logging.getLogger("CLI args")
+
+ConfigT = TypeVar("ConfigT")
 
 
 @dataclass
@@ -157,11 +164,24 @@ class GenerationHyperparameters:
             )
         },
     )
+    lora_name: str = field(
+        default="",
+        metadata={"help": "Lora name to be used for this generation."},
+    )
 
     def new(self, **kwargs):
         args = asdict(self)
         args.update(kwargs)
         return GenerationHyperparameters(**args)
+
+    def new_with_stop_and_pad_token_ids(self, tokenizer: PreTrainedTokenizerFast):
+        """Create a new generation hyperparameters with stop and pad token ids added."""
+        new_stop_token_ids = self.stop_token_ids.copy()
+        if tokenizer.pad_token_id not in new_stop_token_ids:
+            new_stop_token_ids.append(tokenizer.pad_token_id)
+        if tokenizer.eos_token_id not in new_stop_token_ids:
+            new_stop_token_ids.append(tokenizer.eos_token_id)
+        return self.new(stop_token_ids=new_stop_token_ids)
 
     def to_openai_args_dict(
         self, exclude_args: list[str] | None = None
@@ -373,6 +393,51 @@ class MegatronEngineConfig:
 
 
 @dataclass
+class SchedulingStrategy:
+    type: str = field(
+        default="separation", metadata={"choices": ["separation", "colocation"]}
+    )
+    target: str | None = field(
+        default=None, metadata={"help": "The target role to be colocated with"}
+    )
+
+
+@dataclass
+class SchedulingSpec:
+    cpu: int = field(default=0, metadata={"help": "Number of CPU cores required"})
+    gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
+    mem: int = field(default=0, metadata={"help": "Amount of memory (GB) required"})
+    port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
+    image: str = field(
+        default="", metadata={"help": "Docker/Singularity container image to use"}
+    )
+    type: str = field(
+        default="worker",
+        metadata={
+            "help": "Task type (e.g., worker, engine)",
+            "choices": ["worker", "engine"],
+        },
+    )
+    env_vars: dict[str, str] = field(
+        default_factory=dict,
+        metadata={"help": "Environment variables for the container"},
+    )
+    cmd: str | None = field(
+        default=None,
+        metadata={
+            "help": "Command to execute inside the container. Defaults to AReaL's RPC server."
+        },
+    )
+    # slurm configurations from "https://slurm.schedmd.com/sbatch.html"
+    nodelist: str | None = None
+    exclude: str | None = None
+    partition: str | None = None
+    time_limit: str | None = None  # see  "--time" option for format
+    begin: str | None = None  # see "--begin" option for format
+    deadline: str | None = None  # see "--deadline" option for format
+
+
+@dataclass
 class TrainEngineConfig:
     """Core configuration for model training, including optimization and backend settings."""
 
@@ -392,6 +457,9 @@ class TrainEngineConfig:
     is_critic: bool = field(
         default=False,
         metadata={"help": "Whether to use a critic/reward model"},
+    )
+    temperature: float = field(
+        default=1.0, metadata={"help": "Temperature during generation."}
     )
     # Runtime microbatch limit
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
@@ -442,6 +510,32 @@ class TrainEngineConfig:
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
+    scheduling_spec: tuple[SchedulingSpec, ...] = field(
+        default_factory=lambda: (
+            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+        ),
+        metadata={
+            "help": "Train engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
+            "if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; "
+            "if 2 specs provided, first one is for worker, second one is for engine. "
+            "Currently only used by the TrainController."
+        },
+    )
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "The scheduling strategy of this TrainEngine, either separation or colocation. "
+            "Currently only used by the TrainController."
+        },
+    )
+
+    def __post_init__(self):
+        """Validate scheduling_spec length."""
+        if len(self.scheduling_spec) not in (1, 2):
+            raise ValueError(
+                f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
+                f"got {len(self.scheduling_spec)}"
+            )
 
 
 @dataclass
@@ -469,9 +563,6 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Dual clipping factor for policy ratio, must be > 1.0. None disables dual clipping."
         },
-    )
-    temperature: float = field(
-        default=1.0, metadata={"help": "Temperature during generation."}
     )
     # M2PO
     m2_threshold: float | None = field(
@@ -550,6 +641,18 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Level at which to compute importance sampling ratios. 'token': per-token ratios (standard PPO). 'sequence': sequence-level geometric mean of per-token ratios (GSPO).",
             "choices": ["token", "sequence"],
+        },
+    )
+    # Proximal Log-Probability Computation Method
+    prox_logp_method: str = field(
+        default=PROX_LOGP_METHOD_RECOMPUTE,
+        metadata={
+            "help": "Method for computing proximal policy log-probabilities in decoupled PPO. "
+            "Only effective when use_decoupled_loss=True. Options: "
+            "'recompute' (default): Standard decoupled PPO, recompute proximal policy via forward pass. "
+            "'loglinear': Use log-linear interpolation to approximate proximal policy (skip forward pass). "
+            "'metrics': Like 'recompute', but also compute approximation metrics for evaluation.",
+            "choices": PROX_LOGP_METHODS_ALL,
         },
     )
     # Advanced Options
@@ -649,6 +752,8 @@ class vLLMConfig:
     )
     enable_sleep_mode: bool = False
     uvicorn_log_level: str = "warning"
+    enable_lora: bool = False
+    lora_modules: str = ""
 
     @staticmethod
     def build_args(
@@ -673,6 +778,18 @@ class vLLMConfig:
             args["port"] = port
         if host is not None:
             args["host"] = host
+        # handle lora modules separately
+        lm = args.get("lora_modules")
+        if lm:
+            if isinstance(lm, str):
+                lm = [lm]
+            if isinstance(lm, (list, tuple)):
+                try:
+                    args["lora_modules"] = [
+                        json.dumps(json.loads(s), separators=(",", ":")) for s in lm
+                    ]
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON string in lora_modules: {e}") from e
         return args
 
     @staticmethod
@@ -924,6 +1041,36 @@ class InferenceEngineConfig:
             "help": "The grace period after calling /pause_generation. Wait until all requests have been dropped."
         },
     )
+    scheduling_spec: tuple[SchedulingSpec, ...] = field(
+        default_factory=lambda: (
+            SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),
+        ),
+        metadata={
+            "help": "inference engine schedule specs. Can accept 1 or 2 SchedulingSpec: "
+            "if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; "
+            "if 2 specs provided, first one is for worker, second one is for engine. "
+            "Currently only used by the RolloutController."
+        },
+    )
+    scheduling_strategy: SchedulingStrategy = field(
+        default_factory=SchedulingStrategy,
+        metadata={
+            "help": "The scheduling strategy of this TrainEngine, either separation or colocation. "
+            "Currently only used by the RolloutController."
+        },
+    )
+    use_lora: bool = field(
+        default=False,
+        metadata={"help": "Whether to use LoRA. Should be same as actors LORA option."},
+    )
+
+    def __post_init__(self):
+        """Validate scheduling_spec length."""
+        if len(self.scheduling_spec) not in (1, 2):
+            raise ValueError(
+                f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
+                f"got {len(self.scheduling_spec)}"
+            )
 
 
 @dataclass
@@ -1088,6 +1235,15 @@ class PerfTracerConfig:
             )
         },
     )
+    profile_steps: list[int] | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "List of step numbers at which to capture detailed profiling traces. "
+                "If None, no detailed profiling traces are captured."
+            )
+        },
+    )
     session_tracer: SessionTracerConfig | None = field(
         default=None,
         metadata={"help": "Session tracing configuration."},
@@ -1163,7 +1319,7 @@ class SchedulerConfig:
 
 
 @dataclass
-class DatasetConfig:
+class _DatasetConfig:
     """Configuration for dataset loading and preprocessing."""
 
     path: str = field(
@@ -1199,6 +1355,27 @@ class DatasetConfig:
         metadata={
             "help": "Maximum token length of sequences in dataset. Longer sequences are filtered out."
         },
+    )
+
+
+@dataclass
+class TrainDatasetConfig(_DatasetConfig):
+    """Configuration for training dataset loading and preprocessing."""
+
+
+@dataclass
+class ValidDatasetConfig(_DatasetConfig):
+    """Configuration for validation dataset loading and preprocessing.
+
+    It has different default values with `TrainDatasetConfig`.
+    `shuffle` and `drop_last` default to False.
+    """
+
+    shuffle: bool = field(
+        default=False, metadata={"help": "Whether to shuffle the dataset"}
+    )
+    drop_last: bool = field(
+        default=False, metadata={"help": "Drop the last incomplete batch"}
     )
 
 
@@ -1299,6 +1476,13 @@ class BaseExperimentConfig:
         metadata={"help": "Pattern-based GPU parallel strategy allocation mode. "},
     )
     seed: int = field(default=1, metadata={"help": "Random seed for reproducibility."})
+    enable_offload: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to enable training offload using torch_memory_saver. "
+            "This requires setting up the environment for TMS (e.g., via LD_PRELOAD)."
+        },
+    )
     total_train_epochs: int = field(
         default=1, metadata={"help": "Total number of epochs to train the model."}
     )
@@ -1321,8 +1505,8 @@ class BaseExperimentConfig:
         metadata={"help": "Path to the tokenizer."},
     )
 
-    train_dataset: DatasetConfig = field(default_factory=DatasetConfig)
-    valid_dataset: DatasetConfig | None = field(default=None)
+    train_dataset: TrainDatasetConfig = field(default_factory=TrainDatasetConfig)
+    valid_dataset: ValidDatasetConfig | None = field(default=None)
 
     saver: SaverConfig = field(default_factory=SaverConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
@@ -1406,7 +1590,7 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def load_expr_config(argv: list[str], config_cls):
+def load_expr_config(argv: list[str], config_cls: type[ConfigT]) -> tuple[ConfigT, str]:
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)

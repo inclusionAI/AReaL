@@ -2,7 +2,6 @@ import json
 import os
 import sys
 from dataclasses import asdict
-from typing import List
 
 import yaml
 from sh import Command
@@ -15,9 +14,8 @@ def test_grpo(tmp_path: str):
 
     # Wrap over the original config to use local models/datasets if possible
     config, _ = load_expr_config(
-        ["--config", os.path.join(base_dir, f"config.yaml")], GRPOConfig
+        ["--config", os.path.join(base_dir, "config.yaml")], GRPOConfig
     )
-    config: GRPOConfig
 
     local_model_path = config.actor.path.replace("/", "__")
     local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
@@ -58,6 +56,6 @@ def test_grpo(tmp_path: str):
     )
 
     with open(os.path.join(tmp_path, "rewards.json")) as f:
-        rewards: List[float] = json.load(f)
+        rewards: list[float] = json.load(f)
 
     assert rewards[-1] > 0.6

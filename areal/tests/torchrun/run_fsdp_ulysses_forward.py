@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -21,7 +21,6 @@ MODEL_PATHS = {
 }
 HF_MODEL_PATHS = {
     "qwen3": "Qwen/Qwen3-0.6B",
-    # TODO: switch Qwen3MoE to smaller model initialized from scratch
     "qwen3moe": "Qwen/Qwen3-30B-A3B",
 }
 for model_type, path in MODEL_PATHS.items():
@@ -51,7 +50,7 @@ def mock_input(
     batch_size=128,
     min_seqlen=1,
     max_seqlen=1024,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -114,64 +113,54 @@ def test_ulysses(model_type: str):
     input = mock_input(device=engine.device, batch_size=4, max_seqlen=16)
 
     engine.eval()
-    logits = engine.forward(
+    logprobs = engine.forward(
         input_=input,
-        post_hook=None,
         aggregate_fn=lambda xs: torch.cat(xs, dim=0),
     )
 
     dist.barrier()
 
-    print(f"rank {rank} logits shape: {logits.shape} with content {logits}")
+    print(f"rank {rank} logprobs shape: {logprobs.shape} with content {logprobs}")
 
-    # All ranks in the model parallel group should have the same logits
-    logits_list = [torch.empty_like(logits) for _ in range(world_size)]
-    dist.all_gather(logits_list, logits, group=dist.group.WORLD)
+    # All ranks in the model parallel group should have the same logprobs
+    logprobs_list = [torch.empty_like(logprobs) for _ in range(world_size)]
+    dist.all_gather(logprobs_list, logprobs, group=dist.group.WORLD)
 
-    assert all(
-        torch.equal(logits, logits_list[0]) for logits in logits_list
-    ), "Logits should be the same across all model parallel ranks."
+    for logprob in logprobs_list:
+        assert torch.equal(logprob, logprobs_list[0])
 
     engine_golden.eval()
-    logits_golden = engine_golden.forward(
+    logprobs_golden = engine_golden.forward(
         input_=input,
-        post_hook=None,
         aggregate_fn=lambda xs: torch.cat(xs, dim=0),
     )
 
     dist.barrier()
 
     print(
-        f"rank {rank} logits_golden shape: {logits_golden.shape} with content {logits_golden}"
+        f"rank {rank} logprobs_golden shape: {logprobs_golden.shape} with content {logprobs_golden}"
     )
 
     if rank == 0:
-        diff = torch.abs(logits - logits_golden)
+        # Create loss mask
+        attn_mask = input["attention_mask"]
+        loss_mask = attn_mask.clone()
+        loss_mask[:, :-1] = attn_mask[:, :-1] & attn_mask[:, 1:]
+        loss_mask[:, -1] = False
+
+        logprobs_valid = logprobs[loss_mask]
+        logprobs_golden_valid = logprobs_golden[loss_mask]
+
+        diff = torch.abs(logprobs_valid - logprobs_golden_valid)
         print(
-            f"rank {rank} diff between SP=1 and SP=2 logits: {diff}, max(diff)={torch.max(diff)} avg(diff)={torch.mean(diff)}"
-        )
-        # statistics
-        non_zero_logits = torch.count_nonzero(logits)
-        masked_diff = diff.masked_fill(logits == 0, torch.finfo(logits.dtype).max)
-        print(f"logits non-zero count: {torch.count_nonzero(logits)}")
-        print(
-            f"diff < 10 count: {torch.count_nonzero(masked_diff < 10)}, {torch.count_nonzero(masked_diff < 10) * 100/non_zero_logits:.2f} percent."
-        )
-        print(
-            f"diff < 1 count: {torch.count_nonzero(masked_diff < 1)}, {torch.count_nonzero(masked_diff < 1) * 100/non_zero_logits:.2f} percent."
-        )
-        print(
-            f"diff < 0.1 count: {torch.count_nonzero(masked_diff < 0.1)}, {torch.count_nonzero(masked_diff < 0.1) * 100/non_zero_logits:.2f} percent."
-        )
-        print(
-            f"diff < 0.01 count: {torch.count_nonzero(masked_diff < 0.01)}, {torch.count_nonzero(masked_diff < 0.01) * 100/non_zero_logits:.2f} percent."
+            f"rank {rank} diff between SP=1 and SP=2 logprobs: {diff}, max(diff)={torch.max(diff)} avg(diff)={torch.mean(diff)}"
         )
         try:
             torch.testing.assert_close(
-                logits.to(torch.float32),
-                logits_golden.to(torch.float32),
-                rtol=0.2,
-                atol=100,
+                logprobs_valid.to(torch.float32),
+                logprobs_golden_valid.to(torch.float32),
+                rtol=1e-3,
+                atol=1e-3,
             )
         except AssertionError as e:
             print(f"AssertionError in torch.testing.assert_close: {e}")

@@ -107,7 +107,8 @@ class AReaLOpenAICompatibleModel(BaseModelBackend):
     ) -> None:
         api_key = api_key or os.environ.get("OPENAI_COMPATIBILITY_API_KEY")
         url = url or os.environ.get("OPENAI_COMPATIBILITY_API_BASE_URL")
-        timeout = timeout or float(os.environ.get("MODEL_TIMEOUT", 180))
+        if timeout is None:
+            timeout = float(os.environ.get("MODEL_TIMEOUT", 180))
         super().__init__(
             model_type,
             model_config_dict,

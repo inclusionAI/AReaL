@@ -1,6 +1,6 @@
 # Adapted from verl
 
-from typing import Any, Optional
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -67,7 +67,7 @@ def gather_seq_scatter_heads(
 
 
 def gather_heads_scatter_seq(
-    x: Tensor, head_dim: int, seq_dim: int, group: Optional[ProcessGroup] = None
+    x: Tensor, head_dim: int, seq_dim: int, group: ProcessGroup | None = None
 ) -> Tensor:
     """
     A func to sync attention result with alltoall in sequence parallel
@@ -104,7 +104,7 @@ def _unpad_tensor(x: Tensor, dim: int, padding_size: int) -> Tensor:
 
 
 def slice_input_tensor(
-    x: Tensor, dim: int, padding: bool = True, group: Optional[dist.ProcessGroup] = None
+    x: Tensor, dim: int, padding: bool = True, group: dist.ProcessGroup | None = None
 ) -> Tensor:
     group = get_ulysses_sequence_parallel_group() if group is None else group
     sp_world_size = dist.get_world_size(group)
@@ -125,7 +125,7 @@ def all_to_all_tensor(
     local_input: Tensor,
     scatter_dim: int,
     gather_dim: int,
-    group: Optional[dist.ProcessGroup] = None,
+    group: dist.ProcessGroup | None = None,
     async_op: bool = False,
 ) -> Tensor:
     group = get_ulysses_sequence_parallel_group() if group is None else group
@@ -185,7 +185,7 @@ class SeqAllToAll(torch.autograd.Function):
 
 def ulysses_pad(
     input_ids_rmpad: torch.Tensor,
-    position_ids_rmpad: Optional[torch.Tensor] = None,
+    position_ids_rmpad: torch.Tensor | None = None,
     sp_size: int = 1,
 ):
     if position_ids_rmpad is not None:
@@ -211,7 +211,7 @@ def ulysses_pad(
 
 def ulysses_pad_and_slice_inputs(
     input_ids_rmpad: torch.Tensor,
-    position_ids_rmpad: Optional[torch.Tensor] = None,
+    position_ids_rmpad: torch.Tensor | None = None,
     sp_size: int = 1,
 ):
     input_ids_rmpad, position_ids_rmpad, pad_size = ulysses_pad(
@@ -249,10 +249,6 @@ def ulysses_prepare_inputs(
         if value.dim() >= 2 and value.shape[:2] == padded_input_ids.shape[:2]:
             # Please refer to ppo_loss_fn() in areal/engine/ppo/critic.py
             if key in {"values", "returns", "loss_mask"}:
-                # For loss_mask, also keep the full version for loss function
-                if key == "loss_mask":
-                    inputs["full_loss_mask"] = value.squeeze(0)
-
                 sliced_value = slice_input_tensor(value, dim=1, padding=True)
                 inputs[key] = sliced_value.squeeze(0)
             else:

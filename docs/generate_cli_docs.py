@@ -13,7 +13,7 @@ import types
 from dataclasses import MISSING as DATACLASSES_MISSING
 from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 
 import mdformat
 from omegaconf import MISSING as OMEGACONF_MISSING
@@ -22,11 +22,10 @@ from omegaconf import MISSING as OMEGACONF_MISSING
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# Import the entire module to discover all dataclasses
-import areal.api.cli_args as cli_args_module
+import areal.api.cli_args as cli_args_module  # noqa: E402
 
 
-def discover_dataclasses() -> Dict[str, Any]:
+def discover_dataclasses() -> dict[str, Any]:
     """Discover all dataclasses in the cli_args module."""
     dataclasses = {}
     for name in dir(cli_args_module):
@@ -37,8 +36,8 @@ def discover_dataclasses() -> Dict[str, Any]:
 
 
 def categorize_dataclasses(
-    dataclasses: Dict[str, Any],
-) -> Dict[str, List[Tuple[str, Any]]]:
+    dataclasses: dict[str, Any],
+) -> dict[str, list[tuple[str, Any]]]:
     """Categorize dataclasses by their purpose/type."""
     categories = {
         "Core Experiment Configurations": [],
@@ -74,7 +73,7 @@ def categorize_dataclasses(
         "vLLMConfig",
         "GenerationHyperparameters",
     ]
-    dataset_configs = ["DatasetConfig"]
+    dataset_configs = ["TrainDatasetConfig", "ValidDatasetConfig"]
     system_configs = [
         "ClusterSpecConfig",
         "NameResolveConfig",
@@ -140,7 +139,7 @@ def get_class_description(cls: Any) -> str:
     return f"Configuration class: {cls.__name__}"
 
 
-def get_type_description(field_type, all_dataclasses: Dict[str, Any]) -> str:
+def get_type_description(field_type, all_dataclasses: dict[str, Any]) -> str:
     """Convert a type annotation to a readable string."""
     # Handle union types (Type | None)
     origin = get_origin(field_type)
@@ -158,15 +157,15 @@ def get_type_description(field_type, all_dataclasses: Dict[str, Any]) -> str:
             )
 
     # Handle basic types
-    if field_type == int:
+    if field_type is int:
         return "integer"
-    elif field_type == float:
+    elif field_type is float:
         return "float"
-    elif field_type == str:
+    elif field_type is str:
         return "string"
-    elif field_type == bool:
+    elif field_type is bool:
         return "boolean"
-    elif field_type == list or get_origin(field_type) == list:
+    elif field_type is list or get_origin(field_type) is list:
         if get_args(field_type):
             inner_type = get_args(field_type)[0]
             return f"list of {get_type_description(inner_type, all_dataclasses)}"
@@ -210,7 +209,7 @@ def format_default_value(field_obj) -> str:
                 return "`{}`"
             else:
                 return f"*{type(factory_result).__name__}*"
-        except:
+        except Exception:
             return f"*default {field_obj.default_factory.__name__}*"
     else:
         return "`None`"
@@ -218,7 +217,7 @@ def format_default_value(field_obj) -> str:
 
 def generate_config_section(
     config_class,
-    all_dataclasses: Dict[str, Any],
+    all_dataclasses: dict[str, Any],
     title: str = "",
     description: str = "",
     anchor: str = "",

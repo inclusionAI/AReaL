@@ -1,5 +1,3 @@
-from typing import List, Tuple
-
 import torch
 
 
@@ -31,9 +29,9 @@ def to_precision_dtype(dtype_str: str) -> torch.dtype:
 class AnyPrecisionAdamW(torch.optim.Optimizer):
     def __init__(
         self,
-        params: List[torch.Tensor],
+        params: list[torch.Tensor],
         lr: float = 1e-3,
-        betas: Tuple[float, float] = (0.9, 0.999),
+        betas: tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         weight_decay: float = 0.01,
         use_kahan_summation: bool = True,

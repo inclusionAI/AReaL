@@ -26,7 +26,7 @@ from tenacity import (
 
 from openai.types.chat.chat_completion import ChatCompletion
 
-from areal.experimental.openai.cache import CompletionCache
+from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
@@ -70,7 +70,7 @@ class SessionData:
         self,
         id: str,
         completed: bool = False,
-        completions: CompletionCache | None = None,
+        completions: InteractionCache | None = None,
         final_reward: float | None = None,
         start_time: float | None = None,
         end_time: float | None = None,
@@ -78,7 +78,7 @@ class SessionData:
     ):
         self.id = id
         self.completed = completed
-        self.completions = completions or CompletionCache()
+        self.completions = completions or InteractionCache()
         self.final_reward = final_reward
         self.start_time = start_time or time.time()
         self.end_time = end_time
@@ -133,7 +133,7 @@ def build_app(
         session_cache[session_id] = SessionData(
             id=session_id,
             completed=False,
-            completions=CompletionCache(),
+            completions=InteractionCache(),
             final_reward=None,
             start_time=time.time(),
             end_time=None,
@@ -253,7 +253,7 @@ def build_app(
 
         try:
             completion: ChatCompletion = await state.client.chat.completions.create(
-                areal_completion_cache=session_cache[session_id].completions, **kwargs
+                areal_cache=session_cache[session_id].completions, **kwargs
             )
             return completion
         except ValueError as e:
@@ -282,7 +282,7 @@ class ProxyServer:
             self.app, host=self._localhost, port=self.port, log_level=log_level
         )
         self.server = uvicorn.Server(self.server_config)
-        self.thread = threading.Thread(target=self.server.run)
+        self.thread = threading.Thread(target=self.server.run, daemon=True)
 
     @property
     def public_addr(self) -> str:

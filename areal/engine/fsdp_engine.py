@@ -1,9 +1,11 @@
 import dataclasses
+import gc
 import math
 import os
 import time
 from collections.abc import Callable
 from concurrent.futures import Future
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 
@@ -24,8 +26,14 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
+from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
+    AutoModelForTokenClassification,
+    PretrainedConfig,
     PreTrainedTokenizerFast,
     ProcessorMixin,
     get_constant_schedule_with_warmup,
@@ -34,27 +42,43 @@ from transformers import (
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import InferenceEngine
+from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.dist_rollout import DistRolloutCoordinator
-from areal.engine.base_hf_engine import BaseHFEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, pkg_version
+from areal.utils import logging, name_resolve, names, pkg_version, stats_tracker
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
+    MicroBatchList,
+    amend_position_ids,
     pack_tensor_dict,
     pad_and_stack_tensors_along_first_dim,
+    pad_mb_list,
     reorder_list,
+    split_padded_tensor_dict_into_mb_list,
     unpack_sequence,
+    unsqueeze_mb_list,
 )
-from areal.utils.distributed import init_custom_process_group
+from areal.utils.device import clear_memory, log_gpu_stats
+from areal.utils.distributed import init_custom_process_group, patch_dist_group_timeout
 from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.checkpoint import DCPState
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
+from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
+from areal.utils.model import (
+    disable_dropout_in_model,
+    is_gemma3_model,
+    is_qwen3_moe_model,
+    is_qwen3_vl_model,
+    is_qwen_vl_model,
+    is_valid_vision_model,
+)
+from areal.utils.offload import is_tms_enabled
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
@@ -65,10 +89,31 @@ from areal.utils.ulysses import (
 )
 
 
-class FSDPEngine(BaseHFEngine):
+class FSDPEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
-        super().__init__(config)
-        # FSDP options
+        self.config = config
+        self.optimizer_config = config.optimizer
+
+        self.model: torch.nn.Module
+        self.optimizer: torch.optim.Optimizer
+        self.tokenizer: PreTrainedTokenizerFast
+        self.processor: ProcessorMixin | None = None
+        self.model_config: PretrainedConfig
+        self._version: int = 0
+
+        self.initialized = False
+        self.own_global_group = False
+        self._cpu_group: dist.ProcessGroup
+        self.weight_update_group_initialized = False
+
+        self.model_config = AutoConfig.from_pretrained(
+            pretrained_model_name_or_path=self.config.path,
+            trust_remote_code=True,
+        )
+        self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
+        self.world_size = int(os.environ["WORLD_SIZE"])
+
+        # FSDP-specific initialization
         self.cpu_offload: CPUOffloadPolicy | None = None
 
         self.rollout_engine: InferenceEngine | None = None
@@ -79,10 +124,13 @@ class FSDPEngine(BaseHFEngine):
 
         self.dp_group: dist.ProcessGroup
         self.sp_group: dist.ProcessGroup
+        self.mp_group: dist.ProcessGroup
 
         self.rank: int
         self.dp_head: int
         self.dp_rank: int
+
+        self.is_offload: bool = False
 
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
@@ -114,8 +162,21 @@ class FSDPEngine(BaseHFEngine):
         )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
-        super().create_process_group(parallel_strategy)
+        patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
 
+        backend = current_platform.communication_backend
+        if not dist.is_initialized():
+            dist.init_process_group(
+                backend=backend,
+                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
+            )
+            self.own_global_group = True
+
+        self._cpu_group = dist.new_group(
+            timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend="gloo"
+        )
+
+        # FSDP-specific process group setup
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
 
@@ -154,6 +215,9 @@ class FSDPEngine(BaseHFEngine):
         assert ft_spec is not None, "FSDPEngine requires FinetuneSpec to initialize."
         if pkg_version.is_version_less("torch", "2.4.0"):
             raise RuntimeError("areal only supports FSDP2, which requires torch>=2.4.0")
+
+        if is_tms_enabled():
+            torch_memory_saver.hook_mode = "preload"
 
         # Create device model
         self.create_device_model()
@@ -252,7 +316,7 @@ class FSDPEngine(BaseHFEngine):
             if processor is not None:
                 processor.save_pretrained(path)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
     def _load_model_from_hf(self, path: str):
         """Load model from HuggingFace format."""
@@ -392,7 +456,7 @@ class FSDPEngine(BaseHFEngine):
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
@@ -422,13 +486,13 @@ class FSDPEngine(BaseHFEngine):
         if named_tensors:
             self._update_bucket_weights_from_distributed(meta, named_tensors)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         if dist.get_rank() == 0:
             self.rollout_engine.continue_generation()
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     @trace_perf("fsdp_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
@@ -452,14 +516,21 @@ class FSDPEngine(BaseHFEngine):
 
             fut.result()
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
         if meta.type == current_platform.communication_backend:
             assert self.weight_update_group_initialized
-            self._update_weights_from_distributed(meta)
+            # In offload mode, wakes up parameters as needed to perform the update.
+            tms_context = (
+                torch_memory_saver.disable()
+                if self.is_offload and not torch.version.hip
+                else nullcontext()
+            )
+            with tms_context:
+                self._update_weights_from_distributed(meta)
         elif meta.type == "disk":
             self._update_weights_from_disk(meta)
         else:
@@ -482,8 +553,8 @@ class FSDPEngine(BaseHFEngine):
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""
@@ -530,14 +601,93 @@ class FSDPEngine(BaseHFEngine):
             should_accept_fn=should_accept_fn,
         )
 
+    def _sp_all_gather(self, tensor: torch.Tensor) -> torch.Tensor:
+        gathered = dist_F.all_gather(tensor, group=self.sp_group)
+        return torch.cat(gathered, dim=-1)
+
+    def _get_vocab_min_max_logits(
+        self,
+        logits: torch.Tensor,
+        ulysses_pad_size: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        vocab_min_logits = logits.detach().min(-1).values.float()
+        vocab_max_logits = logits.detach().max(-1).values.float()
+        if self.parallel_helper.sp_size > 1:
+            vocab_min_logits = self._sp_all_gather(vocab_min_logits)
+            vocab_max_logits = self._sp_all_gather(vocab_max_logits)
+            if ulysses_pad_size > 0:
+                vocab_min_logits = vocab_min_logits[:-ulysses_pad_size]
+                vocab_max_logits = vocab_max_logits[:-ulysses_pad_size]
+        return vocab_min_logits, vocab_max_logits
+
+    def _compute_logprobs_entropy(
+        self,
+        logits: torch.Tensor,
+        inputs: Any,
+        ulysses_pad_size: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Try to get rolled_input_ids (if Ulysses SP is enabled)
+        labels = inputs.get(
+            "rolled_input_ids",
+            torch.roll(inputs["input_ids"], shifts=-1, dims=-1),
+        )
+        # inputs (padded_mbs) has batch dim (1, seq_len), squeeze to match logits (seq_len,)
+        if labels.ndim == 2 and labels.shape[0] == 1:
+            labels = labels.squeeze(0)
+        logprobs, entropy = gather_logprobs_entropy(
+            logits, labels, temperature=self.config.temperature
+        )
+        if self.parallel_helper.sp_size > 1:
+            logprobs = self._sp_all_gather(logprobs)
+            entropy = self._sp_all_gather(entropy)
+            if ulysses_pad_size > 0:
+                logprobs = logprobs[:-ulysses_pad_size]
+                entropy = entropy[:-ulysses_pad_size]
+        return logprobs, entropy
+
+    def _compute_logprobs(
+        self,
+        logits: torch.Tensor,
+        inputs: Any,
+        ulysses_pad_size: int = 0,
+    ) -> torch.Tensor:
+        # Try to get rolled_input_ids (if Ulysses SP is enabled)
+        labels = inputs.get(
+            "rolled_input_ids",
+            torch.roll(inputs["input_ids"], shifts=-1, dims=-1),
+        )
+        # inputs (padded_mbs) has batch dim (1, seq_len), squeeze to match logits (seq_len,)
+        if labels.ndim == 2 and labels.shape[0] == 1:
+            labels = labels.squeeze(0)
+        logprobs = gather_logprobs(logits, labels, temperature=self.config.temperature)
+        if self.parallel_helper.sp_size > 1:
+            logprobs = self._sp_all_gather(logprobs)
+            if ulysses_pad_size > 0:
+                logprobs = logprobs[:-ulysses_pad_size]
+        return logprobs
+
+    def _compute_values(
+        self,
+        values: torch.Tensor,
+        ulysses_pad_size: int = 0,
+    ) -> torch.Tensor:
+        if self.parallel_helper.sp_size > 1:
+            values = self._sp_all_gather(values)
+            if ulysses_pad_size > 0:
+                values = values[:-ulysses_pad_size]
+        return values
+
     @trace_perf("fsdp_engine.train_batch", category="compute")
     def train_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         """Train on a batch using gradient accumulation."""
+        if self.is_offload:
+            self.onload()
+
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
@@ -572,7 +722,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        _,
+                        ulysses_pad_size,
                     ) = ulysses_pad(
                         input_ids, position_ids, sp_size=self.parallel_helper.sp_size
                     )
@@ -581,7 +731,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        _,
+                        ulysses_pad_size,
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
@@ -602,16 +752,36 @@ class FSDPEngine(BaseHFEngine):
                 )
             else:
                 inputs = padded_mb_input
+                ulysses_pad_size = 0
 
             with trace_scope("fsdp_engine.train_batch.forward"):
                 outputs = self.model(**inputs)
 
-            logits = outputs.logits.squeeze(0)
-            if self.parallel_helper.sp_size > 1:
-                loss = loss_fn(logits, inputs)
+            output = outputs.logits.squeeze(0)
+            if not self.config.is_critic:
+                logprobs, entropy = self._compute_logprobs_entropy(
+                    output, inputs, ulysses_pad_size
+                )
+                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
+                    output, ulysses_pad_size
+                )
+                if pad_length > 0:
+                    logprobs = logprobs[:-pad_length]
+                    entropy = entropy[:-pad_length]
+                    vocab_min_logits = vocab_min_logits[:-pad_length]
+                    vocab_max_logits = vocab_max_logits[:-pad_length]
+                loss = loss_fn(
+                    logprobs,
+                    entropy,
+                    mb_input,
+                    vocab_min_logits=vocab_min_logits,
+                    vocab_max_logits=vocab_max_logits,
+                )
             else:
-                logits = logits[:-pad_length] if pad_length > 0 else logits
-                loss = loss_fn(logits, mb_input)
+                values = self._compute_values(output.squeeze(-1), ulysses_pad_size)
+                if pad_length > 0:
+                    values = values[:-pad_length]
+                loss = loss_fn(values, mb_input)
 
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
             # Scale loss for accumulation
@@ -648,10 +818,13 @@ class FSDPEngine(BaseHFEngine):
     def eval_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate on a batch."""
+        if self.is_offload:
+            self.onload()
+
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
@@ -681,7 +854,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        _,
+                        ulysses_pad_size,
                     ) = ulysses_pad(
                         input_ids, position_ids, sp_size=self.parallel_helper.sp_size
                     )
@@ -690,7 +863,7 @@ class FSDPEngine(BaseHFEngine):
                     (
                         ulysses_input_ids,
                         ulysses_position_ids,
-                        _,
+                        ulysses_pad_size,
                     ) = ulysses_pad_and_slice_inputs(
                         input_ids,
                         position_ids,
@@ -711,16 +884,36 @@ class FSDPEngine(BaseHFEngine):
                 )
             else:
                 inputs = padded_mb_input
+                ulysses_pad_size = 0
 
             with trace_scope("fsdp_engine.eval_batch.forward"):
                 outputs = self.model(**inputs)
 
-            logits = outputs.logits.squeeze(0)
-            if self.parallel_helper.sp_size > 1:
-                loss = loss_fn(logits, inputs)
+            output = outputs.logits.squeeze(0)
+            if not self.config.is_critic:
+                logprobs, entropy = self._compute_logprobs_entropy(
+                    output, inputs, ulysses_pad_size
+                )
+                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
+                    output, ulysses_pad_size
+                )
+                if pad_length > 0:
+                    logprobs = logprobs[:-pad_length]
+                    entropy = entropy[:-pad_length]
+                    vocab_min_logits = vocab_min_logits[:-pad_length]
+                    vocab_max_logits = vocab_max_logits[:-pad_length]
+                loss = loss_fn(
+                    logprobs,
+                    entropy,
+                    mb_input,
+                    vocab_min_logits=vocab_min_logits,
+                    vocab_max_logits=vocab_max_logits,
+                )
             else:
-                logits = logits[:-pad_length] if pad_length > 0 else logits
-                loss = loss_fn(logits, mb_input)
+                values = self._compute_values(output.squeeze(-1), ulysses_pad_size)
+                if pad_length > 0:
+                    values = values[:-pad_length]
+                loss = loss_fn(values, mb_input)
 
             loss_scale = loss_weight_fn(mb_input) / total_loss_weight
 
@@ -738,10 +931,12 @@ class FSDPEngine(BaseHFEngine):
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
-        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
-        """Forward pass with optional post-processing."""
+        """Forward pass returning logprobs or values."""
+        if self.is_offload:
+            self.onload()
+
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
 
@@ -758,7 +953,6 @@ class FSDPEngine(BaseHFEngine):
         for pad_length, padded_mb_input, mb_input in zip(
             mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
         ):
-            ulysses_pad_size = 0
             if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
@@ -797,37 +991,19 @@ class FSDPEngine(BaseHFEngine):
                 )
             else:
                 inputs = padded_mb_input
+                ulysses_pad_size = 0
 
             with trace_scope("fsdp_engine.forward.forward"):
                 outputs = self.model(**inputs)
 
-            logits = outputs.logits.squeeze(0)
-
-            if post_hook:
-                if self.parallel_helper.sp_size > 1:
-                    # When Ulysses SP is enabled, post_hook will gather logits internally.
-                    result = post_hook(logits, inputs)
-                    # Remove Ulysses padding and original padding
-                    result = (
-                        result[:-ulysses_pad_size] if ulysses_pad_size > 0 else result
-                    )
-                    result = result[:-pad_length] if pad_length > 0 else result
-                else:
-                    # Remove original padding
-                    logits = logits[:-pad_length] if pad_length > 0 else logits
-                    result = post_hook(logits, mb_input)
-                results.append(result)
+            output = outputs.logits.squeeze(0)
+            if not self.config.is_critic:
+                result = self._compute_logprobs(output, inputs, ulysses_pad_size)
             else:
-                if self.parallel_helper.sp_size > 1:
-                    # Gather and remove Ulysses padding
-                    gathered_logits = dist_F.all_gather(logits, group=self.sp_group)
-                    logits = torch.cat(gathered_logits, dim=0)
-                    logits = (
-                        logits[:-ulysses_pad_size] if ulysses_pad_size > 0 else logits
-                    )
-                # Remove original padding
-                logits = logits[:-pad_length] if pad_length > 0 else logits
-                results.append(logits)
+                result = self._compute_values(output.squeeze(-1), ulysses_pad_size)
+            if pad_length > 0:
+                result = result[:-pad_length]
+            results.append(result)
 
         res = aggregate_fn(results)
         output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
@@ -909,3 +1085,305 @@ class FSDPEngine(BaseHFEngine):
                 f"Unknown lr scheduler type {self.optimizer_config.lr_scheduler_type}"
             )
         self.logger.info(f"Create optimizer time: {time.perf_counter() - tik}")
+
+    def set_version(self, version: int):
+        self._version = version
+
+    def get_version(self) -> int:
+        return self._version
+
+    def train(self, mode: bool = True):
+        assert self.model is not None
+        self.model.train(mode=mode)
+        return self
+
+    @property
+    def cpu_group(self) -> dist.ProcessGroup:
+        assert self.initialized
+        return self._cpu_group
+
+    def create_device_model(self):
+        current_platform.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = torch.device(int(os.environ["LOCAL_RANK"]))
+
+        dtype = getattr(torch, self.config.dtype)
+
+        if self.is_vision_model:
+            if dtype == torch.float16:
+                raise ValueError(
+                    "Vision models do not support float16 dtype. Please use bfloat16."
+                )
+            if self.config.init_from_scratch:
+                raise ValueError(
+                    "Vision models do not support initialization from scratch. Please use a pretrained model."
+                )
+            self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
+                self.config.path
+            )
+
+            tik = time.perf_counter()
+            device = current_platform.device_type
+            with torch.device(device):
+                model = AutoModelForImageTextToText.from_pretrained(
+                    pretrained_model_name_or_path=self.config.path,
+                    trust_remote_code=True,
+                    dtype=dtype,
+                    attn_implementation=self.config.attn_impl,
+                )
+                if self.config.disable_dropout:
+                    disable_dropout_in_model(model)
+        else:
+            self.tokenizer = load_hf_tokenizer(self.config.path)
+            self.processor = None
+            tik = time.perf_counter()
+            with torch.device(current_platform.device_type):
+                model = self._create_llm_actor_or_critic()
+                if self.config.disable_dropout:
+                    disable_dropout_in_model(model)
+
+        if self.config.gradient_checkpointing:
+            model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
+        self.logger.info(
+            f"Model creation and loading time: {time.perf_counter() - tik}"
+        )
+        self.model = model
+
+    def _create_llm_actor_or_critic(self):
+        dtype = getattr(torch, self.config.dtype)
+
+        if self.config.is_critic:
+            model_class = AutoModelForTokenClassification
+            model_kwargs = {"num_labels": 1}
+        else:
+            model_class = AutoModelForCausalLM
+            model_kwargs = {}
+
+        common_kwargs = {
+            "dtype": dtype,
+            "attn_implementation": self.config.attn_impl,
+        }
+        model_kwargs.update(common_kwargs)
+
+        if self.config.init_from_scratch:
+            # initialize model from config
+            # NOTE: VLM cannot directly load state dict using this random initialized model
+            model = model_class.from_config(
+                self.model_config,
+                **model_kwargs,
+            )
+        else:
+            model = model_class.from_pretrained(
+                pretrained_model_name_or_path=self.config.path,
+                trust_remote_code=True,
+                **model_kwargs,
+            )
+        return model
+
+    def destroy(self):
+        if hasattr(self, "optimizer"):
+            del self.optimizer
+        if hasattr(self, "model"):
+            del self.model
+        gc.collect()
+        current_platform.empty_cache()
+        gc.collect()
+        # NOTE: if `own_global_group` is true, we assume that
+        # no communications are needed after `destroy`, so we
+        # directly destroy all groups. Otherwise, process group
+        # handles still exist and we expect another engine to
+        # clean up these groups.
+        if dist.is_initialized() and self.own_global_group:
+            dist.destroy_process_group()
+        self.initialized = False
+
+    def save_optimizer_state(self, path: str):
+        assert self.optimizer is not None
+        assert dist.is_initialized()
+        rank = dist.get_rank()
+        shard_path = os.path.join(
+            path, f"optim_world_size_{self.world_size}_rank_{rank}.pt"
+        )
+        state_dict = self.optimizer.state_dict()
+        torch.save(state_dict, shard_path)
+        dist.barrier(group=self.cpu_group)
+
+    def load_optimizer_state(self, path: str):
+        assert self.optimizer is not None
+        assert dist.is_initialized()
+        rank = dist.get_rank()
+        shard_path = os.path.join(
+            path, f"optim_world_size_{self.world_size}_rank_{rank}.pt"
+        )
+        optimizer_state_dict = torch.load(shard_path, weights_only=False)
+        self.optimizer.load_state_dict(optimizer_state_dict)
+        dist.barrier(group=self.cpu_group)
+
+    def step_lr_scheduler(self):
+        assert self.lr_scheduler is not None
+        self.lr_scheduler.step()
+
+    def prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
+        assert "attention_mask" in input_ and "input_ids" in input_
+        input_ = input_.copy()
+
+        if is_qwen_vl_model(self.model_config.model_type):
+            attn_mask = input_["attention_mask"]
+            input_ids = input_["input_ids"]
+            image_grid_thw = None
+            video_grid_thw = None
+            if "multi_modal_input" in input_:
+                multi_modal_input = input_["multi_modal_input"]
+                image_grid_thw_list = [
+                    m["image_grid_thw"]
+                    for m in multi_modal_input
+                    if "image_grid_thw" in m
+                ]
+                if image_grid_thw_list:
+                    image_grid_thw = torch.cat(image_grid_thw_list)
+                video_grid_thw_list = [
+                    m["video_grid_thw"]
+                    for m in multi_modal_input
+                    if "video_grid_thw" in m
+                ]
+                if video_grid_thw_list:
+                    video_grid_thw = torch.cat(video_grid_thw_list)
+
+            position_ids, _ = self.model.model.get_rope_index(
+                input_ids, image_grid_thw, video_grid_thw, attn_mask
+            )
+            position_ids = torch.einsum("ijk->jki", position_ids)
+            input_["position_ids"] = position_ids
+        else:
+            input_ = amend_position_ids(input_)
+
+        mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
+        mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
+        mb_list = pad_mb_list(
+            mb_list,
+            pad_value=0.0,
+            pad_to_maximum=self.config.pad_to_maximum,
+        )
+        self.logger.info(
+            f"Microbatch #tokens (rank {dist.get_rank()}): {mb_list.group_lens}, "
+            f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}"
+        )
+        mb_list = unsqueeze_mb_list(mb_list)
+        if is_qwen_vl_model(self.model_config.model_type):
+            assert mb_list.padded_mbs is not None
+            for mb in mb_list.padded_mbs:
+                mb["position_ids"] = torch.einsum("ijk->kij", mb["position_ids"])
+
+        assert mb_list.padded_mbs is not None
+        for i, mb in enumerate(mb_list.mbs):
+            mb_list.mbs[i] = dict(**mb)
+        for i, mb in enumerate(mb_list.padded_mbs):
+            mb_list.padded_mbs[i] = dict(**mb)
+        for mb, padded_mb in zip(mb_list.mbs, mb_list.padded_mbs):
+            mb["max_length_q"] = mb["max_length_k"] = mb["max_seqlen"] = int(
+                mb["max_seqlen"]
+            )
+            padded_mb["max_length_q"] = padded_mb["max_length_k"] = padded_mb[
+                "max_seqlen"
+            ] = int(padded_mb["max_seqlen"])
+            mb["cu_seq_lens_q"] = mb["cu_seq_lens_k"] = mb["cu_seqlens"]
+            padded_mb["cu_seq_lens_q"] = padded_mb["cu_seq_lens_k"] = padded_mb[
+                "cu_seqlens"
+            ]
+            mb["use_cache"] = False
+            padded_mb["use_cache"] = False
+            if is_qwen3_moe_model(self.model_config.model_type) or is_qwen3_vl_model(
+                self.model_config.model_type
+            ):
+                mb["attention_mask"] = None
+                padded_mb["attention_mask"] = None
+            else:
+                mb["attention_mask"] = dict(full_attention=None, sliding_attention=None)
+                padded_mb["attention_mask"] = dict(
+                    full_attention=None, sliding_attention=None
+                )
+            if "multi_modal_input" in mb:
+                image_grid_thw_list = [
+                    item["image_grid_thw"]
+                    for item in mb["multi_modal_input"]
+                    if "image_grid_thw" in item
+                ]
+                if image_grid_thw_list:
+                    mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+                    padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
+                pixel_values_list = [
+                    item["pixel_values"]
+                    for item in mb["multi_modal_input"]
+                    if "pixel_values" in item
+                ]
+                if pixel_values_list:
+                    mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+                    padded_mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+                video_grid_thw_list = [
+                    item["video_grid_thw"]
+                    for item in mb["multi_modal_input"]
+                    if "video_grid_thw" in item
+                ]
+                if video_grid_thw_list:
+                    mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+                    padded_mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+        return mb_list
+
+    def get_model_name_parameters(self):
+        name_params_iterator = self.model.named_parameters()
+        if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
+            for name, value in name_params_iterator:
+                new_name = name.replace("model.", "", 1).replace(
+                    "language_model", "model"
+                )
+                yield new_name, value
+        elif self.is_vision_model and is_gemma3_model(self.model_config.model_type):
+            for name, value in name_params_iterator:
+                new_name = name.replace("model.", "", 1)
+                if new_name.startswith("language_model."):
+                    new_name = new_name.replace(
+                        "language_model.", "language_model.model.", 1
+                    )
+                elif new_name.startswith("lm_head."):
+                    new_name = new_name.replace(
+                        "lm_head.", "language_model.lm_head.", 1
+                    )
+                yield new_name, value
+        else:
+            yield from name_params_iterator
+
+    def offload(self) -> None:
+        """Offload model memory to CPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
+        """
+
+        log_gpu_stats("before offload model")
+
+        # Use torch_memory_saver to pause CUDA memory
+        clear_memory()
+        torch_memory_saver.pause()
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+        log_gpu_stats("after offload model")
+
+        self.is_offload = True
+
+    def onload(self) -> None:
+        """Onload model memory from CPU back to GPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/fsdp_utils/actor.py
+        """
+
+        torch_memory_saver.resume()
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+        log_gpu_stats("after onload model")
+
+        self.is_offload = False
+
+    def export_stats(self) -> dict[str, float]:
+        return stats_tracker.export_all(reduce_group=self.data_parallel_group)

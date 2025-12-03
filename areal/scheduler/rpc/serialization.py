@@ -16,6 +16,7 @@ import importlib
 import importlib.util
 import io
 import os
+import subprocess
 import tempfile
 import zipfile
 from dataclasses import fields, is_dataclass
@@ -432,6 +433,10 @@ def serialize_value(value: Any) -> Any:
     # Handle tuple - convert to list and recursively serialize
     if isinstance(value, tuple):
         return [serialize_value(item) for item in value]
+
+    # `launch_server` returns a subprocess.Popen, skip it
+    if isinstance(value, subprocess.Popen):
+        return None
 
     # Primitives (int, float, str, bool) pass through unchanged
     return value

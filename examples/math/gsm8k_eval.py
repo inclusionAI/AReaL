@@ -22,7 +22,6 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
 
     dist.init_process_group("gloo")
     # Create a group for stats all-reduce.
@@ -51,10 +50,6 @@ def main(args):
     eval_rollout.initialize()
 
     # Create rollout workflow
-    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
     workflow = RLVRWorkflow(
         reward_fn=gsm8k_reward_fn,
         gconfig=config.gconfig,

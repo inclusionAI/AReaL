@@ -25,7 +25,6 @@ from areal.utils.stats_logger import StatsLogger
 
 def main_sft():
     config, _ = load_expr_config(sys.argv[1:], SFTConfig)
-    config: SFTConfig
 
     rank = int(os.getenv("RANK"))
 
@@ -145,8 +144,8 @@ def main_sft():
                     processor=processor,
                 )
 
-            dist.barrier(device_ids=[engine.device.index])
             current_platform.synchronize()
+            dist.barrier(group=engine.cpu_group)
 
             with stats_tracker.record_timing("eval"):
                 # No need to log anything. Logging will be handled outside
@@ -170,14 +169,14 @@ def main_sft():
                     global_step,
                 )
 
-            dist.barrier(device_ids=[engine.device.index])
             current_platform.synchronize()
+            dist.barrier(group=engine.cpu_group)
 
             stats_logger.commit(
                 epoch,
                 step,
                 global_step,
-                stats_tracker.export(reduce_group=engine.data_parallel_group),
+                engine.export_stats(),
             )
             global_step += 1
 

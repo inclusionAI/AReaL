@@ -10,6 +10,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange
+from torch.utils.data import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import MicroBatchSpec, NormConfig
@@ -1066,12 +1067,12 @@ def bcast_mb_list(
 
 def cycle_dataloader(dataloader: StatefulDataLoader):
     """Cycle through a dataloader indefinitely."""
-    g = iter(dataloader)
+    epoch = 0
     while True:
-        try:
-            yield next(g)
-        except StopIteration:
-            g = iter(dataloader)
+        if isinstance(dataloader.sampler, DistributedSampler):
+            dataloader.sampler.set_epoch(epoch)
+        yield from dataloader
+        epoch += 1
 
 
 class Normalization:

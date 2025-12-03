@@ -2,6 +2,7 @@ experiment_name: gsm8k-gspo
 trial_name: trial0
 
 seed: 1
+enable_offload: false
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
@@ -97,7 +98,6 @@ sglang:
 # datasets
 train_dataset:
   batch_size: 256
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
@@ -106,7 +106,6 @@ train_dataset:
 
 valid_dataset:
   batch_size: 256
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k

@@ -28,7 +28,8 @@ async def arequest_with_retry(
     retry_delay: float = 1.0,
     verbose=False,
 ) -> dict:
-    timeout = timeout or DEFAULT_REQUEST_TIMEOUT
+    if timeout is None:
+        timeout = DEFAULT_REQUEST_TIMEOUT
     last_exception = None
     max_retries = max_retries or DEFAULT_RETRIES
     base_url = f"http://{addr}"

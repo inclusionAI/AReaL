@@ -14,7 +14,7 @@ from areal.api.cli_args import (
 from areal.api.io_struct import WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import network
-from areal.utils.data import get_batch_size
+from areal.utils.data import concat_padded_tensors, get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.pkg_version import is_available
 
@@ -113,7 +113,6 @@ def inference_engine(request):
         }
     finally:
         # Cleanup using engine API
-        server_manager.teardown_server()
         server_manager.destroy()
 
 
@@ -220,7 +219,8 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         with pytest.raises(TimeoutError):
             engine.wait(count=bs * 2, timeout=10)
     else:
-        result = engine.wait(count=bs * 2, timeout=10)
+        results = engine.wait(count=bs * 2, timeout=10)
+        result = concat_padded_tensors([r for r in results if r is not None])
         assert result["attention_mask"].shape[0] == bs * 2 * n_samples
 
     # Update model version
@@ -237,7 +237,8 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
             engine.wait(count=bs * 4, timeout=5)
     else:
         # 2 * bs samples haved been retrived above
-        results = engine.wait(count=bs * 2, timeout=5)
+        results_list = engine.wait(count=bs * 2, timeout=5)
+        results = concat_padded_tensors([r for r in results_list if r is not None])
         assert results["attention_mask"].shape[0] == bs * 2 * n_samples
 
     engine.destroy()

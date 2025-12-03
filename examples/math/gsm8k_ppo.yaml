@@ -2,6 +2,7 @@ experiment_name: gsm8k-ppo
 trial_name: trial0
 
 seed: 1
+enable_offload: false
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
@@ -62,6 +63,9 @@ actor:
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
   dynamic_sampling: false
+  adv_norm:
+    mean_level: batch
+    std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
 
 critic:
@@ -103,7 +107,6 @@ sglang:
 # datasets
 train_dataset:
   batch_size: 256
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
@@ -112,7 +115,6 @@ train_dataset:
 
 valid_dataset:
   batch_size: 256
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k

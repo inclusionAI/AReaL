@@ -124,8 +124,8 @@ batch = torch.load(os.path.join(dump_dir, "batch_data.pt"), weights_only=False)
 
 # Prepare batch for training
 batch = batch.to('cuda')
-dist.barrier(device_ids=[actor.device.index])
 torch.cuda.synchronize()
+dist.barrier(group=actor.cpu_group)
 
 # Your custom algorithm logic here
 ...

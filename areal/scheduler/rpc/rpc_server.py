@@ -1,4 +1,5 @@
 import argparse
+import os
 import traceback
 from concurrent.futures import Future
 
@@ -8,7 +9,7 @@ from areal.api.cli_args import BaseExperimentConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.platforms import current_platform
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
-from areal.utils import logging, name_resolve, seeding, stats_tracker
+from areal.utils import logging, name_resolve, seeding
 from areal.utils.data import (
     broadcast_tensor_container,
     tensor_container_to,
@@ -69,6 +70,42 @@ def configure():
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
+@app.route("/set_env", methods=["POST"])
+def set_env():
+    """Set environment variables for the worker process."""
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON in request body"}), 400
+
+        env_payload = data.get("env")
+        if env_payload is None:
+            return jsonify({"error": "Missing 'env' field in request"}), 400
+        if not isinstance(env_payload, dict):
+            return jsonify({"error": "'env' must be a dictionary"}), 400
+
+        for key, value in env_payload.items():
+            if not isinstance(key, str):
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                f"Environment variable name must be str, got {type(key)}"
+                            )
+                        }
+                    ),
+                    400,
+                )
+            os.environ[key] = str(value)
+            logger.info(f"Set {key}={value}")
+
+        return jsonify({"status": "success"})
+
+    except Exception as e:
+        logger.error(f"Unexpected error in set_env: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
 @app.route("/create_engine", methods=["POST"])
 def create_engine():
     """
@@ -78,8 +115,14 @@ def create_engine():
     {
         "engine": "areal.engine.ppo.actor.FSDPPPOActor",  # Import path
         "init_args": [...],  # Positional arguments
-        "init_kwargs": {...}  # Keyword arguments
+        "init_kwargs": {
+            "config": ...,  # Engine config
+        }
     }
+
+    Distributed training environment variables (RANK, WORLD_SIZE, MASTER_ADDR,
+    MASTER_PORT, LOCAL_RANK, etc.) should be configured via the `/set_env`
+    endpoint before invoking this endpoint.
     """
     global _engine
 
@@ -239,28 +282,6 @@ def call_engine_method():
 
     except Exception as e:
         logger.error(f"Unexpected error in call: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-
-
-@app.route("/export_stats", methods=["POST"])
-def export_stats():
-    """Export training statistics from stats_tracker."""
-    try:
-        global _engine
-        if _engine is None:
-            return jsonify({"error": "Engine not initialized"}), 503
-
-        # TrainEngine: reduce stats across data_parallel_group
-        if not isinstance(_engine, TrainEngine):
-            return (
-                jsonify({"error": "/export_stats is only available for TrainEngine"}),
-                400,
-            )
-        result = stats_tracker.export(reduce_group=_engine.data_parallel_group)
-        return jsonify({"status": "success", "result": result})
-
-    except Exception as e:
-        logger.error(f"Unexpected error in export_stats: {e}\n{traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 

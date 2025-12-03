@@ -18,7 +18,6 @@ from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.reward.math_parser import process_results
-from areal.utils import stats_tracker
 from areal.utils.data import broadcast_tensor_container, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
@@ -80,10 +79,6 @@ def main() -> None:
     ref.create_process_group(parallel_strategy=parallel_strategy)
     ref.initialize(None, ft_spec)
 
-    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(cast(int, tokenizer.pad_token_id))
-    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(cast(int, tokenizer.eos_token_id))
     workflow = RLVRWorkflow(
         reward_fn=gsm8k_reward_fn,
         gconfig=config.gconfig,
@@ -115,9 +110,10 @@ def main() -> None:
                 group=actor.context_and_model_parallel_group,
             )
 
-            dist.barrier(device_ids=[actor.device.index])
             current_platform.synchronize()
+            dist.barrier(group=actor.cpu_group)
 
+            batch["prox_logp"] = actor.compute_logp(batch)
             batch["ref_logp"] = ref.compute_logp(batch)
 
             actor.compute_advantages(batch)
@@ -131,8 +127,8 @@ def main() -> None:
             actor.set_version(global_step + 1)
             rollout.set_version(global_step + 1)
 
-            stat = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-            rewards.append(stat["ppo_actor/task_reward/avg"])
+            stats = actor.export_stats()
+            rewards.append(stats["ppo_actor/task_reward/avg"])
 
             global_step += 1
 

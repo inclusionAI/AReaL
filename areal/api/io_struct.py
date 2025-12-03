@@ -114,6 +114,9 @@ class WeightUpdateMeta:
     weight_chunked_mem_mb: int = 1024
 
     use_lora: bool = False
+    lora_name: str = ""
+    lora_int_id: int = 0
+    base_model_name: str = ""
 
     clear_checkpoint_after_load: bool = True
 
@@ -126,6 +129,9 @@ class WeightUpdateMeta:
         name: str = "default",
         use_lora: bool = False,
         clear_checkpoint_after_load: bool = True,
+        lora_name: str = "",
+        lora_int_id: int = 0,
+        base_model_name: str = "",
     ) -> "WeightUpdateMeta":
         from areal.utils.saver import Saver
 
@@ -138,6 +144,9 @@ class WeightUpdateMeta:
             path=path,
             use_lora=use_lora,
             clear_checkpoint_after_load=clear_checkpoint_after_load,
+            lora_name=lora_name,
+            lora_int_id=lora_int_id,
+            base_model_name=base_model_name,
         )
 
     @classmethod

@@ -1,4 +1,4 @@
-from typing import Callable
+from collections.abc import Callable
 
 from areal.api.cli_args import EvaluatorConfig
 from areal.api.io_struct import FinetuneSpec
@@ -6,7 +6,6 @@ from areal.utils import timeutil
 
 
 class Evaluator:
-
     def __init__(self, config: EvaluatorConfig, ft_spec: FinetuneSpec):
         self.config = config
         self.ft_sepc = ft_spec

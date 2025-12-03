@@ -4,6 +4,7 @@ import gc
 import os
 from collections.abc import Callable
 from concurrent.futures import Future
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 
@@ -21,6 +22,7 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
 from torch import nn
+from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
@@ -34,7 +36,7 @@ from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names
+from areal.utils import logging, name_resolve, names, stats_tracker
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchList,
@@ -48,7 +50,9 @@ from areal.utils.data import (
     unpack_sequence,
     unpad_logits,
 )
+from areal.utils.device import clear_memory, log_gpu_stats
 from areal.utils.distributed import init_custom_process_group
+from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
 from areal.utils.mcore.determinisitc import set_deterministic_algorithms
@@ -64,6 +68,7 @@ from areal.utils.megatron import (
 )
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
+from areal.utils.offload import is_tms_enabled
 from areal.utils.perf_tracer import trace_perf, trace_scope
 
 
@@ -113,6 +118,7 @@ class MegatronEngine(TrainEngine):
         self.checkpointer = None
         self.seed = 0
         self.own_global_group = False
+        self.is_offload: bool = False
 
     def initialize(
         self,
@@ -126,6 +132,10 @@ class MegatronEngine(TrainEngine):
         self.seed = seed
 
         assert addr is None, "FSDPEngine does not support remote initialization."
+
+        if is_tms_enabled():
+            torch_memory_saver.hook_mode = "preload"
+
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
         self.rank = int(os.environ["RANK"])
@@ -271,11 +281,12 @@ class MegatronEngine(TrainEngine):
             tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
             self.own_global_group = True
         self.logger = logging.getLogger(f"[Megatron Engine Rank {dist.get_rank()}]")
-        self._parallelism_group = dist.new_group(
-            timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend=backend
-        )
         self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
+        # This is needed for barrier synchronization when models are moved to CPU
+        self._cpu_group = dist.new_group(
+            timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend="gloo"
+        )
         self.process_group_initialized = True
 
     def _init_context_and_model_parallel_group(self):
@@ -385,9 +396,9 @@ class MegatronEngine(TrainEngine):
         )
 
     @property
-    def parallelism_group(self) -> dist.ProcessGroup:
+    def cpu_group(self) -> dist.ProcessGroup:
         assert self.process_group_initialized
-        return self._parallelism_group
+        return self._cpu_group
 
     @property
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
@@ -437,11 +448,13 @@ class MegatronEngine(TrainEngine):
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
-        dist.destroy_process_group(self.parallelism_group)
-        dist.destroy_process_group(self.context_and_model_parallel_group)
         self.process_group_initialized = False
-        if self.own_global_group:
-            assert dist.is_initialized()
+        # NOTE: if `own_global_group` is true, we assume that
+        # no communications are needed after `destroy`, so we
+        # directly destroy all groups. Otherwise, process group
+        # handles still exist and we expect another engine to
+        # clean up these groups.
+        if dist.is_initialized() and self.own_global_group:
             mpu.destroy_model_parallel()
             dist.destroy_process_group()
             self.own_global_group = False
@@ -638,7 +651,7 @@ class MegatronEngine(TrainEngine):
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         num_moe_experts = self.tf_config.num_moe_experts
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
@@ -662,7 +675,7 @@ class MegatronEngine(TrainEngine):
         if converted_named_tensors:
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         buffer_size = 0
         named_tensors = []
@@ -683,13 +696,13 @@ class MegatronEngine(TrainEngine):
             # This function will early return if not pipeline parallel head
             self._update_bucket_expert_weights_from_distributed(meta, named_tensors)
 
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
         if dist.get_rank() == 0:
             self.rollout_engine.continue_generation()
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     @trace_perf("megatron_engine.update_weights_from_disk", category="io")
     def _update_weights_from_disk(self, meta: WeightUpdateMeta):
@@ -713,14 +726,21 @@ class MegatronEngine(TrainEngine):
 
             fut.result()
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
         if meta.type == current_platform.communication_backend:
             assert self.weight_update_group_initialized
-            self._update_weights_from_distributed(meta)
+            # In offload mode, wakes up parameters as needed to perform the update.
+            tms_context = (
+                torch_memory_saver.disable()
+                if self.is_offload and not torch.version.hip
+                else nullcontext()
+            )
+            with tms_context:
+                self._update_weights_from_distributed(meta)
         elif meta.type == "disk":
             self._update_weights_from_disk(meta)
         else:
@@ -743,8 +763,8 @@ class MegatronEngine(TrainEngine):
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
-        dist.barrier(device_ids=[self.device.index])
         current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
 
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""
@@ -838,7 +858,7 @@ class MegatronEngine(TrainEngine):
                 tokenizer.save_pretrained(path)
             if processor is not None:
                 processor.save_pretrained(path)
-        dist.barrier(device_ids=[self.device.index])
+        dist.barrier(group=self.cpu_group)
 
     def load(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
@@ -929,9 +949,12 @@ class MegatronEngine(TrainEngine):
     def train_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
+        if self.is_offload:
+            self.onload()
+
         assert self.model is not None, "Model is not initialized."
         assert self.optimizer is not None, "Optimizer is not initialized."
         self.optimizer.zero_grad()
@@ -979,7 +1002,11 @@ class MegatronEngine(TrainEngine):
                 )
 
             def _scaled_loss_fn(input_, output):
-                loss = loss_fn(output, input_)
+                labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
+                logprobs, entropy = gather_logprobs_entropy(
+                    output, labels, temperature=self.config.temperature
+                )
+                loss = loss_fn(logprobs, entropy, input_)
                 loss_scale = loss_weight_fn(input_) / total_loss_weight
                 # Megatron will average gradients across DP ranks.
                 # If we normalize loss across micro batches of all DP ranks,
@@ -1023,9 +1050,12 @@ class MegatronEngine(TrainEngine):
     def eval_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
+        if self.is_offload:
+            self.onload()
+
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
         mb_list = self.prepare_mb_list(input_)
@@ -1071,7 +1101,11 @@ class MegatronEngine(TrainEngine):
             def _scaled_loss_fn(input_, output):
                 # NOTE: Do not need to record loss here, will be
                 # automatically recorded by stats_tracker
-                loss = loss_fn(output, input_)
+                labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
+                logprobs, entropy = gather_logprobs_entropy(
+                    output, labels, temperature=self.config.temperature
+                )
+                loss = loss_fn(logprobs, entropy, input_)
                 loss_scale = loss_weight_fn(input_) / total_loss_weight
                 # eval_batch does not run backward, the grad will not be averaged over DP group
                 # so we shouldn't multiple dp_size in loss_scale
@@ -1105,9 +1139,11 @@ class MegatronEngine(TrainEngine):
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
-        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
+        if self.is_offload:
+            self.onload()
+
         assert self.model is not None, "Model is not initialized."
         # Assume input_ is identical across context and model parallel group
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
@@ -1151,10 +1187,11 @@ class MegatronEngine(TrainEngine):
                 )
 
             def _post_process_fn(input_, output):
-                loss = torch.tensor(1.0, device=output.device)
-                if post_hook is not None:
-                    output = post_hook(output, input_)
-                return loss, {"output": output}
+                labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
+                logprobs = gather_logprobs(
+                    output, labels, temperature=self.config.temperature
+                )
+                return torch.tensor(1.0, device=logprobs.device), {"output": logprobs}
 
             return output, functools.partial(_post_process_fn, orig_input)
 
@@ -1191,3 +1228,49 @@ class MegatronEngine(TrainEngine):
             group=mpu.get_pipeline_model_parallel_group(),
         )
         return result
+
+    def offload(self) -> None:
+        """Offload model memory to CPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
+        """
+
+        log_gpu_stats("before offload model")
+        clear_memory()
+        torch_memory_saver.pause()
+
+        # TODO: NCCL offload
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+        log_gpu_stats("after offload model")
+
+        self.is_offload = True
+
+    def onload(self) -> None:
+        """Onload model memory from CPU back to GPU using torch_memory_saver.
+
+        Ref: https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
+        """
+
+        torch_memory_saver.resume()
+        clear_memory()
+
+        # TODO: NCCL onload
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+        log_gpu_stats("after onload model")
+
+        self.is_offload = False
+
+    def export_stats(self) -> dict[str, float]:
+        data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        if mpu.get_pipeline_model_parallel_world_size() > 1:
+            # Some log info only exist in last pipeline rank
+            data_list = [data]
+            dist.broadcast_object_list(
+                data_list,
+                src=mpu.get_pipeline_model_parallel_last_rank(),
+                group=mpu.get_pipeline_model_parallel_group(),
+            )
+            data.update(data_list[0])
+        return data

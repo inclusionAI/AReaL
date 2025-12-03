@@ -5,8 +5,14 @@ and staleness constraints for asynchronous rollout generation in RL training.
 """
 
 from threading import Lock
+from typing import Protocol
 
 from areal.api.io_struct import RolloutStat
+
+
+class VersionProvider(Protocol):
+    def get_version(self) -> int:
+        raise NotImplementedError()
 
 
 class StalenessManager:
@@ -19,6 +25,8 @@ class StalenessManager:
 
     Parameters
     ----------
+    version_provider : VersionProvider
+        Provider for current model version (e.g., InferenceEngine)
     max_concurrent_rollouts : int
         Maximum number of concurrent rollouts allowed
     consumer_batch_size : int
@@ -29,6 +37,7 @@ class StalenessManager:
 
     def __init__(
         self,
+        version_provider: VersionProvider,
         max_concurrent_rollouts: int,
         consumer_batch_size: int,
         max_staleness: int,
@@ -37,6 +46,8 @@ class StalenessManager:
 
         Parameters
         ----------
+        version_provider : VersionProvider
+            Provider for current model version (e.g., InferenceEngine)
         max_concurrent_rollouts : int
             Maximum number of concurrent rollouts allowed
         consumer_batch_size : int
@@ -44,6 +55,7 @@ class StalenessManager:
         max_staleness : int
             Maximum allowed offpolicyness (version difference) for rollouts
         """
+        self.version_provider = version_provider
         self.max_concurrent_rollouts = max_concurrent_rollouts
         self.consumer_batch_size = consumer_batch_size
         self.max_staleness = max_staleness
@@ -62,23 +74,11 @@ class StalenessManager:
         """
         return (self.max_staleness + 1) * self.consumer_batch_size
 
-    def get_capacity(self, current_version: int) -> int:
+    def get_capacity(self) -> int:
         """Calculate available capacity for new rollouts.
 
-        This method considers both concurrency limits and staleness constraints
-        to determine how many new rollouts can be accepted.
-
-        The capacity calculation ensures:
-        1. The number of running rollouts doesn't exceed max_concurrent_rollouts
-        2. Samples don't become too stale by limiting based on:
-           - current_version: The current model version
-           - max_staleness: Maximum allowed version difference
-           - consumer_batch_size: Expected batch size for training
-
-        Parameters
-        ----------
-        current_version : int
-            The current version of the model weights
+        Considers both concurrency limits and staleness constraints.
+        Obtains current model version from version_provider.
 
         Returns
         -------
@@ -95,6 +95,7 @@ class StalenessManager:
         the maximum allowed staleness.
         """
         with self.lock:
+            current_version = self.version_provider.get_version()
             # Calculate concurrency-based capacity
             max_concurrent_rollouts = max(1, self.max_concurrent_rollouts)
             concurrency_capacity = max_concurrent_rollouts - self.rollout_stat.running

@@ -9,6 +9,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 seed: 1
+enable_offload: false
 total_train_epochs: 3
 tokenizer_path: ${actor.path}
 
@@ -100,7 +101,6 @@ tir:
 # Dataset configuration
 train_dataset:
   batch_size: 32
-  shuffle: true
   pin_memory: true
   num_workers: 4
   path: /tmp/areal/torl_data/train.parquet

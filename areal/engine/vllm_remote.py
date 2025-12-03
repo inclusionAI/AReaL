@@ -23,6 +23,7 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import RemoteInfEngine
 from areal.platforms import current_platform
+from areal.utils import stats_tracker
 from areal.utils.launcher import TRITON_CACHE_PATH
 
 
@@ -33,8 +34,6 @@ class VLLMBackend:
         self, req: ModelRequest, with_lora: bool
     ) -> HttpRequest:
         """Build vLLM generation request."""
-        if with_lora:
-            raise NotImplementedError("vLLM does not support LoRA training.")
         gconfig = req.gconfig
         stop_token_ids = gconfig.stop_token_ids
 
@@ -50,7 +49,8 @@ class VLLMBackend:
             "logprobs": 0,
             "stream": False,
         }
-
+        if with_lora and len(gconfig.lora_name) > 0:
+            payload["model"] = gconfig.lora_name
         return HttpRequest(endpoint="/v1/completions", payload=payload)
 
     def parse_generation_response(
@@ -81,16 +81,24 @@ class VLLMBackend:
         self, meta: WeightUpdateMeta, lora_initialized: bool
     ) -> WeightUpdateRequests:
         """Build vLLM disk weight update requests."""
-        # vLLM uses a single endpoint for disk updates
-        if lora_initialized:
-            raise NotImplementedError("vLLM does not support updating LoRA weights.")
-        return WeightUpdateRequests(
-            requests=[
-                HttpRequest(
-                    endpoint="/areal_update_weights",
-                    payload={"model_path": str(meta.path)},
+        if meta.use_lora:
+            if not lora_initialized:
+                raise ValueError(
+                    "LoRA update requested, but LoRA is not enabled/initialized in the vLLM engine."
                 )
-            ]
+            endpoint = "/areal_update_weights_lora"
+            payload = {
+                "lora_model_path": str(meta.path),
+                "lora_name": str(meta.lora_name),
+                "lora_int_id": meta.lora_int_id,
+                "base_model_name": str(meta.base_model_name),
+            }
+        else:
+            endpoint = "/areal_update_weights"
+            payload = {"model_path": str(meta.path)}
+
+        return WeightUpdateRequests(
+            requests=[HttpRequest(endpoint=endpoint, payload=payload)]
         )
 
     def build_distributed_weight_update_requests(
@@ -146,6 +154,33 @@ class VLLMBackend:
         """Get vLLM health check request."""
         return HttpRequest(endpoint="/health", payload={}, method="GET")
 
+    def get_offload_request(self) -> HttpRequest:
+        """Get vLLM offload request.
+
+        Uses vLLM's /sleep endpoint to offload model memory to CPU.
+        Default level is 1.
+        """
+        return HttpRequest(endpoint="/sleep", payload={}, method="POST")
+
+    def get_onload_request(self, tags: list[str] | None = None) -> HttpRequest:
+        """Get vLLM onload request.
+
+        Uses vLLM's /wake_up endpoint to reload model memory from CPU.
+        vLLM reads parameters from query string.
+
+        Parameters
+        ----------
+        tags : list[str], optional
+            Tags to wake up specific components. If None, wakes up all components.
+        """
+        if tags is not None:
+            # Build query string with multiple tags parameters
+            tags_query = "&".join([f"tags={tag}" for tag in tags])
+            endpoint = f"/wake_up?{tags_query}"
+        else:
+            endpoint = "/wake_up"
+        return HttpRequest(endpoint=endpoint, payload={}, method="POST")
+
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch vLLM server subprocess."""
         cmd = vLLMConfig.build_cmd_from_args(server_args)
@@ -183,6 +218,8 @@ class RemotevLLMEngine(InferenceEngine):
         self.config = config
         # Pure composition - create internal engine with vLLM backend
         self._engine = RemoteInfEngine(config, VLLMBackend())
+        # lora already initialized when use_lora=true during init, by design, for vLLM
+        self._engine.lora_initialized = config.use_lora
 
     def initialize(
         self,
@@ -235,7 +272,7 @@ class RemotevLLMEngine(InferenceEngine):
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any] | None]:
         """Wait for a specified number of requests to complete."""
         return self._engine.wait(count, timeout, raise_timeout)
 
@@ -281,3 +318,12 @@ class RemotevLLMEngine(InferenceEngine):
 
     def teardown_server(self):
         return self._engine.teardown_server()
+
+    def offload(self):
+        return self._engine.offload()
+
+    def onload(self, tags: list[str] | None = None):
+        return self._engine.onload(tags=tags)
+
+    def export_stats(self) -> dict[str, float]:
+        return stats_tracker.export_all(reduce_group=None)

@@ -64,7 +64,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         max_llm_calls_per_run: int = 100,
         judge_engine: RemoteSGLangEngine | None = None,
     ):
-        self.gconfig = gconfig
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
@@ -177,7 +177,6 @@ def get_search_dataset(dataset_path, tokenizer):
 
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
-    config: AgentRLConfig
 
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
@@ -222,10 +221,6 @@ def main(args):
     actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow
-    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
     workflow = TongyiDeepResearchReactWorkflow(
         gconfig=config.gconfig,
         tokenizer=tokenizer,
@@ -321,15 +316,15 @@ def main(args):
                 tokenizer=tokenizer,
             )
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Upload statistics to the logger (e.g., wandb)
-        stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+        stats = actor.export_stats()
         stats_logger.commit(epoch, step, global_step, stats)
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Resume rollout
         rollout.resume()

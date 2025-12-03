@@ -35,9 +35,8 @@ our project just as you enjoy real-world milk tea (cheers).
 ## 📰 News
 
 **\[2025/08/30\]** Introducing ASearcher, a state-of-the-art search agent built with
-AReaL's end-to-end asynchronous RL training. Check out the
-[paper](https://arxiv.org/pdf/2508.07976) and the
-[open-source repository](https://github.com/inclusionAI/ASearcher)!
+AReaL's end-to-end asynchronous RL training. Check out the [paper](assets/paper.pdf) and
+the [open-source repository](https://github.com/inclusionAI/ASearcher)!
 
 **\[2025/07/31\] (AReaL-lite)** We introduce AReaL-lite, a **lightweight** version of
 AReaL designed specifically for AI researchers and rapid prototyping. AReaL-lite
@@ -56,7 +55,7 @@ asynchronous RL training, which achieves **2.77× speedup while delivering compa
 superior training performance** compared to synchronous systems. Furthermore,
 asynchronous RL significantly simplifies multi-turn agentic RL training setup! Check out
 [our v0.3 overview blog](/blog/AReaL_v0_3.md) and the
-[research paper](https://arxiv.org/pdf/2505.24298).
+[research paper](assets/paper.pdf).
 
 **\[2025/03/31\] (v0.2, boba)** Introducing our milestone release—boba! Please call it
 A-ReaL-boba! This release features significantly faster training with SGLang support and

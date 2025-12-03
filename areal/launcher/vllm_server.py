@@ -1,4 +1,5 @@
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -20,6 +21,7 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
+from areal.utils.proc import kill_process_tree
 
 logger = logging.getLogger("vLLMServer Wrapper")
 
@@ -88,8 +90,48 @@ class vLLMServerWrapper:
         self.trial_name = trial_name
         self.config = vllm_config
         self.allocation_mode = allocation_mode
-        self.server_process = None
+        self.server_processes = []
         self.n_gpus_per_node = n_gpus_per_node
+        self._shutdown_requested = False
+        self._is_shutting_down = False
+
+        # Register signal handlers for graceful shutdown
+        signal.signal(signal.SIGTERM, self._handle_shutdown_signal)
+        signal.signal(signal.SIGINT, self._handle_shutdown_signal)
+
+    def _handle_shutdown_signal(self, signum, frame):
+        """Handle shutdown signals by cleaning up all server processes."""
+        if self._is_shutting_down:
+            logger.warning("Shutdown already in progress, ignoring redundant signal.")
+            return
+        self._is_shutting_down = True
+
+        sig_name = signal.Signals(signum).name
+        logger.info(f"Received {sig_name}, initiating graceful shutdown...")
+        self._shutdown_requested = True
+        self._cleanup_all_servers()
+        sys.exit(0)
+
+    def _cleanup_all_servers(self):
+        """Clean up all server processes and their children."""
+        # To prevent race conditions from re-entrant calls (e.g., from a signal handler),
+        # we first copy the list of processes and then clear the original list.
+        processes_to_clean = list(self.server_processes)
+        self.server_processes.clear()
+
+        if not processes_to_clean:
+            logger.info("No server processes to clean up")
+            return
+
+        logger.info(f"Cleaning up {len(processes_to_clean)} vLLM server processes")
+        for i, process in enumerate(processes_to_clean):
+            if process.poll() is None:  # Process is still running
+                logger.info(f"Terminating vLLM server process {i} (PID: {process.pid})")
+                kill_process_tree(process.pid, timeout=10, graceful=True)
+            else:
+                logger.info(f"vLLM server process {i} already terminated")
+
+        logger.info("All vLLM server processes cleaned up")
 
     def run(self):
         gpus_per_server = self.allocation_mode.gen_instance_size
@@ -144,33 +186,39 @@ class vLLMServerWrapper:
             launch_server_args.append((cmd, host_ip, server_port, custom_env))
             server_addresses.append(f"http://{host_ip}:{server_port}")
 
-        with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
-            server_processes = executor.map(
-                lambda args: self.launch_one_server(*args), launch_server_args
-            )
+        try:
+            with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
+                server_iterator = executor.map(
+                    lambda args: self.launch_one_server(*args), launch_server_args
+                )
+                # Consume iterator incrementally to allow cleanup of partially started servers
+                for process in server_iterator:
+                    self.server_processes.append(process)
 
-        while True:
-            all_alive = True
-            for i, process in enumerate(server_processes):
-                return_code = process.poll()
-                if return_code is not None:
-                    logger.info(
-                        f"vllm server {server_addresses[i]} exits, "
-                        f"returncode={return_code}"
-                    )
-                    all_alive = False
-                    break
-
-            if not all_alive:
-                for i, process in enumerate(server_processes):
-                    if process.poll() is None:
-                        process.terminate()
-                        process.wait()
+            while not self._shutdown_requested:
+                all_alive = True
+                for i, process in enumerate(self.server_processes):
+                    return_code = process.poll()
+                    if return_code is not None:
                         logger.info(
-                            f"vllm server process{server_addresses[i]} terminated."
+                            f"vllm server {server_addresses[i]} exits, "
+                            f"returncode={return_code}"
                         )
+                        all_alive = False
+                        break
 
-            time.sleep(1)
+                if not all_alive:
+                    logger.warning(
+                        "One or more vLLM servers died, cleaning up all servers"
+                    )
+                    self._cleanup_all_servers()
+                    sys.exit(1)
+
+                time.sleep(1)
+        except Exception as e:
+            logger.error(f"Error in vLLM server wrapper: {e}")
+            self._cleanup_all_servers()
+            raise
 
     def launch_one_server(
         self, cmd: str, host_ip: str, server_port: int, custom_env: dict | None = None

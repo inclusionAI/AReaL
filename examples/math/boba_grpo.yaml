@@ -2,6 +2,7 @@ experiment_name: boba_grpo
 trial_name: trial0
 
 seed: 1
+enable_offload: false
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
@@ -95,14 +96,12 @@ sglang:
 train_dataset:
   path: inclusionAI/AReaL-boba-Data
   batch_size: 32
-  shuffle: true
   pin_memory: true
   type: rl
 
 valid_dataset:
   path: inclusionAI/AReaL-boba-Data
   batch_size: 16
-  shuffle: true
   pin_memory: true
   type: rl
 

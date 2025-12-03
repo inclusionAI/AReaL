@@ -33,6 +33,7 @@ from areal.utils.launcher import (
     validate_config_for_distributed_launcher,
     wait_llm_server_addrs,
 )
+from areal.utils.offload import get_tms_env_vars
 from areal.utils.ray import get_placement_group_master_ip_and_port
 from areal.utils.recover import check_if_recover
 
@@ -508,6 +509,11 @@ def ray_main(config, run_id: int = 0):
             launcher.stop_all(force=True)
             raise e
 
+    if config.get("enable_offload", False):
+        tms_env_vars = get_tms_env_vars()
+    else:
+        tms_env_vars = {}
+
     if allocation_mode.type_ == AllocationType.DECOUPLED_EVAL:
         trainer_n_nodes = 1
         gpus_per_task = 0
@@ -574,6 +580,7 @@ def ray_main(config, run_id: int = 0):
                     config.launcher.trainer_env_vars,
                 ),
                 **_env_vars,
+                **tms_env_vars,
             ),
             env_hook=partial(torch_env_hook, trainer_n_nodes * n_gpus_per_node),
         )

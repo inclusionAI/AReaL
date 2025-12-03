@@ -2,7 +2,6 @@ import json
 import os
 import sys
 from dataclasses import asdict
-from typing import List
 
 import pytest
 import yaml
@@ -16,9 +15,8 @@ def test_sft(tmp_path: str):
 
     # Wrap over the original config to use local models/datasets if possible
     config, _ = load_expr_config(
-        ["--config", os.path.join(base_dir, f"config.yaml")], SFTConfig
+        ["--config", os.path.join(base_dir, "config.yaml")], SFTConfig
     )
-    config: SFTConfig
 
     local_model_path = config.model.path.replace("/", "__")
     local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
@@ -57,10 +55,10 @@ def test_sft(tmp_path: str):
     )
 
     with open(os.path.join(tmp_path, "losses.json")) as f:
-        losses: List[float] = json.load(f)
+        losses: list[float] = json.load(f)
 
     with open(os.path.join(base_dir, "ref_losses.json")) as f:
-        ref_losses: List[float] = json.load(f)
+        ref_losses: list[float] = json.load(f)
 
     # Refer to https://docs.pytorch.org/docs/stable/testing.html#torch.testing.assert_close
     assert all(

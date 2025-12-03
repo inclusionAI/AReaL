@@ -1,6 +1,5 @@
 # Adapted from verl
 
-from typing import Optional
 
 import torch
 from transformers.integrations.flash_attention import flash_attention_forward
@@ -19,11 +18,11 @@ from areal.utils.ulysses import (
 def ulysses_flash_attn_forward(
     self,
     hidden_states: torch.Tensor,
-    attention_mask: Optional[torch.Tensor] = None,
-    position_ids: Optional[torch.LongTensor] = None,
-    position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+    attention_mask: torch.Tensor | None = None,
+    position_ids: torch.LongTensor | None = None,
+    position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
     **kwargs,
-) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     # bsz = 1, q_len = total_seqlen / sp_size
     bsz, q_len, _ = hidden_states.size()
 
@@ -40,9 +39,10 @@ def ulysses_flash_attn_forward(
     ulysses_sp_size = get_ulysses_sequence_parallel_world_size()
 
     if ulysses_sp_size > 1:
-        assert (
-            self.num_heads % ulysses_sp_size == 0
-        ), f"num_heads ({self.num_heads}) must be divisible by Ulysses sequence parallel size({ulysses_sp_size})"
+        if self.num_heads % ulysses_sp_size != 0:
+            raise ValueError(
+                f"num_heads ({self.num_heads}) must be divisible by Ulysses sequence parallel size({ulysses_sp_size})"
+            )
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)

@@ -30,6 +30,7 @@ from areal.utils.launcher import (
     wait_llm_server_addrs,
 )
 from areal.utils.network import find_free_ports
+from areal.utils.offload import get_tms_env_vars
 from areal.utils.recover import check_if_recover
 
 logger = logging.getLogger("Local Scheduler")
@@ -351,6 +352,10 @@ def local_main(config, run_id: int = 0):
             launcher.stop_all(signal="SIGINT")
             raise e
 
+    if config.get("enable_offload", False):
+        tms_env_vars = get_tms_env_vars()
+    else:
+        tms_env_vars = {}
     # Launch trainer entrypoint
     if alloc_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         if alloc_mode.type_ == AllocationType.DECOUPLED_EVAL:
@@ -376,6 +381,7 @@ def local_main(config, run_id: int = 0):
                     config.launcher.trainer_env_vars,
                 ),
                 **_env_vars,
+                **tms_env_vars,
             ),
         )
 

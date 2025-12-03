@@ -71,7 +71,6 @@ def boba_reward_fn(
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
-    config: GRPOConfig
     rank = int(os.getenv("RANK"))
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
@@ -130,10 +129,6 @@ def main(args):
         ref.initialize(None, ft_spec)
 
     # Create rollout workflow
-    if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.pad_token_id)
-    if tokenizer.eos_token_id not in config.gconfig.stop_token_ids:
-        config.gconfig.stop_token_ids.append(tokenizer.eos_token_id)
     workflow = RLVRWorkflow(
         reward_fn=boba_reward_fn,
         gconfig=config.gconfig,
@@ -292,8 +287,8 @@ def main(args):
                 tokenizer=tokenizer,
             )
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Upload statistics to the logger (e.g., wandb)
         with perf_tracer.trace_scope(
@@ -301,11 +296,11 @@ def main(args):
             category=Category.INSTR,
             args={"global_step": global_step},
         ):
-            stats = stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+            stats = actor.export_stats()
             stats_logger.commit(epoch, step, global_step, stats)
 
-        dist.barrier(device_ids=[actor.device.index])
         current_platform.synchronize()
+        dist.barrier(group=actor.cpu_group)
 
         # Resume rollout
         rollout.resume()

@@ -6,7 +6,7 @@ from areal.utils import logging
 logger = logging.getLogger("AReaLOpenAI Interaction Cache")
 
 
-class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
+class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._apply_reward_discount_called = False
@@ -52,9 +52,9 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             updated in-place.
         """
         # Assign rewards to interactions in cache based on their creation order
-        assert (
-            not self._apply_reward_discount_called
-        ), "apply_reward_discount should only be called once."
+        assert not self._apply_reward_discount_called, (
+            "apply_reward_discount should only be called once."
+        )
         self._apply_reward_discount_called = True
         interaction_time_sequence = list(
             reversed([interaction for _, interaction in self.items()])

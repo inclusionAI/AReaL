@@ -23,6 +23,7 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import RemoteInfEngine
 from areal.platforms import current_platform
+from areal.utils import stats_tracker
 from areal.utils.launcher import TRITON_CACHE_PATH
 
 
@@ -176,6 +177,21 @@ class SGLangBackend:
         """Get SGLang health check request."""
         return HttpRequest(endpoint="/health", payload={}, method="GET")
 
+    def get_offload_request(self) -> HttpRequest:
+        """Get SGLang offload request."""
+        return HttpRequest(endpoint="/release_memory_occupation", payload={})
+
+    def get_onload_request(self, tags: list[str] | None = None) -> HttpRequest:
+        """Get SGLang onload request.
+
+        Parameters:
+        ----------
+        tags: list[str], optional
+            Available tags for multi-stage resume: weights, kv_cache
+        """
+        payload = {"tags": tags} if tags is not None else {}
+        return HttpRequest(endpoint="/resume_memory_occupation", payload=payload)
+
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch SGLang server subprocess."""
         cmd = SGLangConfig.build_cmd_from_args(server_args)
@@ -260,7 +276,7 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any] | None]:
         """Wait for a specified number of requests to complete."""
         return self._engine.wait(count, timeout, raise_timeout)
 
@@ -306,3 +322,12 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def teardown_server(self):
         return self._engine.teardown_server()
+
+    def offload(self):
+        return self._engine.offload()
+
+    def onload(self, tags: list[str] | None = None):
+        return self._engine.onload(tags=tags)
+
+    def export_stats(self) -> dict[str, float]:
+        return stats_tracker.export_all(reduce_group=None)

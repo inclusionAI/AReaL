@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -22,7 +22,6 @@ MODEL_PATHS = {
 }
 HF_MODEL_PATHS = {
     "qwen3": "Qwen/Qwen3-0.6B",
-    # TODO: switch Qwen3MoE to smaller model initialized from scratch
     "qwen3moe": "Qwen/Qwen3-30B-A3B",
 }
 for model_type, path in MODEL_PATHS.items():
@@ -52,7 +51,7 @@ def mock_input(
     batch_size=128,
     min_seqlen=1,
     max_seqlen=1024,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create mock padded input data (same format for huggingface) for testing.
     Returns a dict with input_ids, attention_mask, and position_ids.
     """
@@ -77,9 +76,11 @@ def mock_input(
     )
 
 
-def mock_loss_fn(logits: torch.Tensor, input_data: Dict) -> torch.Tensor:
+def mock_loss_fn(
+    logprobs: torch.Tensor, entropy: torch.Tensor, input_data: dict, **kwargs
+) -> torch.Tensor:
     """Mock loss function for testing."""
-    return torch.mean(logits)
+    return torch.mean(logprobs)
 
 
 def make_engine(model_type, mb_spec, ulysses_sp_size=1, init_optimizer=False):
@@ -147,7 +148,7 @@ def test_ulysses(model_type: str):
             model_type, mb_spec, ulysses_sp_size=2, init_optimizer=True
         )
         engine.train()
-        train_result = engine.train_batch(
+        engine.train_batch(
             input_=input,
             loss_fn=mock_loss_fn,
             loss_weight_fn=lambda x: x["cu_seqlens"][-1],
@@ -157,7 +158,7 @@ def test_ulysses(model_type: str):
         engine_golden = make_engine(model_type, mb_spec, init_optimizer=True)
         engine_golden.train()
         for input in input_chunks:
-            train_result_golden = engine_golden.train_batch(
+            engine_golden.train_batch(
                 input_=input,
                 loss_fn=mock_loss_fn,
                 loss_weight_fn=lambda x: x["cu_seqlens"][-1],

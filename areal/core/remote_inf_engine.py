@@ -3,11 +3,12 @@ import os
 import random
 import shutil
 import subprocess
-import threading
 import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ProcessPoolExecutor
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from threading import Lock
 from typing import Any, Protocol
@@ -19,6 +20,7 @@ import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
+from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
@@ -36,14 +38,15 @@ from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
+from areal.utils.proc import kill_process_tree
 
 from .workflow_executor import WorkflowExecutor
 
 RID_CACHE_SIZE = 128
 
-# Thread-local storage for aiohttp sessions
-# Each thread gets its own session to ensure thread safety and event loop compatibility
-_session_storage = threading.local()
+logger = logging.getLogger(__name__)
+
+_session_storage = ContextVar("aiohttp.ClientSession")
 
 
 class RemoteInfBackendProtocol(Protocol):
@@ -197,6 +200,41 @@ class RemoteInfBackendProtocol(Protocol):
         """
         ...
 
+    def get_offload_request(self) -> HttpRequest:
+        """Get request to offload model memory.
+
+        Returns
+        -------
+        HttpRequest
+            The HTTP request to offload model memory
+
+        Raises
+        ------
+        NotImplementedError
+            If offload is not supported by this backend
+        """
+        ...
+
+    def get_onload_request(self, tags: list[str] | None = None) -> HttpRequest:
+        """Get request to onload model memory.
+
+        Parameters
+        ----------
+        tags : list[str], optional
+            Tags to onload specific components. If None, onloads all components.
+
+        Returns
+        -------
+        HttpRequest
+            The HTTP request to onload model memory
+
+        Raises
+        ------
+        NotImplementedError
+            If onload is not supported by this backend
+        """
+        ...
+
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch inference server subprocess.
 
@@ -213,7 +251,7 @@ class RemoteInfBackendProtocol(Protocol):
         ...
 
 
-class RemoteInfEngine:
+class RemoteInfEngine(InferenceEngine):
     """
     Base implementation for HTTP-based remote inference engines.
 
@@ -254,34 +292,47 @@ class RemoteInfEngine:
         self.workflow_executor: WorkflowExecutor
         self.local_server_processes: list[LocalInfServerInfo] = []
 
-    def _get_or_create_session(self) -> aiohttp.ClientSession:
-        """Get or create a ClientSession for the current thread/event loop.
-
-        This method provides thread-local session storage to avoid creating
-        a new session for every request while maintaining thread safety.
-        Each thread gets its own isolated session that is bound to that
-        thread's event loop.
+    def _create_session(self) -> aiohttp.ClientSession:
+        """Create a ClientSession for the current asyncio coroutine.
 
         Returns
         -------
         aiohttp.ClientSession
-            A session object for the current thread
+            A new client session object
         """
-        if (
-            not hasattr(_session_storage, "session")
-            or _session_storage.session is None
-            or _session_storage.session.closed
-        ):
-            _session_storage.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(
-                    total=self.config.request_timeout,
-                    sock_connect=self.config.request_timeout,
-                    connect=self.config.request_timeout,
-                ),
-                read_bufsize=1024 * 1024 * 10,
-                connector=get_default_connector(),
-            )
-        return _session_storage.session
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=self.config.request_timeout,
+                sock_connect=self.config.request_timeout,
+                connect=self.config.request_timeout,
+            ),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        )
+
+    @asynccontextmanager
+    async def managed_session(self):
+        """Provide a managed ClientSession with automatic lifecycle handling.
+
+        Creates a ClientSession, stores it in task-local context for nested
+        agenerate() calls to reuse, and ensures proper cleanup.
+
+        Yields
+        ------
+            None
+
+        Examples
+        --------
+            async with engine.managed_session():
+                result = await engine.agenerate(request)
+        """
+        session = self._create_session()
+        token = _session_storage.set(session)
+        try:
+            yield
+        finally:
+            await session.close()
+            _session_storage.reset(token)
 
     def _wait_for_server(self, address):
         """Wait for a server to become healthy."""
@@ -333,6 +384,13 @@ class RemoteInfEngine:
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
             self.logger.info("Get server addresses from the `addr` argument.")
+        elif len(self.local_server_processes) > 0:
+            self.addresses = [f"{s.host}:{s.port}" for s in self.local_server_processes]
+            self.logger.info("Get server addresses from the local subprocess.")
+        elif os.getenv("AREAL_LLM_SERVER_ADDRS"):
+            # When addr is not provided, fallback to reading addrs from env var
+            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
+            self.logger.info("Get server addresses from environment variable.")
         else:
             if (
                 self.config.experiment_name is not None
@@ -348,10 +406,6 @@ class RemoteInfEngine:
                 except (TimeoutError, RuntimeError):
                     # RuntimeError happens when name_resolve is not properly configured.
                     pass
-        if not self.addresses and os.getenv("AREAL_LLM_SERVER_ADDRS"):
-            # When addr is not provided, fallback to reading addrs from env var
-            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
-            self.logger.info("Get server addresses from environment variable.")
         if not self.addresses:
             raise RuntimeError(
                 "No configured inference servers. "
@@ -375,44 +429,14 @@ class RemoteInfEngine:
             logger=self.logger, train_data_parallel_size=train_data_parallel_size
         )
 
-        # Register session cleanup hook for AsyncTaskRunner thread
-        # This ensures sessions created in the background thread are properly closed
-        async def cleanup_session():
-            """Close thread-local aiohttp session in AsyncTaskRunner thread."""
-            if hasattr(_session_storage, "session") and _session_storage.session:
-                if not _session_storage.session.closed:
-                    await _session_storage.session.close()
-                _session_storage.session = None
-
-        self.workflow_executor.runner.register_shutdown_hook(cleanup_session)
-
     def destroy(self):
         """Destroy the engine and clean up resources."""
-        # Clean up thread-local session if it exists in the current thread
-        if hasattr(_session_storage, "session") and _session_storage.session:
-            try:
-                if not _session_storage.session.closed:
-                    # Try to close the session synchronously
-                    # Note: This only cleans up the session in the current thread.
-                    # Sessions in AsyncTaskRunner thread are cleaned up via shutdown hooks
-                    # registered during initialize().
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # If we're in an async context, schedule the close
-                        asyncio.create_task(_session_storage.session.close())
-                    else:
-                        # If no loop is running, run the close synchronously
-                        loop.run_until_complete(_session_storage.session.close())
-            except RuntimeError:
-                # Ignore errors during cleanup (e.g., no event loop)
-                pass
-            finally:
-                _session_storage.session = None
-
         if hasattr(self, "workflow_executor"):
             self.workflow_executor.destroy()
         if hasattr(self, "executor"):
             self.executor.shutdown()
+        if len(self.local_server_processes) > 0:
+            self.teardown_server()
 
     def set_version(self, version):
         """Set the current weight version."""
@@ -500,10 +524,13 @@ class RemoteInfEngine:
             self.rid_to_address[req.rid] = server_addr
             self.rid_queue.append(req.rid)
 
-        # Get or create thread-local session
-        # Thread-local storage ensures each thread has its own session,
-        # maintaining thread safety and event loop compatibility
-        session = self._get_or_create_session()
+        # Get or create task-local session
+        session_cleanup = False
+        try:
+            session = _session_storage.get()
+        except LookupError:
+            session = self._create_session()
+            session_cleanup = True
 
         # Deal with rollout interruption
         stop_reason = None
@@ -549,6 +576,9 @@ class RemoteInfEngine:
                 len(gen_result.output_tokens),
                 len(req.input_ids),
             )
+
+        if session_cleanup:
+            await session.close()
 
         # Final abort handling
         if stop_reason == "abort":
@@ -723,7 +753,7 @@ class RemoteInfEngine:
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any] | None]:
         """Wait for a specified number of requests to complete.
 
         Parameters
@@ -737,8 +767,9 @@ class RemoteInfEngine:
 
         Returns
         -------
-        Dict[str, Any]
-            A concatenated batch of trajectories, or an empty dict if timeout exceeded and raise_timeout is False
+        list[dict[str, Any] | None]
+            A list of trajectory dictionaries. Each element may be None for rejected trajectories.
+            Returns an empty list if timeout exceeded and raise_timeout is False.
         """
         return self.workflow_executor.wait(
             count, timeout=timeout, raise_timeout=raise_timeout
@@ -812,16 +843,8 @@ class RemoteInfEngine:
     @trace_perf("remote_inf_engine.pause_generation", category="misc")
     def pause_generation(self):
         """Pause request submission for async rollout."""
-        try:
-            pause_req = self.backend.get_pause_request()
-            for addr in self.addresses:
-                res = requests.post(
-                    f"http://{addr}{pause_req.endpoint}",
-                    json=pause_req.payload,
-                )
-                res.raise_for_status()
-        except NotImplementedError:
-            self.logger.warning("Backend does not support pause operation")
+        pause_req = self.backend.get_pause_request()
+        self._run_request_on_all_servers(pause_req)
 
         # The above http request may require some time to be scheduled and executed.
         # The following line waits until all requests are indeed dropped.
@@ -830,16 +853,8 @@ class RemoteInfEngine:
     @trace_perf("remote_inf_engine.continue_generation", category="misc")
     def continue_generation(self):
         """Resume request submission for async rollout."""
-        try:
-            resume_req = self.backend.get_resume_request()
-            for addr in self.addresses:
-                res = requests.post(
-                    f"http://{addr}{resume_req.endpoint}",
-                    json=resume_req.payload,
-                )
-                res.raise_for_status()
-        except NotImplementedError:
-            self.logger.warning("Backend does not support resume operation")
+        resume_req = self.backend.get_resume_request()
+        self._run_request_on_all_servers(resume_req)
 
     def pause(self):
         """Pause request submission for async rollout.
@@ -850,6 +865,40 @@ class RemoteInfEngine:
     def resume(self):
         """Resume request submission for async rollout."""
         return self.workflow_executor.resume()
+
+    def offload(self) -> None:
+        """Offload model memory on all servers."""
+        offload_req = self.backend.get_offload_request()
+        self._run_request_on_all_servers(offload_req)
+
+    def onload(self, tags: list[str] | None = None) -> None:
+        """Onload model memory on all servers."""
+        onload_req = self.backend.get_onload_request(tags=tags)
+        self._run_request_on_all_servers(onload_req)
+
+    def _run_request_on_all_servers(self, req: HttpRequest):
+        async def _fn():
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.config.request_timeout),
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            ) as session:
+                jobs = []
+                for addr in self.addresses:
+                    jobs.append(
+                        arequest_with_retry(
+                            session=session,
+                            addr=addr,
+                            endpoint=req.endpoint,
+                            payload=req.payload,
+                            method=req.method,
+                            max_retries=self.config.request_retries,
+                            timeout=self.config.request_timeout,
+                        )
+                    )
+                await asyncio.gather(*jobs)
+
+        uvloop.run(_fn())
 
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
         """Launch a local inference server."""
@@ -867,21 +916,19 @@ class RemoteInfEngine:
             self.local_server_processes.append(server_info)
             return server_info
         except TimeoutError:
+            logger.warning(
+                f"Launch local server timeouted at {address} after {self.config.setup_timeout}s."
+            )
             self._shutdown_one_server(server_info)
             raise
 
     def _shutdown_one_server(self, server_info: LocalInfServerInfo):
+        addr = f"{server_info.host}:{server_info.port}"
+        if addr in self.addresses:
+            self.addresses.remove(addr)
         if server_info.process.poll() is not None:
             return
-        server_info.process.terminate()
-        try:
-            server_info.process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.logger.warning(
-                f"Server process {server_info.process.pid} did not terminate gracefully. Killing it."
-            )
-            server_info.process.kill()
-            server_info.process.wait()
+        kill_process_tree(server_info.process.pid, graceful=True)
 
     def teardown_server(self):
         """Teardown all locally launched servers."""
