@@ -234,6 +234,83 @@ def ppo_actor_loss_fn(
     return pg_loss, stat
 
 
+def sapo_loss_fn(
+    logprobs: torch.Tensor,
+    old_logprobs: torch.Tensor,
+    advantages: torch.Tensor,
+    tau_pos: float,
+    tau_neg: float,
+    loss_mask: torch.Tensor,
+    importance_sampling_level: str = "token",
+    cu_seqlens: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict]:
+    """SAPO (Soft Adaptive Policy Optimization) loss with asymmetric sigmoid gates.
+
+    SAPO replaces PPO clipping with soft sigmoid gates, providing smooth gradients.
+    Note: SAPO requires use_decoupled_loss=False.
+
+    Args:
+        logprobs: Current policy log probabilities
+        old_logprobs: Old policy log probabilities
+        advantages: Advantage values
+        tau_pos: Temperature for positive advantages (higher = sharper gate)
+        tau_neg: Temperature for negative advantages (higher = sharper gate)
+        loss_mask: Mask for valid tokens
+        importance_sampling_level: "token" or "sequence" level importance sampling
+        cu_seqlens: Cumulative sequence lengths for sequence-level IS
+
+    Returns:
+        Tuple of (loss, statistics dict compatible with PPO)
+    """
+    loss_mask_count = loss_mask.count_nonzero() or 1
+    advantages = advantages.detach()
+    log_ratio = logprobs - old_logprobs
+
+    if importance_sampling_level == "sequence":
+        ratio, advantages = _compute_sequence_level_ratio_and_advantages(
+            log_ratio, advantages, loss_mask, cu_seqlens
+        )
+    elif importance_sampling_level == "token":
+        ratio = torch.exp(log_ratio)
+    else:
+        raise ValueError(
+            f"Invalid importance_sampling_level: {importance_sampling_level}. "
+            "Must be 'token' or 'sequence'."
+        )
+
+    # SAPO: Asymmetric sigmoid gates with 4/τ gradient normalization
+    gate_pos = torch.sigmoid(tau_pos * (ratio - 1.0))
+    gate_neg = torch.sigmoid(tau_neg * (ratio - 1.0))
+    scale_pos = 4.0 / tau_pos
+    scale_neg = 4.0 / tau_neg
+    scaled_gate_pos = gate_pos * scale_pos
+    scaled_gate_neg = gate_neg * scale_neg
+
+    # Select gate based on advantage sign
+    is_positive = advantages > 0
+    soft_gate = torch.where(is_positive, scaled_gate_pos, scaled_gate_neg)
+
+    # Compute loss
+    pg_loss = -soft_gate * advantages
+    logging_loss = pg_loss.detach()
+    pg_loss = torch.where(loss_mask, pg_loss, 0).sum() / loss_mask_count
+
+    # Return stat dict compatible with PPO (fake clip_mask for logging compatibility)
+    stat = dict(
+        loss=logging_loss,
+        importance_weight=ratio.detach(),
+        approx_kl=log_ratio.detach(),
+        clip_mask=torch.zeros_like(loss_mask, dtype=torch.bool),  # SAPO doesn't clip
+        dual_clip_mask=torch.zeros_like(loss_mask, dtype=torch.bool),
+        # SAPO-specific stats
+        sapo_soft_gate=soft_gate.detach(),
+        sapo_gate_pos=gate_pos.detach(),
+        sapo_gate_neg=gate_neg.detach(),
+    )
+
+    return pg_loss, stat
+
+
 def _huber_loss(x: torch.Tensor, y: torch.Tensor, delta: float):
     diff = torch.abs(x - y)
     return torch.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta))

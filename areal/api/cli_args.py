@@ -620,6 +620,20 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={"help": "KL divergence estimator", "choices": ["k1", "k2", "k3"]},
     )
 
+    # SAPO (Soft Adaptive Policy Optimization) - https://arxiv.org/abs/2511.20347
+    use_sapo_loss: bool = field(
+        default=False,
+        metadata={"help": "Use SAPO loss (mutually exclusive with PPO clipping)"},
+    )
+    sapo_tau_pos: float = field(
+        default=1.0,
+        metadata={"help": "SAPO temperature for positive advantages"},
+    )
+    sapo_tau_neg: float = field(
+        default=1.05,
+        metadata={"help": "SAPO temperature for negative advantages"},
+    )
+
     # Asynchronous RL
     recompute_logprob: bool = field(
         default=False,
