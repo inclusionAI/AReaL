@@ -26,6 +26,7 @@ import numpy as np
 import torch
 from pydantic import BaseModel, Field
 
+from areal.controller.batch import DistributedBatchMemory
 from areal.utils import logging
 
 TOKENIZER_ARCHIVE_INLINE_THRESHOLD = 512 * 1024
@@ -404,6 +405,18 @@ def serialize_value(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return SerializedNDArray.from_array(value).model_dump()
 
+    # Handle DistributedBatchMemory (check before dataclass)
+    # Import here to avoid circular dependency
+    if isinstance(value, DistributedBatchMemory):
+        # Use __getstate__ to get serializable state
+        state = value.__getstate__()
+        # Recursively serialize the state
+        serialized_state = serialize_value(state)
+        return {
+            "type": "distributed_batch_memory",
+            "state": serialized_state,
+        }
+
     # Handle dataclass instances (check before dict, as dataclasses can be dict-like)
     # Note: is_dataclass returns True for both classes and instances, so check it's not a type
     if is_dataclass(value) and not isinstance(value, type):
@@ -468,8 +481,17 @@ def deserialize_value(value: Any) -> Any:
     if value is None:
         return None
 
-    # Handle dict - check if it's a SerializedDataclass or SerializedTensor
+    # Handle dict - check if it's a SerializedDataclass, SerializedTensor, or DistributedBatchMemory
     if isinstance(value, dict):
+        # Check for DistributedBatchMemory marker
+        if value.get("type") == "distributed_batch_memory":
+            # Deserialize the state
+            state = deserialize_value(value.get("state", {}))
+            # Create instance and restore state
+            instance = DistributedBatchMemory.__new__(DistributedBatchMemory)
+            instance.__setstate__(state)
+            return instance
+
         # Check for SerializedDataclass marker (check before tensor)
         if value.get("type") == "dataclass":
             try:

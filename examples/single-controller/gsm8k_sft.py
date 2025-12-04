@@ -138,6 +138,13 @@ def main(args):
                     evaluator.evaluate(evaluate_fn, epoch, step, global_step)
 
                 stats_logger.commit(epoch, step, global_step, engine.export_stats())
+
+                # Clear old batch data periodically (if batch server is enabled)
+                if global_step % 10 == 0 and global_step > 0:
+                    with stats_tracker.record_timing("clear_batches"):
+                        # Keep data from the last 5 steps
+                        engine.clear_batches(global_step - 5)
+
                 global_step += 1
 
     finally:

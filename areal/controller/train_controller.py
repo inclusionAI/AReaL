@@ -95,6 +95,8 @@ class TrainController:
             Allocation mode configuration for distributed setup
         ft_spec : FinetuneSpec
             Finetune specification for model initialization
+        enable_batch_server : bool, optional
+            Whether to enable batch data storage endpoints (integrated in RPC server), by default False
         **kwargs
             Additional keyword arguments passed to engine initialization
         """
@@ -149,7 +151,6 @@ class TrainController:
 
         # Identify DP head workers
         self._identify_dp_heads()
-
         logger.info("TrainController initialization complete")
 
     def _run_async_task(self, task):
@@ -319,15 +320,11 @@ class TrainController:
                 }
 
                 # Convert DistributedBatch to dict for RPC serialization
-                # TODO: Consider passing metadata instead of full tensors to reduce
-                # network overhead, especially for large batches
-                worker_args = [
-                    arg.get_data() if isinstance(arg, DistributedBatch) else arg
-                    for arg in worker_args
-                ]
+                # If batch server is enabled and batch has metadata, pass metadata
+                # Otherwise, get data (legacy mode)
+                worker_args = [self._serialize_arg_for_rpc(arg) for arg in worker_args]
                 worker_kwargs = {
-                    k: v.get_data() if isinstance(v, DistributedBatch) else v
-                    for k, v in worker_kwargs.items()
+                    k: self._serialize_arg_for_rpc(v) for k, v in worker_kwargs.items()
                 }
                 dp_idx += 1
             else:
@@ -346,9 +343,33 @@ class TrainController:
             )
         return await asyncio.gather(*tasks)
 
+    def _serialize_arg_for_rpc(self, arg: Any) -> Any:
+        """Serialize argument for RPC transmission.
+
+        For DistributedBatch with metadata, pass metadata to avoid data transmission.
+        For DistributedBatch with local data, get the data.
+        For other types, pass as-is.
+        """
+        if isinstance(arg, DistributedBatch):
+            # If batch has metadata and batch server is enabled, pass metadata
+            if hasattr(arg, "metadata") and arg.metadata is not None:
+                # Return a special dict that indicates metadata mode
+                return {
+                    "__distributed_batch_metadata__": True,
+                    "metadata": arg.metadata,
+                }
+            else:
+                # Legacy mode: get actual data
+                return arg.get_data()
+        return arg
+
     def _merge_results(self, results, method):
         """Merge results from DP heads: pad tensors to max seq_len, concat dicts, return first for others."""
         first_result = results[0]
+
+        # Handle DistributedBatchMemory
+        if isinstance(first_result, DistributedBatchMemory):
+            return DistributedBatchMemory.concat(results)
 
         if isinstance(first_result, torch.Tensor):
             # Pad tensors to max sequence length and concatenate along batch dimension
@@ -399,7 +420,8 @@ class TrainController:
     ) -> list[DistributedBatch]:
         """Split batch across DP groups. Uses chunk_by_ffd if rebalance=True, else simple chunking."""
         # Handle empty batch by replicating to all DP groups
-        if len(input_.get_data()) == 0:
+        # Use _get_total_size() to avoid fetching data
+        if len(input_) == 0:
             return [input_] * self.alloc_mode.train.dp_size
 
         if rebalance:
@@ -722,3 +744,41 @@ class TrainController:
             self._update_weights_from_disk(meta)
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
+
+    # ==================== DISTRIBUTED BATCH RPC WRAPPERS ====================
+    def clear_batches(self, global_step: int):
+        """Clear batch data from distributed nodes.
+
+        This performs garbage collection of batch data with step < global_step.
+
+        Parameters
+        ----------
+        global_step : int
+            Clear all data with step less than this value
+        """
+
+        server_addrs = {
+            f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
+        }
+        try:
+            DistributedBatchMemory.clear(global_step, server_addrs)
+            logger.info(f"Cleared old batches with step < {global_step}")
+        except Exception as e:
+            logger.warning(f"Error clearing old batches: {e}")
+
+    async def aclear_batches(self, global_step: int):
+        """Async version of clear_batches.
+
+        Parameters
+        ----------
+        global_step : int
+            Clear all data with step less than this value
+        """
+        server_addrs = {
+            f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
+        }
+        try:
+            await DistributedBatchMemory.aclear(global_step, server_addrs)
+            logger.info(f"Cleared old batches with step < {global_step}")
+        except Exception as e:
+            logger.warning(f"Error clearing old batches: {e}")

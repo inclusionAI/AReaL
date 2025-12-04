@@ -20,7 +20,7 @@ from areal.controller.batch import DistributedBatchMemory
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher
 from areal.utils import logging, perf_tracer
-from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.utils.data import cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf
 
@@ -294,6 +294,7 @@ class RolloutController:
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
                         http_timeout=self.config.request_timeout,
+                        _should_return_distributed_batch=True,
                     )
 
                 # TimeourError will be catched below
@@ -367,6 +368,7 @@ class RolloutController:
         # Log and trace
         if self.config.enable_rollout_tracing:
             logger.info("Rollout results are ready!")
+
         return [r.trajectory if r is not None else None for r in results]
 
     @trace_perf("rollout_controller.rollout_batch", category="scheduler")
@@ -390,12 +392,38 @@ class RolloutController:
                 should_accept_fn=should_accept_fn,
             )
         results = self.wait(count=len(data))
-        # Concatenate into batch tensor format
-        batch = concat_padded_tensors([r for r in results if r is not None])
+        logger.info(f"results : {results}")
+        metadata = self._create_batch_with_metadata(results)
+        logger.info(f"metadata: {metadata}")
+        return metadata
 
-        # NOTE: DistributedBatchMemory.from_dict does nothing for now
-        # Just for sync with internal code
-        return DistributedBatchMemory.from_dict(batch)
+    def _create_batch_with_metadata(
+        self, results: list[DistributedBatch | None]
+    ) -> DistributedBatchMemory:
+        """Create a single DistributedBatchMemory from multiple results.
+
+        假设 `results` 中的元素已经是 `DistributedBatch`/`DistributedBatchMemory`，
+        这里不再做任何额外的 HTTP 存储或数据聚合，只在 **metadata 层面** 做合并。
+
+        - 过滤掉 None
+        - 将所有 `DistributedBatchMemory` 通过 `concat` 合并
+        - 如果列表为空，返回一个空的 `DistributedBatchMemory`
+        """
+        from areal.controller.batch import DistributedBatchMemory
+
+        # 过滤掉 None，并只保留 DistributedBatchMemory 实例
+        batches: list[DistributedBatchMemory] = [
+            b for b in results if isinstance(b, DistributedBatchMemory)
+        ]
+
+        if not batches:
+            # 返回一个空的 batch（保持向后兼容）
+            return DistributedBatchMemory.from_dict({})
+
+        # 使用已有的 concat 逻辑：
+        # - 若所有子 batch 都只有 metadata，则 concat 只拼 metadata（不取数据）
+        # - 若有本地数据，则按原有逻辑拼接数据
+        return DistributedBatchMemory.concat(batches)
 
     @trace_perf("rollout_controller.prepare_batch", category="scheduler")
     def prepare_batch(
@@ -437,13 +465,11 @@ class RolloutController:
             self.data_generator, batch_size=dataloader.batch_size
         )
 
-        # Extract trajectories and concatenate
+        # Extract trajectories
         trajectories = [r.trajectory if r is not None else None for r in results]
-        batch = concat_padded_tensors([t for t in trajectories if t is not None])
 
-        # NOTE: DistributedBatchMemory.from_dict does nothing for now
-        # Just for sync with internal code
-        return DistributedBatchMemory.from_dict(batch)
+        valid_traj = [t for t in trajectories if t is not None]
+        return self._create_batch_with_metadata(valid_traj)
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.
@@ -540,3 +566,40 @@ class RolloutController:
     def runner(self):
         """For backward compatibility. The runner is now owned by the dispatcher."""
         return self.dispatcher.runner
+
+    def clear_batches(self, global_step: int):
+        """Clear batch data from distributed nodes.
+
+        This performs garbage collection of batch data with step < global_step.
+
+        Parameters
+        ----------
+        global_step : int
+            Clear all data with step less than this value
+        """
+
+        server_addrs = {
+            f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
+        }
+        try:
+            DistributedBatchMemory.clear(global_step, server_addrs)
+            logger.info(f"Cleared old batches with step < {global_step}")
+        except Exception as e:
+            logger.warning(f"Error clearing old batches: {e}")
+
+    async def aclear_batches(self, global_step: int):
+        """Async version of clear_batches.
+
+        Parameters
+        ----------
+        global_step : int
+            Clear all data with step less than this value
+        """
+        server_addrs = {
+            f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
+        }
+        try:
+            await DistributedBatchMemory.aclear(global_step, server_addrs)
+            logger.info(f"Cleared old batches with step < {global_step}")
+        except Exception as e:
+            logger.warning(f"Error clearing old batches: {e}")
