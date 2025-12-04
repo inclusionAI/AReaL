@@ -70,6 +70,10 @@ class ProxyAgentConfig(GRPOConfig):
         default="qwen25",
     )
 
+    reasoning_parser: str = field(
+        default="qwen3",
+    )
+
     agent_process_pool_size: int = field(
         default=256,
         metadata={"help": "Number of parallel processes for running agents."},
@@ -399,6 +403,7 @@ def main(args):
                                 gconfig=config.gconfig,
                                 tokenizer=config.tokenizer_path,
                                 tool_call_parser=config.tool_call_parser,
+                                reasoning_parser=config.reasoning_parser,
                                 chat_template_type=(
                                     "concat"
                                     if config.export_style == "concat"

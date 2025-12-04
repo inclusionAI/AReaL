@@ -82,6 +82,7 @@ class ProxyServerSingletonWarpper:
         tokenizer: "PreTrainedTokenizerFast",
         engine_max_tokens: int | None = None,
         tool_call_parser: str | None = None,
+        reasoning_parser: str | None = None,
         chat_template_type: str = "hf",
     ):
         self.client = ArealOpenAI(
@@ -89,6 +90,7 @@ class ProxyServerSingletonWarpper:
             tokenizer=tokenizer,
             engine_max_tokens=engine_max_tokens,
             tool_call_parser=tool_call_parser,
+            reasoning_parser=reasoning_parser,
             chat_template_type=chat_template_type,
         )
 
@@ -109,6 +111,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
         tool_call_parser: str = "qwen25",
+        reasoning_parser: str = "qwen3",
         chat_template_type: str = "concat",
         # proxy_server: ProxyServer,
         # run_agent_return_reward: Callable[[Any], Awaitable[float]],
@@ -121,6 +124,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
         # self.proxy_server = proxy_server
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.reasoning_parser = reasoning_parser
         self.chat_template_type = chat_template_type
         self.api_version = "v1"
         self.n_samples = gconfig.n_samples
@@ -146,6 +150,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
             tokenizer=self.tokenizer,
             engine_max_tokens=self.gconfig.max_tokens,
             tool_call_parser=self.tool_call_parser,
+            reasoning_parser=self.reasoning_parser,
             chat_template_type=self.chat_template_type,
         )
         self.proxy_server = self.proxy_server_warpper.get_proxy_server()

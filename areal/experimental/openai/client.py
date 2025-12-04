@@ -70,6 +70,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         cache: CompletionCache,
         engine_max_tokens: int | None = None,
         tool_call_parser: str | None = None,
+        reasoning_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
@@ -78,6 +79,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.reasoning_parser = reasoning_parser
         self._cache = cache
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
@@ -183,6 +185,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 output_text,
                 tools,
                 self.tool_call_parser,
+                self.reasoning_parser,
                 response.stop_reason,
             )
 
@@ -245,6 +248,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         cache: CompletionCache,
         engine_max_tokens: int | None = None,
         tool_call_parser: str | None = None,
+        reasoning_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
@@ -253,6 +257,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.reasoning_parser = reasoning_parser
         self._cache = cache
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
@@ -432,6 +437,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 output_text,
                 tools,
                 self.tool_call_parser,
+                self.reasoning_parser,
                 engine_resp.stop_reason,
                 use_responses=True,
             )
@@ -557,6 +563,7 @@ class ArealOpenAI(AsyncOpenAI):
         tokenizer: "PreTrainedTokenizerFast",
         engine_max_tokens: int | None = None,
         tool_call_parser: str | None = None,
+        reasoning_parser: str | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
@@ -579,6 +586,7 @@ class ArealOpenAI(AsyncOpenAI):
             self._cache,
             engine_max_tokens=self.engine_max_tokens,
             tool_call_parser=self.tool_call_parser,
+            reasoning_parser=reasoning_parser,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,
             messages_delimiter_end=messages_delimiter_end,
@@ -592,6 +600,7 @@ class ArealOpenAI(AsyncOpenAI):
             self._cache,
             engine_max_tokens=self.engine_max_tokens,
             tool_call_parser=self.tool_call_parser,
+            reasoning_parser=reasoning_parser,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,
             messages_delimiter_end=messages_delimiter_end,
