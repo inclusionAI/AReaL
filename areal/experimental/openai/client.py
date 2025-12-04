@@ -143,9 +143,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
                 chat_template_type=self.chat_template_type,
             )
-            print(f"adding new interaction to cache {interaction}")
             remaining_data = cache.add_new_interaction(
-                completion_id, 
+                completion_id,
                 interaction,
                 find_parent=self.chat_template_type == "concat"
             )
