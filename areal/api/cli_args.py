@@ -194,8 +194,10 @@ class GenerationHyperparameters:
                 "greedy",  # Not directly supported by OpenAI
                 "top_k",  # Not supported by OpenAI
                 "stop_token_ids",  # Not supported by OpenAI
+                "lora_name",  # Not supported by OpenAI
             }
         )
+        # TODO: move the excluded args into extra body, so they can be passed through the client request
 
         mapping = {
             "n_samples": "n",
