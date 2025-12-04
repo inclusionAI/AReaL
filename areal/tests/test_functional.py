@@ -1107,9 +1107,8 @@ class TestSAPOLossFn:
         loss2.backward()
         grad2 = logprobs.grad.clone()
 
-        # At ratio=1.0, gradient magnitude should be similar due to 4/tau normalization
-        # (not exactly equal, but should be same order of magnitude)
-        assert torch.allclose(grad1, grad2, rtol=0.5)
+        # At ratio=1.0, gradient magnitude should be identical due to 4/tau normalization.
+        assert torch.allclose(grad1, grad2, atol=1e-6)
 
     def test_loss_mask(self):
         """Test that loss_mask correctly excludes masked tokens."""
