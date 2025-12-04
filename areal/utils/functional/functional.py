@@ -1,80 +1,10 @@
 import functools
 import warnings
-from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any
 
 import numpy as np
 import torch
 import torch.distributed as dist
-
-from areal.platforms import is_npu_available
-
-T = TypeVar("T", torch.Tensor, tuple[torch.Tensor, torch.Tensor])
-
-
-def _gather_logprobs(
-    logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
-):
-    log_probs = torch.nn.functional.log_softmax(logits.float() / temperature, dim=-1)
-    log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-    return log_probs_labels
-
-
-def _gather_logprobs_entropy(
-    logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
-):
-    log_probs = torch.nn.functional.log_softmax(logits.float() / temperature, dim=-1)
-    entropy = -torch.sum(log_probs.exp() * log_probs, dim=-1)
-    log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-    return log_probs_labels, entropy
-
-
-# remove torch.compile due to npu problems
-if not is_npu_available:
-    _gather_logprobs = torch.compile(_gather_logprobs)
-    _gather_logprobs_entropy = torch.compile(_gather_logprobs_entropy)
-
-
-def chunked_apply(
-    fn: Callable[[torch.Tensor, torch.Tensor], T],
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-    chunk_size: int = 1024,
-) -> T:
-    """Apply a function in chunks along the first dimension to reduce peak memory."""
-    total_seqlen = logits.shape[0]
-    results: list = []
-
-    for i in range(0, total_seqlen, chunk_size):
-        end_idx = min(i + chunk_size, total_seqlen)
-        chunk_result = fn(logits[i:end_idx], labels[i:end_idx])
-        results.append(chunk_result)
-
-    # Handle single tensor vs tuple of tensors
-    if isinstance(results[0], tuple):
-        num_outputs = len(results[0])
-        return tuple(torch.cat([r[i] for r in results]) for i in range(num_outputs))
-    return torch.cat(results)
-
-
-def chunked_gather_logprobs(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-    temperature: float = 1.0,
-    chunk_size: int = 1024,
-) -> torch.Tensor:
-    fn = functools.partial(_gather_logprobs, temperature=temperature)
-    return chunked_apply(fn, logits, labels, chunk_size)
-
-
-def chunked_gather_logprobs_entropy(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-    temperature: float = 1.0,
-    chunk_size: int = 1024,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    fn = functools.partial(_gather_logprobs_entropy, temperature=temperature)
-    return chunked_apply(fn, logits, labels, chunk_size)
 
 
 @torch.no_grad()

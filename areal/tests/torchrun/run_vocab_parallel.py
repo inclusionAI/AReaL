@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 
 from areal.platforms import current_platform
-from areal.utils.fsdp.functional import (
+from areal.utils.functional.vocab_parallel import (
     _vocab_parallel_logprobs,
     _vocab_parallel_logprobs_entropy,
 )

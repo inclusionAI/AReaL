@@ -17,7 +17,7 @@ def _run_test_with_torchrun(world_size: int):
                 "--nnodes=1",
                 "--master-addr=localhost",
                 f"--master_port={port}",
-                "areal/tests/torchrun/run_fsdp_vocab_parallel.py",
+                "areal/tests/torchrun/run_vocab_parallel.py",
             ],
             check=True,
             capture_output=True,
@@ -29,7 +29,7 @@ def _run_test_with_torchrun(world_size: int):
 
 @pytest.mark.multi_gpu
 @pytest.mark.parametrize("world_size", [2, 4])
-def test_fsdp_tensor_parallel(world_size: int):
+def test_vocab_parallel(world_size: int):
     """Test vocab parallel logprobs and entropy with TP."""
     if current_platform.device_count() < world_size:
         pytest.skip(f"This test requires {world_size} GPUs")

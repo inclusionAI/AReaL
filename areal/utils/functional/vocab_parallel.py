@@ -1,14 +1,78 @@
 import functools
+from collections.abc import Callable
+from typing import TypeVar
 
 import torch
 from torch import distributed as dist
 
-from areal.utils.fsdp.parallel import ParallelHelper
-from areal.utils.functional import (
-    chunked_apply,
-    chunked_gather_logprobs,
-    chunked_gather_logprobs_entropy,
-)
+from areal.platforms import is_npu_available
+
+T = TypeVar("T", torch.Tensor, tuple[torch.Tensor, torch.Tensor])
+
+
+def _gather_logprobs(
+    logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
+):
+    log_probs = torch.nn.functional.log_softmax(logits.float() / temperature, dim=-1)
+    log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+    return log_probs_labels
+
+
+def _gather_logprobs_entropy(
+    logits: torch.Tensor, labels: torch.Tensor, temperature: float = 1.0
+):
+    log_probs = torch.nn.functional.log_softmax(logits.float() / temperature, dim=-1)
+    entropy = -torch.sum(log_probs.exp() * log_probs, dim=-1)
+    log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+    return log_probs_labels, entropy
+
+
+# remove torch.compile due to npu problems
+if not is_npu_available:
+    _gather_logprobs = torch.compile(_gather_logprobs)
+    _gather_logprobs_entropy = torch.compile(_gather_logprobs_entropy)
+
+
+def _chunked_apply(
+    fn: Callable[[torch.Tensor, torch.Tensor], T],
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    chunk_size: int = 1024,
+) -> T:
+    """Apply a function in chunks along the first dimension to reduce peak memory."""
+    total_seqlen = logits.shape[0]
+    results: list = []
+
+    for i in range(0, total_seqlen, chunk_size):
+        end_idx = min(i + chunk_size, total_seqlen)
+        chunk_result = fn(logits[i:end_idx], labels[i:end_idx])
+        results.append(chunk_result)
+
+    # Handle single tensor vs tuple of tensors
+    if isinstance(results[0], tuple):
+        num_outputs = len(results[0])
+        return tuple(torch.cat([r[i] for r in results]) for i in range(num_outputs))
+    return torch.cat(results)
+
+
+def _chunked_gather_logprobs(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    temperature: float = 1.0,
+    chunk_size: int = 1024,
+) -> torch.Tensor:
+    fn = functools.partial(_gather_logprobs, temperature=temperature)
+    return _chunked_apply(fn, logits, labels, chunk_size)
+
+
+def _chunked_gather_logprobs_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    temperature: float = 1.0,
+    chunk_size: int = 1024,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    fn = functools.partial(_gather_logprobs_entropy, temperature=temperature)
+    return _chunked_apply(fn, logits, labels, chunk_size)
 
 
 class _VocabParallelLogProbs(torch.autograd.Function):
@@ -245,11 +309,11 @@ class _VocabParallelLogProbsEntropy(torch.autograd.Function):
         # Note: torch.xlogy handles 0 * log(0) = 0 correctly
         mean_x_minus_log_z = sum_softmax_times_logits - log_z  # [*, 1] small tensor
 
-        # Use softmax as grad_input base (in-place operations)
-        grad_input = softmax
+        # The gradient is computed in a single large tensor, grad_input, to minimize
+        # peak memory usage. It is initialized here and then modified in-place.
         # Compute: softmax * (mean_x - log_z) - xlogy(softmax, softmax)
         # First: grad_input = softmax * mean_x_minus_log_z (broadcast, creates new tensor)
-        grad_input = grad_input * mean_x_minus_log_z
+        grad_input = softmax * mean_x_minus_log_z
         # Subtract xlogy term in-place
         grad_input.sub_(torch.xlogy(softmax, softmax))
         # Scale by grad_entropy in-place
@@ -300,7 +364,7 @@ def gather_logprobs(
     logits: torch.Tensor,
     labels: torch.Tensor,
     temperature: float = 1.0,
-    parallel_helper: ParallelHelper | None = None,
+    tp_group: dist.ProcessGroup | None = None,
     chunk_size: int = 1024,
 ) -> torch.Tensor:
     """Compute log probabilities with optional vocab parallelism for FSDP.
@@ -310,7 +374,7 @@ def gather_logprobs(
             when tensor parallelism is enabled.
         labels: Token indices with shape [...] for which to compute log probabilities.
         temperature: Softmax temperature scaling. Default is 1.0.
-        parallel_helper: If provided with tp_size > 1, uses vocab-parallel computation
+        tp_group: If provided with tp_size > 1, uses vocab-parallel computation
             to avoid gathering the full vocab dimension across TP ranks.
         chunk_size: Chunk size for memory-efficient processing along the sequence
             dimension. Default is 1024.
@@ -318,22 +382,22 @@ def gather_logprobs(
     Returns:
         Log probabilities at the label positions with shape [...].
     """
-    if parallel_helper is not None and parallel_helper.tp_size > 1:
+    if tp_group is not None and dist.get_world_size(tp_group) > 1:
         fn = functools.partial(
             _vocab_parallel_logprobs,
-            tp_group=parallel_helper.tp_group,
+            tp_group=tp_group,
             temperature=temperature,
         )
-        return chunked_apply(fn, logits, labels, chunk_size)
+        return _chunked_apply(fn, logits, labels, chunk_size)
 
-    return chunked_gather_logprobs(logits, labels, temperature, chunk_size)
+    return _chunked_gather_logprobs(logits, labels, temperature, chunk_size)
 
 
 def gather_logprobs_entropy(
     logits: torch.Tensor,
     labels: torch.Tensor,
     temperature: float = 1.0,
-    parallel_helper: ParallelHelper | None = None,
+    tp_group: dist.ProcessGroup | None = None,
     chunk_size: int = 1024,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute log probabilities and entropy with optional vocab parallelism for FSDP.
@@ -346,7 +410,7 @@ def gather_logprobs_entropy(
             when tensor parallelism is enabled.
         labels: Token indices with shape [...] for which to compute log probabilities.
         temperature: Softmax temperature scaling. Default is 1.0.
-        parallel_helper: If provided with tp_size > 1, uses vocab-parallel computation
+        tp_group: If provided with tp_size > 1, uses vocab-parallel computation
             to avoid gathering the full vocab dimension across TP ranks.
         chunk_size: Chunk size for memory-efficient processing along the sequence
             dimension. Default is 1024.
@@ -356,12 +420,12 @@ def gather_logprobs_entropy(
             - logprobs: Log probabilities at the label positions with shape [...].
             - entropy: Entropy of the probability distribution with shape [...].
     """
-    if parallel_helper is not None and parallel_helper.tp_size > 1:
+    if tp_group is not None and dist.get_world_size(tp_group) > 1:
         fn = functools.partial(
             _vocab_parallel_logprobs_entropy,
-            tp_group=parallel_helper.tp_group,
+            tp_group=tp_group,
             temperature=temperature,
         )
-        return chunked_apply(fn, logits, labels, chunk_size)
+        return _chunked_apply(fn, logits, labels, chunk_size)
 
-    return chunked_gather_logprobs_entropy(logits, labels, temperature, chunk_size)
+    return _chunked_gather_logprobs_entropy(logits, labels, temperature, chunk_size)
