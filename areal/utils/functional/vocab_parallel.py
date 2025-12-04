@@ -41,6 +41,7 @@ def _chunked_apply(
 ) -> T:
     """Apply a function in chunks along the first dimension to reduce peak memory."""
     total_seqlen = logits.shape[0]
+    assert total_seqlen > 0, "Input logits must have at least one element"
     results: list = []
 
     for i in range(0, total_seqlen, chunk_size):
@@ -81,13 +82,24 @@ class _VocabParallelLogProbs(torch.autograd.Function):
     Given sharded logits [..., vocab_size/tp] and labels [...], computes:
         logprobs[i] = logits[i, labels[i]] - log(sum(exp(logits[i, :])))
 
-    The input can have arbitrary leading dimensions (e.g., [batch, seq_len] or just [seq_len]).
-    The labels indices are global (0 to vocab_size-1), and each TP rank only
-    holds a partition of the vocabulary.
+    The input can have arbitrary leading dimensions (e.g., [batch, seq_len] or just
+    [seq_len]). The labels indices are global (0 to vocab_size-1), and each TP rank
+    only holds a partition of the vocabulary.
 
-    Memory optimization: Following Megatron's pattern, we use in-place operations
-    where possible to minimize temporary allocations. The only large tensor saved
-    for backward is the softmax, which is unavoidable for gradient computation.
+    Memory Optimization:
+        Following Megatron's cross_entropy pattern, we use in-place operations to
+        minimize memory allocations. The key optimization is in backward():
+
+        - The gradient formula is: grad = one_hot(labels) - softmax
+        - Since this only requires subtracting 1 at the label position and scaling,
+          we can directly reuse the saved softmax tensor as grad_input (in-place).
+        - This avoids allocating a new [*, vocab/tp] tensor for gradients.
+
+        Forward saves only ONE large tensor:
+        - softmax: [*, vocab/tp] - unavoidable for gradient computation
+
+        Backward allocates NO new large tensors:
+        - Reuses softmax directly as grad_input via in-place modifications
 
     Note:
         This implementation uses in-place operations on saved tensors for memory
@@ -185,20 +197,41 @@ class _VocabParallelLogProbsEntropy(torch.autograd.Function):
         - labels: [...]
 
     This combines the computation to share intermediate results (softmax, sum_exp, etc.)
-    and reduce redundant all-reduce operations.
+    and reduce redundant all-reduce operations compared to calling logprobs and entropy
+    separately.
 
-    Memory optimization: Following Megatron's pattern, we only save softmax (one large
-    tensor) instead of both logits and softmax. The entropy gradient is rewritten to
-    avoid needing the original logits:
-        grad_entropy = softmax * (E[x] - x)
-                     = softmax * E[x] - softmax * x
-                     = softmax * E[x] - softmax * (log(softmax) + log(Z))
-                     = softmax * (E[x] - log(Z)) - softmax * log(softmax)
-    where E[x] = sum(softmax * logits) and log(Z) = log(sum(exp(logits - max))) + max.
+    Memory Optimization:
+        Forward saves only ONE large tensor (softmax) plus a few small scalars.
+        The entropy gradient is algebraically rewritten to avoid saving original logits:
+
+            grad_entropy = softmax * (E[x] - x)
+                         = softmax * (E[x] - log(softmax) - log(Z))
+                         = softmax * (E[x] - log(Z)) - softmax * log(softmax)
+
+        where E[x] = sum(softmax * logits) and log(Z) = log(sum(exp(logits))).
+
+        Why we CANNOT reuse softmax in-place (unlike _VocabParallelLogProbs):
+            The combined gradient requires multiple reads of the original softmax:
+
+            1. grad_input = softmax * (E[x] - log(Z))   # first read
+            2. grad_input -= xlogy(softmax, softmax)    # second read
+            3. grad_input -= softmax * grad_logprobs    # third read
+
+            If we modified softmax in step 1, steps 2 and 3 would get wrong values.
+            In contrast, _VocabParallelLogProbs only needs: grad = softmax - one_hot,
+            which can be done by subtracting 1 at one position then scaling - a single
+            pass that allows full in-place reuse.
+
+        Backward allocates ONE new large tensor:
+            - grad_input: [*, vocab/tp] - created via `softmax * mean_x_minus_log_z`
+
+        Memory comparison (seq=8192, vocab=152K, tp=2, fp32):
+            - Naive approach: save both logits and softmax = ~4.7GB
+            - Our approach: save only softmax = ~2.3GB (50% reduction in forward)
+            - Backward: +2.3GB temporary for grad_input (unavoidable for correctness)
 
     Note:
-        This implementation uses in-place operations on saved tensors for memory
-        efficiency. As a result, it does NOT support:
+        This implementation does NOT support:
         - `retain_graph=True` in backward()
         - Higher-order gradients (e.g., torch.autograd.grad with create_graph=True)
 
