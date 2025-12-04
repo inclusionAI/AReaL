@@ -132,6 +132,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         current_time = int(datetime.datetime.now().timestamp())
         # Add interaction to cache, resolve parent relationship according to input messages
         cache, remaining_data, interaction = None, None, None
+        print(f"creating completion_id = {completion_id}")
         if is_omitted(store) or store:
             # Cache the completion with its input messages
             cache = areal_cache if areal_cache is not None else self._cache
@@ -142,6 +143,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
                 chat_template_type=self.chat_template_type,
             )
+            print(f"adding new interaction to cache {interaction}")
             remaining_data = cache.add_new_interaction(
                 completion_id, 
                 interaction,
@@ -407,6 +409,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         interaction = InteractionWithTokenLogpReward(
             messages=deepcopy(messages_list),  # Store a copy of the input messages
             chat_template_type=self.chat_template_type,
+            input_data=(
+                deepcopy(input) if not is_omitted(input) else ""
+            ),  # Store a copy of the input data
         )
         remaining_data = cache.add_new_interaction(
             resp_id, 
@@ -562,15 +567,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         if resp_id in cache:
             raise ValueError(f"Response {resp_id} already exists in cache")
 
-        cache[resp_id] = InteractionWithTokenLogpReward(
-            response=deepcopy(response),
-            model_response=engine_resp,  # Should not deepcopy because of tokenizer
-            input_data=(
-                deepcopy(input) if not is_omitted(input) else ""
-            ),  # Store a copy of the input data
-            chat_template_type=self.chat_template_type,
-        )
-
+        cache[resp_id].response = deepcopy(response)
+        cache[resp_id].model_response = engine_resp
+        cache[resp_id].output_text = output_text
         return response
 
     def _count_reasoning_tokens(
