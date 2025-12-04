@@ -304,10 +304,10 @@ def sapo_loss_fn(
         approx_kl=log_ratio.detach(),
         clip_mask=torch.zeros_like(loss_mask, dtype=torch.bool),  # SAPO doesn't clip
         dual_clip_mask=torch.zeros_like(loss_mask, dtype=torch.bool),
-        # SAPO-specific stats
+        # SAPO-specific stats (scaled gates for consistency)
         sapo_soft_gate=soft_gate.detach(),
-        sapo_gate_pos=gate_pos.detach(),
-        sapo_gate_neg=gate_neg.detach(),
+        sapo_gate_pos=scaled_gate_pos.detach(),
+        sapo_gate_neg=scaled_gate_neg.detach(),
     )
 
     return pg_loss, stat
