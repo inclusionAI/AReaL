@@ -391,6 +391,27 @@ class MegatronEngineConfig:
     distribute_saved_activations: bool | None = None
     recompute_modules: list[str] | None = None
 
+    # MoE
+    moe_router_dtype: str | None = None
+    moe_shared_expert_overlap: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable overlapping between shared expert computations and dispatcher communications. "
+            "Without this, the shared epxerts execute after the routed experts."
+        },
+    )
+    moe_enable_deepep: bool = False
+    moe_token_dispatcher_type: str = field(
+        default="alltoall",
+        metadata={
+            "help": "Type of token dispatcher. Options: 'allgather','alltoall' and 'flex'."
+        },
+    )
+    moe_permute_fusion: bool = field(
+        default=False,
+        metadata={"help": "Fuse token rearrangement ops during token dispatching."},
+    )
+
     # FP8 Training Configuration
     fp8: str | None = field(
         default=None,

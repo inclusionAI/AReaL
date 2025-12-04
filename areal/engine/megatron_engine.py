@@ -121,6 +121,7 @@ class MegatronEngine(TrainEngine):
         self.is_offload: bool = False
         self.enable_fp8: bool = self.config.megatron.fp8 is not None
         self.fp8_align_size: int = 16
+        self.quantization_config: dict[str, int | str | list[str]] | None = None
 
     def initialize(
         self,
@@ -175,6 +176,9 @@ class MegatronEngine(TrainEngine):
         self.tf_config = configure_pipeline_layer_splits(
             self.parallel_strategy, self.hf_config, self.tf_config
         )
+
+        # Get quantization_config from hf_config if available (for FP8 weight updates)
+        self.quantization_config = getattr(self.hf_config, "quantization_config", None)
 
         self._check_and_apply_fp8_config()
 
@@ -563,7 +567,13 @@ class MegatronEngine(TrainEngine):
             buffer_size = 0
 
         converted_named_tensors.extend(
-            convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
+            convert_to_hf(
+                self.tf_config,
+                self.hf_config.model_type,
+                name,
+                param,
+                quantization_config=self.quantization_config,
+            )
         )
         buffer_size += param_size
         return buffer_size
@@ -629,7 +639,13 @@ class MegatronEngine(TrainEngine):
         converted_hf_tensors = []
         for name, param in gathered_params:
             converted_hf_tensors.extend(
-                convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
+                convert_to_hf(
+                    self.tf_config,
+                    self.hf_config.model_type,
+                    name,
+                    param,
+                    quantization_config=self.quantization_config,
+                )
             )
 
         self._update_bucket_weights_from_distributed(meta, converted_hf_tensors)
