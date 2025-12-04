@@ -1001,7 +1001,12 @@ class MegatronEngine(TrainEngine):
             def _scaled_loss_fn(input_, output):
                 labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
                 logprobs, entropy = gather_logprobs_entropy(
-                    output, labels, temperature=self.config.temperature
+                    output,
+                    labels,
+                    temperature=self.config.temperature,
+                    tp_group=mpu.get_tensor_model_parallel_group()
+                    if mpu.get_tensor_model_parallel_world_size() > 1
+                    else None,
                 )
                 loss = loss_fn(logprobs, entropy, input_)
                 loss_scale = loss_weight_fn(input_) / total_loss_weight
@@ -1100,7 +1105,12 @@ class MegatronEngine(TrainEngine):
                 # automatically recorded by stats_tracker
                 labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
                 logprobs, entropy = gather_logprobs_entropy(
-                    output, labels, temperature=self.config.temperature
+                    output,
+                    labels,
+                    temperature=self.config.temperature,
+                    tp_group=mpu.get_tensor_model_parallel_group()
+                    if mpu.get_tensor_model_parallel_world_size() > 1
+                    else None,
                 )
                 loss = loss_fn(logprobs, entropy, input_)
                 loss_scale = loss_weight_fn(input_) / total_loss_weight
@@ -1186,7 +1196,12 @@ class MegatronEngine(TrainEngine):
             def _post_process_fn(input_, output):
                 labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
                 logprobs = gather_logprobs(
-                    output, labels, temperature=self.config.temperature
+                    output,
+                    labels,
+                    temperature=self.config.temperature,
+                    tp_group=mpu.get_tensor_model_parallel_group()
+                    if mpu.get_tensor_model_parallel_world_size() > 1
+                    else None,
                 )
                 return torch.tensor(1.0, device=logprobs.device), {"output": logprobs}
 
