@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from areal.utils.functional import ppo_actor_loss_fn
+from areal.utils.functional import ppo_actor_loss_fn, sapo_loss_fn
 
 
 class TestPPOActorLossFnSequenceLevel:
@@ -759,3 +759,380 @@ class TestPPOActorLossFnEdgeCases:
         # Verify all valid tokens have same ratio (same sequence)
         valid_ratios = stat["importance_weight"][0, :7]
         assert torch.allclose(valid_ratios, valid_ratios[0].expand(7), atol=1e-5)
+
+
+class TestSAPOLossFn:
+    """Test cases for sapo_loss_fn (Soft Adaptive Policy Optimization)."""
+
+    @pytest.fixture
+    def basic_2d_data(self):
+        """Basic 2D tensor test data for SAPO."""
+        batch_size = 4
+        seq_len = 8
+
+        return {
+            "logprobs": torch.randn(batch_size, seq_len),
+            "old_logprobs": torch.randn(batch_size, seq_len),
+            "advantages": torch.randn(batch_size, seq_len),
+            "loss_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
+            "tau_pos": 1.0,
+            "tau_neg": 1.05,
+        }
+
+    @pytest.fixture
+    def basic_1d_data(self):
+        """Basic 1D tensor test data for SAPO (packed)."""
+        # 3 sequences with lengths [8, 12, 12]
+        total_tokens = 32
+        cu_seqlens = torch.tensor([0, 8, 20, 32], dtype=torch.int32)
+
+        return {
+            "logprobs": torch.randn(total_tokens),
+            "old_logprobs": torch.randn(total_tokens),
+            "advantages": torch.randn(total_tokens),
+            "loss_mask": torch.ones(total_tokens, dtype=torch.bool),
+            "tau_pos": 1.0,
+            "tau_neg": 1.05,
+            "cu_seqlens": cu_seqlens,
+        }
+
+    def test_2d_shape(self, basic_2d_data):
+        """Test that SAPO loss returns correct shape for 2D tensors."""
+        loss, stat = sapo_loss_fn(
+            logprobs=basic_2d_data["logprobs"],
+            old_logprobs=basic_2d_data["old_logprobs"],
+            advantages=basic_2d_data["advantages"],
+            tau_pos=basic_2d_data["tau_pos"],
+            tau_neg=basic_2d_data["tau_neg"],
+            loss_mask=basic_2d_data["loss_mask"],
+            importance_sampling_level="token",
+        )
+
+        # Loss should be a scalar
+        assert loss.ndim == 0
+        assert loss.dtype == torch.float32
+
+        # Stats should have correct shapes
+        assert stat["sapo_soft_gate"].shape == basic_2d_data["logprobs"].shape
+        assert stat["sapo_gate_pos"].shape == basic_2d_data["logprobs"].shape
+        assert stat["sapo_gate_neg"].shape == basic_2d_data["logprobs"].shape
+        assert stat["clip_mask"].shape == basic_2d_data["logprobs"].shape
+
+    def test_1d_shape(self, basic_1d_data):
+        """Test that SAPO loss returns correct shape for 1D tensors."""
+        loss, stat = sapo_loss_fn(
+            logprobs=basic_1d_data["logprobs"],
+            old_logprobs=basic_1d_data["old_logprobs"],
+            advantages=basic_1d_data["advantages"],
+            tau_pos=basic_1d_data["tau_pos"],
+            tau_neg=basic_1d_data["tau_neg"],
+            loss_mask=basic_1d_data["loss_mask"],
+            importance_sampling_level="token",
+        )
+
+        # Loss should be a scalar
+        assert loss.ndim == 0
+        assert loss.dtype == torch.float32
+
+        # Stats should have correct shapes
+        assert stat["sapo_soft_gate"].shape == basic_1d_data["logprobs"].shape
+        assert stat["sapo_gate_pos"].shape == basic_1d_data["logprobs"].shape
+        assert stat["sapo_gate_neg"].shape == basic_1d_data["logprobs"].shape
+        assert stat["clip_mask"].shape == basic_1d_data["logprobs"].shape
+
+    def test_known_value(self):
+        """Test SAPO loss with known input values."""
+        # Simple case: ratio = 1.0, advantages = 1.0
+        logprobs = torch.tensor([[1.0, 1.0]])
+        old_logprobs = torch.tensor([[1.0, 1.0]])  # ratio = exp(0) = 1.0
+        advantages = torch.tensor([[1.0, 1.0]])
+        loss_mask = torch.ones(1, 2, dtype=torch.bool)
+        tau_pos = 1.0
+
+        loss, stat = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=tau_pos,
+            tau_neg=tau_pos,
+            loss_mask=loss_mask,
+            importance_sampling_level="token",
+        )
+
+        # At ratio=1.0, sigmoid(tau * (1.0 - 1.0)) = sigmoid(0) = 0.5
+        # gate = 0.5 * (4.0 / tau) = 0.5 * 4.0 = 2.0
+        # loss = -gate * advantage = -2.0 * 1.0 = -2.0
+        expected_loss = -2.0
+        assert torch.allclose(loss, torch.tensor(expected_loss), atol=1e-5)
+
+        # Check gate value
+        expected_gate = 2.0
+        assert torch.allclose(
+            stat["sapo_soft_gate"],
+            torch.tensor([[expected_gate, expected_gate]]),
+            atol=1e-5,
+        )
+
+    def test_gate_selection_positive_advantages(self):
+        """Test that positive gate is selected for positive advantages."""
+        # Create data with positive advantages
+        logprobs = torch.tensor([[0.5, 0.5]])
+        old_logprobs = torch.tensor([[0.0, 0.0]])
+        advantages = torch.tensor([[1.0, 2.0]])  # All positive
+        loss_mask = torch.ones(1, 2, dtype=torch.bool)
+        tau_pos = 1.0
+        tau_neg = 2.0  # Different from tau_pos
+
+        loss, stat = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=tau_pos,
+            tau_neg=tau_neg,
+            loss_mask=loss_mask,
+            importance_sampling_level="token",
+        )
+
+        # For positive advantages, gate should match gate_pos
+        assert torch.allclose(stat["sapo_soft_gate"], stat["sapo_gate_pos"], atol=1e-6)
+
+    def test_gate_selection_negative_advantages(self):
+        """Test that negative gate is selected for negative advantages."""
+        # Create data with negative advantages
+        logprobs = torch.tensor([[0.5, 0.5]])
+        old_logprobs = torch.tensor([[0.0, 0.0]])
+        advantages = torch.tensor([[-1.0, -2.0]])  # All negative
+        loss_mask = torch.ones(1, 2, dtype=torch.bool)
+        tau_pos = 1.0
+        tau_neg = 2.0  # Different from tau_pos
+
+        loss, stat = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=tau_pos,
+            tau_neg=tau_neg,
+            loss_mask=loss_mask,
+            importance_sampling_level="token",
+        )
+
+        # For negative advantages, gate should match gate_neg
+        assert torch.allclose(stat["sapo_soft_gate"], stat["sapo_gate_neg"], atol=1e-6)
+
+    def test_gate_selection_mixed_advantages(self):
+        """Test gate selection with mixed positive and negative advantages."""
+        logprobs = torch.tensor([[0.5, 0.5, 0.5]])
+        old_logprobs = torch.tensor([[0.0, 0.0, 0.0]])
+        advantages = torch.tensor([[1.0, -1.0, 2.0]])  # Mixed signs
+        loss_mask = torch.ones(1, 3, dtype=torch.bool)
+        tau_pos = 1.0
+        tau_neg = 2.0
+
+        loss, stat = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=tau_pos,
+            tau_neg=tau_neg,
+            loss_mask=loss_mask,
+            importance_sampling_level="token",
+        )
+
+        # Check that positive advantages use gate_pos
+        assert torch.allclose(
+            stat["sapo_soft_gate"][0, 0], stat["sapo_gate_pos"][0, 0], atol=1e-6
+        )
+        assert torch.allclose(
+            stat["sapo_soft_gate"][0, 2], stat["sapo_gate_pos"][0, 2], atol=1e-6
+        )
+
+        # Check that negative advantage uses gate_neg
+        assert torch.allclose(
+            stat["sapo_soft_gate"][0, 1], stat["sapo_gate_neg"][0, 1], atol=1e-6
+        )
+
+    def test_zero_tau_raises_error(self):
+        """Test that zero tau_pos raises ValueError."""
+        logprobs = torch.tensor([[1.0]])
+        old_logprobs = torch.tensor([[1.0]])
+        advantages = torch.tensor([[1.0]])
+        loss_mask = torch.ones(1, 1, dtype=torch.bool)
+
+        with pytest.raises(ValueError, match="must be positive"):
+            sapo_loss_fn(
+                logprobs=logprobs,
+                old_logprobs=old_logprobs,
+                advantages=advantages,
+                tau_pos=0.0,
+                tau_neg=1.0,
+                loss_mask=loss_mask,
+                importance_sampling_level="token",
+            )
+
+    def test_negative_tau_raises_error(self):
+        """Test that negative tau_neg raises ValueError."""
+        logprobs = torch.tensor([[1.0]])
+        old_logprobs = torch.tensor([[1.0]])
+        advantages = torch.tensor([[1.0]])
+        loss_mask = torch.ones(1, 1, dtype=torch.bool)
+
+        with pytest.raises(ValueError, match="must be positive"):
+            sapo_loss_fn(
+                logprobs=logprobs,
+                old_logprobs=old_logprobs,
+                advantages=advantages,
+                tau_pos=1.0,
+                tau_neg=-1.0,
+                loss_mask=loss_mask,
+                importance_sampling_level="token",
+            )
+
+    def test_token_level_importance_sampling(self):
+        """Test SAPO with token-level importance sampling."""
+        batch_size = 2
+        seq_len = 4
+
+        logprobs = torch.randn(batch_size, seq_len)
+        old_logprobs = torch.randn(batch_size, seq_len)
+        advantages = torch.randn(batch_size, seq_len)
+        loss_mask = torch.ones(batch_size, seq_len, dtype=torch.bool)
+
+        loss, stat = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=1.0,
+            tau_neg=1.05,
+            loss_mask=loss_mask,
+            importance_sampling_level="token",
+        )
+
+        # Verify loss is finite
+        assert not torch.isnan(loss) and not torch.isinf(loss)
+
+        # Verify stat shapes
+        assert stat["sapo_soft_gate"].shape == logprobs.shape
+        assert stat["sapo_gate_pos"].shape == logprobs.shape
+        assert stat["sapo_gate_neg"].shape == logprobs.shape
+
+    def test_sequence_level_importance_sampling_2d(self):
+        """Test SAPO with sequence-level importance sampling (2D)."""
+        batch_size = 2
+        seq_len = 4
+
+        logprobs = torch.randn(batch_size, seq_len)
+        old_logprobs = torch.randn(batch_size, seq_len)
+        advantages = torch.randn(batch_size, seq_len)
+        loss_mask = torch.ones(batch_size, seq_len, dtype=torch.bool)
+
+        loss, stat = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=1.0,
+            tau_neg=1.05,
+            loss_mask=loss_mask,
+            importance_sampling_level="sequence",
+        )
+
+        # Verify loss is finite
+        assert not torch.isnan(loss) and not torch.isinf(loss)
+
+        # Verify stat shapes
+        assert stat["sapo_soft_gate"].shape == logprobs.shape
+        assert stat["sapo_gate_pos"].shape == logprobs.shape
+        assert stat["sapo_gate_neg"].shape == logprobs.shape
+
+    def test_sequence_level_importance_sampling_1d(self):
+        """Test SAPO with sequence-level importance sampling (1D packed)."""
+        # 2 sequences with lengths [4, 6]
+        total_tokens = 10
+        cu_seqlens = torch.tensor([0, 4, 10], dtype=torch.int32)
+
+        logprobs = torch.randn(total_tokens)
+        old_logprobs = torch.randn(total_tokens)
+        advantages = torch.randn(total_tokens)
+        loss_mask = torch.ones(total_tokens, dtype=torch.bool)
+
+        loss, stat = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=1.0,
+            tau_neg=1.05,
+            loss_mask=loss_mask,
+            importance_sampling_level="sequence",
+            cu_seqlens=cu_seqlens,
+        )
+
+        # Verify loss is finite
+        assert not torch.isnan(loss) and not torch.isinf(loss)
+
+        # Verify stat shapes
+        assert stat["sapo_soft_gate"].shape == logprobs.shape
+        assert stat["sapo_gate_pos"].shape == logprobs.shape
+        assert stat["sapo_gate_neg"].shape == logprobs.shape
+
+    def test_gradient_normalization(self):
+        """Test that 4/tau normalization provides consistent gradients."""
+        logprobs = torch.tensor([[0.0]], requires_grad=True)
+        old_logprobs = torch.tensor([[0.0]])
+        advantages = torch.tensor([[1.0]])
+        loss_mask = torch.ones(1, 1, dtype=torch.bool)
+
+        # Test with tau=1.0
+        loss1, _ = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=1.0,
+            tau_neg=1.0,
+            loss_mask=loss_mask,
+            importance_sampling_level="token",
+        )
+        loss1.backward()
+        grad1 = logprobs.grad.clone()
+        logprobs.grad.zero_()
+
+        # Test with tau=2.0
+        loss2, _ = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=2.0,
+            tau_neg=2.0,
+            loss_mask=loss_mask,
+            importance_sampling_level="token",
+        )
+        loss2.backward()
+        grad2 = logprobs.grad.clone()
+
+        # At ratio=1.0, gradient magnitude should be similar due to 4/tau normalization
+        # (not exactly equal, but should be same order of magnitude)
+        assert torch.allclose(grad1, grad2, rtol=0.5)
+
+    def test_loss_mask(self):
+        """Test that loss_mask correctly excludes masked tokens."""
+        logprobs = torch.randn(1, 4)
+        old_logprobs = torch.randn(1, 4)
+        advantages = torch.randn(1, 4)
+        # Only first 2 tokens are valid
+        loss_mask = torch.tensor([[True, True, False, False]])
+
+        loss, stat = sapo_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            tau_pos=1.0,
+            tau_neg=1.0,
+            loss_mask=loss_mask,
+            importance_sampling_level="token",
+        )
+
+        # Compute expected loss manually (only first 2 tokens)
+        log_ratio = logprobs[:, :2] - old_logprobs[:, :2]
+        ratio = torch.exp(log_ratio)
+        gate = torch.sigmoid(1.0 * (ratio - 1.0)) * 4.0
+        expected_loss = -(gate * advantages[:, :2]).sum() / 2
+
+        assert torch.allclose(loss, expected_loss, atol=1e-5)
