@@ -558,6 +558,7 @@ https://github.com/sgl-project/sglang for detailed documentation.
 | `decode_log_interval`             | integer                 | `1`          | -           |
 | `enable_multithread_load`         | boolean                 | `False`      | -           |
 | `enable_fast_load`                | boolean                 | `False`      | -           |
+| `quantization`                    | string \| None          | `None`       | -           |
 
 (section-v-llm)=
 
