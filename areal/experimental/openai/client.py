@@ -612,11 +612,7 @@ class ArealOpenAI(AsyncOpenAI):
         self.tool_call_parser = tool_call_parser
 
         # Use an ordered dict to maintain insertion order of completions/responses
-        self._cache: InteractionCache = InteractionCache(
-            tokenizer=self.tokenizer,
-            messages_delimiter_start=messages_delimiter_start,
-            messages_delimiter_end=messages_delimiter_end,
-        )
+        self._cache: InteractionCache = InteractionCache()
 
         # Override responses with our extended implementation
         self.responses = AsyncResponsesWithReward(
