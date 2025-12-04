@@ -620,7 +620,6 @@ class FSDPEngine(TrainEngine):
             total_loss_weight = data_iterator.kwargs["total_loss_weight"]
 
         for mb_input, padded_mb_input, pad_length in data_iterator:
-            ulysses_pad_size = 0
             if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
                 position_ids = padded_mb_input.get("position_ids", None)
@@ -658,8 +657,9 @@ class FSDPEngine(TrainEngine):
                 )
             else:
                 inputs = padded_mb_input
+                ulysses_pad_size = 0
 
-            def loss_fn_wrap(output, inputs_):
+            def loss_fn_wrap(output, inputs):
                 if not self.config.is_critic:
                     logprobs, entropy = self._compute_logprobs_entropy(
                         output, inputs, ulysses_pad_size
@@ -686,7 +686,7 @@ class FSDPEngine(TrainEngine):
                     loss = loss_fn(values, mb_input)
                 return loss
 
-            def post_hook_wrap(output, inputs_):
+            def post_hook_wrap(output, inputs):
                 if not self.config.is_critic:
                     result = self._compute_logprobs(output, inputs, ulysses_pad_size)
                 else:
@@ -701,10 +701,13 @@ class FSDPEngine(TrainEngine):
                 loss_weight_fn,
             )
 
-            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-            # Scale loss for accumulation
-            # To reverse the gradient averaging for SP groups
-            loss_scale *= self.parallel_helper.dp_size
+            if loss_weight_fn is not None:
+                loss_scale = loss_weight_fn(mb_input) / total_loss_weight
+                # Scale loss for accumulation
+                # To reverse the gradient averaging for SP groups
+                loss_scale *= self.parallel_helper.dp_size
+            else:
+                loss_scale = torch.tensor(1.0, device=logits.device)
 
             if batch_type == "train_batch":
                 loss, _ = post_process_fn(logits)
@@ -732,7 +735,7 @@ class FSDPEngine(TrainEngine):
     ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
         with trace_scope("fsdp_engine.forward"):
             outputs = self.model(**mb_input)
-        logits = outputs.logits.squeeze(0)
+        output = outputs.logits.squeeze(0)
 
         def _post_process_fn(input_, output_):
             result = {}
@@ -745,7 +748,7 @@ class FSDPEngine(TrainEngine):
                 result["output"] = output_
             return loss, result
 
-        return logits, functools.partial(_post_process_fn, mb_input)
+        return output, functools.partial(_post_process_fn, mb_input)
 
     def _sp_all_gather(self, tensor: torch.Tensor) -> torch.Tensor:
         gathered = dist_F.all_gather(tensor, group=self.sp_group)

@@ -230,11 +230,6 @@ class TrainEngine(abc.ABC):
     ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]:
         """Split input batch into micro-batches for gradient accumulation.
 
-        This method prepares the input data for micro-batch processing by splitting
-        the batch according to the configured micro-batch specification, computing
-        total loss weights across all micro-batches, and creating an iterator that
-        yields micro-batch dictionaries with necessary metadata.
-
         Parameters
         ----------
         input_ : dict[str, Any]
@@ -245,9 +240,7 @@ class TrainEngine(abc.ABC):
         Returns
         -------
         tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]
-            A tuple containing:
-            - An iterable of micro-batch dictionaries.
-            - A MicroBatchList object containing metadata about the micro-batches.
+            An iterator over micro-batch dictionaries and the MicroBatchList metadata.
         """
         raise NotImplementedError()
 
@@ -258,99 +251,50 @@ class TrainEngine(abc.ABC):
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
         **kwargs,
     ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
-        """Compute forward pass and prepare loss function for a single micro-batch.
-
-        This method performs the forward pass on a single micro-batch and returns
-        the output tensor along with a loss function closure. The loss function
-        closure is used by the training framework to compute loss and perform
-        backward pass during gradient accumulation.
+        """Compute forward pass and prepare loss function closure for a single micro-batch.
 
         Parameters
         ----------
         mb_input : dict[str, Any]
-            A dictionary containing the micro-batch input data. The exact structure
-            depends on the engine implementation, but typically includes packed/padded
-            tensors, padding metadata, and total loss weight.
-        loss_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor], optional
-            A function that computes the normalized loss given model output and
-            input data. Optional for pure forward passes.
-        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
+            A dictionary containing the micro-batch input data.
+        post_process_fn : Callable[[torch.Tensor, dict[str, Any]], Any]
+            A function that processes the model output.
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
             A function that computes the weight for this micro-batch, typically
-            the number of tokens. Used for proper loss scaling across micro-batches.
-            Optional when `loss_fn` is not provided.
+            the number of tokens.
         **kwargs
-            Additional keyword arguments that may be used by specific implementations,
-            such as model reference for pipeline parallel, batch type, post-processing
-            hooks, etc.
+            Additional keyword arguments for specific implementations.
 
         Returns
         -------
-        tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]] | None]
-            A tuple containing:
-            - The model output tensor (logits) from the forward pass
-            - A callable loss function that takes the output tensor and returns:
-              - A loss tensor (scaled appropriately for gradient accumulation)
-              - A dictionary with additional data
-              If `loss_fn` is None (e.g., pure forward pass), the callable can be None.
+        tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]
+            The model output (logits) and a callable that computes loss and returns
+            (loss_tensor, result_dict) for gradient accumulation.
         """
         raise NotImplementedError()
 
     def optimizer_zero_grad(self):
-        """Zero out all gradients in the optimizer.
-
-        This method clears the gradients of all model parameters before starting
-        a new training step. For engines that use gradient accumulation across
-        micro-batches, this should be called once at the beginning of each training
-        step, not for each micro-batch.
-
-        Note
-        ----
-        This should be called before starting a new training step, typically
-        at the beginning of `train_batch`. For distributed engines, this may also
-        clear gradient buffers used for gradient accumulation.
-        """
+        """Zero out all gradients in the optimizer."""
         raise NotImplementedError()
 
     def optimizer_step(self):
         """Perform a single optimization step.
 
-        This method executes one optimizer step, which typically includes gradient
-        clipping (if configured), the optimizer update (e.g., AdamW step), and may
-        integrate learning rate scheduling depending on the optimizer implementation.
-
         Returns
         -------
         dict[str, float]
-            A dictionary containing training statistics:
-            - `update_successful`: 1.0 if the update succeeded, 0.0 otherwise
-              (e.g., if gradients were NaN/Inf and the update was skipped)
-            - `grad_norm`: The gradient norm after clipping, or NaN if gradient
-              clipping is disabled or not computed
-            - `lr`: The current learning rate after the step
+            Training statistics containing ``update_successful``, ``grad_norm``, and ``lr``.
         """
         raise NotImplementedError()
 
     def lr_scheduler_step(self):
-        """Advance the learning rate scheduler by one step.
-
-        This method updates the learning rate according to the configured scheduler
-        (e.g., cosine decay, linear warmup). The scheduler step is typically called
-        after each optimizer step or periodically (e.g., once per PPO update).
-
-        Note
-        ----
-        For some optimizers (e.g., Megatron's integrated optimizer), the learning
-        rate scheduling may be integrated into the optimizer step, in which case
-        this method may advance a separate scheduler or be a no-op.
-        """
+        """Advance the learning rate scheduler by one step."""
         raise NotImplementedError()
 
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 
-        Since PPO uses minibatch updates, this method should be called periodically
-        (e.g., once per PPO step). It is separated from train_batch to allow
-        for more flexible learning rate scheduling.
+        This is an alias for `lr_scheduler_step()`.
         """
         return self.lr_scheduler_step()
 
@@ -364,27 +308,19 @@ class TrainEngine(abc.ABC):
     ) -> ForwardBackwardOutputs:
         """Process micro-batches through forward and optionally backward pass.
 
-        This method iterates over all micro-batches in the data iterator and processes
-        them through the model. For each micro-batch, it performs forward pass and
-        optionally backward pass (for training), collecting outputs or losses as
-        specified by the parameters.
-
         Parameters
         ----------
         data_iterator : Iterable[dict[str, torch.Tensor]]
-            `data_iterator` is typically produced by converting a `MicroBatchList` into
-            an iterator (e.g., via `create_mb_iterator`), yielding per-micro-batch
-            payloads and any metadata computed during splitting for downstream use.
+            An iterable that yields micro-batch dictionaries containing packed tensors.
         loss_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor], optional
-            A function that computes the normalized loss given model output and
-            input data. Required when `forward_only=False` or when `return_outputs=False`
-            in forward-only mode. By default None.
+            A function that computes the normalized loss. Required when
+            ``forward_only=False`` or when ``return_outputs=False`` in forward-only mode.
         loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
             A function that computes the weight for each micro-batch, typically
-            the number of tokens. Used for proper loss scaling. By default None.
+            the number of tokens. Used for proper loss scaling.
         return_outputs : bool, optional
             If True, collect and return model outputs (logits) instead of losses.
-            Only used when `forward_only=True`. By default False.
+            Only used when ``forward_only=True``. By default False.
         forward_only : bool, optional
             If True, only perform forward pass (no backward pass or gradient computation).
             If False, perform both forward and backward passes for training. By default False.
@@ -392,12 +328,8 @@ class TrainEngine(abc.ABC):
         Returns
         -------
         ForwardBackwardOutputs
-            A dataclass containing:
-            - `mb_outputs`: List of output tensors (one per micro-batch) when
-              `return_outputs=True` and `forward_only=True`. Each output may be
-              processed by `output_post_hook` if provided. None otherwise.
-            - `losses`: List of loss tensors (one per micro-batch) when collecting
-              losses (training or eval mode). None when `return_outputs=True`.
+            A dataclass containing ``mb_outputs`` (list of output tensors) when
+            ``return_outputs=True``, or ``losses`` (list of loss tensors) otherwise.
         """
         raise NotImplementedError()
 
@@ -525,10 +457,12 @@ class TrainEngine(abc.ABC):
         )
 
         res = aggregate_fn(result.mb_outputs)
-        output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
-        unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
-        reordered = reorder_list(unpacked, mb_list.backward_indices)
-        return pad_and_stack_tensors_along_first_dim(reordered)
+        if res is not None:
+            output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
+            unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
+            reordered = reorder_list(unpacked, mb_list.backward_indices)
+            res = pad_and_stack_tensors_along_first_dim(reordered)
+        return res
 
     @torch.no_grad()
     def forward(
