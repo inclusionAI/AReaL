@@ -171,7 +171,7 @@ def concat_padded_tensors(
         merged_multi_modal = []
         for td in tensor_dicts:
             bs = get_batch_size(td)
-            merged_multi_modal.extend(td[mm_key] if mm_key in td else [{} for _ in range(bs)])
+            merged_multi_modal.extend(td.get(mm_key, [{} for _ in range(bs)]))
         result[mm_key] = merged_multi_modal
 
     # Process each key
