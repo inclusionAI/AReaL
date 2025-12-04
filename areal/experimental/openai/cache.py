@@ -168,6 +168,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             return {}
 
         for id, interaction in self.items():
+            print(f"id={id}, interaction={interaction}")
             if interaction.interaction_id != id:
                 raise ValueError(
                     f"Interaction ID mismatch: {interaction.interaction_id} != {id}"
