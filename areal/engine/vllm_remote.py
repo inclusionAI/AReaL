@@ -22,6 +22,7 @@ from areal.api.io_struct import (
 )
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import RemoteInfEngine
+from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
 from areal.utils import stats_tracker
 from areal.utils.launcher import TRITON_CACHE_PATH
@@ -220,6 +221,10 @@ class RemotevLLMEngine(InferenceEngine):
         self._engine = RemoteInfEngine(config, VLLMBackend())
         # lora already initialized when use_lora=true during init, by design, for vLLM
         self._engine.lora_initialized = config.use_lora
+
+    @property
+    def workflow_executor(self) -> WorkflowExecutor:
+        return self._engine.workflow_executor
 
     def initialize(
         self,

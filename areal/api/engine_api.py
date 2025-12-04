@@ -21,6 +21,7 @@ from areal.api.io_struct import (
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
+    from areal.core.workflow_executor import WorkflowExecutor
 
 
 class TrainEngine(abc.ABC):
@@ -46,6 +47,11 @@ class TrainEngine(abc.ABC):
         **kwargs
             Arbitrary keyword arguments
         """
+        raise NotImplementedError()
+
+    @property
+    def workflow_executor(self) -> WorkflowExecutor:
+        """Get the workflow executor of the inference engine."""
         raise NotImplementedError()
 
     @property
