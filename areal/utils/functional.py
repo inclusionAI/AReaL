@@ -5,16 +5,11 @@ from typing import Any
 import numpy as np
 import torch
 import torch.distributed as dist
-import torch.distributed.nn.functional as dist_F
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 
 from areal.platforms import is_npu_available
 from areal.utils.mcore.functional import _VocabParallelEntropy
-from areal.utils.ulysses import (
-    get_ulysses_sequence_parallel_group,
-    get_ulysses_sequence_parallel_world_size,
-)
 
 
 def _gather_logprobs(
@@ -72,12 +67,6 @@ def gather_logprobs(
 
     logprobs = torch.cat(log_probs_labels_list)
 
-    # Ulysses SP path
-    if get_ulysses_sequence_parallel_world_size() > 1:
-        sp_group = get_ulysses_sequence_parallel_group()
-        logprobs = dist_F.all_gather(logprobs, group=sp_group)
-        logprobs = torch.cat(logprobs, dim=-1)
-
     return logprobs
 
 
@@ -86,7 +75,7 @@ def gather_logprobs_entropy(
     labels: torch.Tensor,
     temperature: float = 1.0,
     chunk_size: int = 1024,
-):
+) -> tuple[torch.Tensor, torch.Tensor]:
     # Megatron path
     if mpu.is_initialized() and mpu.get_tensor_model_parallel_world_size() > 1:
         # TODO: check GPU memory usage
@@ -115,14 +104,6 @@ def gather_logprobs_entropy(
 
     logprobs = torch.cat(log_probs_labels_list)
     entropy = torch.cat(entropy_list)
-
-    # Ulysses SP path
-    if get_ulysses_sequence_parallel_world_size() > 1:
-        sp_group = get_ulysses_sequence_parallel_group()
-        logprobs = dist_F.all_gather(logprobs, group=sp_group)
-        logprobs = torch.cat(logprobs, dim=-1)
-        entropy = dist_F.all_gather(entropy, group=sp_group)
-        entropy = torch.cat(entropy, dim=-1)
 
     return logprobs, entropy
 

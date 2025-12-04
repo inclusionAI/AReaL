@@ -10,7 +10,7 @@ function-based rewards. Ensure you've completed
 To run the experiment, you will need:
 
 - Training script:
-  [examples/math/gsm8k_grpo.py](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_grpo.py)
+  [examples/math/gsm8k_rl.py](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_rl.py)
 - Config YAML:
   [examples/math/gsm8k_grpo.yaml](https://github.com/inclusionAI/AReaL/blob/main/examples/math/gsm8k_grpo.yaml)
 
@@ -19,7 +19,7 @@ Our training scripts will automatically download the dataset (openai/gsm8k) and 
 the repository directory:
 
 ```
-python3 -m areal.launcher.local examples/math/gsm8k_grpo.py --config examples/math/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
+python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml experiment_name=<your experiment name> trial_name=<your trial name>
 ```
 
 > **Note**: The command above uses `LocalLauncher`, which only works for a single node
@@ -44,7 +44,7 @@ For example, here is the command to launch a customized configuration, based on 
 GSM8K GRPO example:
 
 ```
-python3 -m areal.launcher.local examples/math/gsm8k_grpo.py \
+python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
@@ -71,7 +71,7 @@ your Ray or Slurm cluster, launch experiments similarly to `LocalLauncher`:
 
 ```
 # Launch with Ray launcher. 4 nodes (4 GPUs each), 3 nodes for generation, 1 node for training.
-python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
+python3 -m areal.launcher.ray examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \
@@ -80,7 +80,7 @@ python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
     cluster.n_gpus_per_node=4 \
 
 # Launch with Slurm launcher. 16 nodes (8 GPUs each), 12 nodes for generation, 4 nodes for training
-python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
+python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name> \

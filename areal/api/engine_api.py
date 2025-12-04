@@ -215,7 +215,7 @@ class TrainEngine(abc.ABC):
     def train_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         """Update the model with a batch of data and a loss function.
@@ -229,9 +229,10 @@ class TrainEngine(abc.ABC):
         input_ : Dict[str, Any]
             The input data for model forward pass and the loss function.
             Redundant entries are allowed.
-        loss_fn : Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor]
-            The loss function that takes the model's forward output and input_,
-            and outputs a scalar normalized loss.
+        loss_fn : Callable[..., torch.Tensor]
+            The loss function. For actor (is_critic=False), it receives
+            (logprobs, entropy, input_data). For critic (is_critic=True),
+            it receives (values, input_data). Returns a scalar normalized loss.
         loss_weight_fn : Callable[[Dict[str, Any]], torch.Tensor]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
@@ -250,7 +251,7 @@ class TrainEngine(abc.ABC):
     def eval_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function.
@@ -264,9 +265,10 @@ class TrainEngine(abc.ABC):
         input_ : Dict[str, Any]
             The input data for model forward pass and the loss function.
             Redundant entries are allowed.
-        loss_fn : Callable[[torch.Tensor, Dict[str, Any]], torch.Tensor]
-            The loss function that takes the model's forward output and input_,
-            and outputs a scalar normalized loss.
+        loss_fn : Callable[..., torch.Tensor]
+            The loss function. For actor (is_critic=False), it receives
+            (logprobs, entropy, input_data). For critic (is_critic=True),
+            it receives (values, input_data). Returns a scalar normalized loss.
         loss_weight_fn : Callable[[Dict[str, Any]], torch.Tensor]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
@@ -286,7 +288,6 @@ class TrainEngine(abc.ABC):
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
-        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Run the forward pass or inference on the model.
@@ -302,17 +303,14 @@ class TrainEngine(abc.ABC):
         output_seqlens : List[int], optional
             The desired output sequence lengths. If None, assumes that the output
             has the same lengths as inputs, by default None.
-        post_hook : Callable[[torch.Tensor, Dict[str, Any]], Any], optional
-            The post-processing function for micro-batched outputs. Post-processing
-            the output on-the-fly during micro-batched forward can reduce peak
-            memory usage, by default None.
         aggregate_fn : Callable[[List[Any]], Any], optional
             A function to aggregate micro-batched outputs, by default torch.cat.
 
         Returns
         -------
         Any or None
-            The result produced by `post_hook` and `aggregate_fn`.
+            For actor (is_critic=False): logprobs tensor aggregated by `aggregate_fn`.
+            For critic (is_critic=True): values tensor aggregated by `aggregate_fn`.
         """
         raise NotImplementedError()
 

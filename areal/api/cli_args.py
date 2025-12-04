@@ -458,6 +458,9 @@ class TrainEngineConfig:
         default=False,
         metadata={"help": "Whether to use a critic/reward model"},
     )
+    temperature: float = field(
+        default=1.0, metadata={"help": "Temperature during generation."}
+    )
     # Runtime microbatch limit
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
     pad_to_maximum: bool = field(
@@ -486,7 +489,10 @@ class TrainEngineConfig:
         metadata={"help": "Optimizer configuration. None means no training."},
     )
 
-    weight_update_mode: str = field(default="disk")
+    weight_update_mode: str = field(
+        default="xccl",
+        metadata={"help": "Weight update backend type.", "choices": ["disk", "xccl"]},
+    )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
 
@@ -560,9 +566,6 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Dual clipping factor for policy ratio, must be > 1.0. None disables dual clipping."
         },
-    )
-    temperature: float = field(
-        default=1.0, metadata={"help": "Temperature during generation."}
     )
     # M2PO
     m2_threshold: float | None = field(
@@ -1539,22 +1542,23 @@ class RWConfig(BaseExperimentConfig):
 
 
 @dataclass
-class GRPOConfig(BaseExperimentConfig):
-    """Configuration for Group Relative Policy Optimization (GRPO) reinforcement learning experiments."""
+class PPOConfig(BaseExperimentConfig):
+    """Configuration for Proximal Policy Optimization (PPO) reinforcement learning experiments."""
 
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
-    ref: PPOActorConfig = field(default_factory=PPOActorConfig)
+    ref: PPOActorConfig | None = field(default=None)
+    critic: PPOCriticConfig | None = field(default=None)
 
 
 @dataclass
-class PPOConfig(GRPOConfig):
-    """Configuration for Proximal Policy Optimization (PPO) reinforcement learning experiments."""
+class GRPOConfig(PPOConfig):
+    """A dummy place holder of GRPO config for backward compatibility."""
 
-    critic: PPOCriticConfig = field(default_factory=PPOCriticConfig)
+    pass
 
 
 def parse_cli_args(argv: list[str]):

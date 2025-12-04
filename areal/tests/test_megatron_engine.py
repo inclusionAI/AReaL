@@ -59,9 +59,14 @@ def mock_input(
     )
 
 
-def mock_loss_fn(logits: torch.Tensor, input_data: dict) -> torch.Tensor:
+def mock_loss_fn(
+    logprobs: torch.Tensor,
+    entropy: torch.Tensor,
+    input_data: dict,
+    **kwargs,
+) -> torch.Tensor:
     """Mock loss function for testing."""
-    return torch.mean(logits)
+    return torch.mean(logprobs)
 
 
 # Cannot use a "module" scope since process groups can only be initialized once.
@@ -88,7 +93,7 @@ def engine():
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
     engine = MegatronEngine(config)
     engine.create_process_group(alloc_mode.train)
-    engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
+    engine.initialize(addr=None, ft_spec=ft_spec)
     logger.info(f"mcore GPTModel initialized: {engine.model}")
     log_gpu_stats("initialize")
     try:
