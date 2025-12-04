@@ -62,7 +62,7 @@ def remove_padding(name: str, param: Parameter | Tensor, vocab_size: int):
 
 # Adapted from slime
 def convert_qwen3moe_to_hf(
-    tf_config: TransformerConfig, name: str, param: Parameter | Tensor
+    tf_config: TransformerConfig, name: str, param: Parameter | Tensor, **kwargs
 ):
     if name == "module.module.embedding.word_embeddings.weight":
         return [("model.embed_tokens.weight", param)]
@@ -217,7 +217,7 @@ def convert_qwen3moe_to_hf(
 
 # Adapted from slime
 def convert_qwen2_to_hf(
-    tf_config: TransformerConfig, name: str, param: Parameter | Tensor
+    tf_config: TransformerConfig, name: str, param: Parameter | Tensor, **kwargs
 ):
     if name == "module.module.embedding.word_embeddings.weight":
         return [("model.embed_tokens.weight", param)]
