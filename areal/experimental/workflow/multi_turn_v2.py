@@ -99,7 +99,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward, num_turns=t)
 
         client.set_reward(_comp.id, reward)
-        return client.export_completions(), comp
+        return client.export_interactions(), comp
 
     async def arun_episode(self, engine: InferenceEngine, data: dict[str, Any]) -> dict:
         rid = uuid.uuid4().hex

@@ -344,117 +344,184 @@ agent types and configuration options.
 ## Training with OpenAI Agents
 
 Using the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with AReaL
-follows a similar pattern to using CAMEL. The key difference is that instead of using
-CAMEL's `AReaLOpenAICompatibleModel` adapter, you can use AReaL's `ArealOpenAI` client
-directly with the SDK's `RunConfig`.
+demonstrates a **modular, configuration-based approach** that separates agent definition
+from training logic. Instead of defining agents directly in your training workflow, you
+create reusable agent builder functions and reference them via configuration.
+
+**Key architectural advantages:**
+
+1. **Modularity**: Agent definitions live in separate, reusable modules
+1. **Configuration-driven**: Specify agent builders and reward functions via config
+   paths
+1. **Generic workflow**: One workflow class works with any agent builder
+1. **Easy experimentation**: Test different agents by changing config, not code
 
 ### Building An Agent with OpenAI SDK
 
-#### Step 1: Basic Agent Implementation
+#### Step 1: Create an Agent Builder Function
+
+First, create an agent builder function that returns an OpenAI `Agent` object. This can
+be a simple single agent or a complex multi-agent workflow with handoffs:
 
 ```python
+# In areal/workflow/openai_agent/math_agent.py
 from agents import Agent as OpenAIAgent
-from agents import Runner as OpenAIRunner
+from agents import handoff
+from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 
-# Create a basic agent with OpenAI client
-agent = OpenAIAgent(
-    name="MathAgent",
-    instructions="You are a helpful assistant that solves math problems."
-)
+def build_math_agent() -> OpenAIAgent:
+    """Create a multi-agent workflow for math problem solving."""
 
-# Run the agent
-result = await OpenAIRunner.run(
-    agent,
-    input="Solve: 2 + 2 = ?"
-)
-print(result.final_output)
-```
-
-#### Step 2: Enabling RL Training
-
-Replace the standard OpenAI client with AReaL's `ArealOpenAI` client:
-
-```python
-from agents import Agent as OpenAIAgent
-from agents import OpenAIProvider, RunConfig
-from agents import Runner as OpenAIRunner
-from areal.experimental.openai import ArealOpenAI
-
-# Create AReaL's OpenAI-compatible client
-client = ArealOpenAI(engine=engine, tokenizer=tokenizer)
-
-# Create agent with OpenAI Agents SDK
-agent = OpenAIAgent(
-    name="MathAgent",
-    instructions="You are a helpful assistant that solves math problems."
-)
-
-# Configure runner to use ArealOpenAI (instead of OpenAI client)
-run_config = RunConfig(
-    model_provider=OpenAIProvider(openai_client=client),
-    tracing_disabled=True,
-)
-
-# Run agent - all LLM calls go through ArealOpenAI
-result = await OpenAIRunner.run(
-    agent,
-    input="Solve: 2 + 2 = ?",
-    run_config=run_config
-)
-
-# The ArealOpenAI client automatically captures token-level data suitable for RL training
-```
-
-#### Step 3: Adding Reward Evaluation
-
-```python
-def math_reward_fn(result, answer):
-    """Simple reward function: 1.0 if correct, 0.0 otherwise."""
-    return 1.0 if result.strip() == answer.strip() else 0.0
-
-# Run the agent
-result = await OpenAIRunner.run(
-    agent,
-    input="Solve: 2 + 2 = ?",
-    run_config=run_config
-)
-
-# Compute reward and associate it with the interaction
-reward = math_reward_fn(result.final_output, "4")
-client.set_final_reward(reward)
-```
-
-#### Step 4: Wrapping the Agent in a Reusable Class
-
-```python
-from areal.api.reward_api import AsyncRewardWrapper
-from transformers import PreTrainedTokenizerFast
-
-class OpenAIMathAgent:
-    def __init__(self):
-        # Wrap reward function for async execution
-        self.async_reward_fn = AsyncRewardWrapper(math_reward_fn)
-
-    async def run_agent(self, data, client: ArealOpenAI):
-        """Run agent on a dataset sample.
-
-        Parameters
-        ----------
-        data : Dict
-            Dataset sample with 'messages' (conversation history) and 'answer' (ground truth)
-        client : ArealOpenAI
-            Client that tracks token information
+    # Create specialized agents for different reasoning stages
+    problem_analyzer = OpenAIAgent(
+        name="Problem Analyzer",
+        instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
+        You are a math problem analyzer. Your job is to:
+        1. Carefully read and understand the math problem
+        2. Identify the type of problem (algebra, geometry, arithmetic, etc.)
+        3. Break down the problem into key components
+        ...
         """
-        # Create agent with OpenAI Agents SDK
-        agent = OpenAIAgent(
-            name="MathAgent",
-            instructions="You are a helpful assistant that solves math problems."
+    )
+
+    solution_specialist = OpenAIAgent(
+        name="Solution Specialist",
+        instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
+        You are a math solution specialist...
+        """
+    )
+
+    # Create main orchestrator with handoffs
+    main_agent = OpenAIAgent(
+        name="Math Problem Solver",
+        instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
+        You are a math problem solving coordinator...
+        """,
+        handoffs=[
+            handoff(agent=problem_analyzer, ...),
+            handoff(agent=solution_specialist, ...),
+        ]
+    )
+
+    return main_agent
+```
+
+For the complete multi-agent implementation, see
+[`areal/workflow/openai_agent/math_agent.py`](https://github.com/inclusionAI/AReaL/blob/main/areal/workflow/openai_agent/math_agent.py).
+
+#### Step 2: Configure the Training
+
+In your config file, specify the paths to your agent builder and reward function:
+
+```yaml
+# examples/openai-agents/config.yaml
+reward_fn_path: "areal.reward.gsm8k.gsm8k_reward_fn"
+agent_builder_path: "areal.workflow.openai_agent.math_agent.build_math_agent"
+agent_builder_kwargs: {}  # Optional kwargs for the builder function
+
+gconfig:
+  n_samples: 4  # Collect 4 trajectories per query for diversity
+  max_tokens: 8192  # Maximum tokens per agent interaction
+  temperature: 1.0
+```
+
+**Key parameters:**
+
+- **`agent_builder_path`**: Python import path to your agent builder function
+- **`reward_fn_path`**: Python import path to your reward function
+- **`agent_builder_kwargs`**: Optional dictionary of arguments to pass to the builder
+- **`gconfig.n_samples`**: Number of parallel trajectories to collect per query
+- **`gconfig.max_tokens`**: Maximum tokens for each agent interaction
+
+#### Step 3: Use the Generic Workflow
+
+AReaL provides a generic `OpenAIAgentWorkflow` that works with any agent builder:
+
+```python
+# In examples/openai-agents/train_agents.py
+from areal.api.workflow_api import RolloutWorkflow
+from areal.experimental.openai import ArealOpenAI
+from areal.utils.dynamic_import import import_from_string
+
+class OpenAIAgentWorkflow(RolloutWorkflow):
+    def __init__(
+        self,
+        agent_builder_path: str,
+        agent_builder_kwargs: dict,
+        reward_fn_path: str,
+        gconfig: GenerationHyperparameters,
+        tokenizer: PreTrainedTokenizerFast,
+    ):
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
+        self.tokenizer = tokenizer
+
+        # Dynamically import agent builder and reward function
+        self.agent = OpenAIAgentWrapper(
+            agent_builder_path=agent_builder_path,
+            agent_builder_kwargs=agent_builder_kwargs,
+            reward_fn_path=reward_fn_path,
+            temperature=gconfig.temperature,
+            max_tokens=gconfig.max_tokens,
         )
 
-        # Configure runner to use ArealOpenAI
+    async def arun_episode(self, engine, data):
+        """Run one training episode: collect trajectories and return training data."""
+        # Create one client per trajectory (controlled by gconfig.n_samples)
+        clients = [
+            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+            for _ in range(self.gconfig.n_samples)
+        ]
+
+        # Run agents in parallel
+        rewards = await asyncio.gather(
+            *[
+                self.agent.run_agent(data=data, client=clients[i])
+                for i in range(self.gconfig.n_samples)
+            ]
+        )
+
+        # Export all interactions with rewards
+        interactions_with_reward = {}
+        for client in clients:
+            client.apply_reward_discount(turn_discount=0.9)
+            interactions = client.export_interactions(style="individual")
+            interactions_with_reward.update(interactions)
+
+        return interactions_with_reward
+```
+
+The `OpenAIAgentWrapper` handles the agent execution:
+
+```python
+class OpenAIAgentWrapper:
+    def __init__(
+        self,
+        agent_builder_path: str,
+        agent_builder_kwargs: dict,
+        reward_fn_path: str,
+        temperature: float = 1.0,
+        max_tokens: int = 512,
+    ):
+        # Dynamically import the builder and reward functions
+        self.agent_builder = import_from_string(agent_builder_path)
+        self.async_reward_fn = AsyncRewardWrapper(
+            import_from_string(reward_fn_path)
+        )
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+
+    async def run_agent(self, data, client: ArealOpenAI):
+        # Build agent using the imported builder function
+        agent = self.agent_builder(**self.agent_builder_kwargs)
+
+        # Configure to use ArealOpenAI
         run_config = RunConfig(
             model_provider=OpenAIProvider(openai_client=client),
             tracing_disabled=True,
+            model_settings=ModelSettings(
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            ),
         )
 
         # Run agent
@@ -464,74 +531,66 @@ class OpenAIMathAgent:
             run_config=run_config
         )
 
-        # Evaluate reward and set reward on client for RL training
+        # Compute and set reward
         reward = await self.async_reward_fn(
-            result=result.final_output,
-            answer=data["answer"]
+            completions=result.final_output,
+            answer=data["answer"],
+            prompt=None,
+            prompt_ids=None,
+            completion_ids=None,
         )
         client.set_final_reward(reward)
 
         return reward
 ```
 
-#### Step 5: Creating the Rollout Workflow
+#### Step 4: Run Training with PPOTrainer
+
+Use AReaL's `PPOTrainer` for streamlined training:
 
 ```python
-from areal.api.workflow_api import RolloutWorkflow
-from areal.api.cli_args import GenerationHyperparameters
-import asyncio
+from areal.experimental.trainer import PPOTrainer
 
-class RLVRAgentWorkflow(RolloutWorkflow):
-    def __init__(
-        self,
-        gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
-        n_trajs: int = 2,  # Collect 2 trajectories per query
-    ):
-        self.gconfig = gconfig
-        self.gconfig.n_samples = 1
-        self.tokenizer = tokenizer
-        self.n_trajs = n_trajs
+def main(args):
+    config, _ = load_expr_config(args, AgentRLConfig)
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
-        # Create our agent wrapper
-        self.agent = OpenAIMathAgent()
+    train_dataset = get_custom_dataset(
+        split="train",
+        dataset_config=config.train_dataset,
+        tokenizer=tokenizer,
+    )
 
-    async def arun_episode(self, engine, data):
-        """Run one training episode: collect trajectories and return training data."""
-        # Create one client per trajectory (enables parallel collection)
-        clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-            for _ in range(self.n_trajs)
-        ]
+    valid_dataset = get_custom_dataset(
+        split="test",
+        dataset_config=config.valid_dataset,
+        tokenizer=tokenizer,
+    )
 
-        # Run agents in parallel
-        rewards = await asyncio.gather(
-            *[
-                self.agent.run_agent(data=data, client=clients[i])
-                for i in range(self.n_trajs)
-            ]
+    with PPOTrainer(
+        config,
+        train_dataset=train_dataset,
+        valid_dataset=valid_dataset,
+    ) as trainer:
+        # Create workflow with config parameters
+        workflow = OpenAIAgentWorkflow(
+            agent_builder_path=config.agent_builder_path,
+            agent_builder_kwargs=config.agent_builder_kwargs,
+            reward_fn_path=config.reward_fn_path,
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
         )
 
-        # Export all interactions with rewards
-        interactions_with_reward = {}
-        for client in clients:
-            # Apply reward discounting for multi-turn conversations
-            client.apply_reward_discount(turn_discount=0.9)
-            # Export interactions with token-level data
-            interactions = client.export_interactions(style="individual")
-            interactions_with_reward.update(interactions)
+        eval_workflow = OpenAIAgentWorkflow(
+            agent_builder_path=config.agent_builder_path,
+            agent_builder_kwargs=config.agent_builder_kwargs,
+            reward_fn_path=config.reward_fn_path,
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
+        )
 
-        return interactions_with_reward
-```
-
-#### Step 6: Incorporating into Training
-
-```python
-workflow = RLVRAgentWorkflow(
-    gconfig=config.gconfig,
-    tokenizer=tokenizer,
-    n_trajs=2,
-)
+        # Start training
+        trainer.train(workflow, eval_workflow)
 ```
 
 For a complete implementation, refer to the
@@ -551,6 +610,80 @@ python3 -m areal.launcher.local examples/openai-agents/train_agents.py \
 ```
 
 ### Customization
+
+The modular architecture makes it easy to customize your agent training:
+
+#### Creating Custom Agent Builders
+
+You can create any agent workflow by writing a new builder function:
+
+```python
+# In your custom module, e.g., my_package/custom_agent.py
+from agents import Agent as OpenAIAgent
+
+def build_custom_agent() -> OpenAIAgent:
+    """Build your custom agent with any configuration."""
+    agent = OpenAIAgent(
+        name="CustomAgent",
+        instructions="Your custom instructions...",
+        # Add any OpenAI Agent SDK features:
+        # - Tools
+        # - Handoffs
+        # - Custom configurations
+    )
+    return agent
+```
+
+Then reference it in your config:
+
+```yaml
+agent_builder_path: "my_package.custom_agent.build_custom_agent"
+```
+
+#### Passing Arguments to Agent Builders
+
+Use `agent_builder_kwargs` to parameterize your agent builder:
+
+```python
+def build_parameterized_agent(
+    system_message: str,
+    enable_tools: bool = True
+) -> OpenAIAgent:
+    """Agent builder that accepts parameters."""
+    agent = OpenAIAgent(
+        name="ParameterizedAgent",
+        instructions=system_message,
+        tools=get_tools() if enable_tools else None,
+    )
+    return agent
+```
+
+Configure it in your config file:
+
+```yaml
+agent_builder_path: "my_package.agent.build_parameterized_agent"
+agent_builder_kwargs:
+  system_message: "You are a specialized assistant..."
+  enable_tools: true
+```
+
+#### Using Custom Reward Functions
+
+Similarly, you can specify custom reward functions:
+
+```python
+# In my_package/rewards.py
+def custom_reward_fn(completions, answer, prompt, prompt_ids, completion_ids):
+    """Custom reward function following AReaL's API."""
+    # Your custom logic here
+    return reward_value
+```
+
+Reference it in your config:
+
+```yaml
+reward_fn_path: "my_package.rewards.custom_reward_fn"
+```
 
 For comprehensive details on agent instructions, handoffs, `ModelSettings`, and
 additional configuration options, refer to the

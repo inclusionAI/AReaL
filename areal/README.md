@@ -138,7 +138,7 @@ for hyperparameter searches or experimental variations:
 
 ```bash
 # Launch with Ray launcher: 4 nodes (4 GPUs each), 3 nodes for generation, 1 for training
-python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
+python3 -m areal.launcher.ray examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your_experiment_name> \
     trial_name=<your_trial_name> \
@@ -147,7 +147,7 @@ python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
     cluster.n_gpus_per_node=4
 
 # Launch with Slurm launcher: 16 nodes (8 GPUs each), 12 for generation, 4 for training
-python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py \
+python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=<your_experiment_name> \
     trial_name=<your_trial_name> \
@@ -336,7 +336,7 @@ class TrainEngine(abc.ABC):
     def train_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         """Update model parameters using provided batch and loss function."""
@@ -347,7 +347,6 @@ class TrainEngine(abc.ABC):
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
-        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         """Execute gradient-free forward pass for inference."""
@@ -375,16 +374,9 @@ class PPOActor:
         self,
         data: dict[str, Any],
     ) -> torch.Tensor | None:
-
-        def calc_logprobs(logits, input_data):
-            labels = torch.roll(input_data["input_ids"], shifts=-1, dims=-1)
-            logprobs = gather_logprobs(logits, labels, self.temperature)
-            return logprobs
-
         self.engine.eval()
         return self.engine.forward(
             input_=data,
-            post_hook=calc_logprobs,
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 

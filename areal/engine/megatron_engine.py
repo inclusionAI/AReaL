@@ -69,6 +69,7 @@ from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
 from areal.utils.offload import is_tms_enabled
 from areal.utils.perf_tracer import trace_perf, trace_scope
+from areal.utils.seeding import get_seed
 
 
 class _MegatronModelList(list):
@@ -119,16 +120,12 @@ class MegatronEngine(TrainEngine):
         self.own_global_group = False
         self.is_offload: bool = False
 
-    def initialize(
-        self,
-        addr: str | None,
-        ft_spec: FinetuneSpec,
-        parallel_strategy: ParallelStrategy,
-        seed: int = 0,
-    ):
-        if self.parallel_strategy is None:
-            self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
-        self.seed = seed
+    def initialize(self, addr: str | None, ft_spec: FinetuneSpec):
+        try:
+            self.seed = get_seed()
+        except ValueError:
+            self.logger.warning("Seed not set, using default seed 42.")
+            self.seed = 42
 
         assert addr is None, "FSDPEngine does not support remote initialization."
 
@@ -1101,7 +1098,7 @@ class MegatronEngine(TrainEngine):
     def train_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         if self.is_offload:
@@ -1117,7 +1114,7 @@ class MegatronEngine(TrainEngine):
     def eval_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
         if self.is_offload:
@@ -1127,19 +1124,19 @@ class MegatronEngine(TrainEngine):
             input_, loss_fn=loss_fn, loss_weight_fn=loss_weight_fn
         )
 
+    @trace_perf("megatron_engine.forward", category="compute")
     @torch.no_grad()
     def forward_batch(
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
-        post_hook: Callable[[torch.Tensor, dict[str, Any]], Any] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
         if self.is_offload:
             self.onload()
 
         assert self.model is not None, "Model is not initialized."
-        result = super().forward_batch(input_, output_seqlens, post_hook, aggregate_fn)
+        result = super().forward_batch(input_, output_seqlens, aggregate_fn)
         res = None
         if mpu.is_pipeline_last_stage():
             res = result
@@ -1149,7 +1146,6 @@ class MegatronEngine(TrainEngine):
             src_rank=mpu.get_pipeline_model_parallel_last_rank(),
             group=mpu.get_pipeline_model_parallel_group(),
         )
-        return res
 
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver.

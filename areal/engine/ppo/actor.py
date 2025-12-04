@@ -25,8 +25,6 @@ from areal.utils.data import (
 )
 from areal.utils.functional import (
     dynamic_sampling,
-    gather_logprobs,
-    gather_logprobs_entropy,
     ppo_actor_loss_fn,
     reward_overlong_penalty,
 )
@@ -124,10 +122,7 @@ class PPOActor:
 
     @trace_perf("ppo_actor.compute_logp", category="compute")
     @torch.no_grad()
-    def compute_logp(
-        self,
-        data: dict[str, Any],
-    ) -> torch.Tensor | None:
+    def compute_logp(self, data: dict[str, Any]) -> torch.Tensor | None:
         # Determine if forward pass is needed based on prox_logp_method
         # - loglinear: Skip forward pass (use approximation)
         # - recompute/metrics: Do forward pass
@@ -139,18 +134,9 @@ class PPOActor:
             if not self.config.recompute_logprob:
                 return None
 
-        def calc_logprobs(logits, input_data):
-            labels = input_data.get(
-                "rolled_input_ids",
-                torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
-            )
-            logprobs = gather_logprobs(logits, labels, self.temperature)
-            return logprobs
-
         self.engine.eval()
         return self.engine.forward(
             input_=data,
-            post_hook=calc_logprobs,
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
 
@@ -359,7 +345,6 @@ class PPOActor:
                     mb,
                     loss_fn=functools.partial(
                         grpo_loss_fn,
-                        temperature=self.temperature,
                         eps_clip=self.config.eps_clip,
                         eps_clip_higher=self.config.eps_clip_higher,
                         c_clip=self.config.c_clip,
@@ -409,9 +394,9 @@ class MegatronPPOActor(MegatronEngine):
 
 
 def grpo_loss_fn(
-    logits: torch.Tensor,
+    logprobs: torch.Tensor,
+    entropy: torch.Tensor,
     input_data: dict,
-    temperature: float,
     eps_clip: float,
     eps_clip_higher: float | None,
     c_clip: float | None,
@@ -420,21 +405,16 @@ def grpo_loss_fn(
     importance_sampling_level: str = "token",
     current_version: int | None = None,
     prox_logp_method: str = PROX_LOGP_METHOD_RECOMPUTE,
+    vocab_min_logits: torch.Tensor | None = None,
+    vocab_max_logits: torch.Tensor | None = None,
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
-    # Use rolled input_ids. Ulysses SP will roll input_ids in ulysses_prepare_inputs().
-    labels = input_data.get(
-        "rolled_input_ids",
-        torch.roll(input_data["input_ids"], shifts=-1, dims=-1),
-    )
     old_logp = input_data["logprobs"]
     advantages = input_data["advantages"]
-    # Use full loss_mask. Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
-    loss_mask = input_data.get("full_loss_mask", input_data["loss_mask"]).bool()
+    loss_mask = input_data["loss_mask"].bool()
     prox_logp_gt = input_data.get("prox_logp")  # Could be None if skipped
 
-    logprobs, entropy = gather_logprobs_entropy(logits, labels, temperature)
     entropy = entropy.detach()
 
     # Resolve proximal log-probabilities based on method
@@ -471,7 +451,7 @@ def grpo_loss_fn(
         # Using torch.ones_like(loss_mask) ensures correct shape when this function is called
         # standalone (e.g., by recipe/AEnt or tests), not just from ppo_update() which already
         # registers n_tokens.
-        n_tokens=torch.ones_like(loss_mask, dtype=torch.bool, device=logits.device),
+        n_tokens=torch.ones_like(loss_mask, dtype=torch.bool, device=logprobs.device),
         n_valid_tokens=loss_mask.bool(),
         clipped_tokens=stat["clip_mask"],
         dual_clipped_tokens=stat["dual_clip_mask"],
@@ -495,13 +475,13 @@ def grpo_loss_fn(
             behave_approx_kl=stat["behave_approx_kl"],
             denominator="unclipped_behave_tokens",
         )
-    vocab_min_logits = logits.detach().min(-1).values.float()
-    vocab_max_logits = logits.detach().max(-1).values.float()
-    stats_tracker.stat(
-        vocab_min_logits=vocab_min_logits,
-        vocab_max_logits=vocab_max_logits,
-        denominator="n_tokens",
-    )
+
+    if vocab_min_logits is not None and vocab_max_logits is not None:
+        stats_tracker.stat(
+            vocab_min_logits=vocab_min_logits,
+            vocab_max_logits=vocab_max_logits,
+            denominator="n_tokens",
+        )
 
     clip_mask = stat["clip_mask"]
     clipped_new_logp = torch.where(clip_mask, logprobs.detach(), 0.0)

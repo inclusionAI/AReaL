@@ -63,6 +63,9 @@ actor:
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
   dynamic_sampling: false
+  adv_norm:
+    mean_level: batch
+    std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
 
 critic:
@@ -100,6 +103,14 @@ sglang:
   max_running_requests: null
   context_length: 32768
   mem_fraction_static: 0.8
+
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: 32768
+  gpu_memory_utilization: 0.9
 
 # datasets
 train_dataset:

@@ -442,6 +442,7 @@ def slurm_main(config, run_id: int = 0):
         logger.info(f"Saved experiment metadata to {metadata_file}")
 
     n_backend_nodes = 0
+    llm_addrs = []
 
     if allocation_mode.gen_backend in ("sglang", "vllm"):
         # Launcher should launch llm servers according to allocation mode.
