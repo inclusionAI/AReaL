@@ -1,18 +1,21 @@
 from collections import OrderedDict
+from typing import TYPE_CHECKING
 
 from openai.types.responses.response_input_param import ResponseInputParam
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
+from areal.api.io_struct import ModelResponse
+from openai.types.chat import ChatCompletion
 
 logger = logging.getLogger("AReaLOpenAI Interaction Cache")
+
 
 
 class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._apply_reward_discount_called = False
-        self._parent_relationship_built = False
 
     def set_reward(self, id: str, reward: float) -> None:
         """Set reward for a specific completion/response by its ID."""
@@ -75,11 +78,19 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 current_reward = current_reward * turn_discount + interaction.reward
                 interaction.reward = current_reward
         return dict(**self)
-
-    def _build_parent_child_relationships(self) -> None:
-        self._parent_relationship_built = True
-        if len(self) == 0:
-            return
+    
+    def add_new_interaction(self, _id: str, interaction: InteractionWithTokenLogpReward, find_parent: bool = True) -> None:
+        """ Add a new interaction to the cache, automatically building 
+        parent-child relationships if `find_parent` is True. 
+        """
+        if not find_parent:
+            self[_id] = interaction
+            return None
+        
+        if interaction.messages is None:
+            raise ValueError(
+                "Interaction messages must be set to find parent relationship."
+            )
 
         def _is_prefix(
             a: list[dict] | str | ResponseInputParam,
@@ -90,24 +101,32 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 return False
             return b[: len(a)] == a
 
-        # 1) Construct parent-child relationships using longest prefix rule
+        # Construct parent-child relationships using longest prefix rule
         # Sort potential children by (data length asc, created asc)
         # so parents are available
         interactions = sorted(
-            self.values(), key=lambda x: (len(x.current_data), x.created_at)
+            self.values(), key=lambda x: (len(x.current_data), x.created_at), reverse=True
         )
 
         # Reset parents before rebuilding
-        for interaction in interactions:
-            interaction.parent = None
-
-        for i, child in enumerate(interactions):
-            # find the longest prefix in reverse order
-            for j in range(i):
-                parent = interactions[i - 1 - j]
-                if _is_prefix(parent.current_data, child.current_data):
-                    child.parent = parent
-                    break
+        remaining_data = interaction.current_data
+        for parent in interactions:
+            if parent.output_text is None or parent.messages is None:
+                raise ValueError(
+                    "Parent interaction output_text and messages must be set to find parent relationship."
+                )
+            parent_data = parent.current_data + [
+                {
+                    "role": "assistant", 
+                    "content": parent.output_text,
+                }
+            ]
+            if _is_prefix(parent_data, interaction.current_data):
+                interaction.parent = parent
+                remaining_data = interaction.current_data[len(parent_data):]
+                break
+        self[_id] = interaction
+        return remaining_data
 
     def export_interactions(
         self, style: str, reward_discount: float | None = None
@@ -165,9 +184,6 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                         "(e.g. think tokens), making it impossible to construct the conversation tree. "
                         "Please use 'individual' style instead."
                     )
-
-            if not self._parent_relationship_built:
-                self._build_parent_child_relationships()
 
             # Build children mapping to find leaf nodes.
             has_children = set()

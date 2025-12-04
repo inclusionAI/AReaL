@@ -179,8 +179,8 @@ def test_export_interactions_concat_style(mock_interaction):
     )
     i3 = mock_interaction(
         id="3",
-        messages=[{"role": "user", "content": "AEEE"}], # Different content from i1
-        response_text="E",  # TODO: distinguish different response text
+        messages=[{"role": "user", "content": "A"}],
+        response_text="E",  # Different content from i1
         created=3,
     )
     i4 = mock_interaction(
@@ -196,10 +196,10 @@ def test_export_interactions_concat_style(mock_interaction):
         created=4,
     )
 
-    cache[i1.completion.id] = i1
-    cache[i2.completion.id] = i2
-    cache[i3.completion.id] = i3
-    cache[i4.completion.id] = i4
+    cache.add_new_interaction(i1.completion.id, i1)
+    cache.add_new_interaction(i2.completion.id, i2)
+    cache.add_new_interaction(i3.completion.id, i3)
+    cache.add_new_interaction(i4.completion.id, i4)
 
     exported = cache.export_interactions(style="concat")
 
@@ -211,69 +211,40 @@ def test_export_interactions_concat_style(mock_interaction):
     assert i2.parent == i1
     assert i1.parent is None
 
-# TODO: support this scenario later.
-# def test_export_interactions_concat_style_output_be_refactored(mock_interaction):
-#     """
-#     Tests that if a parent's response is refactored (e.g. 'think' tokens removed),
-#     the child still correctly identifies the parent based on token matching.
-#     """
-#     cache = InteractionCache()
-#     # Parent's actual response has extra "think" tokens
-#     i1 = mock_interaction(
-#         id="1",
-#         messages=[{"role": "user", "content": "A"}],
-#         response_text="think: 123, response: B",
-#         created=1,
-#     )
-#     # Child's prompt uses the "clean" version of the parent's response
-#     i2 = mock_interaction(
-#         id="2",
-#         messages=[
-#             {"role": "user", "content": "A"},
-#             {"role": "assistant", "content": "B"},
-#             {"role": "user", "content": "C"},
-#         ],
-#         response_text="D",
-#         created=2,
-#     )
-
-#     cache[i1.completion.id] = i1
-#     cache[i2.completion.id] = i2
-
-#     # The token logic should not match because "think: 123, response: B" is not a prefix of the prompt for i2
-#     exported = cache.export_interactions(style="concat")
-
-#     assert len(exported) == 2  # Both are considered leaves
-#     assert i1.parent is None
-#     assert i2.parent is None
-
-
-def test_concat_export_is_idempotent(mock_interaction):
+def test_export_interactions_concat_style_output_be_refactored(mock_interaction):
+    """
+    Tests that if a parent's response is refactored (e.g. 'think' tokens removed),
+    the child still correctly identifies the parent based on token matching.
+    """
     cache = InteractionCache()
+    # Parent's actual response has extra "think" tokens
     i1 = mock_interaction(
-        id="1", messages=[{"role": "user", "content": "A"}], response_text="B"
+        id="1",
+        messages=[{"role": "user", "content": "A"}],
+        response_text="think: 123, response: B",
+        created=1,
     )
+    # Child's prompt uses the "clean" version of the parent's response
     i2 = mock_interaction(
         id="2",
         messages=[
             {"role": "user", "content": "A"},
             {"role": "assistant", "content": "B"},
+            {"role": "user", "content": "C"},
         ],
-        response_text="C",
+        response_text="D",
+        created=2,
     )
-    cache[i1.completion.id] = i1
-    cache[i2.completion.id] = i2
 
-    # First export builds the relationship
-    cache.export_interactions(style="concat")
-    assert i2.parent == i1
+    cache.add_new_interaction(i1.completion.id, i1)
+    cache.add_new_interaction(i2.completion.id, i2)
 
-    # Manually break it
-    i2.parent = None
-    cache._parent_relationship_built = False
-    # Second export should rebuild it
-    cache.export_interactions(style="concat")
-    assert i2.parent == i1
+    # The token logic should not match because "think: 123, response: B" is not a prefix of the prompt for i2
+    exported = cache.export_interactions(style="concat")
+
+    assert len(exported) == 2  # Both are considered leaves
+    assert i1.parent is None
+    assert i2.parent is None
 
 
 def test_multiple_exports_after_build(mock_interaction):
@@ -293,8 +264,8 @@ def test_multiple_exports_after_build(mock_interaction):
         response_text="C",
         created=2,
     )
-    cache[i1.completion.id] = i1
-    cache[i2.completion.id] = i2
+    cache.add_new_interaction(i1.completion.id, i1)
+    cache.add_new_interaction(i2.completion.id, i2)
 
     # First export: concat
     exported_concat = cache.export_interactions(style="concat")
@@ -321,14 +292,14 @@ def test_export_interactions_empty_cache(mock_interaction):
 
 def test_export_interactions_invalid_style(mock_interaction):
     cache = InteractionCache()
-    cache["1"] = mock_interaction(id="1")
+    cache.add_new_interaction("1", mock_interaction(id="1"))
     with pytest.raises(ValueError, match="Invalid export interactions style"):
         cache.export_interactions(style="invalid_style")
 
 
 def test_export_concat_wrong_template_type(mock_interaction):
     cache = InteractionCache()
-    cache["1"] = mock_interaction(id="1", chat_template_type="hf")
+    cache.add_new_interaction("1", mock_interaction(id="1", chat_template_type="hf"))
     with pytest.raises(
         ValueError, match="Cannot export interactions in 'concat' style"
     ):

@@ -18,11 +18,12 @@ class InteractionWithTokenLogpReward:
     """Internal structure to store completions/responses with their rewards."""
 
     # Common
-    model_response: ModelResponse
+    model_response: ModelResponse | None = None
     reward: float | None = None
     parent: InteractionWithTokenLogpReward | None = None
     chat_template_type: str = "hf"
     _cache: dict[str, torch.Tensor] | None = None
+    output_text: str | None = None
 
     # Completion fields (optional for response)
     completion: ChatCompletion | None = None
@@ -76,6 +77,7 @@ class InteractionWithTokenLogpReward:
         if self._cache is not None:
             return self._cache
         resp = self.model_response
+        assert resp is not None, "Model response is not set."
         self.seq_tokens = seq = resp.input_tokens + resp.output_tokens
         if self.parent:
             assert self.chat_template_type == "concat"
