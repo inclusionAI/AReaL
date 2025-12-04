@@ -218,7 +218,9 @@ class GenerationHyperparameters:
                         should_warn = True
 
                 if should_warn:
-                    logger.warning(f"Unsupported arg for openai format: `{k}`")
+                    logger.warning(
+                        f"Unsupported arg for openai format: `{k}` with value {current_value}"
+                    )
                 continue
             res[mapping.get(k, k)] = v
 
