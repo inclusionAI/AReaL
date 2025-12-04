@@ -357,6 +357,7 @@ class PPOActor:
                         use_sapo_loss=self.config.use_sapo_loss,
                         sapo_tau_pos=self.config.sapo_tau_pos,
                         sapo_tau_neg=self.config.sapo_tau_neg,
+                        use_decoupled_loss=self.config.use_decoupled_loss,
                     ),
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
@@ -412,6 +413,7 @@ def grpo_loss_fn(
     use_sapo_loss: bool = False,
     sapo_tau_pos: float = 1.0,
     sapo_tau_neg: float = 1.05,
+    use_decoupled_loss: bool = False,
     vocab_min_logits: torch.Tensor | None = None,
     vocab_max_logits: torch.Tensor | None = None,
 ):
@@ -440,6 +442,11 @@ def grpo_loss_fn(
 
     # Use SAPO or PPO loss
     if use_sapo_loss:
+        if use_decoupled_loss:
+            raise ValueError(
+                "SAPO is not compatible with `use_decoupled_loss=True`. "
+                "Please set `actor.use_decoupled_loss=false` in your configuration."
+            )
         loss, stat = sapo_loss_fn(
             logprobs=logprobs,
             old_logprobs=old_logp,
