@@ -50,11 +50,6 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @property
-    def workflow_executor(self) -> WorkflowExecutor:
-        """Get the workflow executor of the inference engine."""
-        raise NotImplementedError()
-
-    @property
     def data_parallel_group(self) -> dist.ProcessGroup:
         """Get the data parallel communication group of this engine.
 
@@ -337,6 +332,11 @@ class TrainEngine(abc.ABC):
 
 
 class InferenceEngine(abc.ABC):
+    @property
+    def workflow_executor(self) -> WorkflowExecutor:
+        """Get the workflow executor of the inference engine."""
+        raise NotImplementedError()
+
     def initialize(self, *args, **kwargs):
         """Initialize environments and launch the background thread for asynchronous distributed inference.
 
