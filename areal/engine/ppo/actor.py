@@ -514,8 +514,8 @@ def grpo_loss_fn(
     if use_sapo_loss:
         stats_tracker.stat(
             sapo_soft_gate=stat["sapo_soft_gate"],
-            sapo_gate_pos=stat["sapo_gate_pos"],
-            sapo_gate_neg=stat["sapo_gate_neg"],
+            sapo_scaled_gate_pos=stat["sapo_scaled_gate_pos"],
+            sapo_scaled_gate_neg=stat["sapo_scaled_gate_neg"],
             denominator="n_valid_tokens",
         )
     else:

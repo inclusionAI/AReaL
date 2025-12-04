@@ -814,8 +814,8 @@ class TestSAPOLossFn:
 
         # Stats should have correct shapes
         assert stat["sapo_soft_gate"].shape == basic_2d_data["logprobs"].shape
-        assert stat["sapo_gate_pos"].shape == basic_2d_data["logprobs"].shape
-        assert stat["sapo_gate_neg"].shape == basic_2d_data["logprobs"].shape
+        assert stat["sapo_scaled_gate_pos"].shape == basic_2d_data["logprobs"].shape
+        assert stat["sapo_scaled_gate_neg"].shape == basic_2d_data["logprobs"].shape
         assert stat["clip_mask"].shape == basic_2d_data["logprobs"].shape
 
     def test_1d_shape(self, basic_1d_data):
@@ -836,8 +836,8 @@ class TestSAPOLossFn:
 
         # Stats should have correct shapes
         assert stat["sapo_soft_gate"].shape == basic_1d_data["logprobs"].shape
-        assert stat["sapo_gate_pos"].shape == basic_1d_data["logprobs"].shape
-        assert stat["sapo_gate_neg"].shape == basic_1d_data["logprobs"].shape
+        assert stat["sapo_scaled_gate_pos"].shape == basic_1d_data["logprobs"].shape
+        assert stat["sapo_scaled_gate_neg"].shape == basic_1d_data["logprobs"].shape
         assert stat["clip_mask"].shape == basic_1d_data["logprobs"].shape
 
     def test_known_value(self):
@@ -894,7 +894,9 @@ class TestSAPOLossFn:
         )
 
         # For positive advantages, gate should match gate_pos
-        assert torch.allclose(stat["sapo_soft_gate"], stat["sapo_gate_pos"], atol=1e-6)
+        assert torch.allclose(
+            stat["sapo_soft_gate"], stat["sapo_scaled_gate_pos"], atol=1e-6
+        )
 
     def test_gate_selection_negative_advantages(self):
         """Test that negative gate is selected for negative advantages."""
@@ -917,7 +919,9 @@ class TestSAPOLossFn:
         )
 
         # For negative advantages, gate should match gate_neg
-        assert torch.allclose(stat["sapo_soft_gate"], stat["sapo_gate_neg"], atol=1e-6)
+        assert torch.allclose(
+            stat["sapo_soft_gate"], stat["sapo_scaled_gate_neg"], atol=1e-6
+        )
 
     def test_gate_selection_mixed_advantages(self):
         """Test gate selection with mixed positive and negative advantages."""
@@ -940,15 +944,15 @@ class TestSAPOLossFn:
 
         # Check that positive advantages use gate_pos
         assert torch.allclose(
-            stat["sapo_soft_gate"][0, 0], stat["sapo_gate_pos"][0, 0], atol=1e-6
+            stat["sapo_soft_gate"][0, 0], stat["sapo_scaled_gate_pos"][0, 0], atol=1e-6
         )
         assert torch.allclose(
-            stat["sapo_soft_gate"][0, 2], stat["sapo_gate_pos"][0, 2], atol=1e-6
+            stat["sapo_soft_gate"][0, 2], stat["sapo_scaled_gate_pos"][0, 2], atol=1e-6
         )
 
         # Check that negative advantage uses gate_neg
         assert torch.allclose(
-            stat["sapo_soft_gate"][0, 1], stat["sapo_gate_neg"][0, 1], atol=1e-6
+            stat["sapo_soft_gate"][0, 1], stat["sapo_scaled_gate_neg"][0, 1], atol=1e-6
         )
 
     def test_zero_tau_raises_error(self):
@@ -1012,8 +1016,8 @@ class TestSAPOLossFn:
 
         # Verify stat shapes
         assert stat["sapo_soft_gate"].shape == logprobs.shape
-        assert stat["sapo_gate_pos"].shape == logprobs.shape
-        assert stat["sapo_gate_neg"].shape == logprobs.shape
+        assert stat["sapo_scaled_gate_pos"].shape == logprobs.shape
+        assert stat["sapo_scaled_gate_neg"].shape == logprobs.shape
 
     def test_sequence_level_importance_sampling_2d(self):
         """Test SAPO with sequence-level importance sampling (2D)."""
@@ -1040,8 +1044,8 @@ class TestSAPOLossFn:
 
         # Verify stat shapes
         assert stat["sapo_soft_gate"].shape == logprobs.shape
-        assert stat["sapo_gate_pos"].shape == logprobs.shape
-        assert stat["sapo_gate_neg"].shape == logprobs.shape
+        assert stat["sapo_scaled_gate_pos"].shape == logprobs.shape
+        assert stat["sapo_scaled_gate_neg"].shape == logprobs.shape
 
     def test_sequence_level_importance_sampling_1d(self):
         """Test SAPO with sequence-level importance sampling (1D packed)."""
@@ -1070,8 +1074,8 @@ class TestSAPOLossFn:
 
         # Verify stat shapes
         assert stat["sapo_soft_gate"].shape == logprobs.shape
-        assert stat["sapo_gate_pos"].shape == logprobs.shape
-        assert stat["sapo_gate_neg"].shape == logprobs.shape
+        assert stat["sapo_scaled_gate_pos"].shape == logprobs.shape
+        assert stat["sapo_scaled_gate_neg"].shape == logprobs.shape
 
     def test_gradient_normalization(self):
         """Test that 4/tau normalization provides consistent gradients."""

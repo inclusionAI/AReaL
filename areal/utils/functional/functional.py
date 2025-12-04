@@ -306,8 +306,8 @@ def sapo_loss_fn(
         dual_clip_mask=torch.zeros_like(loss_mask, dtype=torch.bool),
         # SAPO-specific stats (scaled gates for consistency)
         sapo_soft_gate=soft_gate.detach(),
-        sapo_gate_pos=scaled_gate_pos.detach(),
-        sapo_gate_neg=scaled_gate_neg.detach(),
+        sapo_scaled_gate_pos=scaled_gate_pos.detach(),
+        sapo_scaled_gate_neg=scaled_gate_neg.detach(),
     )
 
     return pg_loss, stat
