@@ -84,7 +84,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         parent-child relationships if `find_parent` is True. 
         """
         if not find_parent:
-            print(f"adding interaction with id={_id}, parent={interaction.parent}")
+            print(f"adding interaction with id={_id}, parent={interaction.parent}, interaction=\n{interaction}")
             self[_id] = interaction
             return None
         
@@ -127,7 +127,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 remaining_data = interaction.current_data[len(parent_data):]
                 break
         self[_id] = interaction
-        print(f"adding interaction with id={_id}, parent={interaction.parent}")
+        print(f"adding interaction with id={_id}, parent={interaction.parent}, interaction=\n{interaction}")
         return remaining_data
 
     def export_interactions(
