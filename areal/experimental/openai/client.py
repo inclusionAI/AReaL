@@ -61,7 +61,7 @@ def concat_prompt_token_ids_with_parent(
     tokenizer: "PreTrainedTokenizerFast",
     start: str,
     end: str,
-):
+) -> list[int]:
     """Concatenate prompt token IDs with parent interaction's tokens."""
     parent_tokens = []
     if parent is not None:

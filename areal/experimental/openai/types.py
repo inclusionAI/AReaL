@@ -77,10 +77,8 @@ class InteractionWithTokenLogpReward:
 
     @property
     def remaining_messages(self) -> list[dict]:
-        assert self.messages is not None, "Messages are not set."
         if self.parent is None:
             return self.messages
-        assert self.parent.messages is not None, "Parent messages are not set."
         assert self.parent.output_message_list is not None, (
             "Parent output message is not set."
         )

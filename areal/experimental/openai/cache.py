@@ -77,7 +77,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         self,
         key: str,
         value: InteractionWithTokenLogpReward,
-    ) -> list[dict] | None:
+    ) -> None:
         """Add a new interaction to the cache, automatically building
         parent-child relationships if `find_parent` is True.
         """
@@ -103,7 +103,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         for parent in interactions:
             if parent.output_message_list is None or parent.messages is None:
                 raise ValueError(
-                    "Parent interaction output_text and messages must be set to find parent relationship."
+                    "Parent interaction output_message_list and messages must be set to find parent relationship."
                 )
             parent_data = parent.messages + parent.output_message_list
             if _is_prefix(parent_data, value.messages):
