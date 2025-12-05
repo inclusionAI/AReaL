@@ -52,6 +52,7 @@ def mock_interaction(tokenizer):
             model_response=mock_model_response,
             reward=reward,
             chat_template_type=chat_template_type,
+            output_text=response_text,
         )
 
         output_message = ResponseOutputMessage(
