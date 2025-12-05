@@ -1,3 +1,5 @@
+import traceback
+
 import torch
 from vllm.logger import init_logger
 from vllm.lora.models import LoRAModel
@@ -134,6 +136,9 @@ class VLLMWorkerExtension:
             return False, error_msg
 
     def update_weight_lora_xccl(self):
+        # NOTE: This code relies on vLLM private APIs: _adapter_manager, _registered_adapters,
+        # and _add_adapter/activate_adapter, which may change/ breakdown due to newer vllm versions.
+
         logger.info(
             f"start update lora weights by xccl, lora_name={self.areal_lora_name}, lora_int_id={self.areal_lora_int_id}",
             flush=True,
@@ -228,8 +233,6 @@ class VLLMWorkerExtension:
             return True, "Success"
 
         except Exception as e:
-            import traceback
-
             error_msg = f"Failed to update LoRA parameter via XCCL!   {e}\n{traceback.format_exc()}"
             logger.error(error_msg)
             return False, error_msg

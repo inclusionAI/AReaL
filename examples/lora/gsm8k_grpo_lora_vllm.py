@@ -82,6 +82,14 @@ def main(args):
     eval_rollout.initialize()
 
     if config.actor.weight_update_mode == "xccl":
+        weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
+            allocation_mode,
+            use_lora=config.actor.use_lora,
+            lora_name=config.gconfig.lora_name,
+            lora_int_id=1,  # hard coded for the single lora example
+            base_model_name=config.actor.path,
+        )
+    elif config.actor.weight_update_mode == "disk":
         weight_update_meta = WeightUpdateMeta.from_disk(
             config.saver.experiment_name,
             config.saver.trial_name,
@@ -91,14 +99,7 @@ def main(args):
             lora_int_id=1,  # hard coded for the single lora example
             base_model_name=config.actor.path,
         )
-    elif config.actor.weight_update_mode == "disk":
-        weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
-            allocation_mode,
-            use_lora=config.actor.use_lora,
-            lora_name=config.gconfig.lora_name,
-            lora_int_id=1,  # hard coded for the single lora example
-            base_model_name=config.actor.path,
-        )
+
     else:
         raise ValueError(
             f"Invalid weight_update_mode: {config.actor.weight_update_mode}. Expected 'xccl' or 'disk'."
