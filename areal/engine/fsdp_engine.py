@@ -635,7 +635,12 @@ class FSDPEngine(TrainEngine):
         if labels.ndim == 2 and labels.shape[0] == 1:
             labels = labels.squeeze(0)
         logprobs, entropy = gather_logprobs_entropy(
-            logits, labels, temperature=self.config.temperature
+            logits,
+            labels,
+            temperature=self.config.temperature,
+            tp_group=self.parallel_helper.tp_group
+            if self.parallel_helper.tp_size > 1
+            else None,
         )
         if self.parallel_helper.sp_size > 1:
             logprobs = self._sp_all_gather(logprobs)
@@ -659,7 +664,14 @@ class FSDPEngine(TrainEngine):
         # inputs (padded_mbs) has batch dim (1, seq_len), squeeze to match logits (seq_len,)
         if labels.ndim == 2 and labels.shape[0] == 1:
             labels = labels.squeeze(0)
-        logprobs = gather_logprobs(logits, labels, temperature=self.config.temperature)
+        logprobs = gather_logprobs(
+            logits,
+            labels,
+            temperature=self.config.temperature,
+            tp_group=self.parallel_helper.tp_group
+            if self.parallel_helper.tp_size > 1
+            else None,
+        )
         if self.parallel_helper.sp_size > 1:
             logprobs = self._sp_all_gather(logprobs)
             if ulysses_pad_size > 0:

@@ -3,6 +3,7 @@ from functools import partial
 
 import torch
 from torch import nn
+from torch.distributed import ProcessGroup
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_module
@@ -240,6 +241,18 @@ class ParallelHelper:
         return self._ps.etp_size
 
     @property
+    def dp_group(self) -> ProcessGroup:
+        return self.world_mesh["dp"].get_group()
+
+    @property
+    def sp_group(self) -> ProcessGroup:
+        return self.world_mesh["sp"].get_group()
+
+    @property
+    def tp_group(self) -> ProcessGroup:
+        return self.world_mesh["tp"].get_group()
+
+    @property
     def gradient_div_factor(self) -> int:
         # This is needed for FSDP-sharded experts when Expert Parallel is enabled.
         # Although the FSDP sharding of experts is done on a mesh of a different size than
@@ -346,10 +359,10 @@ def apply_non_moe_tp(
     # For root module
     root_tp_plan: dict[str, ParallelStyle] = {}
     if hasattr(model, "lm_head") and isinstance(model.lm_head, nn.Module):
-        # All-gather
+        # Implicitly all-gather in ColwiseParallel
+        # Output is sharded on the last dimension (Shard(2))
         root_tp_plan["lm_head"] = ColwiseParallel(
             input_layouts=Shard(1),
-            output_layouts=Replicate(),
         )
     if hasattr(model, "score") and isinstance(model.score, nn.Module):
         # For PPO's critic model's score layer:

@@ -69,23 +69,21 @@ class Platform:
         in the current instance. It attempts to retrieve the attribute from
         the corresponding `torch.<device_type>` module (e.g., torch.cuda, torch.xpu).
         If the attribute exists on the device module, it returns it.
-        Otherwise, it logs a warning and returns None.
+        Otherwise, it raises AttributeError.
         Args:
             key (str): The name of the attribute to access.
         Returns:
-            Any: The requested attribute from the Torch device module if found;
-                otherwise, None.
+            Any: The requested attribute from the Torch device module if found.
+        Raises:
+            AttributeError: If the attribute is not found on the device module.
         """
         device = getattr(torch, self.device_type, None)
         if device is not None and hasattr(device, key):
             return getattr(device, key)
         else:
-            logger.warning(
-                "Current platform %s does not have '%s' attribute.",
-                self.device_type,
-                key,
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{key}'"
             )
-            return None
 
     @classmethod
     def clear_cublas_workspaces(cls) -> None:
