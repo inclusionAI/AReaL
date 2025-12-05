@@ -61,7 +61,7 @@ def mock_interaction(tokenizer):
                 )
             ],
         )
-        
+
         interaction = InteractionWithTokenLogpReward(
             model_response=mock_model_response,
             reward=reward,
@@ -162,14 +162,18 @@ def test_export_interactions_concat_style(mock_interaction):
     #             \
     #              -> i3
     # Leaves: i3, i4
-    i1_messages = [{"role": "user", "content": "A"}] 
+    i1_messages = [{"role": "user", "content": "A"}]
     i1 = mock_interaction(
         id="1",
         messages=[{"role": "user", "content": "A"}],
         response_text="B",
         created=1,
     )
-    i2_messages = i1_messages + [o.to_dict() for o in i1.response.output] + [{"role": "user", "content": "C"}]
+    i2_messages = (
+        i1_messages
+        + [o.to_dict() for o in i1.response.output]
+        + [{"role": "user", "content": "C"}]
+    )
     i2 = mock_interaction(
         id="2",
         messages=i2_messages,
@@ -182,7 +186,11 @@ def test_export_interactions_concat_style(mock_interaction):
         response_text="E",  # Different response from i1
         created=3,
     )
-    i4_messages = i2_messages + [o.to_dict() for o in i2.response.output] + [{"role": "user", "content": "F"}]
+    i4_messages = (
+        i2_messages
+        + [o.to_dict() for o in i2.response.output]
+        + [{"role": "user", "content": "F"}]
+    )
     i4 = mock_interaction(
         id="4",
         messages=i4_messages,

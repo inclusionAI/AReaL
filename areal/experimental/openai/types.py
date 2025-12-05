@@ -1,7 +1,6 @@
 from __future__ import annotations  # noqa
 
 from dataclasses import dataclass, field
-from typing import Any
 
 import torch
 from openai.types.chat import ChatCompletion
@@ -75,16 +74,18 @@ class InteractionWithTokenLogpReward:
             return float(self.completion.created)
         else:
             return float(self.response.created_at)
-    
+
     @property
     def remaining_messages(self) -> list[dict]:
         assert self.messages is not None, "Messages are not set."
         if self.parent is None:
             return self.messages
         assert self.parent.messages is not None, "Parent messages are not set."
-        assert self.parent.output_message_list is not None, "Parent output message is not set."
-        parent_len = len(self.parent.messages + self.parent.output_message_list) 
-        return self.messages[parent_len :]
+        assert self.parent.output_message_list is not None, (
+            "Parent output message is not set."
+        )
+        parent_len = len(self.parent.messages + self.parent.output_message_list)
+        return self.messages[parent_len:]
 
     def to_tensor_dict(self) -> dict[str, torch.Tensor]:
         if self._cache is not None:

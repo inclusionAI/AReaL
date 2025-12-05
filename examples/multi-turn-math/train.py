@@ -70,7 +70,9 @@ class MultiTurnMathAgent:
             completions.append(response)
             message = response.choices[0].message
             messages.append(message.to_dict())
-            reward = await self.async_reward_fn(result=message.content, answer=data["answer"])
+            reward = await self.async_reward_fn(
+                result=message.content, answer=data["answer"]
+            )
             client.set_reward(response.id, reward)
             if reward == 1:
                 break

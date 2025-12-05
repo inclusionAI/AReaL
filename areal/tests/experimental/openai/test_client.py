@@ -435,7 +435,9 @@ async def test_multi_round_conversation_with_thinking(openai_client):
 
     # Round 2 - Strip thinking from previous response
     assistant_message_1 = c1.choices[0].message.to_dict()
-    cleaned_assistant_content = strip_thinking_tags(assistant_message_1.get("content", ""))
+    cleaned_assistant_content = strip_thinking_tags(
+        assistant_message_1.get("content", "")
+    )
     assistant_message_1["content"] = cleaned_assistant_content
     messages += [
         assistant_message_1,
@@ -448,7 +450,9 @@ async def test_multi_round_conversation_with_thinking(openai_client):
 
     # Round 3 - Continue conversation, stripping thinking from previous response
     assistant_message_2 = c2.choices[0].message.to_dict()
-    cleaned_assistant_content_2 = strip_thinking_tags(assistant_message_2.get("content", ""))
+    cleaned_assistant_content_2 = strip_thinking_tags(
+        assistant_message_2.get("content", "")
+    )
     assistant_message_2["content"] = cleaned_assistant_content_2
     messages += [
         assistant_message_2,
