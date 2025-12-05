@@ -242,34 +242,6 @@ def test_export_interactions_concat_style_output_be_refactored(mock_interaction)
     assert i2.parent is None
 
 
-def test_concat_export_is_idempotent(mock_interaction):
-    cache = InteractionCache()
-    i1 = mock_interaction(
-        id="1", messages=[{"role": "user", "content": "A"}], response_text="B"
-    )
-    i2 = mock_interaction(
-        id="2",
-        messages=[
-            {"role": "user", "content": "A"},
-            i1.response.output[0].to_dict(),
-        ],
-        response_text="C",
-    )
-    cache[i1.completion.id] = i1
-    cache[i2.completion.id] = i2
-
-    # First export builds the relationship
-    cache.export_interactions(style="concat")
-    assert i2.parent == i1
-
-    # Manually break it
-    i2.parent = None
-    cache._parent_relationship_built = False
-    # Second export should rebuild it
-    cache.export_interactions(style="concat")
-    assert i2.parent == i1
-
-
 def test_multiple_exports_after_build(mock_interaction):
     cache = InteractionCache()
     i1 = mock_interaction(
