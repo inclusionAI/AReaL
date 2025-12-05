@@ -251,7 +251,7 @@ def test_concat_export_is_idempotent(mock_interaction):
         id="2",
         messages=[
             {"role": "user", "content": "A"},
-            {"role": "assistant", "content": "B"},
+            i1.response.output[0].to_dict(),
         ],
         response_text="C",
     )
@@ -282,7 +282,7 @@ def test_multiple_exports_after_build(mock_interaction):
         id="2",
         messages=[
             {"role": "user", "content": "A"},
-            {"role": "assistant", "content": "B"},
+            i1.response.output[0].to_dict(),
         ],
         response_text="C",
         created=2,
