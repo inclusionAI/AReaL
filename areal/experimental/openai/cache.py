@@ -93,8 +93,8 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             )
 
         def _is_prefix(a: list[dict], b: list[dict]) -> bool:
-            # True if a is a strict prefix of b
-            if len(a) >= len(b):
+            # True if a is a prefix of b
+            if len(a) > len(b):
                 return False
             return b[: len(a)] == a
 
