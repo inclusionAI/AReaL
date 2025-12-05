@@ -80,6 +80,10 @@ class UpdateWeightsFromXcclRequestLora(OpenAIBaseModel):
     shapes: list[list[int]]
     lora_name: str
     lora_int_id: int
+    lora_target_modules: list[str] | str
+    lora_rank: int
+    lora_alpha: int
+    lora_bias: str
     base_model_name: str
     group_name: str
 
@@ -203,6 +207,10 @@ async def set_weight_meta_xccl_lora(
             request.shapes,
             request.lora_name,
             request.lora_int_id,
+            request.lora_target_modules,
+            request.lora_rank,
+            request.lora_alpha,
+            request.lora_bias,
             request.base_model_name,
         ),
     )

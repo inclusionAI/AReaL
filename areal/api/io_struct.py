@@ -123,6 +123,7 @@ class WeightUpdateMeta:
     lora_name: str = ""
     lora_int_id: int = 0
     base_model_name: str = ""
+    peft_config: dict = field(default_factory=dict)
 
     clear_checkpoint_after_load: bool = True
 
