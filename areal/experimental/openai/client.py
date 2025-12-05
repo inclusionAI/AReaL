@@ -267,6 +267,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         )
 
         if cache is not None:
+            print(f"Set completion and response for cached interaction {completion_id}")
             cache[completion_id].completion = chat_completion
             cache[completion_id].response = response
             cache[completion_id].output_text = output_text
