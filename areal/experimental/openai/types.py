@@ -91,8 +91,7 @@ class InteractionWithTokenLogpReward:
         resp = self.model_response
         assert resp is not None, "Model response is not set."
         self.seq_tokens = seq = resp.input_tokens + resp.output_tokens
-        if self.chat_template_type == "concat":
-            assert self.parent is not None
+        if self.chat_template_type == "concat" and self.parent is not None:
             parent_res = self.parent.to_tensor_dict()
             parent_logprobs = parent_res["logprobs"].squeeze(0).tolist()
             parent_loss_mask = parent_res["loss_mask"].squeeze(0).tolist()
