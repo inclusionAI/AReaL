@@ -65,7 +65,7 @@ def concat_prompt_token_ids_with_parent(
     """ Concatenate prompt token IDs with parent interaction's tokens. """
     parent_tokens = []
     if parent is not None:
-        parent_tokens = parent.response.input_tokens + parent.response.output_tokens
+        parent_tokens = parent.model_response.input_tokens + parent.model_response.output_tokens
     # By default, follows Qwen3 chat template.
     message_strs = []
     for msg in message_list:
