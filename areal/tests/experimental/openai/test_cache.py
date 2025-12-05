@@ -120,7 +120,7 @@ def test_export_with_reward_discount(mock_interaction):
         cache.items(),
         key=lambda item: item[1].completion.created if item[1].completion else 0,
     )
-    ordered_cache = InteractionCache(ordered_items)
+    ordered_cache = InteractionCache("individual", ordered_items)
 
     # Export should trigger apply_reward_discount internally
     ordered_cache.export_interactions(reward_discount=0.9)
