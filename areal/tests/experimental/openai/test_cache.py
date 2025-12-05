@@ -147,7 +147,7 @@ def test_export_interactions_individual_style(mock_interaction):
     cache["1"] = mock_interaction(id="1")
     cache["2"] = mock_interaction(id="2")
 
-    exported = cache.export_interactions(style="individual")
+    exported = cache.export_interactions()
     assert len(exported) == 2
     assert "1" in exported
     assert "2" in exported
@@ -242,7 +242,7 @@ def test_export_interactions_concat_style_output_be_refactored(mock_interaction)
     cache[i2.completion.id] = i2
 
     # The token logic should not match because "think: 123, response: B" is not a prefix of the prompt for i2
-    exported = cache.export_interactions(style="concat")
+    exported = cache.export_interactions()
 
     assert len(exported) == 2  # Both are considered leaves
     assert i1.parent is None
@@ -251,7 +251,7 @@ def test_export_interactions_concat_style_output_be_refactored(mock_interaction)
 
 def test_export_interactions_empty_cache(mock_interaction):
     cache = InteractionCache(export_style="concat")
-    exported = cache.export_interactions(style="concat")
+    exported = cache.export_interactions()
     assert len(exported) == 0
 
 
@@ -259,6 +259,7 @@ def test_export_interactions_invalid_style(mock_interaction):
     with pytest.raises(ValueError, match="Invalid export interactions style"):
         cache = InteractionCache(export_style="invalid_style")
         cache["1"] = mock_interaction(id="1")
+        exported = cache.export_interactions()
 
 
 def test_export_concat_wrong_template_type(mock_interaction):
