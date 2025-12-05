@@ -57,7 +57,7 @@ logger = logging.getLogger("AReaLOpenAI Client")
 
 def concat_prompt_token_ids_with_parent(
     message_list: list[dict],
-    parent: InteractionWithTokenLogpReward,
+    parent: InteractionWithTokenLogpReward | None,
     tokenizer: "PreTrainedTokenizerFast",
     start: str,
     end: str,
@@ -65,6 +65,8 @@ def concat_prompt_token_ids_with_parent(
     """Concatenate prompt token IDs with parent interaction's tokens."""
     parent_tokens = []
     if parent is not None:
+        if parent.model_response is None:
+            raise ValueError("Parent interaction has no model_response.")
         parent_tokens = (
             parent.model_response.input_tokens + parent.model_response.output_tokens
         )

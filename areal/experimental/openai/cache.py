@@ -78,7 +78,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         _id: str,
         interaction: InteractionWithTokenLogpReward,
         find_parent: bool = True,
-    ) -> None:
+    ) -> list[dict] | None:
         """Add a new interaction to the cache, automatically building
         parent-child relationships if `find_parent` is True.
         """
