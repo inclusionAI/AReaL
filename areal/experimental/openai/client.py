@@ -62,10 +62,12 @@ def concat_prompt_token_ids_with_parent(
     start: str,
     end: str,
 ):
-    """ Concatenate prompt token IDs with parent interaction's tokens. """
+    """Concatenate prompt token IDs with parent interaction's tokens."""
     parent_tokens = []
     if parent is not None:
-        parent_tokens = parent.model_response.input_tokens + parent.model_response.output_tokens
+        parent_tokens = (
+            parent.model_response.input_tokens + parent.model_response.output_tokens
+        )
     # By default, follows Qwen3 chat template.
     message_strs = []
     for msg in message_list:
@@ -73,6 +75,7 @@ def concat_prompt_token_ids_with_parent(
     message_strs.append(f"{start}assistant\n")
     prompt_token_ids = parent_tokens + tokenizer.encode("".join(message_strs))
     return prompt_token_ids
+
 
 class AsyncCompletionsWithReward(BaseAsyncCompletions):
     """Extended AsyncCompletions that adds caching and reward functionality."""
@@ -145,7 +148,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             remaining_data = cache.add_new_interaction(
                 completion_id,
                 interaction,
-                find_parent=self.chat_template_type == "concat"
+                find_parent=self.chat_template_type == "concat",
             )
 
         # Convert messages to prompt format
@@ -316,7 +319,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         msg_id = f"msg-{uuid.uuid4().hex[:29]}"
         current_time = float(int(datetime.datetime.now().timestamp()))
         # Add interaction to cache, resolve parent relationship according to input messages
-        
+
         # Cache the completion with its input messages
         cache = areal_cache if areal_cache is not None else self._cache
         if resp_id in cache:
@@ -412,11 +415,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             ),  # Store a copy of the input data
         )
         remaining_data = cache.add_new_interaction(
-            resp_id, 
-            interaction, 
-            find_parent=self.chat_template_type == "concat"
+            resp_id, interaction, find_parent=self.chat_template_type == "concat"
         )
-        
+
         # Apply chat template
         tools = list(tools) if not is_omitted(tools) else None
         if self.chat_template_type == "hf":

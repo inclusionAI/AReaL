@@ -212,6 +212,7 @@ def test_export_interactions_concat_style(mock_interaction):
     assert i2.parent == i1
     assert i1.parent is None
 
+
 def test_export_interactions_concat_style_output_be_refactored(mock_interaction):
     """
     Tests that if a parent's response is refactored (e.g. 'think' tokens removed),

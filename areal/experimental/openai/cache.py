@@ -1,15 +1,9 @@
 from collections import OrderedDict
-from typing import TYPE_CHECKING
-
-from openai.types.responses.response_input_param import ResponseInputParam
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
-from areal.api.io_struct import ModelResponse
-from openai.types.chat import ChatCompletion
 
 logger = logging.getLogger("AReaLOpenAI Interaction Cache")
-
 
 
 class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
@@ -78,15 +72,20 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 current_reward = current_reward * turn_discount + interaction.reward
                 interaction.reward = current_reward
         return dict(**self)
-    
-    def add_new_interaction(self, _id: str, interaction: InteractionWithTokenLogpReward, find_parent: bool = True) -> None:
-        """ Add a new interaction to the cache, automatically building 
-        parent-child relationships if `find_parent` is True. 
+
+    def add_new_interaction(
+        self,
+        _id: str,
+        interaction: InteractionWithTokenLogpReward,
+        find_parent: bool = True,
+    ) -> None:
+        """Add a new interaction to the cache, automatically building
+        parent-child relationships if `find_parent` is True.
         """
         if not find_parent:
             self[_id] = interaction
             return None
-        
+
         if interaction.messages is None:
             raise ValueError(
                 "Interaction messages must be set to find parent relationship."
@@ -114,13 +113,13 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 )
             parent_data = parent.messages + [
                 {
-                    "role": "assistant", 
+                    "role": "assistant",
                     "content": parent.output_text,
                 }
             ]
             if _is_prefix(parent_data, interaction.messages):
                 interaction.parent = parent
-                remaining_data = interaction.messages[len(parent_data):]
+                remaining_data = interaction.messages[len(parent_data) :]
                 break
         self[_id] = interaction
         return remaining_data
