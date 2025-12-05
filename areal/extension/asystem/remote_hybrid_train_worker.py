@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import gzip
 import json
@@ -18,15 +19,16 @@ from realhf.api.core.data_api import (  # 需要引擎侧也要修改
 from realhf.impl.model.utils import ppo_functional
 from realhf.impl.model.utils.functional import masked_normalization
 
-from areal.extension.asystem.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import (
     SaveLoadMeta,
     TrainEngine,
     WeightUpdateMeta,
 )
+from areal.extension.asystem.api.cli_args import TrainEngineConfig
 from areal.extension.asystem.utils.util import RL_TASKS
 from areal.utils import logging, stats_tracker
 from areal.utils.errors import EngineError, FrameworkError
+from areal.utils.http import arequest_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -110,33 +112,54 @@ class RemoteHybridTrainWorker(TrainEngine):
         }
 
         try:
-            target_url = f"http://{self.megatron_addr}/initialize"
-            headers = {"Content-Type": "application/json"}
+            addr = self.megatron_addr
+            endpoint = "/initialize"
             logger.info(
                 f"initialize begin send request to megatron server, "
-                f"target_url: {target_url}, rank: {global_rank}, target_url: {target_url}"
+                f"addr: {addr}, endpoint: {endpoint}, rank: {global_rank}"
             )
-            response = requests.post(
-                target_url, data=json.dumps(payload), headers=headers, timeout=3600
-            )
+
+            async def _init_with_health_check():
+                # First check health endpoint to ensure service is ready
+                logger.info(f"Checking health endpoint for {addr}/health")
+                try:
+                    await arequest_with_retry(
+                        addr=addr,
+                        endpoint="/health",
+                        method="GET",
+                        timeout=5,
+                        max_retries=20,
+                        retry_delay=5.0,
+                    )
+                    logger.info(
+                        f"Health check passed for {addr}, proceeding with initialize"
+                    )
+                except Exception as e:
+                    logger.error(f"Health check failed for {addr}: {e}")
+                    raise
+
+                # Service is ready, proceed with initialize
+                return await arequest_with_retry(
+                    addr=addr,
+                    endpoint=endpoint,
+                    payload=payload,
+                    method="POST",
+                    timeout=1800,
+                    max_retries=20,
+                    retry_delay=5.0,
+                )
+
+            resp = asyncio.run(_init_with_health_check())
             logger.info("initialize finished send request to megatron server")
-            if response.status_code == 200:
-                # response as belows:
-                # {'success': True, 'result': {'rank': 913, 'tp_size': 2, 'dp_size': 24, 'pp_size': 20,
-                # 'vpp_size': None, 'cp_size': 1, 'ep_size': 8, 'etp_size': 1, 'pp_rank': 19, 'dp_rank': 0,
-                # 'tp_rank': 1, 'cp_rank': 0, 'ep_rank': 1, 'etp_rank': 0}, 'engine_type': 'training',
-                # 'message': 'Engine training initialized successfully 33.180.162.194'}
-                resp = response.json()
-                logger.info(
-                    f"Rank{global_rank} payload sent successfully to {target_url}, response: {resp}"
-                )
-                return resp["result"]
-            else:
-                raise EngineError(
-                    "TrainEngineError",
-                    "InitializeError",
-                    f"rank{global_rank}, status code: {response.status_code}, response: {response.text}",
-                )
+            # response as belows:
+            # {'success': True, 'result': {'rank': 913, 'tp_size': 2, 'dp_size': 24, 'pp_size': 20,
+            # 'vpp_size': None, 'cp_size': 1, 'ep_size': 8, 'etp_size': 1, 'pp_rank': 19, 'dp_rank': 0,
+            # 'tp_rank': 1, 'cp_rank': 0, 'ep_rank': 1, 'etp_rank': 0}, 'engine_type': 'training',
+            # 'message': 'Engine training initialized successfully 33.180.162.194'}
+            logger.info(
+                f"Rank{global_rank} payload sent successfully to {addr}{endpoint}, response: {resp}"
+            )
+            return resp["result"]
         except ValueError as ve:
             raise EngineError(
                 "TrainEngineError", "InitializeError", f"rank{global_rank}, error: {ve}"
@@ -596,9 +619,7 @@ class RemoteHybridTrainWorker(TrainEngine):
 
         new_reward_score = reward_score
 
-        if (
-            self.config.wrap_policy.adv_norm.mean_level == "group"
-        ):
+        if self.config.wrap_policy.adv_norm.mean_level == "group":
             if self.config.wrap_policy.adv_norm.std_level != "group":
                 logger.warning(
                     "When using group-level mean normalization, "
@@ -646,7 +667,6 @@ class RemoteHybridTrainWorker(TrainEngine):
             logger.info(
                 f"[RemoteHypridTrainWorker] process_training_data by batch norm new_reward_score: {new_reward_score}"
             )
-
 
         # Compute rewards and GAEs.
         use_kl_in_loss = self.config.loss_configs.get("use_kl_in_loss", False)
@@ -749,9 +769,9 @@ class RemoteHybridTrainWorker(TrainEngine):
 
         ### Logging code starts. ###
         with stats_tracker.scope("grpo_actor"):
-            assert (
-                task_ids.shape == reward_score.shape
-            ), f"task_ids ({task_ids.shape}) and reward_score ({reward_score.shape}) must have the same shape"
+            assert task_ids.shape == reward_score.shape, (
+                f"task_ids ({task_ids.shape}) and reward_score ({reward_score.shape}) must have the same shape"
+            )
 
             task_denominators = {
                 f"{task}_n_seqs": (task_ids == idx).bool()

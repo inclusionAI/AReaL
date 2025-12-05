@@ -5,7 +5,6 @@ the base RolloutController and overrides the initialize method.
 """
 
 import asyncio
-import time
 from concurrent.futures import ThreadPoolExecutor
 
 from areal.api.alloc_mode import AllocationMode
@@ -92,7 +91,6 @@ class RolloutController(BaseRolloutController):
             self.scheduler.async_call_engine(worker.id, "initialize", init_config)
             for worker, init_config in zip(self.workers, init_configs)
         ]
-        time.sleep(60)
         await asyncio.gather(*tasks)
         self.logger.info("All engines are initialized...")
 

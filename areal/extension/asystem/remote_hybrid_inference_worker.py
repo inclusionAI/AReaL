@@ -113,33 +113,55 @@ class RemoteHybridInferenceWorker(InferenceEngine):
                 }
                 body["rank_config"] = rank_config
                 body["enable_colocate_mode"] = initialize_cfg.enable_colocate_mode
-                url = (
-                    "http://" + initialize_cfg.main_server_addrs[index] + "/initialize"
-                )
+                addr = initialize_cfg.main_server_addrs[index]
+                endpoint = "/initialize"
                 logger.info(
-                    f"url: {url}, send hybrid inference initialize config to engine: {body}"
+                    f"addr: {addr}, endpoint: {endpoint}, send hybrid inference initialize config to engine: {body}"
                 )
 
-                futures.append(
-                    executor.submit(
-                        requests.post,
-                        url,
-                        headers={"Content-Type": "application/json"},
-                        json=body,
-                        timeout=3600,
-                    )
-                )
+                # Wrapper function to run async arequest_with_retry in thread
+                def _make_request(addr: str, endpoint: str, payload: dict):
+                    async def _init_with_health_check():
+                        # First check health endpoint to ensure service is ready
+                        logger.info(f"Checking health endpoint for {addr}/health")
+                        try:
+                            await arequest_with_retry(
+                                addr=addr,
+                                endpoint="/health",
+                                method="GET",
+                                timeout=5,
+                                max_retries=20,
+                                retry_delay=5.0,
+                            )
+                            logger.info(
+                                f"Health check passed for {addr}, proceeding with initialize"
+                            )
+                        except Exception as e:
+                            logger.error(f"Health check failed for {addr}: {e}")
+                            raise
+
+                        # Service is ready, proceed with initialize
+                        return await arequest_with_retry(
+                            addr=addr,
+                            endpoint=endpoint,
+                            payload=payload,
+                            method="POST",
+                            timeout=1800,
+                            max_retries=20,
+                            retry_delay=5.0,
+                        )
+
+                    return asyncio.run(_init_with_health_check())
+
+                futures.append(executor.submit(_make_request, addr, endpoint, body))
 
             try:
                 results = wait_future_ordered(futures)
-                for response in results:
-                    logger.info(f"response: {response._content}")
-                    response.raise_for_status()
-                    result = response.json()
+                for result in results:
                     logger.info(f"initialize success, response: {result}")
             except Exception as e:
                 logger.error(
-                    f"[RemoteHybridInferenceWorker] initialize failed: {str(e)}, response is {response.text}"
+                    f"[RemoteHybridInferenceWorker] initialize failed: {str(e)}"
                 )
                 raise EngineError(
                     "InferenceEngineError",
