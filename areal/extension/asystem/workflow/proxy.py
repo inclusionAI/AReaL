@@ -205,10 +205,30 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                 qid = str(qid)
                 qid = qid + f"_{session_id}" if qid is not None else session_id
 
+                info = f"\n=== Completion Session ID: {session_id} ===\n"
+                for i, completion in enumerate(completion_list):
+                    info += f"Completion {i + 1}\n"
+                    info += f"=======Input Messages=======\n"
+                    for message in completion.messages:
+                        role = message.get("role", "unknown")
+                        content = message.get("content", "")
+                        info += f"role[{role}]: {content}\n"
+                        if "tool_calls" in message:
+                            info += f"\t[tool_calls]: {message['tool_calls']}\n"
+                    
+                    if completion.is_completion:
+                        info += f"=======Completion=======\n{completion.completion}\n"
+                    else:
+                        info += f"=======Response=======\n{completion.response}\n"
+                    info += f"=======Reward=======\n{completion.reward}\n"
+                    info += f"=======Input Tokens=======\n{completion.model_response.input_tokens}\n"
+                    info += f"=======Output Tokens=======\n{completion.model_response.output_tokens}\n"
+                    info += "=========================\n\n"
+
+
                 # Dump rollout to file
                 file_path = os.path.join(dump_path, f"{qid}.txt")
                 async with aiofiles.open(file_path, "a") as f:
-                    info = "\n".join([f"completion is: {completion_list}"])
                     await f.write(info + "\n")
         
         trajs = []

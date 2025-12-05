@@ -256,7 +256,7 @@ def build_app(
                 areal_completion_cache=session_cache[session_id].completions, **kwargs
             )
             return completion
-        except ValueError as e:
+        except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
         # TODO: add response support

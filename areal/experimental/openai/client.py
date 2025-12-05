@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
 from openai.resources.chat.completions.completions import (
@@ -133,9 +134,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         max_new_tokens = model_max_tokens - len(prompt_token_ids)
         if max_new_tokens <= 0:
-            raise RuntimeError(
-                "max_tokens must be greater than the number of prompt tokens"
-            )
+            logger.warning(f"prompt tokens: {len(prompt_token_ids)} greater than max tokens: {model_max_tokens}, input message is: {messages_list}")
+            raise HTTPException(status_code=500, detail=f"prompt tokens: {len(prompt_token_ids)} greater than max tokens: {model_max_tokens}")
         if not is_omitted(max_completion_tokens):
             max_new_tokens = min(max_new_tokens, max_completion_tokens)
 
