@@ -222,10 +222,6 @@ class RemotevLLMEngine(InferenceEngine):
         # lora already initialized when use_lora=true during init, by design, for vLLM
         self._engine.lora_initialized = config.use_lora
 
-    @property
-    def workflow_executor(self) -> WorkflowExecutor:
-        return self._engine.workflow_executor
-
     def initialize(
         self,
         engine_id: str | None = None,
@@ -238,6 +234,11 @@ class RemotevLLMEngine(InferenceEngine):
     def destroy(self):
         """Destroy the engine and clean up resources."""
         return self._engine.destroy()
+
+    @property
+    def workflow_executor(self) -> WorkflowExecutor:
+        """Get the workflow executor of the inference engine."""
+        return self._engine.workflow_executor
 
     def set_version(self, version: int):
         """Set the current weight version."""

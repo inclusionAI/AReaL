@@ -332,11 +332,6 @@ class TrainEngine(abc.ABC):
 
 
 class InferenceEngine(abc.ABC):
-    @property
-    def workflow_executor(self) -> WorkflowExecutor:
-        """Get the workflow executor of the inference engine."""
-        raise NotImplementedError()
-
     def initialize(self, *args, **kwargs):
         """Initialize environments and launch the background thread for asynchronous distributed inference.
 
@@ -354,6 +349,11 @@ class InferenceEngine(abc.ABC):
 
     def destroy(self):
         """Destroy the engine and release GPU memory for the local inference engine."""
+        raise NotImplementedError()
+
+    @property
+    def workflow_executor(self) -> WorkflowExecutor:
+        """Get the workflow executor of the inference engine."""
         raise NotImplementedError()
 
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
