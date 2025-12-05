@@ -92,10 +92,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 "Interaction messages must be set to find parent relationship."
             )
 
-        def _is_prefix(
-            a: list[dict] | str | ResponseInputParam,
-            b: list[dict] | str | ResponseInputParam,
-        ) -> bool:
+        def _is_prefix(a: list[dict], b: list[dict]) -> bool:
             # True if a is a strict prefix of b
             if len(a) >= len(b):
                 return False
@@ -121,6 +118,9 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     "content": parent.output_text,
                 }
             ]
+            print(f"parent_data=\n{parent_data}")
+            print(f"interaction.current_data=\n{interaction.current_data}")
+            print(f"_is_prefix(parent_data, interaction.current_data) = {_is_prefix(parent_data, interaction.current_data)}")
             if _is_prefix(parent_data, interaction.current_data):
                 print(f"Found parent for interaction {_id}: {parent.interaction_id}")
                 interaction.parent = parent
