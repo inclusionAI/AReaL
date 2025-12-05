@@ -101,9 +101,9 @@ class MultiTurnReactAgent(FnCallAgent):
                     stop=["\n<tool_response>", "<tool_response>"],
                     max_completion_tokens=self.max_tokens_per_turn,
                 )
-                content = completion.choices[0].message.content
-                assert content, "Error: LLM response is empty."
-                return completion, content
+                message = completion.choices[0].message
+                assert message, "Error: LLM response is empty."
+                return completion, message
             except RuntimeError as e:
                 logger.warning(
                     f"RuntimeError during LLM call_server at attempt {attempts}: {e}"
@@ -152,9 +152,9 @@ class MultiTurnReactAgent(FnCallAgent):
             round += 1
             stats["turns"] += 1
             num_llm_calls_available -= 1
-            completion, content = await self.call_server(client, messages)
+            completion, message = await self.call_server(client, messages)
             completions.append(completion)
-            messages.append({"role": "assistant", "content": content})
+            messages.append(message.to_dict())
             if "<tool_call>" in content and "</tool_call>" in content:
                 tool_call = content.split("<tool_call>")[1].split("</tool_call>")[0]
                 try:
@@ -202,9 +202,10 @@ class MultiTurnReactAgent(FnCallAgent):
                         "<think>your final thinking</think>\n<answer>your answer</answer>",
                     }
                 )
-                completion, content = await self.call_server(client, messages)
+                completion, message = await self.call_server(client, messages)
                 completions.append(completion)
-                messages.append({"role": "assistant", "content": content})
+                content = message.content
+                messages.append(message.to_dict())
                 if "<answer>" in content and "</answer>" in content:
                     prediction = (
                         messages[-1]["content"]
