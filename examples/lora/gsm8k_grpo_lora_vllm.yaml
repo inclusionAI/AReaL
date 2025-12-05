@@ -46,7 +46,7 @@ actor:
     max_tokens_per_mb: 10240
   optimizer:
     type: adam
-    lr: 1.70e-5
+    lr: 1.70e-4
     weight_decay: 0.017
     beta1: 0.9
     beta2: 0.999
@@ -73,6 +73,7 @@ actor:
     mean_level: batch
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
+  weight_update_mode: xccl
 
   # lora
   use_lora: ${rollout.use_lora}
