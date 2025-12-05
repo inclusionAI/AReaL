@@ -48,13 +48,6 @@ def mock_interaction(tokenizer):
         mock_model_response.input_tokens = input_tokens
         mock_model_response.output_tokens = output_tokens
 
-        interaction = InteractionWithTokenLogpReward(
-            model_response=mock_model_response,
-            reward=reward,
-            chat_template_type=chat_template_type,
-            output_text=response_text,
-        )
-
         output_message = ResponseOutputMessage(
             id=id,
             role="assistant",
@@ -67,6 +60,13 @@ def mock_interaction(tokenizer):
                     type="output_text",
                 )
             ],
+        )
+        
+        interaction = InteractionWithTokenLogpReward(
+            model_response=mock_model_response,
+            reward=reward,
+            chat_template_type=chat_template_type,
+            output_message_list=[output_message.to_dict()],
         )
 
         if is_completion:

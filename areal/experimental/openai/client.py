@@ -561,7 +561,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         cache[resp_id].response = deepcopy(response)
         cache[resp_id].model_response = engine_resp
-        cache[resp_id].output_message_list = resp_output
+        cache[resp_id].output_message_list = [o.to_dict() for o in resp_output]
         return response
 
     def _count_reasoning_tokens(
