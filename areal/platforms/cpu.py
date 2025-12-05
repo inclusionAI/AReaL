@@ -21,3 +21,15 @@ class CpuPlatform(Platform):
     @classmethod
     def synchronize(cls) -> None:
         raise NotImplementedError()
+
+    @classmethod
+    def update_env_vars_for_visible_devices(
+        cls, env_vars: dict, gpu_ranks: list
+    ) -> None:
+        # No-op for CPU platform
+        pass
+
+    @classmethod
+    def get_visible_devices(cls) -> list:
+        # No-devices for CPU platform
+        return []
