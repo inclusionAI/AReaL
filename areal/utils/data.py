@@ -80,9 +80,11 @@ def list_of_dict2dict_of_list(
             )
     return {key: [dict_item[key] for dict_item in list_of_dicts] for key in keys}
 
+
 def is_multi_modal_key(key: str) -> bool:
     # Any key matching: multi_modal_input*
     return key.startswith("multi_modal_input")
+
 
 def pad_sequences_to_tensors(
     sequence_list: list[dict[str, Any]], pad_value: float = 0.0
@@ -120,11 +122,20 @@ def pad_sequences_to_tensors(
             padded.append(padded_x)
         result[key] = torch.stack(padded)
     attention_mask = [
-        [1] * len(next(iter(item[key] for key in item.keys() if not is_multi_modal_key(key))))
+        [1]
+        * len(
+            next(iter(item[key] for key in item.keys() if not is_multi_modal_key(key)))
+        )
         + [0]
         * (
             max_length
-            - len(next(iter(item[key] for key in item.keys() if not is_multi_modal_key(key))))
+            - len(
+                next(
+                    iter(
+                        item[key] for key in item.keys() if not is_multi_modal_key(key)
+                    )
+                )
+            )
         )
         for item in sequence_list
     ]
@@ -165,7 +176,9 @@ def concat_padded_tensors(
     max_length = max([x["attention_mask"].shape[1] for x in tensor_dicts])
     result = {}
 
-    multimodal_keys = {key for td in tensor_dicts for key in td if is_multi_modal_key(key)}
+    multimodal_keys = {
+        key for td in tensor_dicts for key in td if is_multi_modal_key(key)
+    }
     # Merge multimodal keys
     for mm_key in multimodal_keys:
         merged_multi_modal = []
