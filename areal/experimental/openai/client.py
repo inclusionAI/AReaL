@@ -55,6 +55,50 @@ os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 logger = logging.getLogger("AReaLOpenAI Client")
 
 
+def _ensure_message_dict_list(
+    name: str,
+    value: list[Any],
+) -> list[dict[str, Any]]:
+    """Validate that ``value`` is a list of dictionaries or objects convertible via ``to_dict``.
+
+    Args:
+        name: Name of the argument being validated (for error messages).
+        value: The list provided by the caller.
+
+    Returns:
+        A list containing only dictionaries. Objects implementing ``to_dict`` are
+        converted into their dictionary representation; dictionaries are preserved.
+
+    Raises:
+        TypeError: If ``value`` is not a list or an element cannot be converted to a dict.
+    """
+
+    if not isinstance(value, list):
+        raise TypeError(f"{name} must be provided as a list, got {type(value).__name__}")
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        to_dict = getattr(item, "to_dict", None)
+        if callable(to_dict):
+            converted = to_dict()
+            if not isinstance(converted, dict):
+                raise TypeError(
+                    f"{name}[{index}] to_dict() must return a dict, got {type(converted).__name__}"
+                )
+            normalized.append(converted)
+            continue
+
+        raise TypeError(
+            f"{name}[{index}] must be a dict or provide a to_dict() method; got {type(item).__name__}"
+        )
+
+    return normalized
+
+
 def concat_prompt_token_ids_with_parent(
     message_list: list[dict],
     parent: InteractionWithTokenLogpReward | None,
@@ -126,9 +170,15 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
-        messages_list = list(messages)
-        if not messages_list:
+        if not isinstance(messages, list):
+            raise TypeError(
+                "messages must be provided as a list of dictionaries or objects supporting to_dict()"
+            )
+
+        messages_list_raw = list(messages)
+        if not messages_list_raw:
             raise ValueError("messages cannot be empty")
+        messages_list = _ensure_message_dict_list("messages", messages_list_raw)
         if extra_body is None:
             extra_body = {}
 
@@ -397,7 +447,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 {"role": "user", "content": input},
             ]
         elif isinstance(input, list):
-            for item in input:
+            normalized_input = _ensure_message_dict_list("input", input)
+            for item in normalized_input:
                 messages_list += _build_messages_list(item)
         else:
             raise ValueError(
