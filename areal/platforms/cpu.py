@@ -6,6 +6,8 @@ class CpuPlatform(Platform):
     device_type: str = "cpu"
     dispatch_key: str = "CPU"
     ray_device_key: str = "CPU"
+    device_control_env_var: str = ""
+    ray_experimental_noset: str = ""
     communication_backend: str = "gloo"
 
     @classmethod
