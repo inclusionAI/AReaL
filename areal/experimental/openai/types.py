@@ -26,7 +26,7 @@ class InteractionWithTokenLogpReward:
 
     # Fields used for parent-child relationship resolving
     messages: list[dict] = field(default_factory=list)
-    output_text: str | None = None
+    output_message: ChatCompletionMessage | None = None
 
     # Completion fields (optional for response)
     completion: ChatCompletion | None = None
@@ -74,6 +74,16 @@ class InteractionWithTokenLogpReward:
             return float(self.completion.created)
         else:
             return float(self.response.created_at)
+    
+    @property
+    def remaining_messages(self) -> list[dict]:
+        assert self.messages is not None, "Messages are not set."
+        if self.parent is None:
+            return self.messages
+        assert self.parent.messages is not None, "Parent messages are not set."
+        assert self.parent_output_text is not None, "Parent output text is not set."
+        parent_len = len(self.parent.messages) + 1
+        return self.messages[parent_len :]
 
     def to_tensor_dict(self) -> dict[str, torch.Tensor]:
         if self._cache is not None:

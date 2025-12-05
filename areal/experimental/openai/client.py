@@ -136,7 +136,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         current_time = int(datetime.datetime.now().timestamp())
         # Add interaction to cache, resolve parent relationship according to input messages
-        cache, remaining_data, interaction = None, None, None
+        cache, interaction = None, None
         if is_omitted(store) or store:
             # Cache the completion with its input messages
             cache = areal_cache if areal_cache is not None else self._cache
@@ -147,11 +147,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
                 chat_template_type=self.chat_template_type,
             )
-            remaining_data = cache.add_new_interaction(
-                completion_id,
-                interaction,
-                find_parent=self.chat_template_type == "concat",
-            )
+            cache[completion_id] = interaction
 
         # Convert messages to prompt format
         tools = tools if not is_omitted(tools) else None
@@ -164,9 +160,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 **extra_body.get("chat_template_kwargs", {}),
             )
         elif self.chat_template_type == "concat":
-            if remaining_data is not None:
-                # Update messages_list to only include remaining data after parent
-                messages_list = remaining_data
+            messages_list = interaction.remaining_messages
             prompt_token_ids = concat_prompt_token_ids_with_parent(
                 messages_list,
                 interaction.parent if interaction is not None else None,
@@ -244,6 +238,11 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             )
 
         # Create proper ChatCompletion object with all required fields
+        output_message = ChatCompletionMessage(
+            content=output_text,
+            role="assistant",
+            tool_calls=tool_calls,
+        )
         chat_completion = ChatCompletion(
             id=completion_id,
             choices=[
@@ -251,11 +250,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                     finish_reason=response.stop_reason,
                     index=0,
                     logprobs=None,  # For simplicity
-                    message=ChatCompletionMessage(
-                        content=output_text,
-                        role="assistant",
-                        tool_calls=tool_calls,
-                    ),
+                    message=output_message,
                 )
             ],
             created=current_time,
@@ -273,7 +268,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         if cache is not None:
             cache[completion_id].completion = chat_completion
             cache[completion_id].model_response = response
-            cache[completion_id].output_text = output_text
+            cache[completion_id].output_message = output_message
         return chat_completion
 
 
@@ -416,9 +411,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 deepcopy(input) if not is_omitted(input) else ""
             ),  # Store a copy of the input data
         )
-        remaining_data = cache.add_new_interaction(
-            resp_id, interaction, find_parent=self.chat_template_type == "concat"
-        )
+        cache[resp_id] = interaction
 
         # Apply chat template
         tools = list(tools) if not is_omitted(tools) else None
@@ -431,9 +424,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 **extra_body.get("chat_template_kwargs", {}),
             )
         elif self.chat_template_type == "concat":
-            if remaining_data is not None:
-                # Update messages_list to only include remaining data after parent
-                messages_list = remaining_data
+            messages_list = interaction.remaining_messages
             prompt_token_ids = concat_prompt_token_ids_with_parent(
                 messages_list,
                 interaction.parent if interaction is not None else None,
@@ -613,7 +604,8 @@ class ArealOpenAI(AsyncOpenAI):
         self.tool_call_parser = tool_call_parser
 
         # Use an ordered dict to maintain insertion order of completions/responses
-        self._cache: InteractionCache = InteractionCache()
+        export_style = "individual" if chat_template_type == "hf" else "concat"
+        self._cache: InteractionCache = InteractionCache(export_style=export_style)
 
         # Override responses with our extended implementation
         self.responses = AsyncResponsesWithReward(

@@ -7,9 +7,10 @@ logger = logging.getLogger("AReaLOpenAI Interaction Cache")
 
 
 class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, export_style = "concat", **kwargs):
         super().__init__(*args, **kwargs)
         self._apply_reward_discount_called = False
+        self.export_style = export_style
 
     def set_reward(self, id: str, reward: float) -> None:
         """Set reward for a specific completion/response by its ID."""
@@ -73,20 +74,20 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 interaction.reward = current_reward
         return dict(**self)
 
-    def add_new_interaction(
+    def __setitem__(
         self,
-        _id: str,
-        interaction: InteractionWithTokenLogpReward,
-        find_parent: bool = True,
+        key: str,
+        value: InteractionWithTokenLogpReward,
     ) -> list[dict] | None:
         """Add a new interaction to the cache, automatically building
         parent-child relationships if `find_parent` is True.
         """
+        find_parent = self.export_style == "concat"
         if not find_parent:
-            self[_id] = interaction
+            self[key] = value
             return None
 
-        if interaction.messages is None:
+        if value.messages is None:
             raise ValueError(
                 "Interaction messages must be set to find parent relationship."
             )
@@ -105,27 +106,19 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         )
 
         # Reset parents before rebuilding
-        remaining_data = interaction.messages
         for parent in interactions:
             if parent.output_text is None or parent.messages is None:
                 raise ValueError(
                     "Parent interaction output_text and messages must be set to find parent relationship."
                 )
-            parent_data = parent.messages + [
-                {
-                    "role": "assistant",
-                    "content": parent.output_text,
-                }
-            ]
-            if _is_prefix(parent_data, interaction.messages):
-                interaction.parent = parent
-                remaining_data = interaction.messages[len(parent_data) :]
+            parent_data = parent.messages + [parent.output_message]
+            if _is_prefix(parent_data, value.messages):
+                value.parent = parent
                 break
-        self[_id] = interaction
-        return remaining_data
+        self[key] = value
 
     def export_interactions(
-        self, style: str, reward_discount: float | None = None
+        self, reward_discount: float | None = None
     ) -> dict[str, InteractionWithTokenLogpReward]:
         """Export cached completions/responses in different formats.
 
@@ -169,7 +162,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     f"Interaction ID mismatch: {interaction.interaction_id} != {id}"
                 )
 
-        if style == "concat":
+        if self.export_style == "concat":
             for interaction in self.values():
                 if interaction.chat_template_type != "concat":
                     raise ValueError(
@@ -193,7 +186,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 for id, interaction in self.items()
                 if id not in has_children
             }
-        elif style == "individual":
+        elif self.export_style == "individual":
             return dict(**cache)
         else:
-            raise ValueError(f"Invalid export interactions style {style}")
+            raise ValueError(f"Invalid export interactions style {self.export_style}")
