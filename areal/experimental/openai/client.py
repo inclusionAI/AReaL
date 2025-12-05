@@ -132,7 +132,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         current_time = int(datetime.datetime.now().timestamp())
         # Add interaction to cache, resolve parent relationship according to input messages
         cache, remaining_data, interaction = None, None, None
-        print(f"creating completion_id = {completion_id}")
         if is_omitted(store) or store:
             # Cache the completion with its input messages
             cache = areal_cache if areal_cache is not None else self._cache
@@ -267,7 +266,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         )
 
         if cache is not None:
-            print(f"Set completion and response for cached interaction {completion_id}")
             cache[completion_id].completion = chat_completion
             cache[completion_id].model_response = response
             cache[completion_id].output_text = output_text

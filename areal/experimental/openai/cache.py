@@ -118,11 +118,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     "content": parent.output_text,
                 }
             ]
-            print(f"parent_data=\n{parent_data}")
-            print(f"interaction.messages=\n{interaction.messages}")
-            print(f"_is_prefix(parent_data, interaction.messages) = {_is_prefix(parent_data, interaction.messages)}")
             if _is_prefix(parent_data, interaction.messages):
-                print(f"Found parent for interaction {_id}: {parent.interaction_id}")
                 interaction.parent = parent
                 remaining_data = interaction.messages[len(parent_data):]
                 break
