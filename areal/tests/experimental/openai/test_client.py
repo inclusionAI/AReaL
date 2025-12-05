@@ -724,3 +724,55 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         + [0] * (c_b1_input_len - (c_b_input_len + c_b_output_len))
         + [1] * c_b1_output_len
     )
+
+
+@pytest.mark.asyncio
+async def test_type_checking(openai_client):
+    openai_client: ArealOpenAI
+    openai_client.chat_template_type = "concat"
+    openai_client.chat.completions.chat_template_type = "concat"
+    # Base conversation
+    base = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Start the session."},
+    ]
+    # Root
+    c_root = await openai_client.chat.completions.create(
+        messages=base,
+    )
+    # Directly use message, should not raise error
+    msgs_a = base + [
+        c_root.choices[0].message,
+        {"role": "user", "content": "Question A"},
+    ]
+    await openai_client.chat.completions.create(
+        messages=msgs_a,
+    )
+    # Use a dict, should not raise error
+    msgs_a = base + [
+        c_root.choices[0].message.to_dict(),
+        {"role": "user", "content": "Question A"},
+    ]
+    await openai_client.chat.completions.create(
+        messages=msgs_a,
+    )
+
+    with pytest.raises(TypeError):
+        # Use other stuff without a to_dict(), should raise error
+        msgs_a = base + [
+            c_root.choices[0].message.content,
+            {"role": "user", "content": "Question A"},
+        ]
+        await openai_client.chat.completions.create(
+            messages=msgs_a,
+        )
+
+    with pytest.raises(TypeError):
+        # `messages` is not a list, should raise error
+        msgs_a = base + [
+            c_root.choices[0].message.content,
+            {"role": "user", "content": "Question A"},
+        ]
+        await openai_client.chat.completions.create(
+            messages=tuple(msgs_a),
+        )
