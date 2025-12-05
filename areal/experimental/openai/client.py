@@ -604,8 +604,7 @@ class ArealOpenAI(AsyncOpenAI):
         self.tool_call_parser = tool_call_parser
 
         # Use an ordered dict to maintain insertion order of completions/responses
-        export_style = "individual" if chat_template_type == "hf" else "concat"
-        self._cache: InteractionCache = InteractionCache(export_style=export_style)
+        self._cache: InteractionCache = InteractionCache()
 
         # Override responses with our extended implementation
         self.responses = AsyncResponsesWithReward(

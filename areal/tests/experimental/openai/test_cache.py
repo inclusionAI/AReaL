@@ -93,7 +93,7 @@ def mock_interaction(tokenizer):
 
 
 def test_set_reward(mock_interaction):
-    cache = InteractionCache(export_style="individual")
+    cache = InteractionCache()
     interaction = mock_interaction(id="1")
     cache["1"] = interaction
     cache.set_reward("1", 10.0)
@@ -101,7 +101,7 @@ def test_set_reward(mock_interaction):
 
 
 def test_set_final_reward(mock_interaction):
-    cache = InteractionCache(export_style="individual")
+    cache = InteractionCache()
     cache["1"] = mock_interaction(id="1")
     cache["2"] = mock_interaction(id="2")
     cache.set_final_reward(20.0)
@@ -110,7 +110,7 @@ def test_set_final_reward(mock_interaction):
 
 
 def test_export_with_reward_discount(mock_interaction):
-    cache = InteractionCache(export_style="individual")
+    cache = InteractionCache()
     cache["1"] = mock_interaction(id="1", created=1)
     cache["2"] = mock_interaction(id="2", created=2)
     cache["3"] = mock_interaction(id="3", created=3, reward=10.0)
@@ -120,10 +120,10 @@ def test_export_with_reward_discount(mock_interaction):
         cache.items(),
         key=lambda item: item[1].completion.created if item[1].completion else 0,
     )
-    ordered_cache = InteractionCache("individual", ordered_items)
+    ordered_cache = InteractionCache(ordered_items)
 
     # Export should trigger apply_reward_discount internally
-    ordered_cache.export_interactions(reward_discount=0.9)
+    ordered_cache.export_interactions(style="individual", reward_discount=0.9)
 
     assert ordered_cache["3"].reward == pytest.approx(10.0)
     assert ordered_cache["2"].reward == pytest.approx(9.0)
@@ -131,7 +131,7 @@ def test_export_with_reward_discount(mock_interaction):
 
 
 def test_export_triggers_reward_discount_once(mock_interaction):
-    cache = InteractionCache(export_style="individual")
+    cache = InteractionCache()
     cache["1"] = mock_interaction(id="1", reward=10.0)
     # First call triggers it
     cache.apply_reward_discount(turn_discount=0.9)
@@ -143,11 +143,11 @@ def test_export_triggers_reward_discount_once(mock_interaction):
 
 
 def test_export_interactions_individual_style(mock_interaction):
-    cache = InteractionCache(export_style="individual")
+    cache = InteractionCache()
     cache["1"] = mock_interaction(id="1")
     cache["2"] = mock_interaction(id="2")
 
-    exported = cache.export_interactions()
+    exported = cache.export_interactions(style="individual")
     assert len(exported) == 2
     assert "1" in exported
     assert "2" in exported
@@ -157,7 +157,7 @@ def test_export_interactions_individual_style(mock_interaction):
 
 
 def test_export_interactions_concat_style(mock_interaction):
-    cache = InteractionCache(export_style="concat")
+    cache = InteractionCache()
     # Tree: root -> i1 -> i2 -> i4
     #             \
     #              -> i3
@@ -181,7 +181,7 @@ def test_export_interactions_concat_style(mock_interaction):
     i3 = mock_interaction(
         id="3",
         messages=[{"role": "user", "content": "A"}],
-        response_text="E",  # Different content from i1
+        response_text="E",  # Different response from i1
         created=3,
     )
     i4 = mock_interaction(
@@ -202,7 +202,7 @@ def test_export_interactions_concat_style(mock_interaction):
     cache[i3.completion.id] = i3
     cache[i4.completion.id] = i4
 
-    exported = cache.export_interactions()
+    exported = cache.export_interactions(style="concat")
 
     assert len(exported) == 2
     assert i3.completion.id in exported
@@ -218,7 +218,7 @@ def test_export_interactions_concat_style_output_be_refactored(mock_interaction)
     Tests that if a parent's response is refactored (e.g. 'think' tokens removed),
     the child still correctly identifies the parent based on token matching.
     """
-    cache = InteractionCache(export_style="concat")
+    cache = InteractionCache()
     # Parent's actual response has extra "think" tokens
     i1 = mock_interaction(
         id="1",
@@ -242,33 +242,98 @@ def test_export_interactions_concat_style_output_be_refactored(mock_interaction)
     cache[i2.completion.id] = i2
 
     # The token logic should not match because "think: 123, response: B" is not a prefix of the prompt for i2
-    exported = cache.export_interactions()
+    exported = cache.export_interactions(style="concat")
 
     assert len(exported) == 2  # Both are considered leaves
     assert i1.parent is None
     assert i2.parent is None
 
 
+def test_concat_export_is_idempotent(mock_interaction):
+    cache = InteractionCache()
+    i1 = mock_interaction(
+        id="1", messages=[{"role": "user", "content": "A"}], response_text="B"
+    )
+    i2 = mock_interaction(
+        id="2",
+        messages=[
+            {"role": "user", "content": "A"},
+            {"role": "assistant", "content": "B"},
+        ],
+        response_text="C",
+    )
+    cache[i1.completion.id] = i1
+    cache[i2.completion.id] = i2
+
+    # First export builds the relationship
+    cache.export_interactions(style="concat")
+    assert i2.parent == i1
+
+    # Manually break it
+    i2.parent = None
+    cache._parent_relationship_built = False
+    # Second export should rebuild it
+    cache.export_interactions(style="concat")
+    assert i2.parent == i1
+
+
+def test_multiple_exports_after_build(mock_interaction):
+    cache = InteractionCache()
+    i1 = mock_interaction(
+        id="1",
+        messages=[{"role": "user", "content": "A"}],
+        response_text="B",
+        created=1,
+    )
+    i2 = mock_interaction(
+        id="2",
+        messages=[
+            {"role": "user", "content": "A"},
+            {"role": "assistant", "content": "B"},
+        ],
+        response_text="C",
+        created=2,
+    )
+    cache[i1.completion.id] = i1
+    cache[i2.completion.id] = i2
+
+    # First export: concat
+    exported_concat = cache.export_interactions(style="concat")
+    assert len(exported_concat) == 1
+    assert i2.completion.id in exported_concat
+
+    # Second export: individual
+    exported_individual = cache.export_interactions(style="individual")
+    assert len(exported_individual) == 2
+    assert i1.completion.id in exported_individual
+    assert i2.completion.id in exported_individual
+
+    # Third export: concat again
+    exported_concat_2 = cache.export_interactions(style="concat")
+    assert len(exported_concat_2) == 1
+    assert i2.completion.id in exported_concat_2
+
+
 def test_export_interactions_empty_cache(mock_interaction):
-    cache = InteractionCache(export_style="concat")
-    exported = cache.export_interactions()
+    cache = InteractionCache()
+    exported = cache.export_interactions(style="concat")
     assert len(exported) == 0
 
 
 def test_export_interactions_invalid_style(mock_interaction):
+    cache = InteractionCache()
+    cache["1"] = mock_interaction(id="1")
     with pytest.raises(ValueError, match="Invalid export interactions style"):
-        cache = InteractionCache(export_style="invalid_style")
-        cache["1"] = mock_interaction(id="1")
-        exported = cache.export_interactions()
+        cache.export_interactions(style="invalid_style")
 
 
 def test_export_concat_wrong_template_type(mock_interaction):
-    cache = InteractionCache(export_style="concat")
+    cache = InteractionCache()
     cache["1"] = mock_interaction(id="1", chat_template_type="hf")
     with pytest.raises(
         ValueError, match="Cannot export interactions in 'concat' style"
     ):
-        cache.export_interactions()
+        cache.export_interactions(style="concat")
 
 
 if __name__ == "__main__":

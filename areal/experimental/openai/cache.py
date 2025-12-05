@@ -7,10 +7,9 @@ logger = logging.getLogger("AReaLOpenAI Interaction Cache")
 
 
 class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
-    def __init__(self, export_style: str, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._apply_reward_discount_called = False
-        self.export_style = export_style
 
     def set_reward(self, id: str, reward: float) -> None:
         """Set reward for a specific completion/response by its ID."""
@@ -82,11 +81,6 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         """Add a new interaction to the cache, automatically building
         parent-child relationships if `find_parent` is True.
         """
-        find_parent = self.export_style == "concat"
-        if not find_parent:
-            super().__setitem__(key, value)
-            return None
-
         if value.messages is None:
             raise ValueError(
                 "Interaction messages must be set to find parent relationship."
@@ -118,7 +112,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         super().__setitem__(key, value)
 
     def export_interactions(
-        self, reward_discount: float | None = None
+        self, style: str = "concat", reward_discount: float | None = None
     ) -> dict[str, InteractionWithTokenLogpReward]:
         """Export cached completions/responses in different formats.
 
@@ -162,7 +156,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     f"Interaction ID mismatch: {interaction.interaction_id} != {id}"
                 )
 
-        if self.export_style == "concat":
+        if style == "concat":
             for interaction in self.values():
                 if interaction.chat_template_type != "concat":
                     raise ValueError(
@@ -186,7 +180,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 for id, interaction in self.items()
                 if id not in has_children
             }
-        elif self.export_style == "individual":
+        elif style == "individual":
             return dict(**cache)
         else:
-            raise ValueError(f"Invalid export interactions style {self.export_style}")
+            raise ValueError(f"Invalid export interactions style {style}")
