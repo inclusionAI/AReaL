@@ -74,7 +74,9 @@ def _ensure_message_dict_list(
     """
 
     if not isinstance(value, list):
-        raise TypeError(f"{name} must be provided as a list, got {type(value).__name__}")
+        raise TypeError(
+            f"{name} must be provided as a list, got {type(value).__name__}"
+        )
 
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(value):
