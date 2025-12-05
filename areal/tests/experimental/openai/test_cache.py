@@ -162,19 +162,17 @@ def test_export_interactions_concat_style(mock_interaction):
     #             \
     #              -> i3
     # Leaves: i3, i4
+    i1_messages = [{"role": "user", "content": "A"}] 
     i1 = mock_interaction(
         id="1",
         messages=[{"role": "user", "content": "A"}],
         response_text="B",
         created=1,
     )
+    i2_messages = i1_messages + i1.response.output.to_dict() + [{"role": "user", "content": "C"}]
     i2 = mock_interaction(
         id="2",
-        messages=[
-            {"role": "user", "content": "A"},
-            {"role": "assistant", "content": "B"},
-            {"role": "user", "content": "C"},
-        ],
+        messages=i2_messages,
         response_text="D",
         created=2,
     )
@@ -184,15 +182,10 @@ def test_export_interactions_concat_style(mock_interaction):
         response_text="E",  # Different response from i1
         created=3,
     )
+    i4_messages = i2_messages + i1.response.output.to_dict() + [{"role": "user", "content": "F"}]
     i4 = mock_interaction(
         id="4",
-        messages=[
-            {"role": "user", "content": "A"},
-            {"role": "assistant", "content": "B"},
-            {"role": "user", "content": "C"},
-            {"role": "assistant", "content": "D"},
-            {"role": "user", "content": "F"},
-        ],
+        messages=i4_messages,
         response_text="G",
         created=4,
     )
