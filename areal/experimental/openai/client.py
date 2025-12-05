@@ -268,7 +268,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         if cache is not None:
             cache[completion_id].completion = chat_completion
             cache[completion_id].model_response = response
-            cache[completion_id].output_message = output_message
+            cache[completion_id].output_message_list = [output_message.to_dict()]
         return chat_completion
 
 
@@ -561,7 +561,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         cache[resp_id].response = deepcopy(response)
         cache[resp_id].model_response = engine_resp
-        cache[resp_id].output_text = output_text
+        cache[resp_id].output_message_list = resp_output
         return response
 
     def _count_reasoning_tokens(

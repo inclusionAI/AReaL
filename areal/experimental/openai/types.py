@@ -1,6 +1,7 @@
 from __future__ import annotations  # noqa
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import torch
 from openai.types.chat import ChatCompletion
@@ -26,7 +27,7 @@ class InteractionWithTokenLogpReward:
 
     # Fields used for parent-child relationship resolving
     messages: list[dict] = field(default_factory=list)
-    output_message: ChatCompletionMessage | None = None
+    output_message_list: list[dict] | None = None
 
     # Completion fields (optional for response)
     completion: ChatCompletion | None = None
@@ -81,8 +82,8 @@ class InteractionWithTokenLogpReward:
         if self.parent is None:
             return self.messages
         assert self.parent.messages is not None, "Parent messages are not set."
-        assert self.parent_output_text is not None, "Parent output text is not set."
-        parent_len = len(self.parent.messages) + 1
+        assert self.parent.output_message_list is not None, "Parent output message is not set."
+        parent_len = len(self.parent.messages + self.parent.output_message_list) 
         return self.messages[parent_len :]
 
     def to_tensor_dict(self) -> dict[str, torch.Tensor]:
