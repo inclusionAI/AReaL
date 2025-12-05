@@ -37,7 +37,7 @@ file_mounts:
 workdir: .
 
 run: |
-  python3 -m areal.launcher.local examples/math/gsm8k_grpo.py \
+  python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
     --config examples/math/gsm8k_grpo.yaml \
     experiment_name=gsm8k-grpo \
     trial_name=trial0 \
@@ -130,7 +130,7 @@ run: |
     done
 
     echo "Executing training script on head node..."
-    python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py \
+    python3 -m areal.launcher.ray examples/math/gsm8k_rl.py \
             --config examples/skypilot/gsm8k_grpo_ray.yaml \
             experiment_name=gsm8k-grpo \
             trial_name=trial0 \

@@ -83,5 +83,5 @@ pip install -e .
 
 ```
 python3 -m areal.launcher.ray examples/math/boba_grpo.py \
-    --config examples/math/boba_grpo_vllm.yaml
+    --config examples/math/boba_grpo.yaml
 ```

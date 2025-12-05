@@ -105,6 +105,14 @@ sglang:
   lora_target_modules: ${actor.target_modules}
   schedule_policy: fcfs
 
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: 32768
+  gpu_memory_utilization: 0.9
+
 # datasets
 train_dataset:
   batch_size: 256

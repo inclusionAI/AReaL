@@ -35,7 +35,8 @@ def set_random_seed(base_seed: int, key: str) -> None:
 
 def get_seed() -> int:
     global _SEED
-    assert _SEED is not None
+    if _SEED is None:
+        raise ValueError("Random seed is not set. Please call set_random_seed first.")
     return _SEED
 
 

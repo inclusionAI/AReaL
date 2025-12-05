@@ -56,13 +56,13 @@ Here we briefly introduce the implementation details of DAPO.
 > The algorithm is experimental and may not be stable.
 
 We recommend to change the parameter within the configuration file
-(i.e.gsm8k_dapo.yaml).
+(i.e. gsm8k_dapo_dynamic_bs.yaml).
 
 | Backend   | CMD                                                                                                                              |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_dapo.py --config examples/math/gsm8k_dapo.yaml --<other_args_to_overwrite>` |
-| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_dapo.py --config examples/math/gsm8k_dapo.yaml --<other_args_to_overwrite>`   |
-| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_dapo.py --config examples/math/gsm8k_dapo.yaml --<other_args_to_overwrite>` |
+| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_dapo_dynamic_bs.yaml --<other_args_to_overwrite>` |
+| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_dapo_dynamic_bs.yaml --<other_args_to_overwrite>`   |
+| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_dapo_dynamic_bs.yaml --<other_args_to_overwrite>` |
 
 ## Baselines
 

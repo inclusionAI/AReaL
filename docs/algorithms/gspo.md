@@ -48,13 +48,13 @@ GSPO shares most parameters with GRPO, with one key addition:
 
 ## Example Usage
 
-We recommend reusing PPO-like training scripts, and changing parameters within the configuration file (e.g., `gsm8k_grpo.py` + `gsm8k_gspo.yaml`).
+We recommend reusing PPO-like training scripts, and changing parameters within the configuration file (e.g., `gsm8k_rl.py` + `gsm8k_gspo.yaml`).
 
 | Backend   | CMD                                                                                                                              |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_grpo.py --config examples/experimental/gspo/gsm8k_gspo.yaml --<other_args_to_overwrite>` |
-| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_grpo.py --config examples/experimental/gspo/gsm8k_gspo.yaml --<other_args_to_overwrite>`   |
-| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_grpo.py --config examples/experimental/gspo/gsm8k_gspo.yaml --<other_args_to_overwrite>` |
+| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_gspo.yaml --<other_args_to_overwrite>` |
+| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_gspo.yaml --<other_args_to_overwrite>`   |
+| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_gspo.yaml --<other_args_to_overwrite>` |
 
 To enable GSPO, set `importance_sampling_level: sequence` in the actor configuration:
 
@@ -69,7 +69,7 @@ actor:
 GSPO can be easily applied to any PPO-based algorithm by adding the `importance_sampling_level` parameter. For example, to use GSPO with GRPO:
 
 ```bash
-python3 -m areal.launcher.local examples/math/gsm8k_grpo.py --config examples/math/gsm8k_grpo.yaml +actor.importance_sampling_level=sequence
+python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml +actor.importance_sampling_level=sequence
 ```
 
 Note: The plus sign (`+`) is required when the key `importance_sampling_level` is not in the YAML file.

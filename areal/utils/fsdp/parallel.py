@@ -3,6 +3,7 @@ from functools import partial
 
 import torch
 from torch import nn
+from torch.distributed import ProcessGroup
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_module
@@ -10,7 +11,6 @@ from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     ParallelStyle,
     PrepareModuleInput,
-    PrepareModuleInputOutput,
     RowwiseParallel,
     SequenceParallel,
     parallelize_module,
@@ -43,13 +43,14 @@ class ReplicateParallel(ParallelStyle):
         self,
         *,
         input_layout: Placement | None = None,
+        desired_input_layout: Placement | None = None,
         output_layout: Placement | None = None,
         use_local_output: bool = True,
     ):
         super().__init__()
         self.input_layout = input_layout or Replicate()
         self.output_layout = output_layout or Replicate()
-        self.desired_input_layout = Replicate()
+        self.desired_input_layout = desired_input_layout or Replicate()
         self.use_local_output = use_local_output
 
     @staticmethod
@@ -240,6 +241,18 @@ class ParallelHelper:
         return self._ps.etp_size
 
     @property
+    def dp_group(self) -> ProcessGroup:
+        return self.world_mesh["dp"].get_group()
+
+    @property
+    def sp_group(self) -> ProcessGroup:
+        return self.world_mesh["sp"].get_group()
+
+    @property
+    def tp_group(self) -> ProcessGroup:
+        return self.world_mesh["tp"].get_group()
+
+    @property
     def gradient_div_factor(self) -> int:
         # This is needed for FSDP-sharded experts when Expert Parallel is enabled.
         # Although the FSDP sharding of experts is done on a mesh of a different size than
@@ -346,22 +359,20 @@ def apply_non_moe_tp(
     # For root module
     root_tp_plan: dict[str, ParallelStyle] = {}
     if hasattr(model, "lm_head") and isinstance(model.lm_head, nn.Module):
-        # All-gather
+        # Implicitly all-gather in ColwiseParallel
+        # Output is sharded on the last dimension (Shard(2))
         root_tp_plan["lm_head"] = ColwiseParallel(
             input_layouts=Shard(1),
-            output_layouts=Replicate(),
         )
     if hasattr(model, "score") and isinstance(model.score, nn.Module):
         # For PPO's critic model's score layer:
-        # 1. The input is sharded by sequence parallelism
-        # 2. `score` is a linear layer, but its weight is not a DTensor. Use local input.
-        # 3. All-gather the output along the sequence dimension to get the full results.
-        root_tp_plan["score"] = PrepareModuleInputOutput(
-            input_layouts=Shard(1),
-            desired_input_layouts=Shard(1),
-            use_local_input=True,
-            output_layouts=Shard(1),
-            desired_output_layouts=Replicate(),
+        # 1. The input is sharded by sequence parallelism (Shard(1))
+        # 2. `score` is a linear layer with replicated weights
+        # 3. All-gather the output along the sequence dimension to get the full results
+        root_tp_plan["score"] = ReplicateParallel(
+            input_layout=Shard(1),
+            desired_input_layout=Shard(1),
+            output_layout=Replicate(),
         )
 
     if is_valid_vision_model(model_config.model_type):

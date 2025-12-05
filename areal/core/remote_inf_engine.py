@@ -289,7 +289,8 @@ class RemoteInfEngine(InferenceEngine):
 
         self.lora_initialized = False
 
-        self.workflow_executor: WorkflowExecutor
+        self._executor: ProcessPoolExecutor | None = None
+        self._workflow_executor: WorkflowExecutor | None = None
         self.local_server_processes: list[LocalInfServerInfo] = []
 
     def _create_session(self) -> aiohttp.ClientSession:
@@ -431,12 +432,36 @@ class RemoteInfEngine(InferenceEngine):
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
-        if hasattr(self, "workflow_executor"):
-            self.workflow_executor.destroy()
-        if hasattr(self, "executor"):
-            self.executor.shutdown()
+        if self._workflow_executor is not None:
+            self._workflow_executor.destroy()
+        if self._executor is not None:
+            self._executor.shutdown()
         if len(self.local_server_processes) > 0:
             self.teardown_server()
+
+    @property
+    def executor(self) -> ProcessPoolExecutor:
+        """Get the process pool executor of the inference engine."""
+        if self._executor is None:
+            raise RuntimeError("Executor is not initialized")
+        return self._executor
+
+    @executor.setter
+    def executor(self, executor: ProcessPoolExecutor):
+        """Set the process pool executor of the inference engine."""
+        self._executor = executor
+
+    @property
+    def workflow_executor(self) -> WorkflowExecutor:
+        """Get the workflow executor of the inference engine."""
+        if self._workflow_executor is None:
+            raise RuntimeError("WorkflowExecutor is not initialized")
+        return self._workflow_executor
+
+    @workflow_executor.setter
+    def workflow_executor(self, workflow_executor: WorkflowExecutor):
+        """Set the workflow executor of the inference engine."""
+        self._workflow_executor = workflow_executor
 
     def set_version(self, version):
         """Set the current weight version."""

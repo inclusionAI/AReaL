@@ -7,7 +7,6 @@ from areal.api.engine_api import TrainEngine
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import stats_tracker
-from areal.utils.functional import gather_logprobs
 from areal.utils.perf_tracer import trace_perf
 
 
@@ -62,22 +61,21 @@ class MegatronLMEngine(MegatronEngine):
 
 
 def compute_packed_sft_loss(
-    logits: torch.Tensor, input_: dict[str, Any]
+    logprobs: torch.Tensor,
+    entropy: torch.Tensor,
+    input_: dict[str, Any],
+    vocab_min_logits: torch.Tensor | None = None,
+    vocab_max_logits: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    # Use rolled input_ids. Ulysses SP will roll input_ids in ulysses_prepare_inputs().
-    labels: torch.Tensor = input_.get(
-        "rolled_input_ids",
-        torch.roll(input_["input_ids"], shifts=-1, dims=-1),
-    )
+    """Compute SFT loss from logprobs."""
+    del entropy  # SFT does not use entropy
     cu_seqlens: torch.Tensor = input_["cu_seqlens"]
-    # Use full loss_mask. Ulysses SP will slice loss_mask in ulysses_prepare_inputs().
-    loss_mask = input_.get("full_loss_mask", input_["loss_mask"]).bool()
+    loss_mask = input_["loss_mask"].bool()
 
-    logprobs = gather_logprobs(logits, labels)
     loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
     logprobs = torch.where(loss_mask, logprobs, 0)
 
-    device = logits.device
+    device = logprobs.device
     loss = -logprobs.sum() / loss_mask.count_nonzero()
     with torch.no_grad():
         batch_size = cu_seqlens.shape[0] - 1
@@ -99,18 +97,18 @@ def compute_packed_sft_loss(
     ## Loggin stats
     stats_tracker.denominator(
         n_seqs=n_seqs,
-        n_tokens=torch.ones(logits.shape[0], dtype=torch.bool, device=device),
+        n_tokens=torch.ones(logprobs.shape[0], dtype=torch.bool, device=device),
         n_valid_tokens=loss_mask,
         prompt_tokens=loss_mask.logical_not(),
     )
     stats_tracker.stat(ppl=(-seqlogp).exp().float(), denominator="n_seqs")
     stats_tracker.stat(loss=-logprobs.detach(), denominator="n_valid_tokens")
-    vocab_min_logits = logits.detach().min(-1).values.float()
-    vocab_max_logits = logits.detach().max(-1).values.float()
-    stats_tracker.stat(
-        vocab_min_logits=vocab_min_logits,
-        vocab_max_logits=vocab_max_logits,
-        denominator="n_tokens",
-    )
+
+    if vocab_min_logits is not None and vocab_max_logits is not None:
+        stats_tracker.stat(
+            vocab_min_logits=vocab_min_logits,
+            vocab_max_logits=vocab_max_logits,
+            denominator="n_tokens",
+        )
 
     return loss
