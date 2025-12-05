@@ -7,7 +7,7 @@ logger = logging.getLogger("AReaLOpenAI Interaction Cache")
 
 
 class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
-    def __init__(self, *args, export_style = "concat", **kwargs):
+    def __init__(self, export_style, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._apply_reward_discount_called = False
         self.export_style = export_style
