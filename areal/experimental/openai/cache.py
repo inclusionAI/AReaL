@@ -84,7 +84,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         """
         find_parent = self.export_style == "concat"
         if not find_parent:
-            self[key] = value
+            super().__setitem__(key, value)
             return None
 
         if value.messages is None:
@@ -115,7 +115,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             if _is_prefix(parent_data, value.messages):
                 value.parent = parent
                 break
-        self[key] = value
+        super().__setitem__(key, value)
 
     def export_interactions(
         self, reward_discount: float | None = None
