@@ -102,29 +102,29 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         # Sort potential children by (data length asc, created asc)
         # so parents are available
         interactions = sorted(
-            self.values(), key=lambda x: (len(x.current_data), x.created_at), reverse=True
+            self.values(), key=lambda x: (len(x.messages), x.created_at), reverse=True
         )
 
         # Reset parents before rebuilding
-        remaining_data = interaction.current_data
+        remaining_data = interaction.messages
         for parent in interactions:
             if parent.output_text is None or parent.messages is None:
                 raise ValueError(
                     "Parent interaction output_text and messages must be set to find parent relationship."
                 )
-            parent_data = parent.current_data + [
+            parent_data = parent.messages + [
                 {
                     "role": "assistant", 
                     "content": parent.output_text,
                 }
             ]
             print(f"parent_data=\n{parent_data}")
-            print(f"interaction.current_data=\n{interaction.current_data}")
-            print(f"_is_prefix(parent_data, interaction.current_data) = {_is_prefix(parent_data, interaction.current_data)}")
-            if _is_prefix(parent_data, interaction.current_data):
+            print(f"interaction.messages=\n{interaction.messages}")
+            print(f"_is_prefix(parent_data, interaction.messages) = {_is_prefix(parent_data, interaction.messages)}")
+            if _is_prefix(parent_data, interaction.messages):
                 print(f"Found parent for interaction {_id}: {parent.interaction_id}")
                 interaction.parent = parent
-                remaining_data = interaction.current_data[len(parent_data):]
+                remaining_data = interaction.messages[len(parent_data):]
                 break
         self[_id] = interaction
         return remaining_data

@@ -23,11 +23,13 @@ class InteractionWithTokenLogpReward:
     parent: InteractionWithTokenLogpReward | None = None
     chat_template_type: str = "hf"
     _cache: dict[str, torch.Tensor] | None = None
+
+    # Fields used for parent-child relationship resolving
+    messages: list[dict] = field(default_factory=list)
     output_text: str | None = None
 
     # Completion fields (optional for response)
     completion: ChatCompletion | None = None
-    messages: list[dict] = field(default_factory=list)
 
     # Response fields (optional for completion)
     response: Response | None = None
