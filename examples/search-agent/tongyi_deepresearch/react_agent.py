@@ -153,6 +153,7 @@ class MultiTurnReactAgent(FnCallAgent):
             stats["turns"] += 1
             num_llm_calls_available -= 1
             completion, message = await self.call_server(client, messages)
+            content = message.content
             completions.append(completion)
             messages.append(message.to_dict())
             if "<tool_call>" in content and "</tool_call>" in content:
