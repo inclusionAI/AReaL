@@ -112,7 +112,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         super().__setitem__(key, value)
 
     def export_interactions(
-        self, style: str = "concat", reward_discount: float | None = None
+        self, style: str, reward_discount: float | None = None
     ) -> dict[str, InteractionWithTokenLogpReward]:
         """Export cached completions/responses in different formats.
 
