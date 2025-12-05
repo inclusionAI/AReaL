@@ -202,7 +202,7 @@ def test_export_interactions_concat_style(mock_interaction):
     cache[i3.completion.id] = i3
     cache[i4.completion.id] = i4
 
-    exported = cache.export_interactions(style="concat")
+    exported = cache.export_interactions()
 
     assert len(exported) == 2
     assert i3.completion.id in exported
