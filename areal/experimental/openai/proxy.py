@@ -89,7 +89,7 @@ class SessionData:
     ) -> dict[str, InteractionWithTokenLogpReward]:
         if len(self.completions) == 0:
             return {}
-        self.completions.set_final_reward(self.final_reward or 0.0)
+        self.completions.set_last_reward(self.final_reward or 0.0)
         self.completions.apply_reward_discount(turn_discount=discount)
         return self.completions.export_interactions(style=style)
 

@@ -62,7 +62,7 @@ class CamelMathAgent:
         response = await agent.astep(messages[-1]["content"])
         content = response.msg.content
         reward = await self.async_reward_fn(result=content, answer=data["answer"])
-        client.set_final_reward(reward)
+        client.set_last_reward(reward)
         return reward
 
 
