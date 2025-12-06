@@ -55,6 +55,76 @@ os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 logger = logging.getLogger("AReaLOpenAI Client")
 
 
+def _ensure_message_dict_list(
+    name: str,
+    value: list[Any],
+) -> list[dict[str, Any]]:
+    """Validate that ``value`` is a list of dictionaries or objects convertible via ``to_dict``.
+
+    Args:
+        name: Name of the argument being validated (for error messages).
+        value: The list provided by the caller.
+
+    Returns:
+        A list containing only dictionaries. Objects implementing ``to_dict`` are
+        converted into their dictionary representation; dictionaries are preserved.
+
+    Raises:
+        TypeError: If ``value`` is not a list or an element cannot be converted to a dict.
+    """
+
+    if not isinstance(value, list):
+        raise TypeError(
+            f"{name} must be provided as a list, got {type(value).__name__}"
+        )
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        to_dict = getattr(item, "to_dict", None)
+        if callable(to_dict):
+            converted = to_dict()
+            if not isinstance(converted, dict):
+                raise TypeError(
+                    f"{name}[{index}] to_dict() must return a dict, got {type(converted).__name__}"
+                )
+            normalized.append(converted)
+            continue
+
+        raise TypeError(
+            f"{name}[{index}] must be a dict or provide a to_dict() method; got {type(item).__name__}"
+        )
+
+    return normalized
+
+
+def concat_prompt_token_ids_with_parent(
+    message_list: list[dict],
+    parent: InteractionWithTokenLogpReward | None,
+    tokenizer: "PreTrainedTokenizerFast",
+    start: str,
+    end: str,
+) -> list[int]:
+    """Concatenate prompt token IDs with parent interaction's tokens."""
+    parent_tokens = []
+    if parent is not None:
+        if parent.model_response is None:
+            raise ValueError("Parent interaction has no model_response.")
+        parent_tokens = (
+            parent.model_response.input_tokens + parent.model_response.output_tokens
+        )
+    # By default, follows Qwen3 chat template.
+    message_strs = []
+    for msg in message_list:
+        message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
+    message_strs.append(f"{start}assistant\n")
+    prompt_token_ids = parent_tokens + tokenizer.encode("".join(message_strs))
+    return prompt_token_ids
+
+
 class AsyncCompletionsWithReward(BaseAsyncCompletions):
     """Extended AsyncCompletions that adds caching and reward functionality."""
 
@@ -102,11 +172,35 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
-        messages_list = list(messages)
-        if not messages_list:
+        if not isinstance(messages, list):
+            raise TypeError(
+                "messages must be provided as a list of dictionaries or objects supporting to_dict()"
+            )
+
+        messages_list_raw = list(messages)
+        if not messages_list_raw:
             raise ValueError("messages cannot be empty")
+        messages_list = _ensure_message_dict_list("messages", messages_list_raw)
         if extra_body is None:
             extra_body = {}
+
+        # Convert response to OpenAI format
+        completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
+        current_time = int(datetime.datetime.now().timestamp())
+        # Add interaction to cache, resolve parent relationship according to input messages
+        cache, interaction = None, None
+        if is_omitted(store) or store:
+            # Cache the completion with its input messages
+            cache = areal_cache if areal_cache is not None else self._cache
+            if completion_id in cache:
+                raise ValueError(f"Completion {completion_id} already exists in cache")
+
+            interaction = InteractionWithTokenLogpReward(
+                messages=deepcopy(messages_list),  # Store a copy of the input messages
+                chat_template_type=self.chat_template_type,
+            )
+            cache[completion_id] = interaction
+
         # Convert messages to prompt format
         tools = tools if not is_omitted(tools) else None
         if self.chat_template_type == "hf":
@@ -118,13 +212,14 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 **extra_body.get("chat_template_kwargs", {}),
             )
         elif self.chat_template_type == "concat":
-            # By default, follows Qwen3 chat template.
-            start, end = self.messages_delimiter_start, self.messages_delimiter_end
-            message_strs = []
-            for msg in messages_list:
-                message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
-            message_strs.append(f"{start}assistant\n")
-            prompt_token_ids = self.tokenizer.encode("".join(message_strs))
+            messages_list = interaction.remaining_messages
+            prompt_token_ids = concat_prompt_token_ids_with_parent(
+                messages_list,
+                interaction.parent if interaction is not None else None,
+                self.tokenizer,
+                self.messages_delimiter_start,
+                self.messages_delimiter_end,
+            )
         else:
             raise ValueError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
@@ -182,11 +277,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Call inference engine
         response = await self.engine.agenerate(model_request)
-
-        # Convert response to OpenAI format
-        completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
-        current_time = int(datetime.datetime.now().timestamp())
-
         output_text = self.tokenizer.decode(response.output_tokens)
 
         # Parse tool calls.
@@ -200,6 +290,11 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             )
 
         # Create proper ChatCompletion object with all required fields
+        output_message = ChatCompletionMessage(
+            content=output_text,
+            role="assistant",
+            tool_calls=tool_calls,
+        )
         chat_completion = ChatCompletion(
             id=completion_id,
             choices=[
@@ -207,11 +302,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                     finish_reason=response.stop_reason,
                     index=0,
                     logprobs=None,  # For simplicity
-                    message=ChatCompletionMessage(
-                        content=output_text,
-                        role="assistant",
-                        tool_calls=tool_calls,
-                    ),
+                    message=output_message,
                 )
             ],
             created=current_time,
@@ -226,18 +317,10 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             ),
         )
 
-        if is_omitted(store) or store:
-            # Cache the completion with its input messages
-            cache = areal_cache if areal_cache is not None else self._cache
-            if completion_id in cache:
-                raise ValueError(f"Completion {completion_id} already exists in cache")
-
-            cache[completion_id] = InteractionWithTokenLogpReward(
-                completion=deepcopy(chat_completion),
-                model_response=response,  # Should not deepcopy response because of tokenizer
-                messages=deepcopy(messages_list),  # Store a copy of the input messages
-                chat_template_type=self.chat_template_type,
-            )
+        if cache is not None:
+            cache[completion_id].completion = chat_completion
+            cache[completion_id].model_response = response
+            cache[completion_id].output_message_list = [output_message.to_dict()]
         return chat_completion
 
 
@@ -280,6 +363,16 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         **kwargs: Any,
     ) -> Response:
         """Override create method to use AReaL engine"""
+        # Initialize IDs and timestamps
+        resp_id = f"resp-{uuid.uuid4().hex[:29]}"
+        msg_id = f"msg-{uuid.uuid4().hex[:29]}"
+        current_time = float(int(datetime.datetime.now().timestamp()))
+        # Add interaction to cache, resolve parent relationship according to input messages
+
+        # Cache the completion with its input messages
+        cache = areal_cache if areal_cache is not None else self._cache
+        if resp_id in cache:
+            raise ValueError(f"Response {resp_id} already exists in cache")
         if extra_body is None:
             extra_body = {}
 
@@ -356,13 +449,22 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 {"role": "user", "content": input},
             ]
         elif isinstance(input, list):
-            for item in input:
+            normalized_input = _ensure_message_dict_list("input", input)
+            for item in normalized_input:
                 messages_list += _build_messages_list(item)
         else:
             raise ValueError(
                 "Unsupported Responses input format: "
                 "expected str or list of message items with input_text."
             )
+        interaction = InteractionWithTokenLogpReward(
+            messages=deepcopy(messages_list),  # Store a copy of the input messages
+            chat_template_type=self.chat_template_type,
+            input_data=(
+                deepcopy(input) if not is_omitted(input) else ""
+            ),  # Store a copy of the input data
+        )
+        cache[resp_id] = interaction
 
         # Apply chat template
         tools = list(tools) if not is_omitted(tools) else None
@@ -375,13 +477,14 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 **extra_body.get("chat_template_kwargs", {}),
             )
         elif self.chat_template_type == "concat":
-            # By default, follows Qwen3 chat template.
-            start, end = self.messages_delimiter_start, self.messages_delimiter_end
-            message_strs: list[str] = []
-            for msg in messages_list:
-                message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
-            message_strs.append(f"{start}assistant\n")
-            prompt_token_ids = self.tokenizer.encode("".join(message_strs))
+            messages_list = interaction.remaining_messages
+            prompt_token_ids = concat_prompt_token_ids_with_parent(
+                messages_list,
+                interaction.parent if interaction is not None else None,
+                self.tokenizer,
+                self.messages_delimiter_start,
+                self.messages_delimiter_end,
+            )
         else:
             raise ValueError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
@@ -441,10 +544,6 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         reasoning_token_count = self._count_reasoning_tokens(output_text)
 
         # Build Responses API objects
-        resp_id = f"resp-{uuid.uuid4().hex[:29]}"
-        msg_id = f"msg-{uuid.uuid4().hex[:29]}"
-        current_time = float(int(datetime.datetime.now().timestamp()))
-
         output_message = ResponseOutputMessage(
             id=msg_id,
             role="assistant",
@@ -513,15 +612,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         if resp_id in cache:
             raise ValueError(f"Response {resp_id} already exists in cache")
 
-        cache[resp_id] = InteractionWithTokenLogpReward(
-            response=deepcopy(response),
-            model_response=engine_resp,  # Should not deepcopy because of tokenizer
-            input_data=(
-                deepcopy(input) if not is_omitted(input) else ""
-            ),  # Store a copy of the input data
-            chat_template_type=self.chat_template_type,
-        )
-
+        cache[resp_id].response = deepcopy(response)
+        cache[resp_id].model_response = engine_resp
+        cache[resp_id].output_message_list = [o.to_dict() for o in resp_output]
         return response
 
     def _count_reasoning_tokens(
