@@ -104,6 +104,16 @@ def _get_custom_dataset(
             max_length=max_length,
             **kwargs,
         )
+    elif "grounding" in path and type == "rl":
+        from .grounding import get_grounding_rl_dataset
+
+        return get_grounding_rl_dataset(
+            path=path,
+            split=split,
+            processor=processor,
+            max_length=max_length,
+            **kwargs,
+        )
     else:
         raise ValueError(
             f"Dataset {path} with split {split} and training type {type} is not supported. "
