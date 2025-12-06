@@ -1,9 +1,10 @@
 import dataclasses
+import functools
 import gc
 import math
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future
 from contextlib import nullcontext
 from datetime import datetime
@@ -42,7 +43,7 @@ from transformers import (
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import InferenceEngine, TrainEngine
+from areal.api.engine_api import ForwardBackwardOutputs, InferenceEngine, TrainEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.dist_rollout import DistRolloutCoordinator
@@ -51,14 +52,13 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, pkg_version, stats_tracker
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
+    MicroBatchIterator,
     MicroBatchList,
     amend_position_ids,
+    create_mb_iterator,
     pack_tensor_dict,
-    pad_and_stack_tensors_along_first_dim,
     pad_mb_list,
-    reorder_list,
     split_padded_tensor_dict_into_mb_list,
-    unpack_sequence,
     unsqueeze_mb_list,
 )
 from areal.utils.device import clear_memory, log_gpu_stats
@@ -600,6 +600,155 @@ class FSDPEngine(TrainEngine):
             should_accept_fn=should_accept_fn,
         )
 
+    def forward_backward_batch(
+        self,
+        data_iterator: Iterable[dict[str, torch.Tensor]],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor] | None = None,
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
+        return_outputs: bool = False,
+        forward_only: bool = False,
+    ) -> ForwardBackwardOutputs | None:
+        results = []
+        losses_list = []
+        batch_type = (
+            "train_batch"
+            if not forward_only
+            else ("forward_batch" if return_outputs else "eval_batch")
+        )
+        if isinstance(data_iterator, MicroBatchIterator):
+            total_loss_weight = data_iterator.kwargs["total_loss_weight"]
+
+        for mb_input, padded_mb_input, pad_length in data_iterator:
+            if self.parallel_helper.sp_size > 1:
+                input_ids = padded_mb_input["input_ids"]
+                position_ids = padded_mb_input.get("position_ids", None)
+
+                if self.is_vision_model:
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad(
+                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
+                    )
+                else:
+                    # Pad and slice the inputs
+                    (
+                        ulysses_input_ids,
+                        ulysses_position_ids,
+                        ulysses_pad_size,
+                    ) = ulysses_pad_and_slice_inputs(
+                        input_ids,
+                        position_ids,
+                        sp_size=self.parallel_helper.sp_size,
+                    )
+                if (
+                    ulysses_position_ids is not None
+                    and not ulysses_position_ids.is_contiguous()
+                ):
+                    ulysses_position_ids = ulysses_position_ids.contiguous()
+
+                inputs = ulysses_prepare_inputs(
+                    padded_mb_input,
+                    ulysses_input_ids,
+                    ulysses_position_ids,
+                    self.parallel_helper.sp_size,
+                )
+            else:
+                inputs = padded_mb_input
+                ulysses_pad_size = 0
+
+            def loss_fn_wrap(output, inputs):
+                if not self.config.is_critic:
+                    logprobs, entropy = self._compute_logprobs_entropy(
+                        output, inputs, ulysses_pad_size
+                    )
+                    vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
+                        output, ulysses_pad_size
+                    )
+                    if pad_length > 0:
+                        logprobs = logprobs[:-pad_length]
+                        entropy = entropy[:-pad_length]
+                        vocab_min_logits = vocab_min_logits[:-pad_length]
+                        vocab_max_logits = vocab_max_logits[:-pad_length]
+                    loss = loss_fn(
+                        logprobs,
+                        entropy,
+                        mb_input,
+                        vocab_min_logits=vocab_min_logits,
+                        vocab_max_logits=vocab_max_logits,
+                    )
+                else:
+                    values = self._compute_values(output.squeeze(-1), ulysses_pad_size)
+                    if pad_length > 0:
+                        values = values[:-pad_length]
+                    loss = loss_fn(values, mb_input)
+                return loss
+
+            def post_hook_wrap(output, inputs):
+                if not self.config.is_critic:
+                    result = self._compute_logprobs(output, inputs, ulysses_pad_size)
+                else:
+                    result = self._compute_values(output.squeeze(-1), ulysses_pad_size)
+                if pad_length > 0:
+                    result = result[:-pad_length]
+                return result
+
+            logits, post_process_fn = self._forward_compute_mb(
+                inputs,
+                loss_fn_wrap if loss_weight_fn is not None else post_hook_wrap,
+                loss_weight_fn,
+            )
+
+            if loss_weight_fn is not None:
+                loss_scale = loss_weight_fn(mb_input) / total_loss_weight
+                # Scale loss for accumulation
+                # To reverse the gradient averaging for SP groups
+                loss_scale *= self.parallel_helper.dp_size
+            else:
+                loss_scale = torch.tensor(1.0, device=logits.device)
+
+            if batch_type == "train_batch":
+                loss, _ = post_process_fn(logits)
+                loss *= loss_scale
+                with trace_scope("fsdp_engine.train_batch.backward"):
+                    loss.backward()
+
+            if batch_type == "eval_batch":
+                _, result = post_process_fn(logits)
+                loss = result["loss"] * loss_scale
+                losses_list.append(loss)
+
+            if batch_type == "forward_batch":
+                _, result = post_process_fn(logits)
+                results.append(result.get("output"))
+
+        return ForwardBackwardOutputs(mb_outputs=results, losses=losses_list)
+
+    def _forward_compute_mb(
+        self,
+        mb_input: dict[str, Any],
+        post_process_fn: Callable[[torch.Tensor, dict[str, Any]], Any],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        **kwargs,
+    ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
+        with trace_scope("fsdp_engine.forward"):
+            outputs = self.model(**mb_input)
+        output = outputs.logits.squeeze(0)
+
+        def _post_process_fn(input_, output_):
+            result = {}
+            loss = torch.tensor(1.0, device=output_.device)
+            if loss_weight_fn is not None:
+                loss = post_process_fn(output_, input_)
+                result["loss"] = loss.clone().detach()
+            else:
+                output_ = post_process_fn(output_, input_)
+                result["output"] = output_
+            return loss, result
+
+        return output, functools.partial(_post_process_fn, mb_input)
+
     def _sp_all_gather(self, tensor: torch.Tensor) -> torch.Tensor:
         gathered = dist_F.all_gather(tensor, group=self.sp_group)
         return torch.cat(gathered, dim=-1)
@@ -688,339 +837,75 @@ class FSDPEngine(TrainEngine):
                 values = values[:-ulysses_pad_size]
         return values
 
+    def _split_micro_batch(
+        self,
+        input_: dict[str, Any],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
+    ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]:
+        mb_list = self.prepare_mb_list(input_)
+        mb_list = mb_list.to(self.device)
+
+        if loss_weight_fn is not None:
+            total_loss_weight = (
+                torch.stack([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
+                .sum()
+                .detach()
+                .clone()
+                .to(dtype=torch.float32)
+            )
+            assert total_loss_weight != 0
+            dist.all_reduce(total_loss_weight, group=self.dp_group)
+        else:
+            total_loss_weight = torch.tensor(1.0, device=self.device)
+
+        mb_fields = ["mbs", "padded_mbs", "padding_lengths"]
+        return create_mb_iterator(
+            mb_list, mb_fields=mb_fields, total_loss_weight=total_loss_weight
+        ), mb_list
+
     @trace_perf("fsdp_engine.train_batch", category="compute")
     def train_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
-        """Train on a batch using gradient accumulation."""
         if self.is_offload:
             self.onload()
-
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
-
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
-
-        self.optimizer.zero_grad()
-
-        mb_list = self.prepare_mb_list(input_)
-        mb_list = mb_list.to(self.device)
-
-        total_loss_weight = (
-            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
-            .sum()
-            .detach()
-            .clone()
-            .to(dtype=torch.float32, device=self.device)
-        )
-        assert total_loss_weight != 0
-        dist.all_reduce(total_loss_weight, group=self.dp_group)
-
-        # Process microbatches with gradient accumulation
-        for pad_length, padded_mb_input, mb_input in zip(
-            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
-        ):
-            if self.parallel_helper.sp_size > 1:
-                input_ids = padded_mb_input["input_ids"]
-                position_ids = padded_mb_input.get("position_ids", None)
-
-                if self.is_vision_model:
-                    (
-                        ulysses_input_ids,
-                        ulysses_position_ids,
-                        ulysses_pad_size,
-                    ) = ulysses_pad(
-                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
-                    )
-                else:
-                    # Pad and slice the inputs
-                    (
-                        ulysses_input_ids,
-                        ulysses_position_ids,
-                        ulysses_pad_size,
-                    ) = ulysses_pad_and_slice_inputs(
-                        input_ids,
-                        position_ids,
-                        sp_size=self.parallel_helper.sp_size,
-                    )
-
-                if (
-                    ulysses_position_ids is not None
-                    and not ulysses_position_ids.is_contiguous()
-                ):
-                    ulysses_position_ids = ulysses_position_ids.contiguous()
-
-                inputs = ulysses_prepare_inputs(
-                    padded_mb_input,
-                    ulysses_input_ids,
-                    ulysses_position_ids,
-                    self.parallel_helper.sp_size,
-                )
-            else:
-                inputs = padded_mb_input
-                ulysses_pad_size = 0
-
-            with trace_scope("fsdp_engine.train_batch.forward"):
-                outputs = self.model(**inputs)
-
-            output = outputs.logits.squeeze(0)
-            if not self.config.is_critic:
-                logprobs, entropy = self._compute_logprobs_entropy(
-                    output, inputs, ulysses_pad_size
-                )
-                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
-                    output, ulysses_pad_size
-                )
-                if pad_length > 0:
-                    logprobs = logprobs[:-pad_length]
-                    entropy = entropy[:-pad_length]
-                    vocab_min_logits = vocab_min_logits[:-pad_length]
-                    vocab_max_logits = vocab_max_logits[:-pad_length]
-                loss = loss_fn(
-                    logprobs,
-                    entropy,
-                    mb_input,
-                    vocab_min_logits=vocab_min_logits,
-                    vocab_max_logits=vocab_max_logits,
-                )
-            else:
-                values = self._compute_values(output.squeeze(-1), ulysses_pad_size)
-                if pad_length > 0:
-                    values = values[:-pad_length]
-                loss = loss_fn(values, mb_input)
-
-            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-            # Scale loss for accumulation
-            # To reverse the gradient averaging for SP groups
-            loss_scale *= self.parallel_helper.dp_size
-
-            loss *= loss_scale
-            with trace_scope("fsdp_engine.train_batch.backward"):
-                loss.backward()
-
-        grad_norm = fsdp2_clip_grad_norm(
-            list(self.model.parameters()),
-            self.world_mesh,
-            max_norm=self.optimizer_config.gradient_clipping,
-        )
-
-        if not math.isfinite(grad_norm):
-            self.optimizer.zero_grad()
-            update_successful = False
-        else:
-            with trace_scope("fsdp_engine.train_batch.step"):
-                self.optimizer.step()
-            update_successful = True
-
-        current_lr = self.lr_scheduler.get_last_lr()[0]
-        return dict(
-            update_successful=float(update_successful),
-            grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
-            lr=current_lr,
-        )
+        return super().train_batch(input_, loss_fn, loss_weight_fn)
 
     @trace_perf("fsdp_engine.eval_batch", category="compute")
     @torch.no_grad()
     def eval_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
-        """Evaluate on a batch."""
         if self.is_offload:
             self.onload()
-
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
+        return super().eval_batch(input_, loss_fn, loss_weight_fn)
 
-        mb_list = self.prepare_mb_list(input_)
-        mb_list = mb_list.to(self.device)
-
-        total_loss_weight = (
-            torch.stack([loss_weight_fn(mb) for mb in mb_list.mbs])
-            .sum()
-            .detach()
-            .clone()
-            .to(dtype=torch.float32)
-        )
-        assert total_loss_weight != 0
-        dist.all_reduce(total_loss_weight, group=self.dp_group)
-
-        total_loss = torch.zeros(1, device=self.device, dtype=torch.float32)
-
-        for pad_length, padded_mb_input, mb_input in zip(
-            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
-        ):
-            if self.parallel_helper.sp_size > 1:
-                input_ids = padded_mb_input["input_ids"]
-                position_ids = padded_mb_input.get("position_ids", None)
-
-                if self.is_vision_model:
-                    (
-                        ulysses_input_ids,
-                        ulysses_position_ids,
-                        ulysses_pad_size,
-                    ) = ulysses_pad(
-                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
-                    )
-                else:
-                    # Pad and slice the inputs
-                    (
-                        ulysses_input_ids,
-                        ulysses_position_ids,
-                        ulysses_pad_size,
-                    ) = ulysses_pad_and_slice_inputs(
-                        input_ids,
-                        position_ids,
-                        sp_size=self.parallel_helper.sp_size,
-                    )
-
-                if (
-                    ulysses_position_ids is not None
-                    and not ulysses_position_ids.is_contiguous()
-                ):
-                    ulysses_position_ids = ulysses_position_ids.contiguous()
-
-                inputs = ulysses_prepare_inputs(
-                    padded_mb_input,
-                    ulysses_input_ids,
-                    ulysses_position_ids,
-                    self.parallel_helper.sp_size,
-                )
-            else:
-                inputs = padded_mb_input
-                ulysses_pad_size = 0
-
-            with trace_scope("fsdp_engine.eval_batch.forward"):
-                outputs = self.model(**inputs)
-
-            output = outputs.logits.squeeze(0)
-            if not self.config.is_critic:
-                logprobs, entropy = self._compute_logprobs_entropy(
-                    output, inputs, ulysses_pad_size
-                )
-                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
-                    output, ulysses_pad_size
-                )
-                if pad_length > 0:
-                    logprobs = logprobs[:-pad_length]
-                    entropy = entropy[:-pad_length]
-                    vocab_min_logits = vocab_min_logits[:-pad_length]
-                    vocab_max_logits = vocab_max_logits[:-pad_length]
-                loss = loss_fn(
-                    logprobs,
-                    entropy,
-                    mb_input,
-                    vocab_min_logits=vocab_min_logits,
-                    vocab_max_logits=vocab_max_logits,
-                )
-            else:
-                values = self._compute_values(output.squeeze(-1), ulysses_pad_size)
-                if pad_length > 0:
-                    values = values[:-pad_length]
-                loss = loss_fn(values, mb_input)
-
-            loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-
-            # eval_batch does not run backward, the grad will not be averaged over DP group
-            # so we shouldn't multiple dp_size in loss_scale
-            total_loss += loss.clone().detach() * loss_scale
-
-        dist.all_reduce(total_loss, group=self.dp_group)
-
-        return total_loss
-
-    @trace_perf("fsdp_engine.forward", category="compute")
+    @trace_perf("fsdp_engine.forward_batch", category="compute")
     @torch.no_grad()
-    def forward(
+    def forward_batch(
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
     ) -> Any | None:
-        """Forward pass returning logprobs or values."""
         if self.is_offload:
             self.onload()
-
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
-
-        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
-        mb_list = self.prepare_mb_list(input_)
-        mb_list = mb_list.to(self.device)
-
-        if output_seqlens is None:
-            output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
-        assert output_seqlens is not None
-
-        results = []
-
-        for pad_length, padded_mb_input, mb_input in zip(
-            mb_list.padding_lengths, mb_list.padded_mbs, mb_list.mbs
-        ):
-            if self.parallel_helper.sp_size > 1:
-                input_ids = padded_mb_input["input_ids"]
-                position_ids = padded_mb_input.get("position_ids", None)
-
-                if self.is_vision_model:
-                    (
-                        ulysses_input_ids,
-                        ulysses_position_ids,
-                        ulysses_pad_size,
-                    ) = ulysses_pad(
-                        input_ids, position_ids, sp_size=self.parallel_helper.sp_size
-                    )
-                else:
-                    # Pad and slice the inputs
-                    (
-                        ulysses_input_ids,
-                        ulysses_position_ids,
-                        ulysses_pad_size,
-                    ) = ulysses_pad_and_slice_inputs(
-                        input_ids,
-                        position_ids,
-                        sp_size=self.parallel_helper.sp_size,
-                    )
-
-                if (
-                    ulysses_position_ids is not None
-                    and not ulysses_position_ids.is_contiguous()
-                ):
-                    ulysses_position_ids = ulysses_position_ids.contiguous()
-
-                inputs = ulysses_prepare_inputs(
-                    padded_mb_input,
-                    ulysses_input_ids,
-                    ulysses_position_ids,
-                    self.parallel_helper.sp_size,
-                )
-            else:
-                inputs = padded_mb_input
-                ulysses_pad_size = 0
-
-            with trace_scope("fsdp_engine.forward.forward"):
-                outputs = self.model(**inputs)
-
-            output = outputs.logits.squeeze(0)
-            if not self.config.is_critic:
-                result = self._compute_logprobs(output, inputs, ulysses_pad_size)
-            else:
-                result = self._compute_values(output.squeeze(-1), ulysses_pad_size)
-            if pad_length > 0:
-                result = result[:-pad_length]
-            results.append(result)
-
-        res = aggregate_fn(results)
-        output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
-        unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
-        reordered = reorder_list(unpacked, mb_list.backward_indices)
-        return pad_and_stack_tensors_along_first_dim(reordered)
+        return super().forward_batch(input_, output_seqlens, aggregate_fn)
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
@@ -1231,7 +1116,35 @@ class FSDPEngine(TrainEngine):
         self.optimizer.load_state_dict(optimizer_state_dict)
         dist.barrier(group=self.cpu_group)
 
-    def step_lr_scheduler(self):
+    # Exposed APIs
+    def optimizer_zero_grad(self):
+        assert self.optimizer is not None
+        self.optimizer.zero_grad()
+
+    def optimizer_step(self):
+        assert self.optimizer is not None
+        grad_norm = fsdp2_clip_grad_norm(
+            list(self.model.parameters()),
+            self.world_mesh,
+            max_norm=self.optimizer_config.gradient_clipping,
+        )
+
+        if not math.isfinite(grad_norm):
+            self.optimizer_zero_grad()
+            update_successful = False
+        else:
+            with trace_scope("fsdp_engine.train_batch.step"):
+                self.optimizer.step()
+            update_successful = True
+
+        current_lr = self.lr_scheduler.get_last_lr()[0]
+        return dict(
+            update_successful=float(update_successful),
+            grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
+            lr=current_lr,
+        )
+
+    def lr_scheduler_step(self):
         assert self.lr_scheduler is not None
         self.lr_scheduler.step()
 

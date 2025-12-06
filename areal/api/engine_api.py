@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -18,13 +19,32 @@ from areal.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
+from areal.utils.data import (
+    MicroBatchList,
+    pack_tensor_dict,
+    pad_and_stack_tensors_along_first_dim,
+    reorder_list,
+    unpack_sequence,
+)
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
     from areal.core.workflow_executor import WorkflowExecutor
 
 
+@dataclass
+class ForwardBackwardOutputs:
+    mb_outputs: list[torch.Tensor] | None
+    losses: list[torch.Tensor] | None
+
+
 class TrainEngine(abc.ABC):
+    def __init__(self):
+        self.is_offload = None
+        self.sp_group = None
+        self.parallel_helper = None
+        self.dp_group = None
+
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Initialize PyTorch distributed communication groups.
 
@@ -204,12 +224,113 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def _split_micro_batch(
+        self,
+        input_: dict[str, Any],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
+    ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]:
+        """Split input batch into micro-batches for gradient accumulation.
+
+        Parameters
+        ----------
+        input_ : dict[str, Any]
+            The input batch dictionary.
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
+            A function to compute the loss weight for each micro-batch.
+
+        Returns
+        -------
+        tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]
+            An iterator over micro-batch dictionaries and the MicroBatchList metadata.
+        """
+        raise NotImplementedError()
+
+    def _forward_compute_mb(
+        self,
+        mb_input: dict[str, Any],
+        post_process_fn: Callable[[torch.Tensor, dict[str, Any]], Any],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        **kwargs,
+    ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
+        """Compute forward pass and prepare loss function closure for a single micro-batch.
+
+        Parameters
+        ----------
+        mb_input : dict[str, Any]
+            A dictionary containing the micro-batch input data.
+        post_process_fn : Callable[[torch.Tensor, dict[str, Any]], Any]
+            A function that processes the model output.
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
+            A function that computes the weight for this micro-batch, typically
+            the number of tokens.
+        **kwargs
+            Additional keyword arguments for specific implementations.
+
+        Returns
+        -------
+        tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]
+            The model output (logits) and a callable that computes loss and returns
+            (loss_tensor, result_dict) for gradient accumulation.
+        """
+        raise NotImplementedError()
+
+    def optimizer_zero_grad(self):
+        """Zero out all gradients in the optimizer."""
+        raise NotImplementedError()
+
+    def optimizer_step(self):
+        """Perform a single optimization step.
+
+        Returns
+        -------
+        dict[str, float]
+            Training statistics containing ``update_successful``, ``grad_norm``, and ``lr``.
+        """
+        raise NotImplementedError()
+
+    def lr_scheduler_step(self):
+        """Advance the learning rate scheduler by one step."""
+        raise NotImplementedError()
+
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 
-        Since PPO uses minibatch updates, this method should be called periodically
-        (e.g., once per PPO step). It is separated from train_batch to allow
-        for more flexible learning rate scheduling.
+        This is an alias for `lr_scheduler_step()`.
+        """
+        return self.lr_scheduler_step()
+
+    def forward_backward_batch(
+        self,
+        data_iterator: Iterable[dict[str, torch.Tensor]],
+        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor] | None = None,
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
+        return_outputs: bool = False,
+        forward_only: bool = False,
+    ) -> ForwardBackwardOutputs:
+        """Process micro-batches through forward and optionally backward pass.
+
+        Parameters
+        ----------
+        data_iterator : Iterable[dict[str, torch.Tensor]]
+            An iterable that yields micro-batch dictionaries containing packed tensors.
+        loss_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor], optional
+            A function that computes the normalized loss. Required when
+            ``forward_only=False`` or when ``return_outputs=False`` in forward-only mode.
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
+            A function that computes the weight for each micro-batch, typically
+            the number of tokens. Used for proper loss scaling.
+        return_outputs : bool, optional
+            If True, collect and return model outputs (logits) instead of losses.
+            Only used when ``forward_only=True``. By default False.
+        forward_only : bool, optional
+            If True, only perform forward pass (no backward pass or gradient computation).
+            If False, perform both forward and backward passes for training. By default False.
+
+        Returns
+        -------
+        ForwardBackwardOutputs
+            A dataclass containing ``mb_outputs`` (list of output tensors) when
+            ``return_outputs=True``, or ``losses`` (list of loss tensors) otherwise.
         """
         raise NotImplementedError()
 
@@ -246,7 +367,10 @@ class TrainEngine(abc.ABC):
             Scalar statistics after training, e.g., the current learning rate,
             gradient norm, etc.
         """
-        raise NotImplementedError()
+        self.optimizer_zero_grad()
+        _data_iterator, _ = self._split_micro_batch(input_, loss_weight_fn)
+        self.forward_backward_batch(_data_iterator, loss_fn, loss_weight_fn)
+        return self.optimizer_step()
 
     @torch.no_grad()
     def eval_batch(
@@ -282,10 +406,16 @@ class TrainEngine(abc.ABC):
             A scalar loss or None. The evaluation statistics should be aggregated
             with `stats_tracker`.
         """
-        raise NotImplementedError()
+        _data_iterator, _ = self._split_micro_batch(input_, loss_weight_fn)
+        output = self.forward_backward_batch(
+            _data_iterator, loss_fn, loss_weight_fn, forward_only=True
+        )
+        loss = torch.stack(output.losses).sum(dtype=torch.float32)
+        dist.all_reduce(loss, group=self.dp_group)
+        return loss
 
     @torch.no_grad()
-    def forward(
+    def forward_batch(
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
@@ -313,7 +443,39 @@ class TrainEngine(abc.ABC):
             For actor (is_critic=False): logprobs tensor aggregated by `aggregate_fn`.
             For critic (is_critic=True): values tensor aggregated by `aggregate_fn`.
         """
-        raise NotImplementedError()
+        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
+
+        if output_seqlens is None:
+            output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+        assert output_seqlens is not None
+
+        _data_iterator, mb_list = self._split_micro_batch(input_)
+
+        result = self.forward_backward_batch(
+            _data_iterator,
+            forward_only=True,
+            return_outputs=True,
+        )
+
+        res = aggregate_fn(result.mb_outputs)
+        if res is not None:
+            output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
+            unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
+            reordered = reorder_list(unpacked, mb_list.backward_indices)
+            res = pad_and_stack_tensors_along_first_dim(reordered)
+        return res
+
+    @torch.no_grad()
+    def forward(
+        self,
+        input_: dict[str, Any],
+        output_seqlens: list[int] | None = None,
+        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
+    ) -> Any | None:
+        """
+        alias for forward_batch
+        """
+        return self.forward_batch(input_, output_seqlens, aggregate_fn)
 
     def export_stats(self) -> dict[str, float]:
         """Export the statistics recorded in this engine process.
@@ -328,6 +490,12 @@ class TrainEngine(abc.ABC):
         dict[str, float]
             The exported scalar statistics.
         """
+        raise NotImplementedError()
+
+    def onload(self):
+        raise NotImplementedError()
+
+    def offload(self):
         raise NotImplementedError()
 
 
