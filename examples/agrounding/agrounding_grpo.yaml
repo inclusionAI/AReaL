@@ -6,14 +6,14 @@ total_train_epochs: 5
 tokenizer_path: ${actor.path}
 
 cluster:
-  n_nodes: 2
+  n_nodes: 1
   n_gpus_per_node: 8
   fileroot: /tmp/areal/experiments
   name_resolve:
     type: ray
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang:d8p1t1+d8p1t1
+allocation_mode: sglang:d4p1t1+d4p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -57,8 +57,6 @@ actor:
   group_size: ${gconfig.n_samples}
   eps_clip: 0.2
   temperature: ${gconfig.temperature}
-  # reward_scaling: 10.0
-  # reward_bias: -0.5
   kl_ctl: 0.0
   ppo_n_minibatches: 1
   recompute_logprob: true
@@ -159,9 +157,3 @@ launcher:
   trainer_cpus_per_gpu: 4
   trainer_mem_per_gpu: 32768
 
-# python3 -m areal.launcher.ray \
-#   examples/agrounding/agrounding_grpo.py --config examples/agrounding/agrounding_grpo.yaml \
-#   actor.path=${MODEL_PATH} \
-#   train_dataset.path=${TRAIN_DATASET_PATH} \
-#   valid_dataset.path=${VALID_DATASET_PATH} 
-# WANDB...

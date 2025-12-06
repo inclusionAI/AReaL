@@ -4,29 +4,26 @@ This repository releases the official [AReaL](https://github.com/inclusionAI/ARe
 
 ## RL Training
 
-We provide the Grounding training and inference workflow for the **EGM-8B** model as the primary example below.
-由于AReaL中使用了decouple loss来提高异步训练表现，该repo中的训练参数设置与论文中的说明略有不同
+We provide the Grounding training and inference workflow for the **EGM-8B** model as the primary example below. Since AReaL adopts a decoupled loss loss to improve asynchronous training performance, the training hyperparameters in this repo are slightly different from those described in the paper.
 
 ### 1. Installation
 
 ```bash
-git clone https://github.com/zgq1879/EGM.git
+git clone https://github.com/antoinegg1/EGM-AReaL
 conda create -n EGM python=3.12
 conda activate EGM
 
-cd verl
-pip install -e .[vllm]
-pip install "pyzmq==26.4.0"
+cd AReaL
+pip install uv
+uv pip install -e .[all]
 ```
 
 ### 2. Model 
 
 | Training Phase | Model | HuggingFace |
 | :--- | :--- | :--- |
-| Supervised Fine-Tuning (SFT) | EGM-Qwen3-VL-4B-SFT | [Link](https://huggingface.co/JamesZGQ/EGM-4B-SFT) |
-| Reinforcement Learning | EGM-Qwen3-VL-4B-v1 | [Link](https://huggingface.co/JamesZGQ/EGM-4B) |
-| Supervised Fine-Tuning (SFT) | EGM-Qwen3-VL-8B-SFT | [Link](https://huggingface.co/JamesZGQ/EGM-8B-SFT) |
-| Reinforcement Learning | EGM-Qwen3-VL-8B-v1 | [Link](https://huggingface.co/JamesZGQ/EGM-8B) |
+| Supervised Fine-Tuning (SFT) | [EGM-Qwen3-VL-8B-SFT](https://huggingface.co/JamesZGQ/EGM-8B-SFT) |
+| Reinforcement Learning | [EGM-Qwen3-VL-8B-v1](https://huggingface.co/JamesZGQ/EGM-8B) |
 
 ### 3. Data Preparation
 
@@ -45,30 +42,35 @@ export VAL_DIR=${YOUR_VAL_DIR}
 export TRAIN_JSON=${QWEN3_8B_GROUNDING_TRAIN_JSON}
 
 # Run preprocessing scripts
-bash examples/data_preprocess/grounding_val.sh
-bash examples/data_preprocess/grounding_all.sh
+bash examples/agrounding/data_preprocess/grounding_val.sh
+bash examples/agrounding/data_preprocess/grounding_all.sh
 ```
 
 ### 4. Training
 
-Reinforcement Learning  is conducted based on the SFT checkpoint. The default configuration utilizes 8 GPUs. You may customize the distributed training settings via the `trainer.nnodes` and `trainer.n_gpus_per_node` arguments. The data directory `(DATA_DIR)` should be the same as output directory `(OUTPUT_DIR)` in Data Preparation.
+Reinforcement Learning is conducted based on the [EGM-Qwen3-VL-8B-SFT](https://huggingface.co/JamesZGQ/EGM-8B-SFT). The default configuration utilizes 8 GPUs with ray framework. You may customize the distributed training settings via the `cluster.nnodes` and `cluster.n_gpus_per_node` arguments. **The data directory `(DATA_DIR)` should be the same as output directory `(OUTPUT_DIR)` in Data Preparation.**
+
 
 ```bash
 export WANDB_BASE_URL=${YOUR_WANDB_BASE_URL}   
 export WANDB_API_KEY=${YOUR_WANDB_API_KEY} 
-export DATA_DIR=${YOUR_DATA_DIR}
-export PROJECT_NAME=${YOUR_PROJECT_NAME}
-export TASK_NAME=${YOUR_TASK_NAME}
-export OUTPUT_DIR=${YOUR_OUTPUT_DIR}
-export MODEL_PATH=${YOUR_MODEL_PATH}
+DATA_DIR=${YOUR_DATA_DIR}
+PROJECT_NAME=${YOUR_PROJECT_NAME}
+MODEL_PATH=${YOUR_MODEL_PATH}
 
-bash scripts/grounding_qwen.sh
+python3 -m areal.launcher.local \
+  examples/agrounding/agrounding_grpo.py --config examples/agrounding/agrounding_grpo.yaml \
+  actor.path="$MODEL_PATH" \
+  train_dataset.path="$DATA_DIR/train_grounding.parquet" \
+  valid_dataset.path="$DATA_DIR/val_grounding.parquet" \
+  experiment_name="$PROJECT_NAME"
+
 ```
 
 ### 5. Inference and Evaluation
 
 
-To evaluate the model, update sglang with `pip install sglang==0.5.5.post3` and use the command provided below.
+To evaluate the model, you can use the command provided below.
 
 **Note:** The RefCOCO benchmark consists of eight distinct JSON files. Consequently, you must run the evaluation script sequentially for each of the 8 files to obtain the complete benchmark results.
 
@@ -78,10 +80,10 @@ export DATA_JSON=${DATA_JSON}
 export OUTPUT_DIR=${YOUR_OUTPUT_DIR}
 export BASE_IMG_PATH=${YOUR_BASE_IMG_PATH}
 
-bash scripts/sglang_infer.sh
+bash examples/agrounding/evaluation/sglang_infer.sh
 ```
 
-We also support evaluation with vLLM, update vLLM with `pip install vllm==0.11.0` and use the command provided below:
+We also support evaluation with vLLM:
 
 ```bash
 export MODEL_PATH=${YOUR_MODEL_PATH}
@@ -89,11 +91,6 @@ export DATA_JSON=${DATA_JSON}
 export OUTPUT_DIR=${YOUR_OUTPUT_DIR}
 export BASE_IMG_PATH=${YOUR_BASE_IMG_PATH}
 
-bash scripts/vllm_infer.sh
+bash examples/agrounding/evaluation/vllm_infer.sh
 ```
-
-### 6. Handling Environment Issues
-
-1. If you encounter runtime errors related to FlashInfer, such as `GLIBC_2.32' not found (required by .../flashinfer/.../sampling.so)`, you can work around this by disabling the FlashInfer sampler: set the environment variable `VLLM_USE_FLASHINFER_SAMPLER=0` or `SGLANG_IS_FLASHINFER_AVAILABLE=false` before launching the training or inference command.
-
 ---
