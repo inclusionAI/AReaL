@@ -52,7 +52,7 @@ class RLVRWorkflow(RolloutWorkflow):
         self,
         reward_fn: Callable[..., Any] | str,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
@@ -64,8 +64,13 @@ class RLVRWorkflow(RolloutWorkflow):
         ] = default_data_extract_prompt_fn,
     ):
         self.reward_fn = reward_fn
-        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
+        if isinstance(self.tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            tokenizer = load_hf_tokenizer(self.tokenizer)
+            self.tokenizer = tokenizer
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(self.tokenizer)
         self.enable_thinking = enable_thinking
         self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
