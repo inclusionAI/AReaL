@@ -38,7 +38,7 @@ async def run_agent_return_reward(data: Any) -> float:
 ```
 
 3. Place your agent code in a path that can be imported in Python, and modify the
-   agent_module_path in the configuration file to that path:
+   agent_madule_path in the configuration file to that path:
 
 ```yaml
 agent_module_path: "examples.any_agents.agent.math.math_with_python_tool"
