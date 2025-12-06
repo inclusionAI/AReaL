@@ -94,7 +94,8 @@ def get_grad_norm_fp32(
     if isinstance(grads_for_norm, Tensor):
         grads_for_norm = [grads_for_norm]
 
-    grads_for_norm = [to_local_if_dtensor(grad) for grad in grads_for_norm]
+    device = current_platform.current_device()
+    grads_for_norm = [to_local_if_dtensor(grad).to(device) for grad in grads_for_norm]
 
     norm_type = float(norm_type)
     total_norm = 0.0
@@ -102,7 +103,6 @@ def get_grad_norm_fp32(
     if not grads_for_norm:
         return 0.0
 
-    device = current_platform.current_device()
 
     if norm_type == torch.inf:
         norms = [grad.abs().max() for grad in grads_for_norm]
