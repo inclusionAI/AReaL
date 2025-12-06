@@ -86,6 +86,18 @@ def is_multi_modal_key(key: str) -> bool:
     return key.startswith("multi_modal_input")
 
 
+def _get_first_non_multimodal_seq(item: dict[str, Any]) -> Any:
+    """Get the first non-multimodal sequence from a dict item."""
+    for key, seq in item.items():
+        if not is_multi_modal_key(key):
+            return seq
+    raise ValueError("No non-multimodal key found in item")
+
+
+def _make_attention_mask(seq_len: int, max_len: int) -> list[int]:
+    return [1] * seq_len + [0] * (max_len - seq_len)
+
+
 def pad_sequences_to_tensors(
     sequence_list: list[dict[str, Any]], pad_value: float = 0.0
 ) -> dict[str, Any]:
@@ -122,21 +134,7 @@ def pad_sequences_to_tensors(
             padded.append(padded_x)
         result[key] = torch.stack(padded)
     attention_mask = [
-        [1]
-        * len(
-            next(iter(item[key] for key in item.keys() if not is_multi_modal_key(key)))
-        )
-        + [0]
-        * (
-            max_length
-            - len(
-                next(
-                    iter(
-                        item[key] for key in item.keys() if not is_multi_modal_key(key)
-                    )
-                )
-            )
-        )
+        _make_attention_mask(len(_get_first_non_multimodal_seq(item)), max_length)
         for item in sequence_list
     ]
     result["attention_mask"] = torch.tensor(attention_mask, dtype=torch.bool)
