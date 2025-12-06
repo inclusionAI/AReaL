@@ -81,22 +81,26 @@ def list_of_dict2dict_of_list(
     return {key: [dict_item[key] for dict_item in list_of_dicts] for key in keys}
 
 
+def is_multi_modal_key(key: str) -> bool:
+    # Any key matching: multi_modal_input*
+    return key.startswith("multi_modal_input")
+
+
 def pad_sequences_to_tensors(
     sequence_list: list[dict[str, Any]], pad_value: float = 0.0
 ) -> dict[str, Any]:
     if not sequence_list:
         return {}
-    skip_keys = {"multi_modal_input"}
     max_length = max(
         len(seq)
         for item in sequence_list
         for key, seq in item.items()
-        if key not in skip_keys
+        if not is_multi_modal_key(key)
     )
     result = {}
     for key in sequence_list[0].keys():
         padded = []
-        if key == "multi_modal_input":
+        if is_multi_modal_key(key):
             for i in range(len(sequence_list)):
                 if sequence_list[i][key]:
                     item = sequence_list[i][key][0]
@@ -118,11 +122,20 @@ def pad_sequences_to_tensors(
             padded.append(padded_x)
         result[key] = torch.stack(padded)
     attention_mask = [
-        [1] * len(next(iter(item[key] for key in item.keys() if key not in skip_keys)))
+        [1]
+        * len(
+            next(iter(item[key] for key in item.keys() if not is_multi_modal_key(key)))
+        )
         + [0]
         * (
             max_length
-            - len(next(iter(item[key] for key in item.keys() if key not in skip_keys)))
+            - len(
+                next(
+                    iter(
+                        item[key] for key in item.keys() if not is_multi_modal_key(key)
+                    )
+                )
+            )
         )
         for item in sequence_list
     ]
@@ -163,31 +176,21 @@ def concat_padded_tensors(
     max_length = max([x["attention_mask"].shape[1] for x in tensor_dicts])
     result = {}
 
-    has_any_multi_modal = any("multi_modal_input" in td for td in tensor_dicts)
-
-    merged_multi_modal = None
-
-    if has_any_multi_modal:
+    multimodal_keys = {
+        key for td in tensor_dicts for key in td if is_multi_modal_key(key)
+    }
+    # Merge multimodal keys
+    for mm_key in multimodal_keys:
         merged_multi_modal = []
-
-        # Merge multi-modal data maintaining per-dp correspondence
-        for tensor_dict in tensor_dicts:
-            td_batch_size = get_batch_size(tensor_dict)
-
-            if "multi_modal_input" in tensor_dict:
-                # Has multi_modal_input - extend the lists
-                multi_modal = tensor_dict["multi_modal_input"]
-            else:
-                multi_modal = [{} for _ in range(td_batch_size)]
-
-            merged_multi_modal.extend(multi_modal)
-
-        result["multi_modal_input"] = merged_multi_modal
+        for td in tensor_dicts:
+            bs = get_batch_size(td)
+            merged_multi_modal.extend(td.get(mm_key, [{} for _ in range(bs)]))
+        result[mm_key] = merged_multi_modal
 
     # Process each key
     for key in tensor_dicts[0].keys():
         tensors_to_concat = []
-        if key == "multi_modal_input":
+        if is_multi_modal_key(key):
             continue
         for tensor_dict in tensor_dicts:
             tensor = tensor_dict[key]
@@ -444,11 +447,14 @@ def split_padded_tensor_dict_into_mb_list(
         .numpy()
     )
 
+    # check for multimodal input data
+    multimodal_keys = {key for key in data if is_multi_modal_key(key)}
+
     # check tensor shape, split only 1d tensors with length "total_lens"
     to_split = {}
     not_to_split = {}
     for key, value in data.items():
-        if key == "multi_modal_input":
+        if key in multimodal_keys:
             continue
         if key == "position_ids" or (
             torch.is_tensor(value) and value.numel() == bs * max_seqlen
@@ -493,8 +499,8 @@ def split_padded_tensor_dict_into_mb_list(
 
     to_split = dict_map(to_split, lambda x: _split(x))
 
-    if "multi_modal_input" in data:
-        multi_modal_input = data["multi_modal_input"]
+    for key in multimodal_keys:
+        multi_modal_input = data[key]
 
         # Prepare the pixel_values and image_grid_thw for each group
         multi_modal_input_split = []
@@ -504,7 +510,7 @@ def split_padded_tensor_dict_into_mb_list(
             # Stack pixel_values for each group (assuming pixel_values is a list of tensors)
             multi_modal_input_split.append(group_pixel_multi_modal_input)
         # Pack the split pixel_values and image_grid_thw back into the data
-        to_split["multi_modal_input"] = multi_modal_input_split
+        to_split[key] = multi_modal_input_split
     mbs = dict_of_list2list_of_dict(to_split)
 
     results = []
