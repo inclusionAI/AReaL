@@ -20,8 +20,8 @@ uv pip install -e .[all]
 
 ### 2. Model 
 
-| Training Phase | Model | HuggingFace |
-| :--- | :--- | :--- |
+| Training Phase | Model | 
+| :--- | :--- | 
 | Supervised Fine-Tuning (SFT) | [EGM-Qwen3-VL-8B-SFT](https://huggingface.co/JamesZGQ/EGM-8B-SFT) |
 | Reinforcement Learning | [EGM-Qwen3-VL-8B-v1](https://huggingface.co/JamesZGQ/EGM-8B) |
 
