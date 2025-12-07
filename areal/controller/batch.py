@@ -448,17 +448,23 @@ class DistributedBatchMemory(DistributedBatch):
         return batches
 
     def union(self, other: DistributedBatchMemory) -> DistributedBatchMemory:
-        """Merge another batch with this one.
+        """Merge another batch with this one in-place.
 
         Supports both metadata mode and local data mode.
         """
         # Both are in local data mode
         if self.dataset is not None and other.dataset is not None:
-            return self._union_local_data(other)
+            merged = self._union_local_data(other)
+            self.dataset = merged.dataset
+            self.metadata = merged.metadata
+            return self
 
         # Both are in metadata mode
         if self.metadata is not None and other.metadata is not None:
-            return self._union_metadata(other)
+            merged = self._union_metadata(other)
+            self.dataset = merged.dataset
+            self.metadata = merged.metadata
+            return self
 
         # Mixed mode: not supported
         raise FrameworkError(
@@ -788,7 +794,23 @@ class DistributedBatchMemory(DistributedBatch):
         - int index: requires converting data to list format for update (less efficient, avoid if possible)
         """
         if isinstance(key, str):
-            # Update entire attribute tensor or scalar/list value
+            # Special handling for DistributedBatchMemory values
+            if isinstance(value, DistributedBatchMemory):
+                # Merge using union (modifies self in-place)
+                self.union(value)
+                return
+
+            # Regular assignment for Tensor/list/scalar values
+            # Check if we're in metadata mode
+            if self.metadata is not None:
+                raise FrameworkError(
+                    "FrameworkError",
+                    "DistributedBatchMemoryError",
+                    "Cannot assign regular value to metadata-mode batch. "
+                    "Use union() with a DistributedBatchMemory object, or get_data() first.",
+                )
+
+            # Local data mode: proceed with assignment
             if self.dataset:
                 expected_total_size = self._get_total_size()
                 if isinstance(value, torch.Tensor):
@@ -805,6 +827,10 @@ class DistributedBatchMemory(DistributedBatch):
                             "DistributedBatchMemoryError",
                             f"The batch size of the list does not match. Expected {expected_total_size}, actual {len(value)}",
                         )
+
+            # Ensure dataset exists
+            if self.dataset is None:
+                self.dataset = {}
             self.dataset[key] = value
         else:
             raise FrameworkError(

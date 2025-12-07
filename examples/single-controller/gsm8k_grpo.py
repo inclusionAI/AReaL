@@ -154,7 +154,7 @@ def main(args):
                         _should_return_distributed_batch=True,
                         _distributed_batch_target_key="prox_logp",
                     )
-                    batch = batch.union(prox_logp)
+                    batch["prox_logp"] = prox_logp
                     log_gpu_stats("recompute logp")
 
             if ref is not None:
@@ -164,7 +164,7 @@ def main(args):
                         _should_return_distributed_batch=True,
                         _distributed_batch_target_key="ref_logp",
                     )
-                    batch = batch.union(ref_logp)
+                    batch["ref_logp"] = ref_logp
                     log_gpu_stats("ref logp")
 
             with stats_tracker.record_timing("compute_advantage"):

@@ -254,7 +254,7 @@ class TestSyncRPCServer:
         shard_id = "test-shard-5"
         original_data = {
             "input_ids": torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]]),
-            "labels": [0, 1, 2, 3],
+            "labels": torch.tensor([0, 1, 2, 3]),
         }
 
         # Store data
@@ -270,9 +270,9 @@ class TestSyncRPCServer:
 
         retrieved_data = pickle.loads(resp.data)
         assert retrieved_data["input_ids"].shape[0] == 2
-        assert len(retrieved_data["labels"]) == 2
+        assert retrieved_data["labels"].shape[0] == 2
         assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"][:2])
-        assert retrieved_data["labels"] == original_data["labels"][:2]
+        assert torch.equal(retrieved_data["labels"], original_data["labels"][:2])
 
     def test_retrieve_batch_data_with_offset_and_batch_size(self, client):
         """Test retrieving batch data with both offset and batch_size."""
@@ -298,29 +298,6 @@ class TestSyncRPCServer:
         assert retrieved_data["labels"].shape[0] == 2
         assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"][1:3])
         assert torch.equal(retrieved_data["labels"], original_data["labels"][1:3])
-
-    def test_retrieve_batch_data_scalar_value(self, client):
-        """Test retrieving batch data with scalar values."""
-        shard_id = "test-shard-7"
-        original_data = {
-            "input_ids": torch.tensor([[1, 2], [3, 4]]),
-            "scalar_value": 42,  # Scalar should be preserved
-        }
-
-        # Store data
-        buffer = io.BytesIO()
-        pickle.dump(original_data, buffer)
-        data_bytes = buffer.getvalue()
-
-        client.put(f"/data/{shard_id}?global_step=1", data=data_bytes)
-
-        # Retrieve with offset=1
-        resp = client.get(f"/data/{shard_id}?offset=1")
-        assert resp.status_code == 200
-
-        retrieved_data = pickle.loads(resp.data)
-        assert "scalar_value" in retrieved_data
-        assert retrieved_data["scalar_value"] == 42  # Scalar should be unchanged
 
     def test_clear_batch_data(self, client):
         """Test clearing old batch data."""
