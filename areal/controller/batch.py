@@ -454,16 +454,12 @@ class DistributedBatchMemory(DistributedBatch):
         """
         # Both are in local data mode
         if self.dataset is not None and other.dataset is not None:
-            merged = self._union_local_data(other)
-            self.dataset = merged.dataset
-            self.metadata = merged.metadata
+            self._union_local_data(other)
             return self
 
         # Both are in metadata mode
         if self.metadata is not None and other.metadata is not None:
-            merged = self._union_metadata(other)
-            self.dataset = merged.dataset
-            self.metadata = merged.metadata
+            self._union_metadata(other)
             return self
 
         # Mixed mode: not supported
@@ -473,8 +469,8 @@ class DistributedBatchMemory(DistributedBatch):
             "Cannot union batches in different modes (metadata vs local data)",
         )
 
-    def _union_metadata(self, other: DistributedBatchMemory) -> DistributedBatchMemory:
-        """Merge two batches in metadata mode."""
+    def _union_metadata(self, other: DistributedBatchMemory) -> None:
+        """Merge two batches in metadata mode by modifying self in-place."""
         # Combine shards from both batches
         all_shards = self.metadata.shards + other.metadata.shards
         max_global_step = max(self.metadata.global_step, other.metadata.global_step)
@@ -482,44 +478,35 @@ class DistributedBatchMemory(DistributedBatch):
         # Calculate total_batch_size (validates different fields have same total)
         _, total_batch_size = self._group_shards_by_keys(all_shards)
 
-        # Create new metadata
-        new_metadata = BatchMetadata(
+        # Update self.metadata directly
+        self.metadata = BatchMetadata(
             batch_id=str(uuid.uuid4()),
             global_step=max_global_step,
             total_batch_size=total_batch_size,
             shards=all_shards,
         )
+        self.dataset = None
 
-        batch = self.__class__.__new__(self.__class__)
-        batch.dataset = None
-        batch.metadata = new_metadata
-        return batch
-
-    def _union_local_data(
-        self, other: DistributedBatchMemory
-    ) -> DistributedBatchMemory:
-        """Merge two batches in local data mode."""
-        merged_data = {k: v for k, v in self.dataset.items()}
+    def _union_local_data(self, other: DistributedBatchMemory) -> None:
+        """Merge two batches in local data mode by modifying self in-place."""
+        # Merge data directly into self.dataset
         for k, v in other.dataset.items():
-            if k in merged_data:
-                if isinstance(merged_data[k], torch.Tensor) and isinstance(
+            if k in self.dataset:
+                if isinstance(self.dataset[k], torch.Tensor) and isinstance(
                     v, torch.Tensor
                 ):
-                    merged_data[k] = torch.cat([merged_data[k], v], dim=0)
-                elif isinstance(merged_data[k], list) and isinstance(v, list):
-                    merged_data[k] = merged_data[k] + v
+                    self.dataset[k] = torch.cat([self.dataset[k], v], dim=0)
+                elif isinstance(self.dataset[k], list) and isinstance(v, list):
+                    self.dataset[k] = self.dataset[k] + v
                 else:
                     # Handle mixed types or scalar values
-                    if isinstance(merged_data[k], list):
-                        merged_data[k].append(v)
+                    if isinstance(self.dataset[k], list):
+                        self.dataset[k].append(v)
                     else:
-                        merged_data[k] = [merged_data[k], v]
+                        self.dataset[k] = [self.dataset[k], v]
             else:
-                merged_data[k] = v
-        batch = self.__class__.__new__(self.__class__)
-        batch.dataset = merged_data
-        batch.metadata = None
-        return batch
+                self.dataset[k] = v
+        self.metadata = None
 
     def _get_total_size(self) -> int:
         """Get the total size of the dataset, supporting both tensor and scalar types.
