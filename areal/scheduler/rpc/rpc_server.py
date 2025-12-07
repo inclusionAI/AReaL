@@ -118,7 +118,6 @@ def configure():
     This endpoint is routed to the NCCL worker thread.
     """
     try:
-        # Parse request in main thread (has Flask request context)
         data = request.get_json()
         if data is None:
             return jsonify({"detail": "Invalid JSON in request body"}), 400
@@ -138,9 +137,7 @@ def configure():
         config = deserialize_value(config)
         config: BaseExperimentConfig
 
-        # Execute in NCCL worker thread
         def execute_configure():
-            """Execute configure in NCCL worker thread."""
             name_resolve.reconfigure(config.cluster.name_resolve)
             seeding.set_random_seed(config.seed, key=f"{role}{rank}")
             return {
@@ -163,7 +160,6 @@ def set_env():
     This endpoint is routed to the NCCL worker thread.
     """
     try:
-        # Parse request in main thread (has Flask request context)
         data = request.get_json()
         if data is None:
             return jsonify({"error": "Invalid JSON in request body"}), 400
@@ -174,7 +170,6 @@ def set_env():
         if not isinstance(env_payload, dict):
             return jsonify({"error": "'env' must be a dictionary"}), 400
 
-        # Validate keys
         for key in env_payload.keys():
             if not isinstance(key, str):
                 return (
@@ -188,9 +183,7 @@ def set_env():
                     400,
                 )
 
-        # Execute in NCCL worker thread
         def execute_set_env():
-            """Execute set_env in NCCL worker thread."""
             for key, value in env_payload.items():
                 os.environ[key] = str(value)
                 logger.info(f"Set {key}={value}")
@@ -320,7 +313,6 @@ def call_engine_method():
         )
 
     try:
-        # Parse request in main thread (has Flask request context)
         data = request.get_json()
         if data is None:
             return jsonify({"error": "Invalid JSON in request body"}), 400
@@ -332,8 +324,6 @@ def call_engine_method():
         if not method_name:
             return jsonify({"error": "Missing 'method' field in request"}), 400
 
-        logger.info(f"22 args: {method_name}")
-        # Deserialize args and kwargs (convert SerializedTensor dicts to tensors)
         args = deserialize_value(args)
         kwargs = deserialize_value(kwargs)
         should_bcast = kwargs.pop("_should_bcast", True)
@@ -342,13 +332,9 @@ def call_engine_method():
         )
         distributed_batch_target_key = kwargs.pop("_distributed_batch_target_key", None)
 
-        # Resolve batch metadata (may involve async operations)
         try:
             args = _resolve_batch_metadata(args)
             kwargs = _resolve_batch_metadata(kwargs)
-            if method_name == "compute_advantages":
-                logger.info(f"compute_advantages args: {args}")
-                logger.info(f"compute_advantages kwargs: {kwargs}")
         except Exception as e:
             logger.error(
                 f"Resolving batch metadata for method '{method_name}' failed: {e}\n{traceback.format_exc()}"
@@ -360,9 +346,7 @@ def call_engine_method():
                 500,
             )
 
-        # Execute in NCCL worker thread to ensure thread safety
         def execute_in_nccl_thread():
-            """Execute the method call in NCCL worker thread."""
             try:
                 if should_bcast and isinstance(_engine, TrainEngine):
                     logger.info(
@@ -390,25 +374,23 @@ def call_engine_method():
                     args_bcast = args
                     kwargs_bcast = kwargs
 
-                # Call method directly
                 logger.info(f"Calling engine method: {method_name}")
                 method = getattr(_engine, method_name)
                 result = method(*args_bcast, **kwargs_bcast)
 
-                # HACK: handle update weights future
+                # Handle update weights future
                 if isinstance(result, Future):
                     logger.info("Waiting for update weights future")
                     result = result.result()
                     logger.info("Update weights future done")
 
-                # Handle distributed batch memory return
                 if should_return_distributed_batch:
                     result = _handle_distributed_batch_return(
                         result,
                         distributed_batch_target_key,
                         _engine,
                     )
-                    logger.info(f"Handling distributed batch memory return: {result}")
+                    logger.debug("Handling distributed batch memory return")
 
                 return result
             except AttributeError as e:
@@ -437,9 +419,7 @@ def call_engine_method():
                 500,
             )
 
-        # Serialize result (convert tensors to SerializedTensor dicts)
         serialized_result = serialize_value(result)
-
         return jsonify({"status": "success", "result": serialized_result})
 
     except Exception as e:
@@ -453,22 +433,12 @@ async def _aresolve_batch_metadata(data: Any) -> Any:
     Resolve DistributedBatch metadata to actual data using async data fetching.
     """
     if isinstance(data, dict) and data.get("__distributed_batch_metadata__"):
-        # This is a metadata reference, fetch actual data
         from areal.controller.batch import DistributedBatchMemory
 
-        logger.info(f"11 Resolving batch metadata: {data}")
         metadata = data.get("metadata")
-        logger.info(f"11 metadata: {metadata}")
         if metadata is not None:
             batch = DistributedBatchMemory.from_metadata(metadata)
-            # Worker fetches its own data using async method
-            logger.info(f"11 batch: {batch}")
-            xxx = await batch.aget_data()
-            for key, value in xxx.items():
-                logger.info(
-                    f"11 key: {key}, shape: {value.shape}, dtype: {value.dtype}"
-                )
-            return xxx
+            return await batch.aget_data()
         return {}
     elif isinstance(data, (list, tuple)):
         # Recursively resolve list/tuple elements
@@ -522,14 +492,15 @@ def _handle_distributed_batch_return(
 ) -> Any:
     """Handle distributed batch memory return.
 
-    当返回值为以下类型之一时, 自动写入本地 `_batch_storage` 并返回
-    `DistributedBatchMemory`(或其列表)的 **metadata**:
+    When the return value is one of the following types, automatically write to
+    local `_batch_storage` and return `DistributedBatchMemory` (or its list)
+    metadata:
 
     - ``torch.Tensor``
     - ``dict[str, torch.Tensor]``
     - ``list[dict[str, torch.Tensor]]``
 
-    其他类型保持原样返回。
+    Other types are returned as-is.
 
     Parameters
     ----------
@@ -547,35 +518,31 @@ def _handle_distributed_batch_return(
     """
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
+    import uuid
+
     import torch
 
-    # 1) 如果是 list, 逐元素递归处理, 支持 list[dict[str, Tensor]] 等场景
+    # Handle list: recursively process each element
     if isinstance(result, list):
         return [
             _handle_distributed_batch_return(r, distributed_batch_target_key, engine)
             for r in result
         ]
 
-    # 2) 单个 Tensor 或 dict[str, Tensor]
-    # Check if result is dict[str, Tensor] or Tensor
-    should_store = False
+    # Check if result is Tensor or dict[str, Tensor]
     data_to_store = None
     if isinstance(result, torch.Tensor):
-        # Convert Tensor to dict
         if distributed_batch_target_key is None:
             distributed_batch_target_key = "data"
         data_to_store = {distributed_batch_target_key: result}
-        should_store = True
     elif isinstance(result, dict) and any(
         isinstance(v, torch.Tensor) for v in result.values()
     ):
-        # Already a dict with tensors
         data_to_store = result
-        should_store = True
 
-    if not should_store or data_to_store is None:
-        # Not a tensor/dict result, return as-is
+    if data_to_store is None:
         return result
+
     # Get global_step from engine
     try:
         global_step = engine.get_version()
@@ -588,23 +555,21 @@ def _handle_distributed_batch_return(
     rank = int(os.environ.get("RANK", "0"))
     node_id = f"{node_id}_rank{rank}"
 
-    # Get node address: use global server host and port (set at startup)
+    # Get node address
     global _server_host, _server_port
     node_addr = f"{_server_host}:{_server_port}"
 
     # Generate shard ID
-    import uuid
-
     shard_id = str(uuid.uuid4())
 
     # Store data in local batch storage
     with _batch_storage_lock:
         _batch_storage[shard_id] = (global_step, data_to_store)
-        # Estimate size
         data_bytes = pickle.dumps(data_to_store)
         _batch_storage_stats[shard_id] = len(data_bytes)
     logger.info(
-        f"Stored result as shard {shard_id} (step={global_step}, size={len(data_bytes)} bytes, node_addr={node_addr})"
+        f"Stored result as shard {shard_id} (step={global_step}, "
+        f"size={len(data_bytes)} bytes, node_addr={node_addr})"
     )
 
     # Create metadata
@@ -616,7 +581,7 @@ def _handle_distributed_batch_return(
         TensorMetadata,
     )
 
-    # Infer batch size and fields
+    # Infer batch size from first value
     first_value = next(iter(data_to_store.values()))
     if isinstance(first_value, torch.Tensor):
         batch_size = first_value.shape[0]
@@ -639,7 +604,7 @@ def _handle_distributed_batch_return(
         else:
             fields[key] = ScalarMetadata(value_type=type(value).__name__, length=1)
 
-    # Create shard metadata
+    # Create shard and batch metadata
     shard = ShardMetadata(
         node_id=node_id,
         node_addr=node_addr,
@@ -649,7 +614,6 @@ def _handle_distributed_batch_return(
         fields=fields,
     )
 
-    # Create batch metadata
     batch_metadata = BatchMetadata(
         batch_id=str(uuid.uuid4()),
         global_step=global_step,
@@ -657,15 +621,12 @@ def _handle_distributed_batch_return(
         shards=[shard],
     )
 
-    # Create DistributedBatchMemory with metadata
     batch = DistributedBatchMemory.from_metadata(batch_metadata)
-
     logger.debug(
-        f"Created DistributedBatchMemory with metadata: {batch_metadata.batch_id}, "
+        f"Created DistributedBatchMemory: {batch_metadata.batch_id}, "
         f"batch_size={batch_size}"
     )
 
-    # Return the batch (will be serialized with metadata)
     return batch
 
 
@@ -682,12 +643,10 @@ def store_batch_data(shard_id: str):
     try:
         global_step = int(request.args.get("global_step", 0))
 
-        # Read and deserialize data
         data_bytes = request.get_data()
         buffer = io.BytesIO(data_bytes)
         data = pickle.load(buffer)
 
-        # Store with lock
         with _batch_storage_lock:
             _batch_storage[shard_id] = (global_step, data)
             _batch_storage_stats[shard_id] = len(data_bytes)
@@ -711,7 +670,7 @@ def retrieve_batch_data(shard_id: str):
     """
     global _batch_storage, _batch_storage_lock
 
-    logger.info(f"Received data get request, batch shard {shard_id}")
+    logger.debug(f"Received data get request for shard {shard_id}")
     try:
         with _batch_storage_lock:
             if shard_id not in _batch_storage:
@@ -724,7 +683,6 @@ def retrieve_batch_data(shard_id: str):
 
             global_step, data = _batch_storage[shard_id]
 
-        # Serialize data
         buffer = io.BytesIO()
         pickle.dump(data, buffer)
         data_bytes = buffer.getvalue()

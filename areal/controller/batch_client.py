@@ -14,7 +14,6 @@ import torch
 
 from areal.controller.batch_metadata import BatchMetadata, ShardMetadata
 from areal.utils import logging
-from areal.utils.data import concat_padded_tensors
 
 logger = logging.getLogger("BatchClient")
 
@@ -87,10 +86,13 @@ class BatchDataClient:
                 f"Error fetching shard {shard.shard_id} from {shard.node_addr}: {e}"
             ) from e
 
-    async def fetch_batch(
+    async def fetch_shards(
         self, metadata: BatchMetadata
-    ) -> dict[str, torch.Tensor | Any]:
-        """Fetch all shards for a batch and assemble into complete dataset.
+    ) -> list[dict[str, torch.Tensor | Any]]:
+        """Fetch all shards for a batch and return raw shard data.
+
+        This method only fetches data from remote nodes without any merging or
+        processing. Data operations should be handled by the caller.
 
         Parameters
         ----------
@@ -99,156 +101,23 @@ class BatchDataClient:
 
         Returns
         -------
-        dict[str, torch.Tensor | Any]
-            Complete dataset assembled from all shards
+        list[dict[str, torch.Tensor | Any]]
+            List of raw shard data dictionaries, one per shard
         """
         if not metadata.shards:
-            return {}
+            return []
 
         session = aiohttp.ClientSession()
         try:
-            # Fetch all shards concurrently (with logical slicing)
             logger.info(
                 f"Fetching {len(metadata.shards)} shards for batch {metadata.batch_id}"
             )
-            for i, shard in enumerate(metadata.shards):
-                logger.info(
-                    f"Shard {i + 1}/{len(metadata.shards)}: {shard} (node={shard.node_id}, "
-                    f"addr={shard.node_addr}, shard_id={shard.shard_id}, "
-                    f"offset={shard.offset}, batch_size={shard.batch_size}, "
-                    f"fields={list(shard.fields.keys())})"
-                )
             tasks = [self._fetch_shard(session, shard) for shard in metadata.shards]
             shard_data_list = await asyncio.gather(*tasks)
-
-            # Concatenate shard data
-            logger.debug(
-                f"Assembling {len(shard_data_list)} shards for batch {metadata.batch_id}"
-            )
-
-            # Check if all shards have the same keys
-            if shard_data_list:
-                all_keys = set()
-                for shard_data in shard_data_list:
-                    all_keys.update(shard_data.keys())
-
-                # Check if all shards have the same keys
-                same_keys = all(
-                    set(shard_data.keys()) == all_keys for shard_data in shard_data_list
-                )
-
-                if same_keys and "attention_mask" in all_keys:
-                    # All shards have the same keys and have attention_mask
-                    # Use the original concat_padded_tensors
-                    dataset = concat_padded_tensors(shard_data_list)
-                else:
-                    # Different keys across shards, merge manually
-                    logger.warning(
-                        f"Shards have different keys, merging manually. "
-                        f"All keys: {sorted(all_keys)}"
-                    )
-                    dataset = self._merge_shards_with_different_keys(
-                        shard_data_list, all_keys
-                    )
-            else:
-                dataset = {}
-
-            return dataset
+            return shard_data_list
         finally:
-            # Always close the session when done
             if not session.closed:
                 await session.close()
-
-    def _merge_shards_with_different_keys(
-        self, shard_data_list: list[dict[str, torch.Tensor | Any]], all_keys: set[str]
-    ) -> dict[str, torch.Tensor | Any]:
-        """Merge shards that may have different keys.
-
-        Parameters
-        ----------
-        shard_data_list : list[dict[str, torch.Tensor | Any]]
-            List of shard data dictionaries
-        all_keys : set[str]
-            Set of all keys across all shards
-
-        Returns
-        -------
-        dict[str, torch.Tensor | Any]
-            Merged dataset
-        """
-        result = {}
-
-        for key in sorted(all_keys):
-            # Collect all values for this key from shards that have it
-            values_to_concat = []
-
-            for shard_data in shard_data_list:
-                if key in shard_data:
-                    values_to_concat.append(shard_data[key])
-
-            if not values_to_concat:
-                continue
-
-            # Determine the type of value
-            first_value = values_to_concat[0]
-
-            if isinstance(first_value, torch.Tensor):
-                # Check if tensors need padding (multi-dimensional with varying lengths)
-                if first_value.ndim > 1:
-                    # Assume dim=1 is the sequence dimension, check if padding is needed
-                    max_length = max(tensor.shape[1] for tensor in values_to_concat)
-                    need_padding = any(
-                        tensor.shape[1] < max_length for tensor in values_to_concat
-                    )
-
-                    if need_padding:
-                        # Pad tensors to max_length before concatenating
-                        padded_tensors = []
-                        for tensor in values_to_concat:
-                            if tensor.shape[1] < max_length:
-                                # Pad along sequence dimension (dim=1)
-                                pad_width = max_length - tensor.shape[1]
-                                # Determine pad value based on key
-                                if key == "attention_mask":
-                                    pad_value = 0
-                                else:
-                                    pad_value = 0.0
-
-                                # Create padding for dim=1 (sequence dimension)
-                                # torch.nn.functional.pad format: (pad_left, pad_right) from last to first dim
-                                n_dim = tensor.ndim
-                                pad_mode = (0,) * (2 * (n_dim - 2)) + (
-                                    0,
-                                    pad_width,
-                                )  # Pad right side of dim=1
-                                padded_tensor = torch.nn.functional.pad(
-                                    tensor, pad_mode, value=pad_value
-                                )
-                                padded_tensors.append(padded_tensor)
-                            else:
-                                padded_tensors.append(tensor)
-                        result[key] = torch.cat(padded_tensors, dim=0)
-                    else:
-                        # All tensors have same shape, directly concat
-                        result[key] = torch.cat(values_to_concat, dim=0)
-                else:
-                    # 1D tensor, directly concat
-                    result[key] = torch.cat(values_to_concat, dim=0)
-            elif isinstance(first_value, list):
-                # Concatenate lists
-                merged_list = []
-                for v in values_to_concat:
-                    merged_list.extend(v)
-                result[key] = merged_list
-            else:
-                # For scalar values, just keep the first one
-                # (or raise an error if this doesn't make sense for your use case)
-                result[key] = first_value
-                logger.warning(
-                    f"Key '{key}' has scalar value, keeping first value: {first_value}"
-                )
-
-        return result
 
     async def _fetch_shard(
         self, session: aiohttp.ClientSession, shard: ShardMetadata

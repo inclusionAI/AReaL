@@ -147,7 +147,6 @@ def main(args):
                         workflow_kwargs=workflow_kwargs,
                     )
 
-            print(f"after rollout batch: {batch}, batch.get_data(): {batch.get_data()}")
             if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
                 with stats_tracker.record_timing("recompute_logp"):
                     prox_logp = actor.compute_logp(
@@ -155,12 +154,9 @@ def main(args):
                         _should_return_distributed_batch=True,
                         _distributed_batch_target_key="prox_logp",
                     )
-                    print(f"prox_logp: {prox_logp}")
                     batch = batch.union(prox_logp)
                     log_gpu_stats("recompute logp")
 
-            print(f"after recompute_logp batch: {batch}")
-            print(f"after recompute_logp batch.get_data(): {batch.get_data()}")
             if ref is not None:
                 with stats_tracker.record_timing("ref_logp"):
                     ref_logp = ref.compute_logp(
@@ -168,33 +164,19 @@ def main(args):
                         _should_return_distributed_batch=True,
                         _distributed_batch_target_key="ref_logp",
                     )
-                    print(f"ref_logp: {ref_logp}")
                     batch = batch.union(ref_logp)
                     log_gpu_stats("ref logp")
 
-            print(f"after ref_logp batch: {batch}")
-            print(f"after ref_logp batch.get_data(): {batch.get_data()}")
-            for key, value in batch.get_data().items():
-                print(
-                    f"key: {key}, value.shape: {value.shape}, value.dtype: {value.dtype}"
-                )
-
             with stats_tracker.record_timing("compute_advantage"):
-                print(f"compute_advantage batch.get_data(): {batch.get_data()}")
                 batch = actor.compute_advantages(
                     batch, _should_return_distributed_batch=True
                 )
                 log_gpu_stats("compute advantages")
 
-            print(f"after compute_advantage batch: {batch}")
-            print(f"after compute_advantage batch.get_data(): {batch.get_data()}")
             with stats_tracker.record_timing("train_step"):
                 actor.ppo_update(batch)
                 actor.step_lr_scheduler()
                 log_gpu_stats("ppo update")
-
-            print(f"after train_step batch: {batch}")
-            print(f"after train_step batch.get_data(): {batch.get_data()}")
             # pause inference for updating weights, save, and evaluation
             rollout.pause()
 

@@ -15,6 +15,7 @@ from areal.controller.batch_metadata import (
     ShardMetadata,
     TensorMetadata,
 )
+from areal.utils import logging
 from areal.utils.batch_utils import (
     convert_dict_to_list,
     convert_list_to_dict,
@@ -23,6 +24,8 @@ from areal.utils.batch_utils import (
 from areal.utils.data import concat_padded_tensors
 from areal.utils.datapack import ffd_allocate
 from areal.utils.errors import FrameworkError
+
+logger = logging.getLogger("DistributedBatchMemory")
 
 
 class DistributedBatchMemory(DistributedBatch):
@@ -87,11 +90,6 @@ class DistributedBatchMemory(DistributedBatch):
         if same_keys:
             # All shards have the same keys, simple summation is correct
             return sum(shard.batch_size for shard in shards)
-
-        # Different keys: use heuristic
-        from areal.utils import logging
-
-        logger = logging.getLogger(__name__)
 
         # Primary fields that typically represent the main data
         primary_fields = {"input_ids", "attention_mask", "pixel_values"}
@@ -343,15 +341,11 @@ class DistributedBatchMemory(DistributedBatch):
                 "dp_size must be positive",
             )
 
-        # 检查是否所有 shards 有相同的 fields
+        # Check if all shards have the same fields
         all_fields_sets = [set(shard.fields.keys()) for shard in self.metadata.shards]
         same_fields = all(fields == all_fields_sets[0] for fields in all_fields_sets)
 
         if not same_fields:
-            # Different fields: use field-aware chunking
-            from areal.utils import logging
-
-            logger = logging.getLogger(__name__)
             logger.warning(
                 "Shards have different fields, using field-aware chunking. "
                 "This may group shards representing the same samples together."
@@ -433,8 +427,8 @@ class DistributedBatchMemory(DistributedBatch):
             if group_idx >= dp_size:
                 break
 
-        # 构造带 metadata 的子 batch
-        batches: list[DistributedBatchMemory] = []
+        # Create chunked batches with metadata
+        batches = []
         for i in range(dp_size):
             new_metadata = BatchMetadata(
                 batch_id=f"{self.metadata.batch_id}_chunk_{i}",
@@ -455,20 +449,16 @@ class DistributedBatchMemory(DistributedBatch):
     ) -> list[DistributedBatchMemory]:
         """Split metadata when shards have different fields.
 
-        策略：将 shards 分为 primary 和 additional 两类。
-        - Primary shards: 包含 input_ids/attention_mask 等主要字段
-        - Additional shards: 只包含额外字段（如 prox_logp）
+        Strategy:
+        - Separate shards into primary (with input_ids/attention_mask) and additional (e.g., prox_logp)
+        - Chunk based on primary shards to maintain sample ordering
+        - Distribute additional shards to groups based on sample range overlap
 
-        只对 primary shards 进行分配，然后为每个 group 添加对应的 additional shards。
+        This ensures strict ordering: samples in chunk[i] come before samples in chunk[i+1].
         """
-        from areal.utils import logging
 
-        logger = logging.getLogger(__name__)
-
-        # 定义主要字段
+        # Separate primary and additional shards
         primary_fields = {"input_ids", "attention_mask", "pixel_values"}
-
-        # 分离 primary 和 additional shards
         primary_shards = []
         additional_shards = []
 
@@ -479,62 +469,55 @@ class DistributedBatchMemory(DistributedBatch):
                 additional_shards.append(shard)
 
         logger.info(
-            f"Field-aware chunking: {len(primary_shards)} primary shards, "
+            f"Field-aware chunking: {len(primary_shards)} primary, "
             f"{len(additional_shards)} additional shards"
         )
 
         if not primary_shards:
-            # 没有 primary shards，回退到普通分配
             logger.warning("No primary shards found, using all shards for chunking")
             primary_shards = self.metadata.shards
             additional_shards = []
 
-        # 计算基于 primary shards 的总样本数
-        total = sum(shard.batch_size for shard in primary_shards)
-        part_size = (total + dp_size - 1) // dp_size
+        # Chunk primary shards
+        total_samples = sum(shard.batch_size for shard in primary_shards)
+        target_size = (total_samples + dp_size - 1) // dp_size
 
-        # 对 primary shards 进行分配
         groups: list[list[ShardMetadata]] = [[] for _ in range(dp_size)]
         group_sizes = [0] * dp_size
-        group_sample_ranges = [
-            (0, 0) for _ in range(dp_size)
-        ]  # (start, end) sample indices
+        group_sample_ranges = [(0, 0) for _ in range(dp_size)]
 
         group_idx = 0
         remaining_groups = dp_size
         used_in_group = 0
-        current_sample_idx = 0  # 追踪当前样本索引
+        sample_idx = 0
 
         for shard in primary_shards:
             base_offset = shard.offset
-            remaining_in_shard = shard.batch_size
+            remaining = shard.batch_size
 
-            # 当前 shard 可能被拆到多个 group 中
-            while remaining_in_shard > 0 and group_idx < dp_size:
-                # 若只剩最后一个 group, 把所有剩余样本都放进去
+            while remaining > 0 and group_idx < dp_size:
                 if remaining_groups == 1:
-                    take = remaining_in_shard
+                    take = remaining
                 else:
-                    space = part_size - used_in_group
+                    space = target_size - used_in_group
                     if space <= 0:
-                        # 当前 group 已满, 切换到下一个 group
                         remaining_groups -= 1
                         group_idx += 1
                         used_in_group = 0
                         if group_idx >= dp_size:
                             break
-                        left_samples = total - sum(group_sizes[:group_idx])
-                        part_size = (
+                        left_samples = total_samples - sum(group_sizes[:group_idx])
+                        target_size = (
                             left_samples + remaining_groups - 1
                         ) // remaining_groups
                         continue
-                    take = min(space, remaining_in_shard)
+                    take = min(space, remaining)
 
                 if take <= 0:
                     break
 
-                # 为当前 group 创建一个子 shard
-                logical_offset = base_offset + (shard.batch_size - remaining_in_shard)
+                # Create sub-shard for this group
+                logical_offset = base_offset + (shard.batch_size - remaining)
                 sub_shard = ShardMetadata(
                     node_id=shard.node_id,
                     node_addr=shard.node_addr,
@@ -547,24 +530,20 @@ class DistributedBatchMemory(DistributedBatch):
 
                 # Update group sample range
                 if group_sizes[group_idx] == 0:
-                    group_sample_ranges[group_idx] = (
-                        current_sample_idx,
-                        current_sample_idx + take,
-                    )
+                    group_sample_ranges[group_idx] = (sample_idx, sample_idx + take)
                 else:
                     start, _ = group_sample_ranges[group_idx]
-                    group_sample_ranges[group_idx] = (start, current_sample_idx + take)
+                    group_sample_ranges[group_idx] = (start, sample_idx + take)
 
                 group_sizes[group_idx] += take
-                current_sample_idx += take
-
-                remaining_in_shard -= take
+                sample_idx += take
+                remaining -= take
                 used_in_group += take
 
-                # 当前 group 达到目标大小, 切换到下一个 group
+                # Move to next group if current is full
                 if (
-                    remaining_in_shard > 0
-                    and used_in_group >= part_size
+                    remaining > 0
+                    and used_in_group >= target_size
                     and remaining_groups > 1
                 ):
                     remaining_groups -= 1
@@ -572,37 +551,31 @@ class DistributedBatchMemory(DistributedBatch):
                     used_in_group = 0
                     if group_idx >= dp_size:
                         break
-                    left_samples = total - sum(group_sizes[:group_idx])
-                    part_size = (
+                    left_samples = total_samples - sum(group_sizes[:group_idx])
+                    target_size = (
                         left_samples + remaining_groups - 1
                     ) // remaining_groups
 
             if group_idx >= dp_size:
                 break
 
-        # 为每个 group 添加对应的 additional shards
-        # 需要根据样本范围来分配，确保严格保序
-        # 计算 additional shards 的样本范围（按顺序累积）
-        additional_sample_ranges = []
-        current_add_sample_idx = 0
+        # Distribute additional shards based on sample range overlap
+        additional_ranges = []
+        add_sample_idx = 0
         for add_shard in additional_shards:
-            add_start = current_add_sample_idx
-            add_end = current_add_sample_idx + add_shard.batch_size
-            additional_sample_ranges.append((add_start, add_end, add_shard))
-            current_add_sample_idx = add_end
+            add_start = add_sample_idx
+            add_end = add_sample_idx + add_shard.batch_size
+            additional_ranges.append((add_start, add_end, add_shard))
+            add_sample_idx = add_end
 
-        # 为每个 group 分配对应的 additional shards
         for group_idx in range(dp_size):
             group_start, group_end = group_sample_ranges[group_idx]
 
-            for add_start, add_end, add_shard in additional_sample_ranges:
-                # 检查 additional shard 是否与当前 group 的样本范围重叠
+            for add_start, add_end, add_shard in additional_ranges:
                 overlap_start = max(group_start, add_start)
                 overlap_end = min(group_end, add_end)
 
                 if overlap_start < overlap_end:
-                    # 有重叠，需要切片 additional shard
-                    # 计算在 original shard 中的 offset 和 length
                     offset_in_shard = overlap_start - add_start
                     length = overlap_end - overlap_start
 
@@ -616,19 +589,17 @@ class DistributedBatchMemory(DistributedBatch):
                     )
                     groups[group_idx].append(sub_shard)
                     logger.debug(
-                        f"Added additional shard slice to group {group_idx}: "
-                        f"shard_id={add_shard.shard_id}, "
-                        f"batch_size={length}, offset={sub_shard.offset}, "
-                        f"covers samples [{overlap_start}, {overlap_end})"
+                        f"Group {group_idx}: added additional shard slice "
+                        f"(shard_id={add_shard.shard_id}, samples=[{overlap_start}, {overlap_end}))"
                     )
 
-        # 构造带 metadata 的子 batch
-        batches: list[DistributedBatchMemory] = []
+        # Create chunked batches
+        batches = []
         for i in range(dp_size):
             new_metadata = BatchMetadata(
                 batch_id=f"{self.metadata.batch_id}_chunk_{i}",
                 global_step=self.metadata.global_step,
-                total_batch_size=group_sizes[i],  # 只计算 primary shards 的 batch_size
+                total_batch_size=group_sizes[i],
                 shards=groups[i],
             )
             batch = self.__class__.__new__(self.__class__)
@@ -838,6 +809,115 @@ class DistributedBatchMemory(DistributedBatch):
             # For scalar values, assume it's a single sample
             return 1
 
+    def _merge_shards(
+        self, shard_data_list: list[dict[str, torch.Tensor | Any]]
+    ) -> dict[str, torch.Tensor | Any]:
+        """Merge shard data into a complete dataset.
+
+        Parameters
+        ----------
+        shard_data_list : list[dict[str, torch.Tensor | Any]]
+            List of shard data dictionaries
+
+        Returns
+        -------
+        dict[str, torch.Tensor | Any]
+            Merged dataset
+        """
+        if not shard_data_list:
+            return {}
+
+        # Check if all shards have the same keys
+        all_keys = set()
+        for shard_data in shard_data_list:
+            all_keys.update(shard_data.keys())
+
+        same_keys = all(
+            set(shard_data.keys()) == all_keys for shard_data in shard_data_list
+        )
+
+        if same_keys and "attention_mask" in all_keys:
+            return concat_padded_tensors(shard_data_list)
+        else:
+            logger.warning(
+                f"Shards have different keys, merging manually. "
+                f"All keys: {sorted(all_keys)}"
+            )
+            return self._merge_shards_with_different_keys(shard_data_list, all_keys)
+
+    def _merge_shards_with_different_keys(
+        self,
+        shard_data_list: list[dict[str, torch.Tensor | Any]],
+        all_keys: set[str],
+    ) -> dict[str, torch.Tensor | Any]:
+        """Merge shards that may have different keys.
+
+        Parameters
+        ----------
+        shard_data_list : list[dict[str, torch.Tensor | Any]]
+            List of shard data dictionaries
+        all_keys : set[str]
+            Set of all keys across all shards
+
+        Returns
+        -------
+        dict[str, torch.Tensor | Any]
+            Merged dataset
+        """
+        result = {}
+
+        for key in sorted(all_keys):
+            values_to_concat = []
+
+            for shard_data in shard_data_list:
+                if key in shard_data:
+                    values_to_concat.append(shard_data[key])
+
+            if not values_to_concat:
+                continue
+
+            first_value = values_to_concat[0]
+
+            if isinstance(first_value, torch.Tensor):
+                if first_value.ndim > 1:
+                    max_length = max(tensor.shape[1] for tensor in values_to_concat)
+                    need_padding = any(
+                        tensor.shape[1] < max_length for tensor in values_to_concat
+                    )
+
+                    if need_padding:
+                        pad_value = 0 if key == "attention_mask" else 0.0
+                        padded_tensors = []
+                        for tensor in values_to_concat:
+                            if tensor.shape[1] < max_length:
+                                pad_width = max_length - tensor.shape[1]
+                                n_dim = tensor.ndim
+                                pad_mode = (0,) * (2 * (n_dim - 2)) + (0, pad_width)
+                                padded_tensors.append(
+                                    torch.nn.functional.pad(
+                                        tensor, pad_mode, value=pad_value
+                                    )
+                                )
+                            else:
+                                padded_tensors.append(tensor)
+                        result[key] = torch.cat(padded_tensors, dim=0)
+                    else:
+                        result[key] = torch.cat(values_to_concat, dim=0)
+                else:
+                    result[key] = torch.cat(values_to_concat, dim=0)
+            elif isinstance(first_value, list):
+                merged_list = []
+                for v in values_to_concat:
+                    merged_list.extend(v)
+                result[key] = merged_list
+            else:
+                result[key] = first_value
+                logger.warning(
+                    f"Key '{key}' has scalar value, keeping first value: {first_value}"
+                )
+
+        return result
+
     def get_data(self) -> dict[str, torch.Tensor | Any]:
         """Get all data from the DistributedBatchMemory.
 
@@ -852,32 +932,27 @@ class DistributedBatchMemory(DistributedBatch):
             other data types containing all values for that field across the
             entire batch.
         """
-        # If we already have local data, return it
         if self.dataset is not None:
             return self.dataset
 
-        # If we have metadata, fetch data from remote nodes
         if self.metadata is not None:
             client = self.get_client()
 
+            # NOTE: get_data() is synchronous and cannot be called from async context.
             # Use asyncio.run() to fetch data in a dedicated event loop.
-            # NOTE: get_data() is a synchronous API and is expected to be called
-            # from non-async contexts. If it is called from within an active event
-            # loop, we raise a clear error.
-            async def _fetch_batch():
-                return await client.fetch_batch(self.metadata)
+            async def _fetch_shards():
+                shard_data_list = await client.fetch_shards(self.metadata)
+                return self._merge_shards(shard_data_list)
 
             try:
-                self.dataset = asyncio.run(_fetch_batch())
+                self.dataset = asyncio.run(_fetch_shards())
             except RuntimeError as exc:
-                # e.g. "asyncio.run() cannot be called from a running event loop"
                 raise RuntimeError(
                     "get_data() cannot be called from within an async context when "
                     "fetching remote data. Please call aget_data() instead."
                 ) from exc
             return self.dataset
 
-        # No data and no metadata
         return {}
 
     async def aget_data(self) -> dict[str, torch.Tensor | Any]:
@@ -891,17 +966,15 @@ class DistributedBatchMemory(DistributedBatch):
             Dictionary where keys are field names and values are tensors or
             other data types.
         """
-        # If we already have local data, return it
         if self.dataset is not None:
             return self.get_data()
 
-        # If we have metadata, fetch data from remote nodes
         if self.metadata is not None:
             client = self.get_client()
-            self.dataset = await client.fetch_batch(self.metadata)
+            shard_data_list = await client.fetch_shards(self.metadata)
+            self.dataset = self._merge_shards(shard_data_list)
             return self.dataset
 
-        # No data and no metadata
         return {}
 
     @classmethod
@@ -942,13 +1015,11 @@ class DistributedBatchMemory(DistributedBatch):
             result._is_local = False
             return result
 
-        # Otherwise, concatenate local data
-        # Note: concat_padded_tensors assumes all dicts have the same keys
-        # If they don't, we need to handle it differently
+        # Concatenate local data
         datasets = [k.dataset for k in data]
-
-        # Check if all datasets have the same keys
-        if datasets:
+        if not datasets:
+            merged_data = {}
+        else:
             all_keys = set()
             for dataset in datasets:
                 all_keys.update(dataset.keys())
@@ -956,87 +1027,87 @@ class DistributedBatchMemory(DistributedBatch):
             same_keys = all(set(dataset.keys()) == all_keys for dataset in datasets)
 
             if same_keys and "attention_mask" in all_keys:
-                # All datasets have the same keys, use concat_padded_tensors
                 merged_data = concat_padded_tensors(datasets)
             else:
-                # Different keys, merge manually
-                from areal.utils import logging
-
-                logger = logging.getLogger(__name__)
                 logger.warning(
                     f"Datasets have different keys, merging manually. "
                     f"All keys: {sorted(all_keys)}"
                 )
-                merged_data = {}
-                for key in sorted(all_keys):
-                    values_to_concat = []
-                    for dataset in datasets:
-                        if key in dataset:
-                            values_to_concat.append(dataset[key])
-
-                    if not values_to_concat:
-                        continue
-
-                    first_value = values_to_concat[0]
-                    if isinstance(first_value, torch.Tensor):
-                        # Check if tensors need padding (multi-dimensional with varying lengths)
-                        if first_value.ndim > 1:
-                            # Assume dim=1 is the sequence dimension
-                            max_length = max(
-                                tensor.shape[1] for tensor in values_to_concat
-                            )
-                            need_padding = any(
-                                tensor.shape[1] < max_length
-                                for tensor in values_to_concat
-                            )
-
-                            if need_padding:
-                                # Pad tensors to max_length before concatenating
-                                padded_tensors = []
-                                for tensor in values_to_concat:
-                                    if tensor.shape[1] < max_length:
-                                        # Pad along sequence dimension (dim=1)
-                                        pad_width = max_length - tensor.shape[1]
-                                        # Determine pad value based on key
-                                        if key == "attention_mask":
-                                            pad_value = 0
-                                        else:
-                                            pad_value = 0.0
-
-                                        # Create padding for dim=1 (sequence dimension)
-                                        n_dim = tensor.ndim
-                                        pad_mode = (0,) * (2 * (n_dim - 2)) + (
-                                            0,
-                                            pad_width,
-                                        )
-                                        padded_tensor = torch.nn.functional.pad(
-                                            tensor, pad_mode, value=pad_value
-                                        )
-                                        padded_tensors.append(padded_tensor)
-                                    else:
-                                        padded_tensors.append(tensor)
-                                merged_data[key] = torch.cat(padded_tensors, dim=0)
-                            else:
-                                # All tensors have same shape, directly concat
-                                merged_data[key] = torch.cat(values_to_concat, dim=0)
-                        else:
-                            # 1D tensor, directly concat
-                            merged_data[key] = torch.cat(values_to_concat, dim=0)
-                    elif isinstance(first_value, list):
-                        merged_list = []
-                        for v in values_to_concat:
-                            merged_list.extend(v)
-                        merged_data[key] = merged_list
-                    else:
-                        merged_data[key] = first_value
-        else:
-            merged_data = {}
+                merged_data = cls._merge_datasets_with_different_keys(
+                    datasets, all_keys
+                )
 
         result = DistributedBatchMemory.__new__(DistributedBatchMemory)
         result.dataset = merged_data
         result.metadata = None
         result._is_local = True
         return result
+
+    @staticmethod
+    def _merge_datasets_with_different_keys(
+        datasets: list[dict[str, torch.Tensor | Any]], all_keys: set[str]
+    ) -> dict[str, torch.Tensor | Any]:
+        """Merge datasets that may have different keys.
+
+        Parameters
+        ----------
+        datasets : list[dict[str, torch.Tensor | Any]]
+            List of dataset dictionaries
+        all_keys : set[str]
+            Set of all keys across all datasets
+
+        Returns
+        -------
+        dict[str, torch.Tensor | Any]
+            Merged dataset
+        """
+        merged_data = {}
+        for key in sorted(all_keys):
+            values_to_concat = []
+            for dataset in datasets:
+                if key in dataset:
+                    values_to_concat.append(dataset[key])
+
+            if not values_to_concat:
+                continue
+
+            first_value = values_to_concat[0]
+            if isinstance(first_value, torch.Tensor):
+                if first_value.ndim > 1:
+                    max_length = max(tensor.shape[1] for tensor in values_to_concat)
+                    need_padding = any(
+                        tensor.shape[1] < max_length for tensor in values_to_concat
+                    )
+
+                    if need_padding:
+                        pad_value = 0 if key == "attention_mask" else 0.0
+                        padded_tensors = []
+                        for tensor in values_to_concat:
+                            if tensor.shape[1] < max_length:
+                                pad_width = max_length - tensor.shape[1]
+                                n_dim = tensor.ndim
+                                pad_mode = (0,) * (2 * (n_dim - 2)) + (0, pad_width)
+                                padded_tensors.append(
+                                    torch.nn.functional.pad(
+                                        tensor, pad_mode, value=pad_value
+                                    )
+                                )
+                            else:
+                                padded_tensors.append(tensor)
+                        merged_data[key] = torch.cat(padded_tensors, dim=0)
+                    else:
+                        merged_data[key] = torch.cat(values_to_concat, dim=0)
+                else:
+                    merged_data[key] = torch.cat(values_to_concat, dim=0)
+            elif isinstance(first_value, list):
+                merged_list = []
+                for v in values_to_concat:
+                    merged_list.extend(v)
+                merged_data[key] = merged_list
+            else:
+                merged_data[key] = first_value
+
+        return merged_data
 
     @classmethod
     async def aclear(cls, global_step: int, node_addrs: set[str] | None = None):
@@ -1056,7 +1127,7 @@ class DistributedBatchMemory(DistributedBatch):
             return
 
         client = cls.get_client()
-        await client._aclear(node_addrs, global_step)
+        await client.clear_old_data(node_addrs, global_step)
 
     @classmethod
     def clear(cls, global_step: int, node_addrs: set[str] | None = None):
