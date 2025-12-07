@@ -839,14 +839,7 @@ class DistributedBatchMemory(DistributedBatch):
         if node_addrs is None or len(node_addrs) == 0:
             return
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            raise RuntimeError(
-                "clear_sync() cannot be called from within an async context. "
-                "Please use clear() instead."
-            )
-        else:
-            loop.run_until_complete(cls.clear(global_step, node_addrs))
+        asyncio.run(cls.aclear(global_step, node_addrs))
 
     def __getstate__(self):
         return {
