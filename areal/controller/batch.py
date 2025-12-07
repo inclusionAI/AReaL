@@ -167,27 +167,8 @@ class DistributedBatchMemory(DistributedBatch):
         shards: list[ShardMetadata],
     ) -> tuple[list[list[ShardMetadata]], int]:
         """Group shards by fields.keys() and calculate total batch size.
-
         Shards with identical keys (fields.keys()) are grouped together.
         Shards with any different keys belong to different groups.
-
-        Parameters
-        ----------
-        shards : list[ShardMetadata]
-            List of shard metadata to group
-
-        Returns
-        -------
-        tuple[list[list[ShardMetadata]], int]
-            Tuple of (groups, total_batch_size), where groups is a list of groups
-            with shards of identical keys, and total_batch_size is the total batch
-            size (validated to be consistent across all groups)
-
-        Raises
-        ------
-        AssertionError
-            If different groups have overlapping keys or if different groups
-            have inconsistent total batch_sizes
         """
         if not shards:
             return [], 0
@@ -296,21 +277,8 @@ class DistributedBatchMemory(DistributedBatch):
         return dp_groups
 
     def _chunk_metadata(self, dp_size: int) -> list[DistributedBatchMemory]:
-        """Split metadata across data parallel processes.
+        """Split metadata across data parallel processes."""
 
-        First groups shards by fields.keys(), then chunks each group across
-        dp_size processes, and finally merges results from different groups.
-
-        Parameters
-        ----------
-        dp_size : int
-            Number of data parallel processes
-
-        Returns
-        -------
-        list[DistributedBatchMemory]
-            List of chunked batches, one per data parallel process
-        """
         if self.metadata is None:
             raise FrameworkError(
                 "FrameworkError",
@@ -575,18 +543,7 @@ class DistributedBatchMemory(DistributedBatch):
     def _merge_shards(
         self, shard_data_list: list[dict[str, torch.Tensor | Any]]
     ) -> dict[str, torch.Tensor | Any]:
-        """Merge shard data into a complete dataset.
-
-        Parameters
-        ----------
-        shard_data_list : list[dict[str, torch.Tensor | Any]]
-            List of shard data dictionaries
-
-        Returns
-        -------
-        dict[str, torch.Tensor | Any]
-            Merged dataset
-        """
+        """Merge shard data into a complete dataset."""
         if not shard_data_list:
             return {}
 
@@ -602,31 +559,14 @@ class DistributedBatchMemory(DistributedBatch):
         if same_keys and "attention_mask" in all_keys:
             return concat_padded_tensors(shard_data_list)
         else:
-            logger.warning(
-                f"Shards have different keys, merging manually. "
-                f"All keys: {sorted(all_keys)}"
-            )
             return self._merge_shards_with_different_keys(shard_data_list, all_keys)
 
     def _merge_shards_with_different_keys(
         self,
-        shard_data_list: list[dict[str, torch.Tensor | Any]],
+        shard_data_list: list[dict[str, torch.Tensor]],
         all_keys: set[str],
-    ) -> dict[str, torch.Tensor | Any]:
-        """Merge shards that may have different keys.
-
-        Parameters
-        ----------
-        shard_data_list : list[dict[str, torch.Tensor | Any]]
-            List of shard data dictionaries
-        all_keys : set[str]
-            Set of all keys across all shards
-
-        Returns
-        -------
-        dict[str, torch.Tensor | Any]
-            Merged dataset
-        """
+    ) -> dict[str, torch.Tensor]:
+        """Merge shards that may have different keys."""
         result = {}
 
         for key in sorted(all_keys):
@@ -640,44 +580,32 @@ class DistributedBatchMemory(DistributedBatch):
                 continue
 
             first_value = values_to_concat[0]
+            if first_value.ndim > 1:
+                max_length = max(tensor.shape[1] for tensor in values_to_concat)
+                need_padding = any(
+                    tensor.shape[1] < max_length for tensor in values_to_concat
+                )
 
-            if isinstance(first_value, torch.Tensor):
-                if first_value.ndim > 1:
-                    max_length = max(tensor.shape[1] for tensor in values_to_concat)
-                    need_padding = any(
-                        tensor.shape[1] < max_length for tensor in values_to_concat
-                    )
-
-                    if need_padding:
-                        pad_value = 0 if key == "attention_mask" else 0.0
-                        padded_tensors = []
-                        for tensor in values_to_concat:
-                            if tensor.shape[1] < max_length:
-                                pad_width = max_length - tensor.shape[1]
-                                n_dim = tensor.ndim
-                                pad_mode = (0,) * (2 * (n_dim - 2)) + (0, pad_width)
-                                padded_tensors.append(
-                                    torch.nn.functional.pad(
-                                        tensor, pad_mode, value=pad_value
-                                    )
+                if need_padding:
+                    pad_value = 0 if key == "attention_mask" else 0.0
+                    padded_tensors = []
+                    for tensor in values_to_concat:
+                        if tensor.shape[1] < max_length:
+                            pad_width = max_length - tensor.shape[1]
+                            n_dim = tensor.ndim
+                            pad_mode = (0,) * (2 * (n_dim - 2)) + (0, pad_width)
+                            padded_tensors.append(
+                                torch.nn.functional.pad(
+                                    tensor, pad_mode, value=pad_value
                                 )
-                            else:
-                                padded_tensors.append(tensor)
-                        result[key] = torch.cat(padded_tensors, dim=0)
-                    else:
-                        result[key] = torch.cat(values_to_concat, dim=0)
+                            )
+                        else:
+                            padded_tensors.append(tensor)
+                    result[key] = torch.cat(padded_tensors, dim=0)
                 else:
                     result[key] = torch.cat(values_to_concat, dim=0)
-            elif isinstance(first_value, list):
-                merged_list = []
-                for v in values_to_concat:
-                    merged_list.extend(v)
-                result[key] = merged_list
             else:
-                result[key] = first_value
-                logger.warning(
-                    f"Key '{key}' has scalar value, keeping first value: {first_value}"
-                )
+                result[key] = torch.cat(values_to_concat, dim=0)
 
         return result
 
@@ -756,6 +684,16 @@ class DistributedBatchMemory(DistributedBatch):
         """
         assert data is not None and len(data) != 0
 
+        # Check if we have mixed modes (some with metadata, some without)
+        has_metadata = [item.metadata is not None for item in data]
+        if not all(has_metadata) and any(has_metadata):
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "Cannot concatenate batches with mixed modes. "
+                "All batches must be either in metadata mode or local data mode.",
+            )
+
         # If all have metadata (distributed), concatenate metadata
         if all(item.metadata is not None for item in data):
             all_shards = []
@@ -807,18 +745,7 @@ class DistributedBatchMemory(DistributedBatch):
 
     @classmethod
     async def aclear(cls, global_step: int, node_addrs: set[str] | None = None):
-        """Clear old batch data from distributed nodes.
-
-        This performs garbage collection of batch data with step < global_step.
-
-        Parameters
-        ----------
-        global_step : int
-            Clear all data with step less than this value
-        node_addrs : set[str] | None, optional
-            Set of node addresses to clear. If None, no clearing is performed.
-            Addresses should be in "host:port" format.
-        """
+        """Clear old batch data from distributed nodes."""
         if node_addrs is None or len(node_addrs) == 0:
             return
 
@@ -827,15 +754,7 @@ class DistributedBatchMemory(DistributedBatch):
 
     @classmethod
     def clear(cls, global_step: int, node_addrs: set[str] | None = None):
-        """Synchronous version of clear().
-
-        Parameters
-        ----------
-        global_step : int
-            Clear all data with step less than this value
-        node_addrs : set[str] | None, optional
-            Set of node addresses to clear. If None, no clearing is performed.
-        """
+        """Synchronous version of clear()."""
         if node_addrs is None or len(node_addrs) == 0:
             return
 

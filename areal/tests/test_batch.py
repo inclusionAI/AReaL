@@ -1953,7 +1953,7 @@ class TestDistributedBatchMemoryExtended:
             DistributedBatchMemory.concat([batch1, batch2])
 
     def test_concat_mixed_modes_error(self):
-        """Test concat with mixed modes (one metadata, one local) works correctly."""
+        """Test concat with mixed modes (one metadata, one local) raises error."""
         batch1 = DistributedBatchMemory.from_dict({"input_ids": torch.tensor([[1, 2]])})
         metadata = BatchMetadata(
             batch_id="test",
@@ -1964,10 +1964,132 @@ class TestDistributedBatchMemoryExtended:
         batch2 = DistributedBatchMemory.from_metadata(metadata)
 
         # concat should only work with all metadata or all local
-        # Since batch2 has empty shards, it should work but result in metadata mode
-        result = DistributedBatchMemory.concat([batch1, batch2])
-        # The behavior depends on implementation - test what actually happens
-        assert result is not None
+        with pytest.raises(
+            FrameworkError, match="Cannot concatenate batches with mixed modes"
+        ):
+            DistributedBatchMemory.concat([batch1, batch2])
+
+    def test_chunk_metadata_complex_multiple_key_groups(self):
+        """Test chunking metadata with multiple key groups (20 shards: 16 with input_ids/attention_mask, 4 with prox_logp)."""
+        # Create 20 shards: first 16 have input_ids+attention_mask, last 4 have prox_logp
+        # Each group should have the same total batch_size for validation
+        shards = []
+
+        # First 16 shards: each has batch_size=5, total=80
+        for i in range(16):
+            shards.append(
+                ShardMetadata(
+                    node_id=f"node-{i % 4}",
+                    node_addr=f"localhost:{8765 + (i % 4)}",
+                    shard_id=f"shard-{i}",
+                    batch_size=5,
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(5, 128), dtype="torch.int64"
+                        ),
+                        "attention_mask": TensorMetadata(
+                            shape=(5, 128), dtype="torch.int64"
+                        ),
+                    },
+                )
+            )
+
+        # Last 4 shards: each has batch_size=20, total=80 (same as first group)
+        for i in range(16, 20):
+            shards.append(
+                ShardMetadata(
+                    node_id=f"node-{i % 4}",
+                    node_addr=f"localhost:{8765 + (i % 4)}",
+                    shard_id=f"shard-{i}",
+                    batch_size=20,
+                    fields={
+                        "prox_logp": TensorMetadata(shape=(20,), dtype="torch.float32"),
+                    },
+                )
+            )
+
+        metadata = BatchMetadata(
+            batch_id="test-complex-batch",
+            global_step=10,
+            total_batch_size=80,  # Both groups sum to 80
+            shards=shards,
+        )
+        batch = DistributedBatchMemory.from_metadata(metadata)
+
+        # Chunk into 4 data parallel processes
+        dp_size = 4
+        chunks = batch.chunk(dp_size)
+
+        # Verify basic structure
+        assert len(chunks) == dp_size
+        assert all(chunk.metadata is not None for chunk in chunks)
+        assert all(chunk.dataset is None for chunk in chunks)
+
+        # Verify total batch_size is preserved across chunks
+        total_size = sum(chunk.metadata.total_batch_size for chunk in chunks)
+        assert total_size == 80
+
+        # Verify each chunk has shards from both key groups
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_shards = chunk.metadata.shards
+            assert len(chunk_shards) > 0, (
+                f"Chunk {chunk_idx} should have at least one shard"
+            )
+
+            # Collect keys from all shards in this chunk
+            chunk_keys = set()
+            for shard in chunk_shards:
+                chunk_keys.update(shard.fields.keys())
+
+            # Each chunk should have both key groups
+            # First group: input_ids + attention_mask (from first 16 shards)
+            # Second group: prox_logp (from last 4 shards)
+            assert "input_ids" in chunk_keys, (
+                f"Chunk {chunk_idx} should have input_ids key from first group"
+            )
+            assert "attention_mask" in chunk_keys, (
+                f"Chunk {chunk_idx} should have attention_mask key from first group"
+            )
+            assert "prox_logp" in chunk_keys, (
+                f"Chunk {chunk_idx} should have prox_logp key from second group"
+            )
+
+            # Verify shards are correctly categorized
+            input_ids_shards = [
+                s
+                for s in chunk_shards
+                if "input_ids" in s.fields.keys()
+                and "attention_mask" in s.fields.keys()
+            ]
+            prox_logp_shards = [
+                s for s in chunk_shards if "prox_logp" in s.fields.keys()
+            ]
+
+            assert len(input_ids_shards) > 0, (
+                f"Chunk {chunk_idx} should have shards with input_ids+attention_mask"
+            )
+            assert len(prox_logp_shards) > 0, (
+                f"Chunk {chunk_idx} should have shards with prox_logp"
+            )
+
+            # Verify batch_size distribution: each chunk should have ~20 samples
+            # (80 total / 4 dp processes = 20 per chunk)
+            assert chunk.metadata.total_batch_size == 20, (
+                f"Chunk {chunk_idx} should have batch_size=20, got {chunk.metadata.total_batch_size}"
+            )
+
+        # Verify all original shards are present (by shard_id)
+        all_chunk_shard_ids = set()
+        for chunk in chunks:
+            for shard in chunk.metadata.shards:
+                all_chunk_shard_ids.add(shard.shard_id)
+
+        original_shard_ids = {f"shard-{i}" for i in range(20)}
+        assert all_chunk_shard_ids == original_shard_ids, (
+            f"All original shards should be present. "
+            f"Missing: {original_shard_ids - all_chunk_shard_ids}, "
+            f"Extra: {all_chunk_shard_ids - original_shard_ids}"
+        )
 
     def test_chunk_preserves_order(self):
         """Test that chunking preserves sample order."""
