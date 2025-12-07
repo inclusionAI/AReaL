@@ -333,6 +333,9 @@ def call_engine_method():
         distributed_batch_target_key = kwargs.pop("_distributed_batch_target_key", None)
 
         try:
+            logger.info(
+                f"Resolving batch metadata for method '{method_name}', args: {args}, kwargs: {kwargs}"
+            )
             args = _resolve_batch_metadata(args)
             kwargs = _resolve_batch_metadata(kwargs)
         except Exception as e:
