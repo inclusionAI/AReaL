@@ -38,28 +38,36 @@ class BatchDataClient:
     async def fetch_shard(
         self, session: aiohttp.ClientSession, shard: ShardMetadata
     ) -> dict[str, Any]:
-        """Fetch the full physical shard from a node (without slicing).
+        """Fetch a logical shard (sub-range) from a physical shard.
 
-        This fetches the entire shard identified by ``shard.shard_id`` from the
-        remote node. Logical slicing based on ``offset`` and ``batch_size`` is
-        handled in :meth:`_fetch_shard`.
+        This fetches only the logical shard identified by ``shard.offset`` and
+        ``shard.batch_size`` from the remote node, reducing data transfer.
 
         Parameters
         ----------
         session : aiohttp.ClientSession
             HTTP session to use
         shard : ShardMetadata
-            Metadata describing the shard to fetch
+            Metadata describing the logical shard to fetch
 
         Returns
         -------
         dict[str, Any]
-            Full shard data
+            Sliced shard data matching the logical sub-range
         """
+        # Build URL with query parameters for logical shard slicing
+        # Only include parameters if we need to slice (offset > 0 or batch_size is specified)
         url = f"http://{shard.node_addr}/data/{shard.shard_id}"
+        params = {}
+        if shard.offset > 0:
+            params["offset"] = shard.offset
+        if shard.batch_size > 0:
+            params["batch_size"] = shard.batch_size
 
         try:
-            async with session.get(url, timeout=self.timeout) as response:
+            async with session.get(
+                url, params=params, timeout=self.timeout
+            ) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     raise RuntimeError(
@@ -72,8 +80,9 @@ class BatchDataClient:
                 data = pickle.load(buffer)
 
                 logger.debug(
-                    f"Fetched shard {shard.shard_id} from {shard.node_addr} "
-                    f"({len(data_bytes)} bytes)"
+                    f"Fetched logical shard {shard.shard_id} from {shard.node_addr} "
+                    f"(offset={shard.offset}, batch_size={shard.batch_size}, "
+                    f"{len(data_bytes)} bytes)"
                 )
                 return data
 
@@ -112,51 +121,12 @@ class BatchDataClient:
             logger.info(
                 f"Fetching {len(metadata.shards)} shards for batch {metadata.batch_id}"
             )
-            tasks = [self._fetch_shard(session, shard) for shard in metadata.shards]
+            tasks = [self.fetch_shard(session, shard) for shard in metadata.shards]
             shard_data_list = await asyncio.gather(*tasks)
             return shard_data_list
         finally:
             if not session.closed:
                 await session.close()
-
-    async def _fetch_shard(
-        self, session: aiohttp.ClientSession, shard: ShardMetadata
-    ) -> dict[str, torch.Tensor | Any]:
-        """Fetch a logical shard (sub-range) from a physical shard.
-
-        This method uses :class:`ShardMetadata`'s ``offset`` and ``batch_size``
-        to slice the full physical shard along the batch dimension.
-
-        Parameters
-        ----------
-        session : aiohttp.ClientSession
-            HTTP session to use
-        shard : ShardMetadata
-            Metadata describing the logical shard to fetch
-
-        Returns
-        -------
-        dict[str, torch.Tensor | Any]
-            Sliced shard data matching the logical sub-range
-        """
-        full_data = await self.fetch_shard(session, shard)
-
-        # If offset is zero and batch_size matches, fast-path: no slicing needed.
-        # Otherwise, slice along batch dimension.
-        offset = shard.offset
-        length = shard.batch_size
-
-        sliced: dict[str, torch.Tensor | Any] = {}
-        for key, value in full_data.items():
-            if isinstance(value, torch.Tensor):
-                sliced[key] = value[offset : offset + length]
-            elif isinstance(value, list):
-                sliced[key] = value[offset : offset + length]
-            else:
-                # Scalar / non-batched value, keep as-is
-                sliced[key] = value
-
-        return sliced
 
     async def store_shard(
         self,

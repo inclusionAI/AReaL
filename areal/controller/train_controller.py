@@ -95,8 +95,6 @@ class TrainController:
             Allocation mode configuration for distributed setup
         ft_spec : FinetuneSpec
             Finetune specification for model initialization
-        enable_batch_server : bool, optional
-            Whether to enable batch data storage endpoints (integrated in RPC server), by default False
         **kwargs
             Additional keyword arguments passed to engine initialization
         """

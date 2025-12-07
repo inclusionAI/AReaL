@@ -13,6 +13,7 @@ from threading import Lock, Thread
 from typing import Any
 
 from flask import Flask, Response, jsonify, request
+from torch import Tensor
 
 from areal.api.cli_args import BaseExperimentConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
@@ -668,13 +669,20 @@ def store_batch_data(shard_id: str):
 def retrieve_batch_data(shard_id: str):
     """Retrieve batch data shard.
 
-    URL: /data/{shard_id}
-    Response: Pickled dict[str, torch.Tensor | Any]
+    URL: /data/{shard_id}?offset={offset}&batch_size={batch_size}
+    Query parameters (optional):
+        offset: int, starting index within the shard (default: 0)
+        batch_size: int, number of samples to retrieve (default: all)
+    Response: Pickled dict[str, torch.Tensor | Any] (sliced logical shard)
     """
     global _batch_storage, _batch_storage_lock
 
     logger.debug(f"Received data get request for shard {shard_id}")
     try:
+        # Parse optional query parameters for logical shard slicing
+        offset = request.args.get("offset", type=int, default=0)
+        batch_size = request.args.get("batch_size", type=int, default=None)
+
         with _batch_storage_lock:
             if shard_id not in _batch_storage:
                 return (
@@ -686,18 +694,67 @@ def retrieve_batch_data(shard_id: str):
 
             global_step, data = _batch_storage[shard_id]
 
+        # Slice the data if offset or batch_size is specified
+        if offset > 0 or batch_size is not None:
+            data = _slice_shard_data(data, offset, batch_size)
+            logger.debug(
+                f"Sliced shard {shard_id}: offset={offset}, batch_size={batch_size}"
+            )
+
         buffer = io.BytesIO()
         pickle.dump(data, buffer)
         data_bytes = buffer.getvalue()
 
         logger.info(
-            f"Retrieved batch shard {shard_id} (step={global_step}, size={len(data_bytes)} bytes)"
+            f"Retrieved batch shard {shard_id} (step={global_step}, "
+            f"offset={offset}, batch_size={batch_size}, "
+            f"size={len(data_bytes)} bytes)"
         )
         return Response(data_bytes, mimetype="application/octet-stream")
 
     except Exception as e:
         logger.error(f"Error retrieving batch shard {shard_id}: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _slice_shard_data(
+    data: dict[str, Tensor], offset: int, batch_size: int | None
+) -> dict[str, Tensor]:
+    """Slice shard data along batch dimension.
+
+    Parameters
+    ----------
+    data : dict[str, Any]
+        Full shard data
+    offset : int
+        Starting index within the shard
+    batch_size : int | None
+        Number of samples to retrieve (None means all remaining)
+
+    Returns
+    -------
+    dict[str, Any]
+        Sliced shard data
+    """
+    import torch
+
+    sliced: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, torch.Tensor):
+            if batch_size is not None:
+                sliced[key] = value[offset : offset + batch_size].clone()
+            else:
+                sliced[key] = value[offset:].clone()
+        elif isinstance(value, list):
+            if batch_size is not None:
+                sliced[key] = value[offset : offset + batch_size]
+            else:
+                sliced[key] = value[offset:]
+        else:
+            # Scalar / non-batched value, keep as-is
+            sliced[key] = value
+
+    return sliced
 
 
 @app.route("/data/clear", methods=["DELETE"])
