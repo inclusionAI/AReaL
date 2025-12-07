@@ -1,10 +1,12 @@
 import argparse
 import asyncio
 import io
+import logging as stdlib_logging
 import os
 import pickle
 import socket
 import traceback
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -12,11 +14,18 @@ from queue import Queue
 from threading import Lock, Thread
 from typing import Any
 
+import torch
 from flask import Flask, Response, jsonify, request
 from torch import Tensor
 
 from areal.api.cli_args import BaseExperimentConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
+from areal.controller.batch import DistributedBatchMemory
+from areal.controller.batch_metadata import (
+    BatchMetadata,
+    ShardMetadata,
+    TensorMetadata,
+)
 from areal.platforms import current_platform
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging, name_resolve, seeding
@@ -437,8 +446,6 @@ async def _aresolve_batch_metadata(data: Any) -> Any:
     Resolve DistributedBatch metadata to actual data using async data fetching.
     """
     if isinstance(data, dict) and data.get("__distributed_batch_metadata__"):
-        from areal.controller.batch import DistributedBatchMemory
-
         metadata = data.get("metadata")
         if metadata is not None:
             batch = DistributedBatchMemory.from_metadata(metadata)
@@ -522,10 +529,6 @@ def _handle_distributed_batch_return(
     """
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
-    import uuid
-
-    import torch
-
     # Handle list: recursively process each element
     if isinstance(result, list):
         return [
@@ -577,12 +580,6 @@ def _handle_distributed_batch_return(
     )
 
     # Create metadata
-    from areal.controller.batch import DistributedBatchMemory
-    from areal.controller.batch_metadata import (
-        BatchMetadata,
-        ShardMetadata,
-        TensorMetadata,
-    )
 
     # Infer batch size from first value
     first_value = next(iter(data_to_store.values()))
@@ -632,11 +629,7 @@ def _handle_distributed_batch_return(
 # ==================== Batch Data Storage Endpoints ====================
 @app.route("/data/<shard_id>", methods=["PUT"])
 def store_batch_data(shard_id: str):
-    """Store batch data shard.
-
-    URL: /data/{shard_id}?global_step={step}
-    Body: Pickled dict[str, torch.Tensor | Any]
-    """
+    """Store batch data shard. Query param: global_step (default: 0)."""
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
     try:
@@ -662,14 +655,7 @@ def store_batch_data(shard_id: str):
 
 @app.route("/data/<shard_id>", methods=["GET"])
 def retrieve_batch_data(shard_id: str):
-    """Retrieve batch data shard.
-
-    URL: /data/{shard_id}?offset={offset}&batch_size={batch_size}
-    Query parameters (optional):
-        offset: int, starting index within the shard (default: 0)
-        batch_size: int, number of samples to retrieve (default: all)
-    Response: Pickled dict[str, torch.Tensor | Any] (sliced logical shard)
-    """
+    """Retrieve batch data shard. Query params: offset (default: 0), batch_size (default: all)."""
     global _batch_storage, _batch_storage_lock
 
     logger.debug(f"Received data get request for shard {shard_id}")
@@ -715,50 +701,21 @@ def retrieve_batch_data(shard_id: str):
 def _slice_shard_data(
     data: dict[str, Tensor], offset: int, batch_size: int | None
 ) -> dict[str, Tensor]:
-    """Slice shard data along batch dimension.
-
-    Parameters
-    ----------
-    data : dict[str, Any]
-        Full shard data
-    offset : int
-        Starting index within the shard
-    batch_size : int | None
-        Number of samples to retrieve (None means all remaining)
-
-    Returns
-    -------
-    dict[str, Any]
-        Sliced shard data
-    """
-    import torch
-
-    sliced: dict[str, Any] = {}
+    """Slice shard data along batch dimension."""
+    sliced: dict[str, Tensor] = {}
     for key, value in data.items():
         if isinstance(value, torch.Tensor):
             if batch_size is not None:
                 sliced[key] = value[offset : offset + batch_size].clone()
             else:
                 sliced[key] = value[offset:].clone()
-        elif isinstance(value, list):
-            if batch_size is not None:
-                sliced[key] = value[offset : offset + batch_size]
-            else:
-                sliced[key] = value[offset:]
-        else:
-            # Scalar / non-batched value, keep as-is
-            sliced[key] = value
 
     return sliced
 
 
 @app.route("/data/clear", methods=["DELETE"])
 def clear_batch_data():
-    """Clear old batch data.
-
-    URL: /data/clear?global_step={step}
-    Clears all shards with global_step < step
-    """
+    """Clear batch data shards with global_step < query param 'global_step' (default: 0)."""
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
     try:
@@ -788,10 +745,7 @@ def clear_batch_data():
 
 @app.route("/data/stats", methods=["GET"])
 def batch_data_stats():
-    """Get batch data storage statistics.
-
-    URL: /data/stats
-    """
+    """Get batch data storage statistics."""
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
     try:
@@ -873,8 +827,6 @@ def main():
     args, _ = parser.parse_known_args()
 
     # Configure Werkzeug logging
-    import logging as stdlib_logging
-
     werkzeug_logger = stdlib_logging.getLogger("werkzeug")
     werkzeug_logger.setLevel(getattr(stdlib_logging, args.werkzeug_log_level))
 
