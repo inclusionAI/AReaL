@@ -34,7 +34,7 @@ model:
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
   scheduling_spec:
-    - type: worker
+    - task_type: worker
       port_count: 2
       gpu: 1
       cmd: python3 -m areal.scheduler.rpc.rpc_server

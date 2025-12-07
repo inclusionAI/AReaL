@@ -612,11 +612,18 @@ class ArealOpenAI(AsyncOpenAI):
             raise KeyError(f"Interaction with ID {id} not found in cache")
         return self._cache.set_reward(id, reward)
 
-    def set_final_reward(self, reward: float) -> None:
+    def set_last_reward(self, reward: float) -> None:
         """Set reward for the most recent completion/response."""
         if not self._cache:
             raise RuntimeError("No interaction in cache to set reward for")
-        return self._cache.set_final_reward(reward)
+        return self._cache.set_last_reward(reward)
+
+    def set_final_reward(self, reward: float) -> None:
+        """Set reward for the final completion/response."""
+        logger.warning(
+            "set_final_reward is deprecated. Please use set_last_reward instead."
+        )
+        return self.set_last_reward(reward)
 
     def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
         """Apply backward discounted rewards across cached completions/responses.
