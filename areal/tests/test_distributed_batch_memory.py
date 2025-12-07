@@ -6,7 +6,6 @@ import torch
 from areal.controller.batch import DistributedBatchMemory
 from areal.controller.batch_metadata import (
     BatchMetadata,
-    ScalarMetadata,
     ShardMetadata,
     TensorMetadata,
 )
@@ -295,15 +294,6 @@ class TestBatchMetadata:
         assert meta.shape == (32, 128)
         assert meta.dtype == "torch.float32"
         assert meta.device == "cuda:0"
-
-    def test_scalar_metadata(self):
-        """Test ScalarMetadata creation."""
-        meta = ScalarMetadata(
-            value_type="int",
-            length=1,
-        )
-        assert meta.value_type == "int"
-        assert meta.length == 1
 
     def test_shard_metadata(self):
         """Test ShardMetadata creation."""

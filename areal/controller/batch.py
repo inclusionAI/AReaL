@@ -823,7 +823,7 @@ class DistributedBatchMemory(DistributedBatch):
             return
 
         client = cls.get_client()
-        await client.clear_old_data(node_addrs, global_step)
+        await client.clear_batches(node_addrs, global_step)
 
     @classmethod
     def clear(cls, global_step: int, node_addrs: set[str] | None = None):

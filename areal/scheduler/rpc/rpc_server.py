@@ -580,7 +580,6 @@ def _handle_distributed_batch_return(
     from areal.controller.batch import DistributedBatchMemory
     from areal.controller.batch_metadata import (
         BatchMetadata,
-        ScalarMetadata,
         ShardMetadata,
         TensorMetadata,
     )
@@ -594,7 +593,7 @@ def _handle_distributed_batch_return(
     else:
         batch_size = 1
 
-    # Create field metadata
+    # Create field metadata (only for tensor fields)
     fields = {}
     for key, value in data_to_store.items():
         if isinstance(value, torch.Tensor):
@@ -603,10 +602,6 @@ def _handle_distributed_batch_return(
                 dtype=str(value.dtype),
                 device=str(value.device),
             )
-        elif isinstance(value, list):
-            fields[key] = ScalarMetadata(value_type="list", length=len(value))
-        else:
-            fields[key] = ScalarMetadata(value_type=type(value).__name__, length=1)
 
     # Create shard and batch metadata
     shard = ShardMetadata(

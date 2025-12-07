@@ -1,8 +1,4 @@
-"""HTTP client for distributed batch memory retrieval.
-
-This module implements an HTTP client that fetches data shards from multiple
-nodes concurrently and assembles them into a complete dataset.
-"""
+"""HTTP client for distributed batch memory retrieval."""
 
 import asyncio
 import io
@@ -19,44 +15,16 @@ logger = logging.getLogger("BatchClient")
 
 
 class BatchDataClient:
-    """HTTP client for fetching distributed batch data.
-
-    This client fetches data shards from multiple nodes concurrently and
-    assembles them into a complete dataset.
-    """
+    """HTTP client for fetching distributed batch data."""
 
     def __init__(self, timeout: float = 300.0):
-        """Initialize the batch data client.
-
-        Parameters
-        ----------
-        timeout : float, optional
-            Timeout for HTTP requests in seconds, by default 300.0
-        """
+        """Initialize the batch data client."""
         self.timeout = aiohttp.ClientTimeout(total=timeout)
 
     async def fetch_shard(
         self, session: aiohttp.ClientSession, shard: ShardMetadata
-    ) -> dict[str, Any]:
-        """Fetch a logical shard (sub-range) from a physical shard.
-
-        This fetches only the logical shard identified by ``shard.offset`` and
-        ``shard.batch_size`` from the remote node, reducing data transfer.
-
-        Parameters
-        ----------
-        session : aiohttp.ClientSession
-            HTTP session to use
-        shard : ShardMetadata
-            Metadata describing the logical shard to fetch
-
-        Returns
-        -------
-        dict[str, Any]
-            Sliced shard data matching the logical sub-range
-        """
-        # Build URL with query parameters for logical shard slicing
-        # Only include parameters if we need to slice (offset > 0 or batch_size is specified)
+    ) -> dict[str, torch.Tensor]:
+        """Fetch a logical shard (sub-range) from a physical shard."""
         url = f"http://{shard.node_addr}/data/{shard.shard_id}"
         params = {}
         if shard.offset > 0:
@@ -97,22 +65,8 @@ class BatchDataClient:
 
     async def fetch_shards(
         self, metadata: BatchMetadata
-    ) -> list[dict[str, torch.Tensor | Any]]:
-        """Fetch all shards for a batch and return raw shard data.
-
-        This method only fetches data from remote nodes without any merging or
-        processing. Data operations should be handled by the caller.
-
-        Parameters
-        ----------
-        metadata : BatchMetadata
-            Metadata describing the batch to fetch
-
-        Returns
-        -------
-        list[dict[str, torch.Tensor | Any]]
-            List of raw shard data dictionaries, one per shard
-        """
+    ) -> list[dict[str, torch.Tensor]]:
+        """Fetch all shards for a batch and return raw shard data."""
         if not metadata.shards:
             return []
 
@@ -136,21 +90,7 @@ class BatchDataClient:
         global_step: int,
         data: dict[str, torch.Tensor | Any],
     ) -> None:
-        """Store a shard on a node.
-
-        Parameters
-        ----------
-        session : aiohttp.ClientSession
-            HTTP session to use
-        node_addr : str
-            Network address (host:port) of the target node
-        shard_id : str
-            Unique identifier for this shard
-        global_step : int
-            Global training step
-        data : dict[str, torch.Tensor | Any]
-            Data to store
-        """
+        """Store a shard on a node."""
         url = f"http://{node_addr}/data/{shard_id}?global_step={global_step}"
 
         # Serialize data
@@ -182,16 +122,8 @@ class BatchDataClient:
                 f"Error storing shard {shard_id} to {node_addr}: {e}"
             ) from e
 
-    async def clear_old_data(self, node_addrs: set[str], global_step: int) -> None:
-        """Clear old data on multiple nodes.
-
-        Parameters
-        ----------
-        node_addrs : set[str]
-            Set of node addresses (host:port) to clear
-        global_step : int
-            Clear all data with step < global_step
-        """
+    async def clear_batches(self, node_addrs: set[str], global_step: int) -> None:
+        """Clear old data on multiple nodes."""
         session = aiohttp.ClientSession()
         try:
             tasks = [
@@ -207,17 +139,7 @@ class BatchDataClient:
     async def _clear_node(
         self, session: aiohttp.ClientSession, node_addr: str, global_step: int
     ) -> None:
-        """Clear old data on a single node.
-
-        Parameters
-        ----------
-        session : aiohttp.ClientSession
-            HTTP session to use
-        node_addr : str
-            Network address (host:port) of the target node
-        global_step : int
-            Clear all data with step < global_step
-        """
+        """Clear old data on a single node."""
         url = f"http://{node_addr}/data/clear?global_step={global_step}"
 
         try:
