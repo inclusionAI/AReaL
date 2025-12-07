@@ -317,9 +317,6 @@ class TrainController:
                     k: splits[dp_idx] for k, splits in dp_worker_kwargs.items()
                 }
 
-                # Convert DistributedBatch to dict for RPC serialization
-                # If batch server is enabled and batch has metadata, pass metadata
-                # Otherwise, get data (legacy mode)
                 worker_args = [self._serialize_arg_for_rpc(arg) for arg in worker_args]
                 worker_kwargs = {
                     k: self._serialize_arg_for_rpc(v) for k, v in worker_kwargs.items()
@@ -342,12 +339,7 @@ class TrainController:
         return await asyncio.gather(*tasks)
 
     def _serialize_arg_for_rpc(self, arg: Any) -> Any:
-        """Serialize argument for RPC transmission.
-
-        For DistributedBatch with metadata, pass metadata to avoid data transmission.
-        For DistributedBatch with local data, get the data.
-        For other types, pass as-is.
-        """
+        """Serialize argument for RPC transmission."""
         if isinstance(arg, DistributedBatch):
             # If batch has metadata and batch server is enabled, pass metadata
             if hasattr(arg, "metadata") and arg.metadata is not None:
@@ -745,38 +737,8 @@ class TrainController:
 
     # ==================== DISTRIBUTED BATCH RPC WRAPPERS ====================
     def clear_batches(self, global_step: int):
-        """Clear batch data from distributed nodes.
-
-        This performs garbage collection of batch data with step < global_step.
-
-        Parameters
-        ----------
-        global_step : int
-            Clear all data with step less than this value
-        """
-
+        """Clear all data with step less than global_step"""
         server_addrs = {
             f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
         }
-        try:
-            DistributedBatchMemory.clear(global_step, server_addrs)
-            logger.info(f"Cleared old batches with step < {global_step}")
-        except Exception as e:
-            logger.warning(f"Error clearing old batches: {e}")
-
-    async def aclear_batches(self, global_step: int):
-        """Async version of clear_batches.
-
-        Parameters
-        ----------
-        global_step : int
-            Clear all data with step less than this value
-        """
-        server_addrs = {
-            f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
-        }
-        try:
-            await DistributedBatchMemory.aclear(global_step, server_addrs)
-            logger.info(f"Cleared old batches with step < {global_step}")
-        except Exception as e:
-            logger.warning(f"Error clearing old batches: {e}")
+        DistributedBatchMemory.clear(global_step, server_addrs)
