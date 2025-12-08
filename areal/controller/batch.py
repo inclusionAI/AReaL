@@ -845,6 +845,20 @@ class DistributedBatchMemory(DistributedBatch):
         self.metadata = state.get("metadata")
 
     def __getitem__(self, key):
+        if self.is_remote:
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "Cannot access items in REMOTE mode. Call get_data() first to fetch data.",
+            )
+
+        if self.dataset is None:
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "Dataset is empty.",
+            )
+
         if isinstance(key, int):
             return {k: v[key] for k, v in self.dataset.items()}
         elif isinstance(key, str):
@@ -857,59 +871,61 @@ class DistributedBatchMemory(DistributedBatch):
             )
 
     def __setitem__(self, key, value):
-        """Support two assignment methods:
-        - str key: update entire attribute tensor
-        - int index: requires converting data to list format for update (less efficient, avoid if possible)
-        """
-        if isinstance(key, str):
-            # Special handling for DistributedBatchMemory values
-            if isinstance(value, DistributedBatchMemory):
-                # Merge using union (modifies self in-place)
-                self.union(value)
-                return
-
-            # Regular assignment for Tensor/list/scalar values
-            # Check if we're in metadata mode
-            if self.metadata is not None:
-                raise FrameworkError(
-                    "FrameworkError",
-                    "DistributedBatchMemoryError",
-                    "Cannot assign regular value to metadata-mode batch. "
-                    "Use union() with a DistributedBatchMemory object, or get_data() first.",
-                )
-
-            # Local data mode: proceed with assignment
-            if self.dataset:
-                expected_total_size = self._get_total_size()
-                if isinstance(value, torch.Tensor):
-                    if value.shape[0] != expected_total_size:
-                        raise FrameworkError(
-                            "FrameworkError",
-                            "DistributedBatchMemoryError",
-                            f"The batch size of the tensor does not match. Expected {expected_total_size}, actual {value.shape[0]}",
-                        )
-                elif isinstance(value, list):
-                    if len(value) != expected_total_size:
-                        raise FrameworkError(
-                            "FrameworkError",
-                            "DistributedBatchMemoryError",
-                            f"The batch size of the list does not match. Expected {expected_total_size}, actual {len(value)}",
-                        )
-
-            # Ensure dataset exists
-            if self.dataset is None:
-                self.dataset = {}
-            self.dataset[key] = value
-        else:
+        if not isinstance(key, str):
             raise FrameworkError(
                 "FrameworkError", "DistributedBatchMemoryError", "key must be str"
             )
+
+        if self.metadata is not None:
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "Cannot assign regular value to metadata-mode batch. "
+                "Use union() with a DistributedBatchMemory object, or get_data() first.",
+            )
+
+        # Local data mode: proceed with assignment
+        if self.dataset:
+            expected_total_size = self._get_total_size()
+            if isinstance(value, torch.Tensor):
+                if value.shape[0] != expected_total_size:
+                    raise FrameworkError(
+                        "FrameworkError",
+                        "DistributedBatchMemoryError",
+                        f"The batch size of the tensor does not match. Expected {expected_total_size}, actual {value.shape[0]}",
+                    )
+            elif isinstance(value, list):
+                if len(value) != expected_total_size:
+                    raise FrameworkError(
+                        "FrameworkError",
+                        "DistributedBatchMemoryError",
+                        f"The batch size of the list does not match. Expected {expected_total_size}, actual {len(value)}",
+                    )
+
+        # Ensure dataset exists
+        if self.dataset is None:
+            self.dataset = {}
+        self.dataset[key] = value
 
     def __delitem__(self, key):
         """Support two deletion methods:
         - int index: delete sample at specified position
         - str key: delete entire attribute
         """
+        if self.is_remote:
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "Cannot delete items in REMOTE mode. Call get_data() first to fetch data.",
+            )
+
+        if self.dataset is None:
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "Dataset is empty.",
+            )
+
         if isinstance(key, int):
             # Convert to list format for deletion
             list_dataset = convert_dict_to_list(self.dataset)

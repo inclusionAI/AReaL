@@ -442,11 +442,7 @@ class RolloutController:
         trajectories = [r.trajectory if r is not None else None for r in results]
 
         # Filter out None and only keep DistributedBatchMemory instances
-        batches = [
-            t
-            for t in trajectories
-            if t is not None and isinstance(t, DistributedBatchMemory)
-        ]
+        batches = [t for t in trajectories if isinstance(t, DistributedBatchMemory)]
         if not batches:
             return DistributedBatchMemory.from_dict({})
 
