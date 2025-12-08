@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any
+from collections import defaultdict
+from enum import Enum, auto
+from typing import Any, ClassVar
 
 import torch
 from torch import Tensor
@@ -26,12 +28,37 @@ from areal.utils.errors import FrameworkError
 logger = logging.getLogger("DistributedBatchMemory")
 
 
+class BatchMode(Enum):
+    """Explicit mode enum for DistributedBatchMemory.
+
+    Attributes
+    ----------
+    LOCAL : auto
+        Data stored locally in memory
+    REMOTE : auto
+        Only metadata; data fetched on-demand via HTTP
+    EMPTY : auto
+        Neither data nor metadata present (invalid/empty state)
+    """
+
+    LOCAL = auto()  # Data stored locally in memory
+    REMOTE = auto()  # Only metadata; data fetched on-demand
+    EMPTY = auto()  # Neither present (invalid state)
+
+
 class DistributedBatchMemory(DistributedBatch):
     """Distributed batch memory with metadata-driven data access.
 
     This class separates metadata (data shape, location) from actual data.
     The control plane only passes metadata, and actual data is fetched on-demand
     via HTTP from distributed nodes.
+
+    The class supports two modes:
+    - LOCAL mode: Data is stored locally in memory (dataset is not None)
+    - REMOTE mode: Only metadata is present; data fetched on-demand via HTTP
+
+    Use the `mode` property to check the current mode, and `is_local`/`is_remote`
+    for convenience checks.
 
     Attributes
     ----------
@@ -41,11 +68,113 @@ class DistributedBatchMemory(DistributedBatch):
         Metadata describing the distributed batch
     """
 
-    dataset = None
-    metadata: BatchMetadata | None = None
+    # Shared client for fetching data (singleton pattern)
+    _client: ClassVar[BatchDataClient | None] = None
 
-    # Shared client for fetching data
-    _client: BatchDataClient | None = None
+    def __init__(
+        self,
+        dataset: dict[str, torch.Tensor | Any] | None = None,
+        metadata: BatchMetadata | None = None,
+    ):
+        """Initialize a DistributedBatchMemory instance.
+
+        Parameters
+        ----------
+        dataset : dict[str, torch.Tensor | Any] | None
+            The actual data stored locally. If provided, batch is in LOCAL mode.
+        metadata : BatchMetadata | None
+            Metadata describing the distributed batch. If provided without dataset,
+            batch is in REMOTE mode.
+        """
+        self.dataset = dataset
+        self.metadata = metadata
+
+    @property
+    def mode(self) -> BatchMode:
+        """Get the current mode of this batch.
+
+        Returns
+        -------
+        BatchMode
+            The current mode: LOCAL, REMOTE, or EMPTY
+        """
+        has_data = self.dataset is not None and len(self.dataset) > 0
+        has_meta = self.metadata is not None
+
+        if has_data:
+            return BatchMode.LOCAL
+        elif has_meta:
+            return BatchMode.REMOTE
+        else:
+            return BatchMode.EMPTY
+
+    @property
+    def is_local(self) -> bool:
+        """Check if data is available locally (no fetch needed).
+
+        Returns
+        -------
+        bool
+            True if batch is in LOCAL mode
+        """
+        return self.mode == BatchMode.LOCAL
+
+    @property
+    def is_remote(self) -> bool:
+        """Check if this batch is in metadata-only mode.
+
+        Returns
+        -------
+        bool
+            True if batch is in REMOTE mode
+        """
+        return self.mode == BatchMode.REMOTE
+
+    def _require_mode(self, *allowed_modes: BatchMode, operation: str) -> None:
+        """Assert that current mode is one of the allowed modes.
+
+        Parameters
+        ----------
+        *allowed_modes : BatchMode
+            The modes that are allowed for this operation
+        operation : str
+            Name of the operation being performed (for error messages)
+
+        Raises
+        ------
+        FrameworkError
+            If the current mode is not in the allowed modes
+        """
+        if self.mode not in allowed_modes:
+            raise FrameworkError(
+                "FrameworkError",
+                "BatchModeError",
+                f"Operation '{operation}' requires mode {[m.name for m in allowed_modes]}, "
+                f"but current mode is {self.mode.name}",
+            )
+
+    def _require_same_mode(self, other: DistributedBatchMemory, operation: str) -> None:
+        """Assert that both batches are in the same mode.
+
+        Parameters
+        ----------
+        other : DistributedBatchMemory
+            The other batch to compare with
+        operation : str
+            Name of the operation being performed (for error messages)
+
+        Raises
+        ------
+        FrameworkError
+            If the two batches are in different modes
+        """
+        if self.mode != other.mode:
+            raise FrameworkError(
+                "FrameworkError",
+                "BatchModeError",
+                f"Operation '{operation}' requires both batches in same mode. "
+                f"Self is {self.mode.name}, other is {other.mode.name}",
+            )
 
     @classmethod
     def get_client(cls) -> BatchDataClient:
@@ -64,7 +193,7 @@ class DistributedBatchMemory(DistributedBatch):
     def from_dict(cls, dict_dataset: dict[str, Tensor | Any]):
         """Create a DistributedBatchMemory from dictionary format dataset.
 
-        This creates a local batch (not distributed) with data stored in memory.
+        This creates a LOCAL mode batch with data stored in memory.
 
         Parameters
         ----------
@@ -74,19 +203,17 @@ class DistributedBatchMemory(DistributedBatch):
         Returns
         -------
         DistributedBatchMemory
-            New DistributedBatchMemory instance
+            New DistributedBatchMemory instance in LOCAL mode
         """
         validate_dict_dataset(dict_dataset)
-        instance = cls.__new__(cls)
-        instance.dataset = dict_dataset
-        instance.metadata = None
-        return instance
+        return cls(dataset=dict_dataset, metadata=None)
 
     @classmethod
     def from_metadata(cls, metadata: BatchMetadata) -> DistributedBatchMemory:
         """Create a DistributedBatchMemory from metadata (without actual data).
 
-        The data will be fetched lazily when get_data() is called.
+        This creates a REMOTE mode batch. The data will be fetched lazily
+        when get_data() is called.
 
         Parameters
         ----------
@@ -96,12 +223,9 @@ class DistributedBatchMemory(DistributedBatch):
         Returns
         -------
         DistributedBatchMemory
-            New DistributedBatchMemory instance with metadata only
+            New DistributedBatchMemory instance in REMOTE mode
         """
-        instance = cls.__new__(cls)
-        instance.dataset = None
-        instance.metadata = metadata
-        return instance
+        return cls(dataset=None, metadata=metadata)
 
     @classmethod
     def from_list(cls, list_dataset: list[dict[str, Tensor | Any]]):
@@ -127,19 +251,29 @@ class DistributedBatchMemory(DistributedBatch):
         the sequence of samples in the concatenated result matches the
         original dataset order.
 
-        Supports both metadata mode and local data mode.
+        Supports both REMOTE mode (metadata) and LOCAL mode (data).
+
+        Parameters
+        ----------
+        dp_size : int
+            Number of data parallel processes
+
+        Returns
+        -------
+        list[DistributedBatchMemory]
+            List of chunked batches
+
+        Raises
+        ------
+        FrameworkError
+            If batch is in EMPTY mode
         """
-        # Metadata mode: split shards across dp_size groups
-        if self.metadata is not None:
+        # REMOTE mode: split shards across dp_size groups
+        if self.is_remote:
             return self._chunk_metadata(dp_size)
 
-        # Local data mode: split actual data
-        if not self.dataset:
-            raise FrameworkError(
-                "FrameworkError",
-                "DistributedBatchMemoryError",
-                "Cannot split empty dataset",
-            )
+        # LOCAL mode: split actual data
+        self._require_mode(BatchMode.LOCAL, operation="chunk")
 
         total = self._get_total_size()
         part_size = (total + dp_size - 1) // dp_size
@@ -156,10 +290,7 @@ class DistributedBatchMemory(DistributedBatch):
                 else:
                     # For scalar values, keep as-is
                     split_data[k] = v
-            batch = self.__class__.__new__(self.__class__)
-            batch.dataset = split_data
-            batch.metadata = None
-            batches.append(batch)
+            batches.append(self.__class__(dataset=split_data, metadata=None))
         return batches
 
     @staticmethod
@@ -174,8 +305,6 @@ class DistributedBatchMemory(DistributedBatch):
             return [], 0
 
         # Group shards by their fields.keys() (using sorted tuple as key)
-        from collections import defaultdict
-
         groups_dict: dict[tuple[str, ...], list[ShardMetadata]] = defaultdict(list)
         for shard in shards:
             keys_tuple = tuple(sorted(shard.fields.keys()))
@@ -294,46 +423,44 @@ class DistributedBatchMemory(DistributedBatch):
             )
 
         # Step 1: Group shards by fields.keys()
-        key_groups, _ = self._group_shards_by_keys(self.metadata.shards)
+        shards_by_field_keys, _ = self._group_shards_by_keys(self.metadata.shards)
 
-        # Step 2: Chunk each group across dp_size processes
-        # Result: list[list[list[ShardMetadata]]] - [key_group][dp_idx][shards]
-        chunked_groups = []
-        for group in key_groups:
-            chunked_group = self._chunk_shard_group(group, dp_size)
-            chunked_groups.append(chunked_group)
+        # Step 2: Chunk each field group across dp_size processes
+        # Result: list[list[list[ShardMetadata]]] - [field_group_idx][dp_rank_idx][shards]
+        chunked_per_dp = []
+        for field_group in shards_by_field_keys:
+            dp_chunks = self._chunk_shard_group(field_group, dp_size)
+            chunked_per_dp.append(dp_chunks)
 
-        # Step 3: Merge results from different groups
-        # Combine shards from all key groups for each dp process
+        # Step 3: Merge results from different field groups
+        # Combine shards from all field groups for each dp rank
         # Since different groups have non-overlapping keys but same total batch_size,
         # the merged batch_size should equal each group's batch_size (not sum)
-        merged_chunks: list[list[ShardMetadata]] = [[] for _ in range(dp_size)]
+        shards_per_dp_rank: list[list[ShardMetadata]] = [[] for _ in range(dp_size)]
 
-        # Calculate batch_size for each dp process from the first group
-        # (all groups should have the same chunk sizes after chunking)
-        if chunked_groups:
-            chunk_sizes = [
-                sum(shard.batch_size for shard in chunked_groups[0][dp_idx])
+        # Calculate batch_size for each dp rank from the first field group
+        # (all field groups should have the same chunk sizes after chunking)
+        if chunked_per_dp:
+            batch_size_per_dp_rank = [
+                sum(shard.batch_size for shard in chunked_per_dp[0][dp_idx])
                 for dp_idx in range(dp_size)
             ]
 
-            # Validate: all groups should have the same chunk sizes for each dp process
-            for group_idx, chunked_group in enumerate(chunked_groups):
+            # Validate: all field groups should have the same chunk sizes for each dp rank
+            for group_idx, dp_chunks in enumerate(chunked_per_dp):
                 for dp_idx in range(dp_size):
-                    group_dp_size = sum(
-                        shard.batch_size for shard in chunked_group[dp_idx]
-                    )
-                    assert group_dp_size == chunk_sizes[dp_idx], (
+                    group_dp_size = sum(shard.batch_size for shard in dp_chunks[dp_idx])
+                    assert group_dp_size == batch_size_per_dp_rank[dp_idx], (
                         f"Group {group_idx} dp_idx {dp_idx} has batch_size {group_dp_size}, "
-                        f"expected {chunk_sizes[dp_idx]}"
+                        f"expected {batch_size_per_dp_rank[dp_idx]}"
                     )
         else:
-            chunk_sizes = [0] * dp_size
+            batch_size_per_dp_rank = [0] * dp_size
 
-        # Merge shards from all groups for each dp process
-        for chunked_group in chunked_groups:
+        # Merge shards from all field groups for each dp rank
+        for dp_chunks in chunked_per_dp:
             for dp_idx in range(dp_size):
-                merged_chunks[dp_idx].extend(chunked_group[dp_idx])
+                shards_per_dp_rank[dp_idx].extend(dp_chunks[dp_idx])
 
         # Create chunked batches
         batches = []
@@ -341,13 +468,10 @@ class DistributedBatchMemory(DistributedBatch):
             new_metadata = BatchMetadata(
                 batch_id=f"{self.metadata.batch_id}_chunk_{i}",
                 global_step=self.metadata.global_step,
-                total_batch_size=chunk_sizes[i],
-                shards=merged_chunks[i],
+                total_batch_size=batch_size_per_dp_rank[i],
+                shards=shards_per_dp_rank[i],
             )
-            batch = self.__class__.__new__(self.__class__)
-            batch.dataset = None
-            batch.metadata = new_metadata
-            batches.append(batch)
+            batches.append(self.__class__(dataset=None, metadata=new_metadata))
 
         return batches
 
@@ -370,15 +494,17 @@ class DistributedBatchMemory(DistributedBatch):
 
         Notes
         -----
-        For metadata mode, this method will fall back to simple chunking
+        For REMOTE mode, this method will fall back to simple chunking
         since we cannot determine sequence lengths without fetching the data.
         """
-        # Metadata mode: fall back to simple chunking
-        # FFD requires sequence length information which is not available in metadata yet, it will be implemented in the future
-        if self.metadata is not None:
+        # REMOTE mode: fall back to simple chunking
+        # FFD requires sequence length information which is not available in metadata yet
+        if self.is_remote:
             return self.chunk(dp_size)
 
-        # Local data mode: use FFD algorithm
+        # LOCAL mode: use FFD algorithm
+        self._require_mode(BatchMode.LOCAL, operation="chunk_by_ffd")
+
         total_size = self._get_total_size()
         if total_size % group_size != 0:
             raise FrameworkError(
@@ -441,33 +567,37 @@ class DistributedBatchMemory(DistributedBatch):
                 else:
                     # For scalar values, keep as-is (they represent single sample)
                     split_data[k] = v
-            batch = self.__class__.__new__(self.__class__)
-            batch.dataset = split_data
-            batch.metadata = None
-            batches.append(batch)
+            batches.append(self.__class__(dataset=split_data, metadata=None))
         return batches
 
     def union(self, other: DistributedBatchMemory) -> DistributedBatchMemory:
         """Merge another batch with this one in-place.
 
-        Supports both metadata mode and local data mode.
+        Both batches must be in the same mode (either both LOCAL or both REMOTE).
+
+        Parameters
+        ----------
+        other : DistributedBatchMemory
+            The batch to merge with this one
+
+        Returns
+        -------
+        DistributedBatchMemory
+            Self (modified in-place)
+
+        Raises
+        ------
+        FrameworkError
+            If batches are in different modes
         """
-        # Both are in local data mode
-        if self.dataset is not None and other.dataset is not None:
-            self._union_local_data(other)
-            return self
+        self._require_same_mode(other, operation="union")
 
-        # Both are in metadata mode
-        if self.metadata is not None and other.metadata is not None:
+        if self.is_remote:
             self._union_metadata(other)
-            return self
+        else:
+            self._union_local_data(other)
 
-        # Mixed mode: not supported
-        raise FrameworkError(
-            "FrameworkError",
-            "DistributedBatchMemoryError",
-            "Cannot union batches in different modes (metadata vs local data)",
-        )
+        return self
 
     def _union_metadata(self, other: DistributedBatchMemory) -> None:
         """Merge two batches in metadata mode by modifying self in-place."""
@@ -533,9 +663,7 @@ class DistributedBatchMemory(DistributedBatch):
             # For scalar values, assume it's a single sample
             return 1
 
-    def _merge_shards(
-        self, shard_data_list: list[dict[str, torch.Tensor | Any]]
-    ) -> dict[str, torch.Tensor | Any]:
+    def _merge_shards(self, shard_data_list: list[dict[str, Any]]) -> dict[str, Any]:
         """Merge shard data into a complete dataset."""
         if not shard_data_list:
             return {}
@@ -556,9 +684,9 @@ class DistributedBatchMemory(DistributedBatch):
 
     def _merge_shards_with_different_keys(
         self,
-        shard_data_list: list[dict[str, torch.Tensor]],
+        shard_data_list: list[dict[str, Any]],
         all_keys: set[str],
-    ) -> dict[str, torch.Tensor]:
+    ) -> dict[str, Any]:
         """Merge shards that may have different keys."""
         result = {}
 
@@ -677,18 +805,18 @@ class DistributedBatchMemory(DistributedBatch):
         """
         assert data is not None and len(data) != 0
 
-        # Check if we have mixed modes (some with metadata, some without)
-        has_metadata = [item.metadata is not None for item in data]
+        # Check if we have mixed modes (some REMOTE, some LOCAL)
+        has_metadata = [item.is_remote for item in data]
         if not all(has_metadata) and any(has_metadata):
             raise FrameworkError(
                 "FrameworkError",
                 "DistributedBatchMemoryError",
                 "Cannot concatenate batches with mixed modes. "
-                "All batches must be either in metadata mode or local data mode.",
+                "All batches must be either in REMOTE mode or LOCAL mode.",
             )
 
-        # If all have metadata (distributed), concatenate metadata
-        if all(item.metadata is not None for item in data):
+        # If all are in REMOTE mode, concatenate metadata
+        if all(item.is_remote for item in data):
             all_shards = []
             max_global_step = 0
             for item in data:
@@ -698,15 +826,15 @@ class DistributedBatchMemory(DistributedBatch):
             # Calculate total_batch_size (validates different fields have same total)
             _, total_batch_size = cls._group_shards_by_keys(all_shards)
 
-            result = DistributedBatchMemory.__new__(DistributedBatchMemory)
-            result.dataset = None
-            result.metadata = BatchMetadata(
-                batch_id=str(uuid.uuid4()),
-                global_step=max_global_step,
-                total_batch_size=total_batch_size,
-                shards=all_shards,
+            return cls(
+                dataset=None,
+                metadata=BatchMetadata(
+                    batch_id=str(uuid.uuid4()),
+                    global_step=max_global_step,
+                    total_batch_size=total_batch_size,
+                    shards=all_shards,
+                ),
             )
-            return result
 
         # Concatenate local data
         datasets = [k.dataset for k in data]
@@ -731,10 +859,7 @@ class DistributedBatchMemory(DistributedBatch):
             # All datasets have the same keys, use concat_padded_tensors
             merged_data = concat_padded_tensors(datasets)
 
-        result = DistributedBatchMemory.__new__(DistributedBatchMemory)
-        result.dataset = merged_data
-        result.metadata = None
-        return result
+        return cls(dataset=merged_data, metadata=None)
 
     @classmethod
     async def aclear(cls, global_step: int, node_addrs: set[str] | None = None):
@@ -846,17 +971,23 @@ class DistributedBatchMemory(DistributedBatch):
             )
 
     def __str__(self):
-        if self.metadata is not None:
-            # Show metadata information
+        mode_name = self.mode.name
+        total_size = self._get_total_size()
+
+        if self.mode == BatchMode.EMPTY:
+            return f"DistributedBatchMemory<mode={mode_name}, empty>"
+
+        if self.is_remote:
+            # Show metadata information for REMOTE mode
             return (
-                f"DistributedBatchMemory<metadata: {self.metadata}, "
+                f"DistributedBatchMemory<mode={mode_name}, "
+                f"size={total_size}, "
+                f"batch_id={self.metadata.batch_id}, "
+                f"num_shards={len(self.metadata.shards)}, "
                 f"data_loaded={self.dataset is not None}>"
             )
 
-        if not self.dataset:
-            return "DistributedBatchMemory<empty>"
-
-        total_size = self._get_total_size()
+        # LOCAL mode: show data details
         keys = list(self.dataset.keys())
         shapes = {}
         for k, v in self.dataset.items():
@@ -866,7 +997,10 @@ class DistributedBatchMemory(DistributedBatch):
                 shapes[k] = f"list[{len(v)}]"
             else:
                 shapes[k] = f"scalar({type(v).__name__})"
-        return f"DistributedBatchMemory<total_size={total_size}, keys={keys}, shapes={shapes}>"
+        return (
+            f"DistributedBatchMemory<mode={mode_name}, "
+            f"size={total_size}, keys={keys}, shapes={shapes}>"
+        )
 
     def __len__(self):
         """Return the total size."""

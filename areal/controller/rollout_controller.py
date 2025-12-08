@@ -294,7 +294,7 @@ class RolloutController:
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
                         http_timeout=self.config.request_timeout,
-                        _should_return_distributed_batch=True,
+                        return_distributed_batch=True,
                     )
 
                 # TimeourError will be catched below

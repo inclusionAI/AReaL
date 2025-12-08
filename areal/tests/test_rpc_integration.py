@@ -111,7 +111,7 @@ class TestSyncRPCServer:
                 "args": ["hello"],
                 "kwargs": {
                     "max_tokens": 10,
-                    "_should_bcast": False,
+                    "should_broadcast": False,
                 },
             },
         )

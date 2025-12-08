@@ -1664,7 +1664,7 @@ class TestRPCDistributedBatchReturn:
         tensor_result = torch.randn(10, 5)
         batch = _handle_distributed_batch_return(
             tensor_result,
-            distributed_batch_target_key="logits",
+            result_key="logits",
             engine=engine,
         )
 
@@ -1695,7 +1695,7 @@ class TestRPCDistributedBatchReturn:
         }
         batch = _handle_distributed_batch_return(
             dict_result,
-            distributed_batch_target_key=None,
+            result_key=None,
             engine=engine,
         )
 

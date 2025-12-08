@@ -6,7 +6,6 @@ import pickle
 from typing import Any
 
 import aiohttp
-import torch
 
 from areal.controller.batch_metadata import BatchMetadata, ShardMetadata
 from areal.utils import logging
@@ -23,7 +22,7 @@ class BatchDataClient:
 
     async def fetch_shard(
         self, session: aiohttp.ClientSession, shard: ShardMetadata
-    ) -> dict[str, torch.Tensor]:
+    ) -> dict[str, Any]:
         """Fetch a logical shard (sub-range) from a physical shard."""
         url = f"http://{shard.node_addr}/data/{shard.shard_id}"
         params = {}
@@ -63,9 +62,7 @@ class BatchDataClient:
                 f"Error fetching shard {shard.shard_id} from {shard.node_addr}: {e}"
             ) from e
 
-    async def fetch_shards(
-        self, metadata: BatchMetadata
-    ) -> list[dict[str, torch.Tensor]]:
+    async def fetch_shards(self, metadata: BatchMetadata) -> list[dict[str, Any]]:
         """Fetch all shards for a batch and return raw shard data."""
         if not metadata.shards:
             return []
@@ -88,7 +85,7 @@ class BatchDataClient:
         node_addr: str,
         shard_id: str,
         global_step: int,
-        data: dict[str, torch.Tensor | Any],
+        data: dict[str, Any],
     ) -> None:
         """Store a shard on a node."""
         url = f"http://{node_addr}/data/{shard_id}?global_step={global_step}"

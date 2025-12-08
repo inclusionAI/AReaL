@@ -336,11 +336,9 @@ def call_engine_method():
 
         args = deserialize_value(args)
         kwargs = deserialize_value(kwargs)
-        should_bcast = kwargs.pop("_should_bcast", True)
-        should_return_distributed_batch = kwargs.pop(
-            "_should_return_distributed_batch", False
-        )
-        distributed_batch_target_key = kwargs.pop("_distributed_batch_target_key", None)
+        should_broadcast = kwargs.pop("should_broadcast", True)
+        should_return_distributed_batch = kwargs.pop("return_distributed_batch", False)
+        result_key = kwargs.pop("result_key", None)
 
         try:
             logger.info(
@@ -361,7 +359,7 @@ def call_engine_method():
 
         def execute_in_nccl_thread():
             try:
-                if should_bcast and isinstance(_engine, TrainEngine):
+                if should_broadcast and isinstance(_engine, TrainEngine):
                     logger.info(
                         f"Broadcasting data for TrainEngine method: {method_name}"
                     )
@@ -400,7 +398,7 @@ def call_engine_method():
                 if should_return_distributed_batch:
                     result = _handle_distributed_batch_return(
                         result,
-                        distributed_batch_target_key,
+                        result_key,
                         _engine,
                     )
                     logger.debug("Handling distributed batch memory return")
@@ -498,7 +496,7 @@ def _resolve_batch_metadata(data: Any) -> Any:
 
 def _handle_distributed_batch_return(
     result: Any,
-    distributed_batch_target_key: str | None,
+    result_key: str | None,
     engine: TrainEngine | InferenceEngine,
 ) -> Any:
     """Handle distributed batch memory return.
@@ -517,7 +515,7 @@ def _handle_distributed_batch_return(
     ----------
     result : Any
         The result from engine method
-    distributed_batch_target_key : str | None
+    result_key : str | None
         Key to use when converting Tensor to dict
     engine : TrainEngine | InferenceEngine
         Engine instance (to get version/node info)
@@ -531,17 +529,14 @@ def _handle_distributed_batch_return(
 
     # Handle list: recursively process each element
     if isinstance(result, list):
-        return [
-            _handle_distributed_batch_return(r, distributed_batch_target_key, engine)
-            for r in result
-        ]
+        return [_handle_distributed_batch_return(r, result_key, engine) for r in result]
 
     # Check if result is Tensor or dict[str, Tensor]
     data_to_store = None
     if isinstance(result, torch.Tensor):
-        if distributed_batch_target_key is None:
-            distributed_batch_target_key = "data"
-        data_to_store = {distributed_batch_target_key: result}
+        if result_key is None:
+            result_key = "data"
+        data_to_store = {result_key: result}
     elif isinstance(result, dict) and any(
         isinstance(v, torch.Tensor) for v in result.values()
     ):

@@ -151,8 +151,8 @@ def main(args):
                 with stats_tracker.record_timing("recompute_logp"):
                     prox_logp = actor.compute_logp(
                         batch,
-                        _should_return_distributed_batch=True,
-                        _distributed_batch_target_key="prox_logp",
+                        return_distributed_batch=True,
+                        result_key="prox_logp",
                     )
                     batch["prox_logp"] = prox_logp
                     log_gpu_stats("recompute logp")
@@ -161,16 +161,14 @@ def main(args):
                 with stats_tracker.record_timing("ref_logp"):
                     ref_logp = ref.compute_logp(
                         batch,
-                        _should_return_distributed_batch=True,
-                        _distributed_batch_target_key="ref_logp",
+                        return_distributed_batch=True,
+                        result_key="ref_logp",
                     )
                     batch["ref_logp"] = ref_logp
                     log_gpu_stats("ref logp")
 
             with stats_tracker.record_timing("compute_advantage"):
-                batch = actor.compute_advantages(
-                    batch, _should_return_distributed_batch=True
-                )
+                batch = actor.compute_advantages(batch, return_distributed_batch=True)
                 log_gpu_stats("compute advantages")
 
             with stats_tracker.record_timing("train_step"):
