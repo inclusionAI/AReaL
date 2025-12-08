@@ -12,13 +12,27 @@ from areal.utils import logging
 
 logger = logging.getLogger("BatchClient")
 
+# Default connection limit for batch data fetching
+DEFAULT_CONNECTION_LIMIT = 100
+
 
 class BatchDataClient:
     """HTTP client for fetching distributed batch data."""
 
-    def __init__(self, timeout: float = 300.0):
-        """Initialize the batch data client."""
+    def __init__(
+        self, timeout: float = 300.0, connection_limit: int = DEFAULT_CONNECTION_LIMIT
+    ):
+        """Initialize the batch data client.
+
+        Parameters
+        ----------
+        timeout : float
+            Request timeout in seconds
+        connection_limit : int
+            Maximum number of concurrent connections
+        """
         self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self.connection_limit = connection_limit
 
     async def fetch_shard(
         self, session: aiohttp.ClientSession, shard: ShardMetadata
@@ -67,17 +81,16 @@ class BatchDataClient:
         if not metadata.shards:
             return []
 
-        session = aiohttp.ClientSession()
-        try:
+        connector = aiohttp.TCPConnector(limit=self.connection_limit)
+        async with aiohttp.ClientSession(
+            timeout=self.timeout, connector=connector
+        ) as session:
             logger.info(
                 f"Fetching {len(metadata.shards)} shards for batch {metadata.batch_id}"
             )
             tasks = [self.fetch_shard(session, shard) for shard in metadata.shards]
             shard_data_list = await asyncio.gather(*tasks)
             return shard_data_list
-        finally:
-            if not session.closed:
-                await session.close()
 
     async def store_shard(
         self,
@@ -121,17 +134,15 @@ class BatchDataClient:
 
     async def clear_batches(self, node_addrs: set[str], global_step: int) -> None:
         """Clear old data on multiple nodes."""
-        session = aiohttp.ClientSession()
-        try:
+        connector = aiohttp.TCPConnector(limit=self.connection_limit)
+        async with aiohttp.ClientSession(
+            timeout=self.timeout, connector=connector
+        ) as session:
             tasks = [
                 self._clear_node(session, node_addr, global_step)
                 for node_addr in node_addrs
             ]
             await asyncio.gather(*tasks, return_exceptions=True)
-        finally:
-            # Always close the session when done
-            if not session.closed:
-                await session.close()
 
     async def _clear_node(
         self, session: aiohttp.ClientSession, node_addr: str, global_step: int

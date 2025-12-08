@@ -876,6 +876,13 @@ class DistributedBatchMemory(DistributedBatch):
                 "FrameworkError", "DistributedBatchMemoryError", "key must be str"
             )
 
+        # Special handling for DistributedBatchMemory values
+        # The key is expected to match the field key in value's metadata (set via result_key)
+        if isinstance(value, DistributedBatchMemory):
+            # Merge using union (modifies self in-place)
+            self.union(value)
+            return
+
         if self.metadata is not None:
             raise FrameworkError(
                 "FrameworkError",
