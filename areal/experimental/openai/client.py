@@ -603,12 +603,6 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             user=None,
         )
 
-        # Cache the response with its input data
-        cache = areal_cache if areal_cache is not None else self._cache
-
-        if resp_id in cache:
-            raise ValueError(f"Response {resp_id} already exists in cache")
-
         cache[resp_id].response = deepcopy(response)
         cache[resp_id].model_response = engine_resp
         cache[resp_id].output_message_list = [
