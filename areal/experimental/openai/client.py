@@ -83,7 +83,7 @@ def _ensure_message_dict_list(
     for index, item in enumerate(value):
         if isinstance(item, dict):
             _item = {k: v for k, v in item.items() if v is not None}
-            normalized.append(item)
+            normalized.append(_item)
         elif isinstance(item, BaseModel):
             normalized.append(item.model_dump(exclude_none=True))
         else:
