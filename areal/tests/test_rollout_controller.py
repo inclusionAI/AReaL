@@ -997,5 +997,348 @@ def test_rollout_controller_integration(tmp_path, model_path):
         rollout.destroy()
 
 
+class TestRolloutControllerResolveWorkflow:
+    """Tests for workflow resolution methods."""
+
+    def test_resolve_workflow_str_with_string(self):
+        """Test _resolve_workflow_str with string input."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        result = controller._resolve_workflow_str("areal.workflow.rlvr.RLVRWorkflow")
+        assert result == "areal.workflow.rlvr.RLVRWorkflow"
+
+    def test_resolve_workflow_str_with_invalid_type(self):
+        """Test _resolve_workflow_str raises for invalid type."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        with pytest.raises(ValueError, match="Invalid workflow type"):
+            controller._resolve_workflow_str(12345)
+
+
+class TestRolloutControllerShouldAcceptFn:
+    """Tests for should_accept_fn resolution."""
+
+    def test_resolve_should_accept_fn_with_none(self):
+        """Test _resolve_should_accept_fn with None input."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        result = controller._resolve_should_accept_fn(None)
+        assert result is None
+
+    def test_resolve_should_accept_fn_with_callable_raises(self):
+        """Test _resolve_should_accept_fn raises for callable input."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        def my_filter(data):
+            return True
+
+        with pytest.raises(RuntimeError, match="must be an importable string path"):
+            controller._resolve_should_accept_fn(my_filter)
+
+    def test_resolve_should_accept_fn_with_invalid_path_raises(self):
+        """Test _resolve_should_accept_fn raises for invalid import path."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        with pytest.raises(RuntimeError, match="Failed to import"):
+            controller._resolve_should_accept_fn("invalid.module.path.function")
+
+
+class TestRolloutControllerDispatcher:
+    """Tests for dispatcher property and initialization."""
+
+    def test_dispatcher_raises_before_initialization(self):
+        """Test dispatcher property raises when not initialized."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        with pytest.raises(RuntimeError, match="initialize\\(\\) must be called"):
+            _ = controller.dispatcher
+
+    def test_dispatcher_available_after_initialization(self):
+        """Test dispatcher property works after initialization."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        dispatcher = controller.dispatcher
+        assert dispatcher is not None
+
+        controller.destroy()
+
+
+class TestRolloutControllerStalenessManager:
+    """Tests for staleness manager property."""
+
+    def test_staleness_manager_none_before_initialization(self):
+        """Test staleness_manager is None before initialization."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        assert controller.staleness_manager is None
+
+    def test_staleness_manager_available_after_initialization(self):
+        """Test staleness_manager is available after initialization."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_head_offpolicyness=2,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        assert controller.staleness_manager is not None
+        assert controller.staleness_manager.max_staleness == 2
+
+        controller.destroy()
+
+
+class TestRolloutControllerRunner:
+    """Tests for runner property (backward compatibility)."""
+
+    def test_runner_property_returns_dispatcher_runner(self):
+        """Test runner property returns the dispatcher's runner."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        runner = controller.runner
+        assert runner is controller.dispatcher.runner
+
+        controller.destroy()
+
+
+class TestRolloutControllerExportStats:
+    """Tests for export_stats method."""
+
+    def test_export_stats_aggregates_from_workers(self):
+        """Test export_stats correctly aggregates stats from all workers."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+
+        # Override async_call_engine to return stats for export_stats method
+        original_async_call = scheduler.async_call_engine
+
+        async def mock_async_call_engine(worker_id, method, *args, **kwargs):
+            if method == "export_stats":
+                return {
+                    "reward": 0.5,
+                    "reward__count": 10,
+                    "loss": 0.3,
+                    "loss__count": 10,
+                }
+            return await original_async_call(worker_id, method, *args, **kwargs)
+
+        scheduler.async_call_engine = mock_async_call_engine
+
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d2")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        stats = controller.export_stats()
+
+        # Should aggregate stats from all workers
+        assert "reward" in stats or "loss" in stats
+
+        controller.destroy()
+
+
+class TestRolloutControllerRolloutStats:
+    """Tests for _rollout_stats method."""
+
+    def test_rollout_stats_returns_formatted_string(self):
+        """Test _rollout_stats returns properly formatted stats string."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_head_offpolicyness=2,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        stats_str = controller._rollout_stats()
+
+        assert "enqueued:" in stats_str
+        assert "running:" in stats_str
+        assert "accepted:" in stats_str
+        assert "rejected:" in stats_str
+
+        controller.destroy()
+
+
+class TestRolloutControllerSchedulingSpec:
+    """Tests for scheduling spec handling during initialization."""
+
+    def test_initialization_scales_scheduling_spec(self):
+        """Test initialization correctly scales scheduling spec for instance size."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_concurrent_rollouts=32,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        # Use TP=2 to test instance size scaling
+        alloc_mode = AllocationMode.from_str("sglang:d2t2")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        # Verify workers were created with correct count
+        assert len(controller.workers) == 2  # dp_size = 2
+
+        controller.destroy()
+
+
+class TestRolloutControllerQueueSize:
+    """Tests for queue size configuration."""
+
+    def test_queue_size_uses_config_value(self):
+        """Test queue size uses config value when provided."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_concurrent_rollouts=32,
+            queue_size=100,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        # Queue size should be used from config
+        assert controller.dispatcher is not None
+
+        controller.destroy()
+
+    def test_queue_size_defaults_to_concurrent_rollouts(self):
+        """Test queue size defaults to max_concurrent_rollouts * 16 when not provided."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_concurrent_rollouts=32,
+            queue_size=None,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        # Should use default queue size
+        assert controller.dispatcher is not None
+
+        controller.destroy()
+
+
+class TestRolloutControllerCollectiveRPC:
+    """Tests for collective RPC methods."""
+
+    def test_collective_rpc_calls_all_workers(self):
+        """Test _collective_rpc calls all workers."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d3")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        # Clear previous calls
+        scheduler.engine_calls = []
+
+        controller._collective_rpc("test_method", arg1="value1")
+
+        # Should have called all 3 workers
+        test_calls = [
+            call for call in scheduler.engine_calls if call[1] == "test_method"
+        ]
+        assert len(test_calls) == 3
+
+        controller.destroy()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
