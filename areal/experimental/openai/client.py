@@ -61,15 +61,16 @@ def _ensure_message_dict_list(
     name: str,
     value: list[Any],
 ) -> list[dict[str, Any]]:
-    """Validate that ``value`` is a list of dictionaries or objects convertible via ``to_dict``.
+    """Validate that ``value`` is a list of dictionaries or BaseModel objects.
 
     Args:
         name: Name of the argument being validated (for error messages).
         value: The list provided by the caller.
 
     Returns:
-        A list containing only dictionaries. Objects implementing ``to_dict`` are
-        converted into their dictionary representation; dictionaries are preserved.
+        A list containing only dictionaries. BaseModel objects are
+        converted into their dictionary representation with
+        `model_dump(exclude_none=True)`; dictionaries are preserved.
 
     Raises:
         TypeError: If ``value`` is not a list or an element cannot be converted to a dict.
