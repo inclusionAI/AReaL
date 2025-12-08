@@ -25,6 +25,15 @@ def _get_tp_slice(shape, dim, tp_rank, tp_size) -> tuple:
     return tuple(res)
 
 
+def _get_shape(obj) -> list:
+    """Get shape from either a tensor or PySafeSlice object."""
+    if isinstance(obj, torch.Tensor):
+        return list(obj.shape)
+    else:
+        # PySafeSlice object
+        return obj.get_shape()
+
+
 def _weight_to_mcore_tp(
     hf_config,
     mcore_weights_name: str,
@@ -47,7 +56,7 @@ def _weight_to_mcore_tp(
         group_dim = head_dim * num_attention_heads // num_key_value_heads
         q, k, v = hf_weights_safe_slice
         # q k v might be tp split
-        real_num_key_value_heads = q.get_shape()[0] // group_dim
+        real_num_key_value_heads = _get_shape(q)[0] // group_dim
         s = _get_tp_slice((real_num_key_value_heads * group_dim,), 0, tp_rank, tp_size)
         q = q[s].reshape(
             real_num_key_value_heads // tp_size,
@@ -68,32 +77,31 @@ def _weight_to_mcore_tp(
         gate, up = hf_weights_safe_slice
         # chunk 0 for TP split
         gate = gate[
-            _get_tp_slice(gate.get_shape(), dim=0, tp_rank=tp_rank, tp_size=tp_size)
+            _get_tp_slice(_get_shape(gate), dim=0, tp_rank=tp_rank, tp_size=tp_size)
         ]
-        up = up[_get_tp_slice(up.get_shape(), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
+        up = up[_get_tp_slice(_get_shape(up), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
         res = torch.cat([gate, up], dim=0)
     elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
         assert len(hf_weights_safe_slice) == 1
         x = hf_weights_safe_slice[0]
-        shape = x.get_shape()
+        shape = _get_shape(x)
         # dim 1 chunk
         res = x[_get_tp_slice(shape, dim=1, tp_rank=tp_rank, tp_size=tp_size)]
     else:
         assert len(hf_weights_safe_slice) == 1
         x = hf_weights_safe_slice[0]
-        if mcore_param_shape == x.get_shape():
-            res = x[:]
+        x_shape = _get_shape(x)
+        if mcore_param_shape == x_shape:
+            res = x[:] if not isinstance(x, torch.Tensor) else x
         else:
-            assert len(x.get_shape()) == len(mcore_param_shape)
-            for partition_dim, (s1, s2) in enumerate(
-                zip(x.get_shape(), mcore_param_shape)
-            ):
+            assert len(x_shape) == len(mcore_param_shape)
+            for partition_dim, (s1, s2) in enumerate(zip(x_shape, mcore_param_shape)):
                 if s1 != s2:
                     break
             # chunk on `partition_dim`
             res = x[
                 _get_tp_slice(
-                    x.get_shape(), dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size
+                    x_shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size
                 )
             ]
     if dtype is not None:
@@ -141,8 +149,8 @@ def _load_weight_with_bridge_worker(
             if scale_inv_name in all_slices:
                 scale_inv_slice = all_slices[scale_inv_name]
                 device = torch.device(current_platform.device_type)
-                weight = hf_slice.to(device)
-                scale_inv = scale_inv_slice.to(device)
+                weight = hf_slice[:].to(device)
+                scale_inv = scale_inv_slice[:].to(device)
                 dequantized_weight = dequantize_params(
                     weight,
                     scale_inv,
