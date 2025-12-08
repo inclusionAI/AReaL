@@ -99,11 +99,11 @@ def test_set_reward(mock_interaction):
     assert cache["1"].reward == 10.0
 
 
-def test_set_final_reward(mock_interaction):
+def test_set_last_reward(mock_interaction):
     cache = InteractionCache()
     cache["1"] = mock_interaction(id="1")
     cache["2"] = mock_interaction(id="2")
-    cache.set_final_reward(20.0)
+    cache.set_last_reward(20.0)
     assert cache["1"].reward is None
     assert cache["2"].reward == 20.0
 

@@ -194,8 +194,10 @@ class GenerationHyperparameters:
                 "greedy",  # Not directly supported by OpenAI
                 "top_k",  # Not supported by OpenAI
                 "stop_token_ids",  # Not supported by OpenAI
+                "lora_name",  # Not supported by OpenAI
             }
         )
+        # TODO: move the excluded args into extra body, so they can be passed through the client request
 
         mapping = {
             "n_samples": "n",
@@ -218,7 +220,9 @@ class GenerationHyperparameters:
                         should_warn = True
 
                 if should_warn:
-                    logger.warning(f"Unsupported arg for openai format: `{k}`")
+                    logger.warning(
+                        f"Unsupported arg for openai format: `{k}` with value {current_value}"
+                    )
                 continue
             res[mapping.get(k, k)] = v
 
@@ -411,7 +415,7 @@ class SchedulingSpec:
     image: str = field(
         default="", metadata={"help": "Docker/Singularity container image to use"}
     )
-    type: str = field(
+    task_type: str = field(
         default="worker",
         metadata={
             "help": "Task type (e.g., worker, engine)",

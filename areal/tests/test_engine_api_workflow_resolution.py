@@ -37,10 +37,16 @@ class MockInferenceEngine(InferenceEngine):
     """Mock inference engine for testing workflow resolution"""
 
     def __init__(self):
-        self.workflow_executor = Mock()
-        self.workflow_executor.submit = Mock()
-        self.workflow_executor.rollout_batch = Mock(return_value={"result": "batch"})
-        self.workflow_executor.prepare_batch = Mock(return_value={"result": "prepared"})
+        self._workflow_executor = Mock()
+        self._workflow_executor.submit = Mock()
+        self._workflow_executor.rollout_batch = Mock(return_value={"result": "batch"})
+        self._workflow_executor.prepare_batch = Mock(
+            return_value={"result": "prepared"}
+        )
+
+    @property
+    def workflow_executor(self):
+        return self._workflow_executor
 
     def submit(
         self,

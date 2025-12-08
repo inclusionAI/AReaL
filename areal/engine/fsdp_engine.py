@@ -57,8 +57,11 @@ from areal.utils.data import (
     amend_position_ids,
     create_mb_iterator,
     pack_tensor_dict,
+    pad_and_stack_tensors_along_first_dim,
     pad_mb_list,
+    reorder_list,
     split_padded_tensor_dict_into_mb_list,
+    unpack_sequence,
     unsqueeze_mb_list,
 )
 from areal.utils.device import clear_memory, log_gpu_stats
@@ -315,7 +318,6 @@ class FSDPEngine(TrainEngine):
                 tokenizer.save_pretrained(path)
             if processor is not None:
                 processor.save_pretrained(path)
-
         dist.barrier(group=self.cpu_group)
 
     def _load_model_from_hf(self, path: str):
@@ -449,6 +451,26 @@ class FSDPEngine(TrainEngine):
 
             fut.result()
 
+    def _get_full_tensor(self, param: nn.Parameter) -> torch.Tensor:
+        """Get full tensor from a parameter, handling DTensor and CPU offloaded tensors."""
+        tensor = param.data
+        if isinstance(tensor, DTensor):
+            # For non-offloaded DTensor, directly call full_tensor()
+            if tensor.device.type != "cpu":
+                return tensor.full_tensor()
+
+            # Handle CPU offloaded DTensor: reconstruct DTensor from local tensor
+            temp_dtensor = DTensor.from_local(
+                tensor.to_local(),
+                device_mesh=tensor.device_mesh,
+                placements=tensor.placements,
+            )
+            return temp_dtensor.full_tensor()
+        else:
+            if tensor.device.type == "cpu":
+                tensor = tensor.to(current_platform.device_type)
+            return tensor
+
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
@@ -459,18 +481,16 @@ class FSDPEngine(TrainEngine):
         dist.barrier(group=self.cpu_group)
 
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
+        main_rank = dist.get_rank() == 0
 
         buffer_size = 0
-        named_tensors = []
+        named_tensors: list[tuple[str, torch.Tensor]] = []
 
         for name, param in self.get_model_name_parameters():
-            if isinstance(param.data, DTensor):
-                tensor = param.data.full_tensor()
-            else:
-                tensor = param.data
+            tensor = self._get_full_tensor(param)
 
             # Ranks other than 0 only help to get the full tensor
-            if dist.get_rank() != 0:
+            if not main_rank:
                 continue
 
             tensor_size = tensor.numel() * tensor.element_size()
@@ -482,7 +502,7 @@ class FSDPEngine(TrainEngine):
             named_tensors.append((name, tensor))
             buffer_size += tensor_size
 
-        # Only rank-0 CAN contain named tensors here
+        # Process remaining parameters
         if named_tensors:
             self._update_bucket_weights_from_distributed(meta, named_tensors)
 
@@ -868,14 +888,17 @@ class FSDPEngine(TrainEngine):
     def train_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
+        """Train on a batch using gradient accumulation."""
         if self.is_offload:
             self.onload()
+
         assert self.optimizer is not None
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
+
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
         return super().train_batch(input_, loss_fn, loss_weight_fn)
@@ -885,11 +908,13 @@ class FSDPEngine(TrainEngine):
     def eval_batch(
         self,
         input_: dict[str, Any],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor],
+        loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> torch.Tensor | None:
+        """Evaluate on a batch."""
         if self.is_offload:
             self.onload()
+
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
         return super().eval_batch(input_, loss_fn, loss_weight_fn)
