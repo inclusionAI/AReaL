@@ -6,10 +6,10 @@ import time
 from pathlib import Path
 
 import json5
+from pydantic import BaseModel
 from qwen_agent.agents.fncall_agent import FnCallAgent
 from qwen_agent.llm.schema import Message
 from transformers import PreTrainedTokenizer
-from pydantic import BaseModel
 
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import logging
@@ -212,11 +212,7 @@ class MultiTurnReactAgent(FnCallAgent):
                 content = message.content
                 messages.append(message)
                 if "<answer>" in content and "</answer>" in content:
-                    prediction = (
-                        content
-                        .split("<answer>")[1]
-                        .split("</answer>")[0]
-                    )
+                    prediction = content.split("<answer>")[1].split("</answer>")[0]
                     termination = "generate an answer as token limit reached"
                 else:
                     prediction = content
@@ -240,9 +236,7 @@ class MultiTurnReactAgent(FnCallAgent):
                 return result
 
         if "<answer>" in content:
-            prediction = (
-                content.split("<answer>")[1].split("</answer>")[0]
-            )
+            prediction = content.split("<answer>")[1].split("</answer>")[0]
             termination = "answer"
         else:
             prediction = "No answer found."
@@ -252,7 +246,9 @@ class MultiTurnReactAgent(FnCallAgent):
         result = {
             "question": question,
             "answer": answer,
-            "messages": [m.model_dump() if isinstance(m, BaseModel) else m for m in messages],
+            "messages": [
+                m.model_dump() if isinstance(m, BaseModel) else m for m in messages
+            ],
             "prediction": prediction,
             "termination": termination,
             "completions": completions,  # final completion
