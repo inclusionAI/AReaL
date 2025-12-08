@@ -213,13 +213,13 @@ class MultiTurnReactAgent(FnCallAgent):
                 messages.append(message)
                 if "<answer>" in content and "</answer>" in content:
                     prediction = (
-                        messages[-1]["content"]
+                        content
                         .split("<answer>")[1]
                         .split("</answer>")[0]
                     )
                     termination = "generate an answer as token limit reached"
                 else:
-                    prediction = messages[-1]["content"]
+                    prediction = content
                     termination = (
                         "format error: generate an answer as token limit reached"
                     )
@@ -239,9 +239,9 @@ class MultiTurnReactAgent(FnCallAgent):
                     )
                 return result
 
-        if "<answer>" in messages[-1]["content"]:
+        if "<answer>" in content:
             prediction = (
-                messages[-1]["content"].split("<answer>")[1].split("</answer>")[0]
+                content.split("<answer>")[1].split("</answer>")[0]
             )
             termination = "answer"
         else:
