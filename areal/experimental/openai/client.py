@@ -82,6 +82,7 @@ def _ensure_message_dict_list(
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(value):
         if isinstance(item, dict):
+            _item = {k: v for k, v in item.items() if v is not None}
             normalized.append(item)
         elif isinstance(item, BaseModel):
             normalized.append(item.model_dump(exclude_none=True))
@@ -165,7 +166,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         # Extract and validate supported parameters
         if not isinstance(messages, list):
             raise TypeError(
-                "messages must be provided as a list of dictionaries or objects supporting to_dict()"
+                "messages must be provided as a list of dictionaries or BaseModel instances."
             )
 
         messages_list_raw = list(messages)
