@@ -973,7 +973,7 @@ class MegatronEngine(TrainEngine):
     def _forward_compute_mb(
         self,
         mb_input: dict[str, Any],
-        post_process_fn: Callable[[torch.Tensor, dict[str, Any]], Any],
+        post_process_fn: Callable[..., Any],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
         **kwargs,
     ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
@@ -1019,8 +1019,9 @@ class MegatronEngine(TrainEngine):
 
     def forward_backward_batch(
         self,
+        # An iterator that yields micro-batches, wrapping the metadata during splitting mb for downstream tasks.
         data_iterator: Iterable[dict[str, torch.Tensor]],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor] | None = None,
+        loss_fn: Callable[..., torch.Tensor] | None = None,
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
         return_outputs: bool = False,
         forward_only: bool = False,
@@ -1035,6 +1036,7 @@ class MegatronEngine(TrainEngine):
             batch, padding_length, orig_input, old_cu_seqlens = next(batch_iter)
             cu_seqlens = batch["cu_seqlens"]
 
+            # post process for training and evaluating to calculate loss
             def loss_fn_wrap(output, input_):
                 labels = torch.roll(orig_input["input_ids"], shifts=-1, dims=-1)
                 logprobs, entropy = gather_logprobs_entropy(
@@ -1059,6 +1061,7 @@ class MegatronEngine(TrainEngine):
                 loss *= loss_scale
                 return loss
 
+            # post process for inferring to calculate loss
             def post_process_fn(output, input_):
                 labels = torch.roll(orig_input["input_ids"], shifts=-1, dims=-1)
                 logprobs = gather_logprobs(
