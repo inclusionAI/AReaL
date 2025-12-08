@@ -15,6 +15,7 @@ from torch.distributed._functional_collectives import all_gather_into_tensor_coa
 
 from areal.platforms import current_platform
 from areal.utils import logging
+from areal.utils.fp8_utils import quantize_params
 
 logger = logging.getLogger("HF WeightsSaver")
 
@@ -276,6 +277,15 @@ def save_weights_to_hf_with_mbridge_fast(
         converted_names, converted_params = bridge._weight_to_hf_format(
             s.global_name, infer_params
         )
+        # Apply quantization if quantization_config is present
+        quantization_config = getattr(bridge.hf_config, "quantization_config", None)
+        if quantization_config is not None:
+            converted_named_params = list(zip(converted_names, converted_params))
+            quantized_named_params = quantize_params(
+                s.global_name, converted_named_params, quantization_config
+            )
+            converted_names = [name for name, _ in quantized_named_params]
+            converted_params = [param for _, param in quantized_named_params]
         for n, p in zip(converted_names, converted_params):
             assert n not in non_expert_sd, n
             non_expert_sd[n] = p
@@ -372,6 +382,15 @@ def save_weights_to_hf_with_mbridge_fast(
             converted_names, converted_params = bridge._weight_to_hf_format(
                 s.global_name, merge_params
             )
+            # Apply quantization if quantization_config is present
+            quantization_config = getattr(bridge.hf_config, "quantization_config", None)
+            if quantization_config is not None:
+                converted_named_params = list(zip(converted_names, converted_params))
+                quantized_named_params = quantize_params(
+                    s.global_name, converted_named_params, quantization_config
+                )
+                converted_names = [name for name, _ in quantized_named_params]
+                converted_params = [param for _, param in quantized_named_params]
             for n, p in zip(converted_names, converted_params):
                 assert n not in expert_sd, n
                 expert_sd[n] = p

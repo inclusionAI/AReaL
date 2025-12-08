@@ -11,7 +11,9 @@ from mbridge.core.bridge import Bridge
 from megatron.core import parallel_state as mpu
 from safetensors import safe_open
 
+from areal.platforms import current_platform
 from areal.utils import logging
+from areal.utils.fp8_utils import dequantize_params
 
 logger = logging.getLogger("HF WeightsLoader")
 
@@ -114,6 +116,8 @@ def _load_weight_with_bridge_worker(
             for name in f.keys():
                 all_slices[name] = f.get_slice(name)
 
+    quantization_config = getattr(bridge.hf_config, "quantization_config", None)
+
     for local_name in local_names:
         hf_names = local_to_hf_map[local_name]
         param = state_dict[local_name]
@@ -125,11 +129,37 @@ def _load_weight_with_bridge_worker(
             tp_size = mpu.get_tensor_model_parallel_world_size()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
+        # Check if any HF weight is FP8 (has _scale_inv suffix)
+        # We need to dequantize FP8 weights before converting to mcore format
+        # Now only support FP8 dequantization
+        hf_weights_safe_slice = []
+        for hf_name in hf_names:
+            if "_scale_inv" in hf_name:
+                continue
+            hf_slice = all_slices[hf_name]
+            scale_inv_name = f"{hf_name}_scale_inv"
+            if scale_inv_name in all_slices:
+                scale_inv_slice = all_slices[scale_inv_name]
+                device = torch.device(current_platform.device_type)
+                weight = hf_slice.to(device)
+                scale_inv = scale_inv_slice.to(device)
+                dequantized_weight = dequantize_params(
+                    weight,
+                    scale_inv,
+                    dst_dtype=bridge.dtype,
+                    quantization_config=quantization_config,
+                )
+                if param.device.type == "cpu":
+                    dequantized_weight = dequantized_weight.cpu()
+                hf_weights_safe_slice.append(dequantized_weight)
+            else:
+                hf_weights_safe_slice.append(hf_slice)
+
         param_to_load = _weight_to_mcore_tp(
             hf_config=bridge.hf_config,
             mcore_weights_name=local_name,
             mcore_param_shape=list(param.shape),
-            hf_weights_safe_slice=[all_slices[hf_name] for hf_name in hf_names],
+            hf_weights_safe_slice=hf_weights_safe_slice,
             tp_rank=tp_rank,
             tp_size=tp_size,
             dtype=bridge.dtype,

@@ -61,7 +61,7 @@ def blockwise_cast_to_fp8_triton(
     fp8_dtype = torch.float8_e4m3fn
     fp8_max = torch.finfo(fp8_dtype).max
     fp8_min = -fp8_max
-    y = torch.empty(M, N, device=x.device, dtype=torch.float8_e4m3fn)
+    y = torch.empty(M, N, device=x.device, dtype=fp8_dtype)
     s = torch.empty(
         ceil_div(M, BLOCK_M), ceil_div(N, BLOCK_N), dtype=torch.float32, device=x.device
     )
@@ -98,3 +98,48 @@ def blockwise_cast_to_fp8_triton(
         **kwargs,
     )
     return y, s
+
+
+# Adapted from https://github.com/alibaba/Pai-Megatron-Patch/blob/2b201af08336dea0403df7c6b497c964cf5a2e75/toolkits/model_checkpoints_convertor/deepseek/fp8_cast_bf16.py
+@triton.jit
+def weight_dequant_kernel(x_ptr, s_ptr, y_ptr, M, N, BLOCK_SIZE: tl.constexpr):
+    pid_m = tl.program_id(axis=0)
+    pid_n = tl.program_id(axis=1)
+    n = tl.cdiv(N, BLOCK_SIZE)
+    offs_m = pid_m * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    offs_n = pid_n * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    offs = offs_m[:, None] * N + offs_n[None, :]
+    mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+    x = tl.load(x_ptr + offs, mask=mask).to(tl.float32)
+    s = tl.load(s_ptr + pid_m * n + pid_n)
+    y = x * s
+    tl.store(y_ptr + offs, y, mask=mask)
+
+
+def weight_dequant(
+    x: torch.Tensor,
+    s: torch.Tensor,
+    block_size: int = 128,
+    dst_dtype: torch.dtype = torch.bfloat16,
+) -> torch.Tensor:
+    """Dequantize FP8 weights to the given dtype.
+
+    Args:
+        x: FP8 weight tensor (2D)
+        s: Scale inverse tensor (2D, shape matches block structure)
+        block_size: Block size used for quantization
+        dst_dtype: Destination dtype to dequantize to
+
+    Returns:
+        Dequantized weight tensor in the destination dtype
+    """
+    assert x.is_contiguous() and s.is_contiguous()
+    assert x.dim() == 2 and s.dim() == 2
+    M, N = x.size()
+    y = torch.empty_like(x, dtype=dst_dtype)
+
+    def grid(meta):
+        return (triton.cdiv(M, meta["BLOCK_SIZE"]), triton.cdiv(N, meta["BLOCK_SIZE"]))
+
+    weight_dequant_kernel[grid](x, s, y, M, N, BLOCK_SIZE=block_size)
+    return y

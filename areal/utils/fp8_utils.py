@@ -13,7 +13,7 @@ except ImportError:
     quant_weight_ue8m0 = None
     transform_scale_ue8m0 = None
 
-from areal.utils.fp8_kernels import blockwise_cast_to_fp8_triton
+from areal.utils.fp8_kernels import blockwise_cast_to_fp8_triton, weight_dequant
 
 
 # Adapted from slime
@@ -149,3 +149,32 @@ def quantize_params(
 
     # For other parameters, return original converted_named_params
     return converted_named_params
+
+
+def dequantize_params(
+    weight: torch.Tensor,
+    scale_inv: torch.Tensor,
+    dst_dtype: torch.dtype = torch.bfloat16,
+    quantization_config: dict[str, int | str | list[str]] | None = None,
+) -> torch.Tensor:
+    """Dequantize FP8 weights to the given dtype."""
+    if not weight.is_contiguous():
+        weight = weight.contiguous()
+    if not scale_inv.is_contiguous():
+        scale_inv = scale_inv.contiguous()
+
+    if quantization_config is None:
+        block_size = 128
+    else:
+        weight_block_size = quantization_config.get("weight_block_size", None)
+        # TODO: consider (M, N) block size, now only support square block size
+        if weight_block_size is not None:
+            assert (
+                len(weight_block_size) == 2
+                and weight_block_size[0] == weight_block_size[1]
+            )
+            block_size = weight_block_size[0]
+        else:
+            block_size = 128
+
+    return weight_dequant(weight, scale_inv, block_size, dst_dtype)
