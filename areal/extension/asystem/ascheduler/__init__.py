@@ -100,6 +100,10 @@ class AsystemScheduler(Scheduler):
         self.asys_resource_reuse_ns = os.environ.get(ASYS_RESOURCE_REUSE_NS, "")
         self.asys_resource_reuse_job_name = os.environ.get(ASYS_RESOURCE_REUSE_JOB_NAME, "")
 
+        # 如果为空，则直接退出
+        assert self.asys_resource_reuse_ns != ""
+        assert self.asys_resource_reuse_job_name != ""
+
         # 信号捕获是为了手动跑 trainer.py 增加的功能，用来在 trainer 退出时清理相关 Job
         signal.signal(signal.SIGINT, self.batch_cleanup_jobs)
         signal.signal(signal.SIGTERM, self.batch_cleanup_jobs)
