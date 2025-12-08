@@ -9,6 +9,7 @@ import json5
 from qwen_agent.agents.fncall_agent import FnCallAgent
 from qwen_agent.llm.schema import Message
 from transformers import PreTrainedTokenizer
+from pydantic import BaseModel
 
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import logging
@@ -82,6 +83,9 @@ class MultiTurnReactAgent(FnCallAgent):
     def count_tokens(self, messages):
         message_strs = []
         for msg in messages:
+            if isinstance(msg, BaseModel):
+                msg = msg.model_dump()
+                assert "role" in msg and "content" in msg
             message_strs.append(
                 f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
             )
