@@ -315,7 +315,6 @@ class FSDPEngine(TrainEngine):
                 tokenizer.save_pretrained(path)
             if processor is not None:
                 processor.save_pretrained(path)
-
         dist.barrier(group=self.cpu_group)
 
     def _load_model_from_hf(self, path: str):
@@ -449,6 +448,26 @@ class FSDPEngine(TrainEngine):
 
             fut.result()
 
+    def _get_full_tensor(self, param: nn.Parameter) -> torch.Tensor:
+        """Get full tensor from a parameter, handling DTensor and CPU offloaded tensors."""
+        tensor = param.data
+        if isinstance(tensor, DTensor):
+            # For non-offloaded DTensor, directly call full_tensor()
+            if tensor.device.type != "cpu":
+                return tensor.full_tensor()
+
+            # Handle CPU offloaded DTensor: reconstruct DTensor from local tensor
+            temp_dtensor = DTensor.from_local(
+                tensor.to_local(),
+                device_mesh=tensor.device_mesh,
+                placements=tensor.placements,
+            )
+            return temp_dtensor.full_tensor()
+        else:
+            if tensor.device.type == "cpu":
+                tensor = tensor.to(current_platform.device_type)
+            return tensor
+
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
@@ -459,18 +478,16 @@ class FSDPEngine(TrainEngine):
         dist.barrier(group=self.cpu_group)
 
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
+        main_rank = dist.get_rank() == 0
 
         buffer_size = 0
-        named_tensors = []
+        named_tensors: list[tuple[str, torch.Tensor]] = []
 
         for name, param in self.get_model_name_parameters():
-            if isinstance(param.data, DTensor):
-                tensor = param.data.full_tensor()
-            else:
-                tensor = param.data
+            tensor = self._get_full_tensor(param)
 
             # Ranks other than 0 only help to get the full tensor
-            if dist.get_rank() != 0:
+            if not main_rank:
                 continue
 
             tensor_size = tensor.numel() * tensor.element_size()
@@ -482,7 +499,7 @@ class FSDPEngine(TrainEngine):
             named_tensors.append((name, tensor))
             buffer_size += tensor_size
 
-        # Only rank-0 CAN contain named tensors here
+        # Process remaining parameters
         if named_tensors:
             self._update_bucket_weights_from_distributed(meta, named_tensors)
 
@@ -635,7 +652,12 @@ class FSDPEngine(TrainEngine):
         if labels.ndim == 2 and labels.shape[0] == 1:
             labels = labels.squeeze(0)
         logprobs, entropy = gather_logprobs_entropy(
-            logits, labels, temperature=self.config.temperature
+            logits,
+            labels,
+            temperature=self.config.temperature,
+            tp_group=self.parallel_helper.tp_group
+            if self.parallel_helper.tp_size > 1
+            else None,
         )
         if self.parallel_helper.sp_size > 1:
             logprobs = self._sp_all_gather(logprobs)
@@ -659,7 +681,14 @@ class FSDPEngine(TrainEngine):
         # inputs (padded_mbs) has batch dim (1, seq_len), squeeze to match logits (seq_len,)
         if labels.ndim == 2 and labels.shape[0] == 1:
             labels = labels.squeeze(0)
-        logprobs = gather_logprobs(logits, labels, temperature=self.config.temperature)
+        logprobs = gather_logprobs(
+            logits,
+            labels,
+            temperature=self.config.temperature,
+            tp_group=self.parallel_helper.tp_group
+            if self.parallel_helper.tp_size > 1
+            else None,
+        )
         if self.parallel_helper.sp_size > 1:
             logprobs = self._sp_all_gather(logprobs)
             if ulysses_pad_size > 0:
@@ -796,6 +825,7 @@ class FSDPEngine(TrainEngine):
             list(self.model.parameters()),
             self.world_mesh,
             max_norm=self.optimizer_config.gradient_clipping,
+            offload_params=self.config.fsdp.offload_params,
         )
 
         if not math.isfinite(grad_norm):

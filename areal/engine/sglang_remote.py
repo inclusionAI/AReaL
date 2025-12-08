@@ -22,6 +22,7 @@ from areal.api.io_struct import (
 )
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import RemoteInfEngine
+from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
 from areal.utils import stats_tracker
 from areal.utils.launcher import TRITON_CACHE_PATH
@@ -237,6 +238,11 @@ class RemoteSGLangEngine(InferenceEngine):
     def destroy(self):
         """Destroy the engine and clean up resources."""
         return self._engine.destroy()
+
+    @property
+    def workflow_executor(self) -> WorkflowExecutor:
+        """Get the workflow executor of the inference engine."""
+        return self._engine.workflow_executor
 
     def set_version(self, version: int):
         """Set the current weight version."""

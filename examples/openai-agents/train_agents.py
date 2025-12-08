@@ -60,7 +60,7 @@ class OpenAIAgentWrapper:
                 not in ["messages", "answer", "prompt", "prompt_ids", "completion_ids"]
             },
         )
-        client.set_final_reward(reward)
+        client.set_last_reward(reward)
         return reward
 
 

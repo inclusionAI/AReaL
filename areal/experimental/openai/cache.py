@@ -1,3 +1,4 @@
+import threading
 from collections import OrderedDict
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
@@ -10,15 +11,27 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._apply_reward_discount_called = False
+        self._total_reward = 0.0
+        self._lock = threading.Lock()
 
-    def set_reward(self, id: str, reward: float) -> None:
+    @property
+    def last_interaction_id(self) -> str:
+        return next(reversed(self))
+
+    @property
+    def total_reward(self) -> float:
+        return self._total_reward
+
+    def set_reward(self, interaction_id: str, reward: float) -> None:
         """Set reward for a specific completion/response by its ID."""
-        self[id].reward = reward
+        with self._lock:  # usually no need to lock, but just in case
+            self._total_reward -= self[interaction_id].reward or 0.0
+            self[interaction_id].reward = reward
+            self._total_reward += reward
 
-    def set_final_reward(self, reward: float) -> None:
+    def set_last_reward(self, reward: float) -> None:
         """Set reward for the most recent completion/response."""
-        last_interaction_id = next(reversed(self))
-        self[last_interaction_id].reward = reward
+        self.set_reward(self.last_interaction_id, reward)
 
     def apply_reward_discount(
         self, turn_discount: float = 1.0
