@@ -131,20 +131,7 @@ class DistributedBatchMemory(DistributedBatch):
         return self.mode == BatchMode.REMOTE
 
     def _require_mode(self, *allowed_modes: BatchMode, operation: str) -> None:
-        """Assert that current mode is one of the allowed modes.
-
-        Parameters
-        ----------
-        *allowed_modes : BatchMode
-            The modes that are allowed for this operation
-        operation : str
-            Name of the operation being performed (for error messages)
-
-        Raises
-        ------
-        FrameworkError
-            If the current mode is not in the allowed modes
-        """
+        """Assert that current mode is one of the allowed modes."""
         if self.mode not in allowed_modes:
             raise FrameworkError(
                 "FrameworkError",
@@ -154,20 +141,7 @@ class DistributedBatchMemory(DistributedBatch):
             )
 
     def _require_same_mode(self, other: DistributedBatchMemory, operation: str) -> None:
-        """Assert that both batches are in the same mode.
-
-        Parameters
-        ----------
-        other : DistributedBatchMemory
-            The other batch to compare with
-        operation : str
-            Name of the operation being performed (for error messages)
-
-        Raises
-        ------
-        FrameworkError
-            If the two batches are in different modes
-        """
+        """Assert that both batches are in the same mode."""
         if self.mode != other.mode:
             raise FrameworkError(
                 "FrameworkError",
@@ -347,18 +321,6 @@ class DistributedBatchMemory(DistributedBatch):
         Splits shards in the group evenly across dp_size groups while preserving
         sample ordering. A physical shard can be split into multiple logical
         sub-shards using offset and batch_size to represent sub-ranges.
-
-        Parameters
-        ----------
-        shard_group : list[ShardMetadata]
-            List of shards in the same group (same fields.keys())
-        dp_size : int
-            Number of data parallel processes
-
-        Returns
-        -------
-        list[list[ShardMetadata]]
-            List of dp_size groups, each containing chunked shards
         """
         if not shard_group:
             return [[] for _ in range(dp_size)]
@@ -639,13 +601,7 @@ class DistributedBatchMemory(DistributedBatch):
         self.metadata = None
 
     def _get_total_size(self) -> int:
-        """Get the total size of the dataset, supporting both tensor and scalar types.
-
-        Returns
-        -------
-        int
-            The total size (batch size) of the dataset
-        """
+        """Get the total size of the dataset, supporting both tensor and scalar types."""
         # Metadata mode: return total_batch_size from metadata
         if self.metadata is not None:
             return self.metadata.total_batch_size

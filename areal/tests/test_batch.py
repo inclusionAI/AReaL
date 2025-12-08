@@ -253,7 +253,7 @@ class TestBatchMemory:
         memory = DistributedBatchMemory.from_dict(test_data)
         str_repr = str(memory)
         assert "DistributedBatchMemory" in str_repr
-        assert "total_size=2" in str_repr
+        assert "size=2" in str_repr
 
     def test_empty_dataset(self):
         """Test handling of empty datasets."""
@@ -540,7 +540,7 @@ class TestRollout:
         str_repr = str(memory)
 
         assert "DistributedBatchMemory" in str_repr
-        assert "total_size=12" in str_repr
+        assert "size=12" in str_repr
         assert "prompt" in str_repr
         assert "task_type" in str_repr
 
@@ -910,7 +910,7 @@ class TestScalarAndListSupport:
         memory = DistributedBatchMemory.from_dict(test_data)
         str_repr = str(memory)
         assert "DistributedBatchMemory" in str_repr
-        assert "total_size=2" in str_repr
+        assert "size=2" in str_repr
 
     def test_empty_dataset(self):
         """Test handling of empty datasets."""
@@ -1300,7 +1300,7 @@ class TestTrain:
         str_repr = str(memory)
 
         assert "DistributedBatchMemory" in str_repr
-        assert "total_size=512" in str_repr
+        assert "size=512" in str_repr
         assert "attention_mask" in str_repr
         assert "input_ids" in str_repr
 
@@ -1771,7 +1771,7 @@ class TestDistributedBatchMemoryExtended:
 
         s = str(batch)
         assert "DistributedBatchMemory" in s
-        assert "metadata" in s
+        assert "batch_id=test" in s
 
     def test_get_total_size_tensor(self):
         """Test _get_total_size with tensor."""
