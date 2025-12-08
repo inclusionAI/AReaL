@@ -61,32 +61,30 @@ def main(args):
     # Initialize inference engine
 
     if allocation_mode.gen_backend == "sglang":
-        rollout = RolloutController(
-            RemoteSGLangEngine, config=config.rollout, scheduler=scheduler
+        engine_class = RemoteSGLangEngine
+        server_args = SGLangConfig.build_args(
+            sglang_config=config.sglang,
+            tp_size=allocation_mode.gen.tp_size,
+            base_gpu_id=0,
         )
-        rollout.initialize(
-            role="rollout",
-            alloc_mode=allocation_mode,
-            server_args=SGLangConfig.build_args(
-                sglang_config=config.sglang,
-                tp_size=allocation_mode.gen.tp_size,
-                base_gpu_id=0,
-            ),
-        )
-
     elif allocation_mode.gen_backend == "vllm":
-        rollout = RolloutController(
-            RemotevLLMEngine, config=config.rollout, scheduler=scheduler
+        engine_class = RemotevLLMEngine
+        server_args = vLLMConfig.build_args(
+            vllm_config=config.vllm,
+            tp_size=allocation_mode.gen.tp_size,
+            pp_size=allocation_mode.gen.pp_size,
         )
-        rollout.initialize(
-            role="rollout",
-            alloc_mode=allocation_mode,
-            server_args=vLLMConfig.build_args(
-                vllm_config=config.vllm,
-                tp_size=allocation_mode.gen.tp_size,
-                pp_size=allocation_mode.gen.pp_size,
-            ),
-        )
+    else:
+        raise ValueError(f"Unsupported gen_backend: '{allocation_mode.gen_backend}'")
+
+    rollout = RolloutController(
+        engine_class, config=config.rollout, scheduler=scheduler
+    )
+    rollout.initialize(
+        role="rollout",
+        alloc_mode=allocation_mode,
+        server_args=server_args,
+    )
 
     weight_update_meta = WeightUpdateMeta.from_disk(
         experiment_name=config.experiment_name,
