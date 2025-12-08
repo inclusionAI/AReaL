@@ -252,7 +252,7 @@ class MultiTurnReactAgent(FnCallAgent):
         result = {
             "question": question,
             "answer": answer,
-            "messages": messages,
+            "messages": [m.model_dump() if isinstance(m, BaseModel) else m for m in messages],
             "prediction": prediction,
             "termination": termination,
             "completions": completions,  # final completion
