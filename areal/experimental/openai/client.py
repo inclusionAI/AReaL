@@ -5,6 +5,8 @@ from collections.abc import Iterable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel
+
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, Body, NotGiven
 from openai.resources.chat.completions.completions import (
@@ -77,27 +79,16 @@ def _ensure_message_dict_list(
         raise TypeError(
             f"{name} must be provided as a list, got {type(value).__name__}"
         )
-
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(value):
         if isinstance(item, dict):
             normalized.append(item)
-            continue
-
-        to_dict = getattr(item, "to_dict", None)
-        if callable(to_dict):
-            converted = to_dict()
-            if not isinstance(converted, dict):
-                raise TypeError(
-                    f"{name}[{index}] to_dict() must return a dict, got {type(converted).__name__}"
-                )
-            normalized.append(converted)
-            continue
-
-        raise TypeError(
-            f"{name}[{index}] must be a dict or provide a to_dict() method; got {type(item).__name__}"
-        )
-
+        elif isinstance(item, BaseModel):
+            normalized.append(item.model_dump(exclude_none=True))
+        else:
+            raise TypeError(
+                f"{name}[{index}] must be a dict or a BaseModel; got {type(item).__name__}"
+            )
     return normalized
 
 
@@ -180,7 +171,10 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         messages_list_raw = list(messages)
         if not messages_list_raw:
             raise ValueError("messages cannot be empty")
-        messages_list = _ensure_message_dict_list("messages", messages_list_raw)
+        messages_list = _ensure_message_dict_list(
+            "messages",
+            messages_list_raw,
+        )
         if extra_body is None:
             extra_body = {}
 
@@ -320,7 +314,9 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         if cache is not None:
             cache[completion_id].completion = chat_completion
             cache[completion_id].model_response = response
-            cache[completion_id].output_message_list = [output_message.to_dict()]
+            cache[completion_id].output_message_list = [
+                output_message.model_dump(exclude_none=True)
+            ]
         return chat_completion
 
 
@@ -445,11 +441,12 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             return messages_list
 
         if isinstance(input, str):
-            messages_list += [
-                {"role": "user", "content": input},
-            ]
-        elif isinstance(input, list):
-            normalized_input = _ensure_message_dict_list("input", input)
+            input = [{"role": "user", "content": input}]
+        if isinstance(input, list):
+            normalized_input = _ensure_message_dict_list(
+                "input",
+                input,
+            )
             for item in normalized_input:
                 messages_list += _build_messages_list(item)
         else:
@@ -614,7 +611,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         cache[resp_id].response = deepcopy(response)
         cache[resp_id].model_response = engine_resp
-        cache[resp_id].output_message_list = [o.to_dict() for o in resp_output]
+        cache[resp_id].output_message_list = [
+            o.model_dump(exclude_none=True) for o in resp_output
+        ]
         return response
 
     def _count_reasoning_tokens(

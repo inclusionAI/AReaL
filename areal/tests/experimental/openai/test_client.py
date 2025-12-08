@@ -119,7 +119,7 @@ async def test_multi_round_conversation(openai_client):
     c1 = await openai_client.chat.completions.create(messages=messages)
 
     # Round 2 - extends the conversation
-    assistant_message_1 = c1.choices[0].message.to_dict()
+    assistant_message_1 = c1.choices[0].message
     messages += [
         assistant_message_1,
         {"role": "user", "content": "What about Germany?"},
@@ -127,7 +127,7 @@ async def test_multi_round_conversation(openai_client):
     c2 = await openai_client.chat.completions.create(messages=messages)
 
     # Round 3 - further extends the conversation
-    assistant_message_2 = c2.choices[0].message.to_dict()
+    assistant_message_2 = c2.choices[0].message
     messages += [
         assistant_message_2,
         {"role": "user", "content": "And Italy?"},
@@ -297,7 +297,7 @@ async def test_multi_round_tool_calling(openai_client):
         messages=[
             {"role": "system", "content": "You are a helpful calculator assistant."},
             {"role": "user", "content": "Calculate 15 * 7"},
-            c1.choices[0].message.to_dict(),
+            c1.choices[0].message,
             {"role": "tool", "content": tool_response, "tool_call_id": "mock_call_id"},
             {
                 "role": "user",
@@ -313,13 +313,13 @@ async def test_multi_round_tool_calling(openai_client):
         messages=[
             {"role": "system", "content": "You are a helpful calculator assistant."},
             {"role": "user", "content": "Calculate 15 * 7"},
-            c1.choices[0].message.to_dict(),
+            c1.choices[0].message,
             {"role": "tool", "content": tool_response, "tool_call_id": "mock_call_id"},
             {
                 "role": "user",
                 "content": "Now get an interesting fact about this number",
             },
-            c2.choices[0].message.to_dict(),
+            c2.choices[0].message,
             {
                 "role": "tool",
                 "content": "105 is divisible by 3, 5, 7, 15, 21, and 35!",
@@ -384,7 +384,7 @@ async def test_parallel_tool_calling(openai_client):
                 "role": "user",
                 "content": "I need you to check the weather in Tokyo, get the current time in Japan, and translate 'hello world' to Japanese. Please do all of these.",
             },
-            c1.choices[0].message.to_dict(),
+            c1.choices[0].message,
             {"role": "tool", "content": "Sunny, 25°C", "tool_call_id": "weather_call"},
             {"role": "tool", "content": "14:30 JST", "tool_call_id": "time_call"},
             {
@@ -434,7 +434,7 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     c1 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
 
     # Round 2 - Strip thinking from previous response
-    assistant_message_1 = c1.choices[0].message.to_dict()
+    assistant_message_1 = c1.choices[0].message.model_dump(exclude_none=True)
     cleaned_assistant_content = strip_thinking_tags(
         assistant_message_1.get("content", "")
     )
@@ -449,7 +449,7 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     c2 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
 
     # Round 3 - Continue conversation, stripping thinking from previous response
-    assistant_message_2 = c2.choices[0].message.to_dict()
+    assistant_message_2 = c2.choices[0].message.model_dump(exclude_none=True)
     cleaned_assistant_content_2 = strip_thinking_tags(
         assistant_message_2.get("content", "")
     )
@@ -511,7 +511,7 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
     )
 
     # Round 2 - Provide tool result and ask follow-up, stripping thinking from previous response
-    assistant_message_1 = c1.choices[0].message.to_dict()
+    assistant_message_1 = c1.choices[0].message.model_dump(exclude_none=True)
     cleaned_content_1 = strip_thinking_tags(assistant_message_1.get("content", ""))
     assistant_message_1["content"] = cleaned_content_1
     messages += [
@@ -527,7 +527,7 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
     )
 
     # Round 3 - Continue with tool result
-    assistant_message_2 = c2.choices[0].message.to_dict()
+    assistant_message_2 = c2.choices[0].message.model_dump(exclude_none=True)
     cleaned_content_2 = strip_thinking_tags(assistant_message_2.get("content", ""))
     assistant_message_2["content"] = cleaned_content_2
     messages += [
@@ -601,14 +601,14 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
 
     # Branch A1: root -> a -> a1
     msgs_a = base + [
-        c_root.choices[0].message.to_dict(),
+        c_root.choices[0].message,
         {"role": "user", "content": "Question A"},
     ]
     c_a = await openai_client.chat.completions.create(
         messages=msgs_a,
     )
     msgs_a1 = msgs_a + [
-        c_a.choices[0].message.to_dict(),
+        c_a.choices[0].message,
         {"role": "user", "content": "Follow-up A1"},
     ]
     c_a1 = await openai_client.chat.completions.create(
@@ -617,7 +617,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
 
     # Branch A2: root -> a -> a2
     msgs_a2 = msgs_a + [
-        c_a.choices[0].message.to_dict(),
+        c_a.choices[0].message,
         {"role": "user", "content": "Follow-up A2"},
     ]
     c_a2 = await openai_client.chat.completions.create(
@@ -626,14 +626,14 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
 
     # Branch B: root -> b -> b1
     msgs_b = base + [
-        c_root.choices[0].message.to_dict(),
+        c_root.choices[0].message,
         {"role": "user", "content": "Question B"},
     ]
     c_b = await openai_client.chat.completions.create(
         messages=msgs_b,
     )
     msgs_b1 = msgs_b + [
-        c_b.choices[0].message.to_dict(),
+        c_b.choices[0].message,
         {"role": "user", "content": "Follow-up B1"},
     ]
     c_b1 = await openai_client.chat.completions.create(
@@ -750,15 +750,14 @@ async def test_type_checking(openai_client):
     )
     # Use a dict, should not raise error
     msgs_a = base + [
-        c_root.choices[0].message.to_dict(),
+        c_root.choices[0].message.model_dump(exclude_none=True),
         {"role": "user", "content": "Question A"},
     ]
     await openai_client.chat.completions.create(
         messages=msgs_a,
     )
-
     with pytest.raises(TypeError):
-        # Use other stuff without a to_dict(), should raise error
+        # Use other stuff without a model_dump(exclude_none=True), should raise error
         msgs_a = base + [
             c_root.choices[0].message.content,
             {"role": "user", "content": "Question A"},

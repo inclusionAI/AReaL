@@ -155,7 +155,7 @@ class MultiTurnReactAgent(FnCallAgent):
             completion, message = await self.call_server(client, messages)
             content = message.content
             completions.append(completion)
-            messages.append(message.to_dict())
+            messages.append(message)
             if "<tool_call>" in content and "</tool_call>" in content:
                 tool_call = content.split("<tool_call>")[1].split("</tool_call>")[0]
                 try:
@@ -206,7 +206,7 @@ class MultiTurnReactAgent(FnCallAgent):
                 completion, message = await self.call_server(client, messages)
                 completions.append(completion)
                 content = message.content
-                messages.append(message.to_dict())
+                messages.append(message)
                 if "<answer>" in content and "</answer>" in content:
                     prediction = (
                         messages[-1]["content"]

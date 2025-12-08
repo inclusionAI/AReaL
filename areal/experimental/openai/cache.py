@@ -92,6 +92,25 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 return False
             return b[: len(a)] == a
 
+        def _is_similar_on_last_message(a: list[dict], b: list[dict]) -> bool:
+            if len(a) > len(b):
+                return False
+            last_a_message = a[-1]
+            last_b_message = b[len(a) - 1]
+
+            same_keys = set(last_a_message.keys()).intersection(
+                set(last_b_message.keys())
+            )
+            a_remaining_keys = set(last_a_message.keys()) - same_keys
+            b_remaining_keys = set(last_b_message.keys()) - same_keys
+            for key in same_keys:
+                if last_a_message[key] != last_b_message[key]:
+                    return False
+
+            if a_remaining_keys or b_remaining_keys:
+                return False
+            return True
+
         # Construct parent-child relationships using longest prefix rule
         # Sort potential children by (data length asc, created asc)
         # so parents are available
@@ -109,6 +128,13 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             if _is_prefix(parent_data, value.messages):
                 value.parent = parent
                 break
+            elif _is_similar_on_last_message(parent_data, value.messages):
+                logger.warning(
+                    "Found a parent interaction with similar last message content, "
+                    "but not a strict prefix match. If you wish to use concat mode and build a conversation tree:\n"
+                    "1. For completion, append `chat_completion.choices[0].message.model_dump()` to your messages.\n"
+                    "2. For response, extend `[o.model_dump() for o in response.output]` to your messages."
+                )
         super().__setitem__(key, value)
 
     def export_interactions(

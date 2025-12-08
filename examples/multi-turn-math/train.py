@@ -69,7 +69,7 @@ class MultiTurnMathAgent:
             )
             completions.append(response)
             message = response.choices[0].message
-            messages.append(message.to_dict())
+            messages.append(message)
             reward = await self.async_reward_fn(
                 result=message.content, answer=data["answer"]
             )

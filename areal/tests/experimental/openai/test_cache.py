@@ -66,7 +66,7 @@ def mock_interaction(tokenizer):
             model_response=mock_model_response,
             reward=reward,
             chat_template_type=chat_template_type,
-            output_message_list=[output_message.to_dict()],
+            output_message_list=[output_message.model_dump(exclude_none=True)],
         )
 
         if is_completion:
@@ -171,7 +171,7 @@ def test_export_interactions_concat_style(mock_interaction):
     )
     i2_messages = (
         i1_messages
-        + [o.to_dict() for o in i1.response.output]
+        + [o.model_dump(exclude_none=True) for o in i1.response.output]
         + [{"role": "user", "content": "C"}]
     )
     i2 = mock_interaction(
@@ -188,7 +188,7 @@ def test_export_interactions_concat_style(mock_interaction):
     )
     i4_messages = (
         i2_messages
-        + [o.to_dict() for o in i2.response.output]
+        + [o.model_dump(exclude_none=True) for o in i2.response.output]
         + [{"role": "user", "content": "F"}]
     )
     i4 = mock_interaction(
@@ -262,7 +262,7 @@ def test_multiple_exports_after_build(mock_interaction):
         id="2",
         messages=[
             {"role": "user", "content": "A"},
-            i1.response.output[0].to_dict(),
+            i1.response.output[0].model_dump(exclude_none=True),
         ],
         response_text="C",
         created=2,
