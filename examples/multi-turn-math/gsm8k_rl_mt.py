@@ -37,13 +37,11 @@ class MultiTurnMathAgent:
 
     async def run_agent(self, data, client: ArealOpenAI):
         messages = data["messages"].copy()
-        completions = []
         for _ in range(self.max_turns):
             response: ChatCompletion = await client.chat.completions.create(
                 messages=messages,
                 **self.gconfig.to_openai_args_dict(),
             )
-            completions.append(response)
             message = response.choices[0].message
             messages.append(message)
             reward = await self.async_reward_fn(
