@@ -4,17 +4,19 @@ import asyncio
 import uuid
 from collections import defaultdict
 from enum import Enum, auto
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import torch
 from torch import Tensor
 
 from areal.api.controller_api import DistributedBatch
-from areal.controller.batch_client import BatchDataClient
 from areal.controller.batch_metadata import (
     BatchMetadata,
     ShardMetadata,
 )
+
+if TYPE_CHECKING:
+    from areal.controller.batch_client import BatchDataClient
 from areal.utils import logging
 from areal.utils.batch_utils import (
     convert_dict_to_list,
@@ -160,6 +162,9 @@ class DistributedBatchMemory(DistributedBatch):
             Shared client instance
         """
         if cls._client is None:
+            # Import here to avoid circular dependency
+            from areal.controller.batch_client import BatchDataClient
+
             cls._client = BatchDataClient()
         return cls._client
 

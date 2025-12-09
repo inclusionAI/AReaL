@@ -406,7 +406,6 @@ def serialize_value(value: Any) -> Any:
         return SerializedNDArray.from_array(value).model_dump()
 
     # Handle DistributedBatchMemory (check before dataclass)
-    # Import here to avoid circular dependency
     if isinstance(value, DistributedBatchMemory):
         # Use __getstate__ to get serializable state
         state = value.__getstate__()

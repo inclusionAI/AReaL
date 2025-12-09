@@ -1,9 +1,7 @@
 import argparse
 import asyncio
-import io
 import logging as stdlib_logging
 import os
-import pickle
 import socket
 import traceback
 import uuid
@@ -14,6 +12,7 @@ from queue import Queue
 from threading import Lock, Thread
 from typing import Any
 
+import orjson
 import torch
 from flask import Flask, Response, jsonify, request
 from torch import Tensor
@@ -567,7 +566,9 @@ def _handle_distributed_batch_return(
     # Store data in local batch storage
     with _batch_storage_lock:
         _batch_storage[shard_id] = (global_step, data_to_store)
-        data_bytes = pickle.dumps(data_to_store)
+        # Serialize using serialize_value to handle tensors, then encode with orjson
+        serialized_data = serialize_value(data_to_store)
+        data_bytes = orjson.dumps(serialized_data)
         _batch_storage_stats[shard_id] = len(data_bytes)
     logger.info(
         f"Stored result as shard {shard_id} (step={global_step}, "
@@ -631,8 +632,9 @@ def store_batch_data(shard_id: str):
         global_step = int(request.args.get("global_step", 0))
 
         data_bytes = request.get_data()
-        buffer = io.BytesIO(data_bytes)
-        data = pickle.load(buffer)
+        # Deserialize from orjson, then deserialize_value to restore tensors
+        serialized_data = orjson.loads(data_bytes)
+        data = deserialize_value(serialized_data)
 
         with _batch_storage_lock:
             _batch_storage[shard_id] = (global_step, data)
@@ -677,9 +679,9 @@ def retrieve_batch_data(shard_id: str):
                 f"Sliced shard {shard_id}: offset={offset}, batch_size={batch_size}"
             )
 
-        buffer = io.BytesIO()
-        pickle.dump(data, buffer)
-        data_bytes = buffer.getvalue()
+        # Serialize using serialize_value to handle tensors, then encode with orjson
+        serialized_data = serialize_value(data)
+        data_bytes = orjson.dumps(serialized_data)
 
         logger.info(
             f"Retrieved batch shard {shard_id} (step={global_step}, "

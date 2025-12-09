@@ -1,13 +1,13 @@
 """HTTP client for distributed batch memory retrieval."""
 
 import asyncio
-import io
-import pickle
 from typing import Any
 
 import aiohttp
+import orjson
 
 from areal.controller.batch_metadata import BatchMetadata, ShardMetadata
+from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging
 
 logger = logging.getLogger("BatchClient")
@@ -57,8 +57,9 @@ class BatchDataClient:
                     )
 
                 data_bytes = await response.read()
-                buffer = io.BytesIO(data_bytes)
-                data = pickle.load(buffer)
+                # Deserialize from orjson, then deserialize_value to restore tensors
+                serialized_data = orjson.loads(data_bytes)
+                data = deserialize_value(serialized_data)
 
                 logger.debug(
                     f"Fetched logical shard {shard.shard_id} from {shard.node_addr} "
@@ -103,10 +104,9 @@ class BatchDataClient:
         """Store a shard on a node."""
         url = f"http://{node_addr}/data/{shard_id}?global_step={global_step}"
 
-        # Serialize data
-        buffer = io.BytesIO()
-        pickle.dump(data, buffer)
-        data_bytes = buffer.getvalue()
+        # Serialize using serialize_value to handle tensors, then encode with orjson
+        serialized_data = serialize_value(data)
+        data_bytes = orjson.dumps(serialized_data)
 
         try:
             async with session.put(
