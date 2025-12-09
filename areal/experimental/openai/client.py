@@ -169,6 +169,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         frequency_penalty: float | None | NotGiven = NOT_GIVEN,
         max_completion_tokens: int | None | NotGiven = NOT_GIVEN,
         max_tokens: int | None | NotGiven = NOT_GIVEN,
+        max_total_tokens: int | None | NotGiven = NOT_GIVEN,
         metadata: Metadata | None | NotGiven = NOT_GIVEN,
         stop: str | None | list[str] | None | NotGiven = NOT_GIVEN,
         store: bool | None | NotGiven = NOT_GIVEN,
@@ -239,12 +240,23 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             )
 
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
-        max_new_tokens = None
         if not is_omitted(max_tokens):
-            max_new_tokens = max_tokens - len(prompt_token_ids)
+            # NOTE: support deprecated `max_tokens` usage.
+            if not is_omitted(max_completion_tokens):
+                raise ValueError(
+                    "max_tokens and max_completion_tokens cannot be set at the same time. "
+                    "max_tokens has been deprecated. Please use max_completion_tokens instead. "
+                    "To set the total max tokens, please use max_total_tokens instead."
+                )
+            # NOTE (2025-12-09): the usage of max_tokens has been changed.
+            max_completion_tokens = max_tokens
+
+        max_new_tokens = None
+        if not is_omitted(max_total_tokens):
+            max_new_tokens = max_total_tokens - len(prompt_token_ids)
             if max_new_tokens <= 0:
                 raise RuntimeError(
-                    "max_tokens must be greater than the number of prompt tokens"
+                    "max_total_tokens must be greater than the number of prompt tokens"
                 )
         if not is_omitted(max_completion_tokens):
             if max_new_tokens is None:
