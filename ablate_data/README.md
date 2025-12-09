@@ -20,3 +20,12 @@ or
 ```
 ./train_moe/sft_multiverse.sh
 ```
+
+## Test 
+Go to masking and set the path correctly.
+
+The run 
+```
+./test8time_real.sh
+```
+it will run 8 times with 8 GPUs simutaneously
