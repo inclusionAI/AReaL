@@ -1,0 +1,44 @@
+#
+# Copyright (c) 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# This file is a part of the AReaL project.
+#
+
+FROM quay.io/ascend/vllm-ascend:v0.11.0
+
+ARG SOC_VERSION="ascend910b1"
+
+COPY patch/vllm-ascend/v0.11.0.patch /tmp/vllm-ascend-v0.11.0.patch
+
+ENV SOC_VERSION=$SOC_VERSION \
+    TASK_QUEUE_ENABLE=1 \
+    OMP_NUM_THREADS=1
+
+# Install vllm-ascend
+RUN cd /vllm-workspace/vllm-ascend && \
+    git apply /tmp/vllm-ascend-v0.11.0.patch && \
+    export PIP_EXTRA_INDEX_URL=https://mirrors.huaweicloud.com/ascend/repos/pypi && \
+    source /usr/local/Ascend/ascend-toolkit/set_env.sh && \
+    source /usr/local/Ascend/nnal/atb/set_env.sh && \
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/Ascend/ascend-toolkit/latest/`uname -i`-linux/devlib && \
+    python3 -m pip install -v -e /vllm-workspace/vllm-ascend/ --extra-index https://download.pytorch.org/whl/cpu/ && \
+    python3 -m pip cache purge
+
+# Update pip and install uv
+RUN pip install -U pip "setuptools<80,>=77.0.3" uv
+
+# Install AReaL dependencies
+COPY pyproject.toml ./
+RUN uv pip install -r pyproject.toml --system && \
+    rm -f pyproject.toml

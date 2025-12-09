@@ -1,0 +1,132 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 13cee9f1..2921163e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -22,9 +22,9 @@ find_package(Torch REQUIRED)
+ 
+ run_python(TORCH_VERSION
+   "import torch; print(torch.__version__)" "Failed to locate torch path")
+-# check torch version is 2.7.1
+-if(NOT ${TORCH_VERSION} VERSION_EQUAL "2.7.1")
+-  message(FATAL_ERROR "Expected PyTorch version 2.7.1, but found ${TORCH_VERSION}")
++# check torch version is 2.8.0
++if(NOT ${TORCH_VERSION} VERSION_EQUAL "2.8.0")
++  message(FATAL_ERROR "Expected PyTorch version 2.8.0, but found ${TORCH_VERSION}")
+ endif()
+ 
+ set(RUN_MODE "npu" CACHE STRING "cpu/sim/npu")
+diff --git a/csrc/kernels/bgmv_expand.cpp b/csrc/kernels/bgmv_expand.cpp
+index c910005c..bcbe63c1 100644
+--- a/csrc/kernels/bgmv_expand.cpp
++++ b/csrc/kernels/bgmv_expand.cpp
+@@ -356,11 +356,9 @@ extern void bgmv_expand_impl(AscendType type, void* stream, void* x, void* weigh
+         bgmv_expand_half<<<blockDim, nullptr, stream>>>(x, weight, indices, indicesSize, yIn, yOut, batchSize, numTokensPerCore,
+                                                         maxLoRARank, outputHiddenDim, sliceOffset, outputFullDim);
+     } else if (type == AscendType::BF16) {
+-        #if (__CCE_AICORE__ >= 220)
+             bgmv_expand_bfloat16_t<<<blockDim, nullptr, stream>>>(x, weight, indices, indicesSize, yIn, yOut, batchSize,
+                                                                   numTokensPerCore, maxLoRARank, outputHiddenDim,
+                                                                   sliceOffset, outputFullDim);
+-        #endif
+     } else {
+         return;
+     }
+diff --git a/csrc/kernels/bgmv_shrink.cpp b/csrc/kernels/bgmv_shrink.cpp
+index b5a2d15d..299a7ff3 100644
+--- a/csrc/kernels/bgmv_shrink.cpp
++++ b/csrc/kernels/bgmv_shrink.cpp
+@@ -240,10 +240,8 @@ extern void bgmv_shrink_impl(AscendType type, void* stream, void* x, void* weigh
+         bgmv_shrink_half<<<blockDim, nullptr, stream>>>(x, weight, indices, indicesSize, y, batchSize, numTokensPerCore, 
+                                                         inputHiddenDim, maxLoRARank, scale);
+     } else if (type == AscendType::BF16) {
+-        #if (__CCE_AICORE__ >= 220)
+             bgmv_shrink_bfloat16_t<<<blockDim, nullptr, stream>>>(x, weight, indices, indicesSize, y, batchSize, numTokensPerCore, 
+                                                                   inputHiddenDim, maxLoRARank, scale);
+-        #endif
+     } else {
+         return;
+     }
+diff --git a/csrc/kernels/sgmv_expand.cpp b/csrc/kernels/sgmv_expand.cpp
+index 5466bd69..ed4be9e0 100644
+--- a/csrc/kernels/sgmv_expand.cpp
++++ b/csrc/kernels/sgmv_expand.cpp
+@@ -375,12 +375,10 @@ extern void sgmv_expand_impl(AscendType type, void* stream, void* x, void* weigh
+                                                         numTokensPerCore, maxLoRARank, outputHiddenDim, sliceOffset, 
+                                                         outputFullDim);
+     } else if (type == AscendType::BF16) {
+-        #if (__CCE_AICORE__ >= 220)
+             sgmv_expand_bfloat16_t<<<blockDim, nullptr, stream>>>(x, weight, loraIndices, loraIndicesSize, 
+                                                                   seqLen, seqLenSize, yIn, yOut, batchSize,
+                                                                   numTokensPerCore, maxLoRARank, outputHiddenDim,
+                                                                   sliceOffset, outputFullDim);
+-        #endif
+     } else {
+         return;
+     }
+diff --git a/csrc/kernels/sgmv_shrink.cpp b/csrc/kernels/sgmv_shrink.cpp
+index a72e592e..086c813d 100644
+--- a/csrc/kernels/sgmv_shrink.cpp
++++ b/csrc/kernels/sgmv_shrink.cpp
+@@ -260,13 +260,11 @@ extern void sgmv_shrink_impl(AscendType type, void* stream, void* x, void* weigh
+                                                         numTokensPerCore, inputHiddenDim, maxLoRARank,
+                                                         scale);
+     } else if (type == AscendType::BF16) {
+-        #if (__CCE_AICORE__ >= 220)
+             sgmv_shrink_bfloat16_t<<<blockDim, nullptr, stream>>>(x, weight, loraIndices, loraIndicesSize, 
+                                                                   seqLen, seqLenSize, 
+                                                                   y, batchSize,
+                                                                   numTokensPerCore, inputHiddenDim, maxLoRARank,
+                                                                   scale);
+-        #endif
+     } else {
+         return;
+     }
+diff --git a/pyproject.toml b/pyproject.toml
+index 248f8441..245896c2 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -13,8 +13,8 @@ requires = [
+     "setuptools>=64",
+     "setuptools-scm>=8",
+     "transformers<=4.57.1",
+-    "torch-npu==2.7.1",
+-    "torch==2.7.1",
++    "torch-npu==2.8.0",
++    "torch==2.8.0",
+     "torchvision",
+     "wheel",
+     "msgpack",
+diff --git a/requirements.txt b/requirements.txt
+index 808ce97e..d2c43bab 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -10,7 +10,7 @@ pyyaml
+ scipy
+ setuptools>=64
+ setuptools-scm>=8
+-torch==2.7.1
++torch==2.8.0
+ torchvision
+ wheel
+ opencv-python-headless<=4.11.0.86 # Required to avoid numpy version conflict with vllm
+@@ -25,7 +25,7 @@ numba
+ # Install torch_npu
+ #--pre
+ #--extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi
+-torch-npu==2.7.1
++torch-npu==2.8.0
+ 
+ transformers<=4.57.1
+ fastapi<0.124.0
+diff --git a/vllm_ascend/lora/punica_npu.py b/vllm_ascend/lora/punica_npu.py
+index db4adc40..43064357 100644
+--- a/vllm_ascend/lora/punica_npu.py
++++ b/vllm_ascend/lora/punica_npu.py
+@@ -255,6 +255,7 @@ class PunicaWrapperNPU(PunicaWrapperBase):
+         # Embedding layer only need expand op
+         expand_fun: Callable = (self._expand_prefill
+                                 if self.is_prefill else self._expand_decode)
++        x = x.to(torch.float32)
+         expand_fun(y, x, lora_b_stacked, add_inputs)
+ 
+     def add_lora_linear(self,
