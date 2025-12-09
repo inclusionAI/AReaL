@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
-
+import json
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig, vLLMConfig
@@ -40,7 +40,6 @@ class VLLMBackend:
 
         # NOTE: vLLM uses flat payload structure, not nested sampling_params
         payload = {
-            "prompt": req.input_ids.copy(),
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
             "max_tokens": gconfig.max_new_tokens,
@@ -52,7 +51,27 @@ class VLLMBackend:
         }
         if with_lora and len(gconfig.lora_name) > 0:
             payload["model"] = gconfig.lora_name
-        return HttpRequest(endpoint="/v1/completions", payload=payload)
+
+        if req.input_text:
+            images = iter(req.image_data)
+            req.input_text = json.loads(req.input_text[0])
+            for msg in req.input_text:
+                if isinstance(msg['content'], list):
+                    for content in msg['content']:
+                        if content.get("type") == "image_url":
+                            try:
+                                base64_img = next(images)
+                            except StopIteration:
+                                raise ValueError("Not enough images in req.image_data to match image_url entries.")
+                            content["image_url"] = {
+                                "url": f"data:image/jpeg;base64,{base64_img}"
+                            }
+            payload["messages"] = req.input_text.copy()
+            payload["logprobs"] = True
+            return HttpRequest(endpoint="/v1/chat/completions", payload=payload)
+        else:
+            payload["prompt"] = req.input_ids.copy()
+            return HttpRequest(endpoint="/v1/completions", payload=payload) 
 
     def parse_generation_response(
         self, response: dict[str, Any]
@@ -62,22 +81,30 @@ class VLLMBackend:
         stop_reason = meta_info["finish_reason"]
 
         # Parse tokens from "token:123" format
-        output_tokens = meta_info["logprobs"]["tokens"]
+        if "tokens" in meta_info["logprobs"]:
+            output_tokens = meta_info["logprobs"]["tokens"]
+            output_tokens = [int(t.split(":")[1]) for t in output_tokens]
+            output_logprobs = meta_info["logprobs"]["token_logprobs"]
+        elif "content" in meta_info["logprobs"]:
+            outputs = meta_info["logprobs"]["content"]
+            output_tokens = [int(t['token'].split(":")[1]) for t in outputs]
+            output_logprobs = [t['logprob'] for t in outputs]
+        else:
+            raise ValueError("Unexpected vLLM response format.")
+
         if stop_reason == "abort" and len(output_tokens) == 0:
             return HttpGenerationResult(
                 output_tokens=[],
                 output_logprobs=[],
                 stop_reason=stop_reason,
             )
-        output_tokens = [int(t.split(":")[1]) for t in output_tokens]
-        output_logprobs = meta_info["logprobs"]["token_logprobs"]
-
+        
         return HttpGenerationResult(
             output_tokens=output_tokens,
             output_logprobs=output_logprobs,
             stop_reason=stop_reason,
         )
-
+    
     def build_disk_weight_update_requests(
         self, meta: WeightUpdateMeta, lora_initialized: bool
     ) -> WeightUpdateRequests:
