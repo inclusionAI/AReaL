@@ -228,6 +228,7 @@ class GenerationHyperparameters:
         elif api_format == "responses":
             mapping["max_new_tokens"] = "max_output_tokens"
         elif api_format == "openai-agents":
+            # NOTE: max_tokens in openai-agents means `max_new_tokens` in sglang/vllm. This is not a bug
             mapping["max_new_tokens"] = "max_tokens"
         else:
             raise ValueError(f"Unsupported API format: {api_format}")
