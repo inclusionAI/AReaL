@@ -36,10 +36,6 @@ def _init_platform() -> Platform:
         logger.warning("Unrecognized CUDA device. Falling back to UnknownPlatform.")
         return UnknownPlatform()
     elif is_npu_available:
-        from torch_npu.contrib import transfer_to_npu
-
-        # Prevent being marked as an unused package and deleted
-        _ = transfer_to_npu.is_available()
         logger.info("Initializing NPU platform (NPU).")
         return NPUPlatform()
     else:
