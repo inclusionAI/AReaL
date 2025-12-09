@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import sys
@@ -55,8 +54,8 @@ class VLLMBackend:
 
         if req.input_text:
             images = iter(req.image_data)
-            req.input_text = json.loads(req.input_text[0])
-            for msg in req.input_text:
+            parsed_input = req.input_text[0]
+            for msg in parsed_input:
                 if isinstance(msg["content"], list):
                     for content in msg["content"]:
                         if content.get("type") == "image_url":
@@ -69,7 +68,7 @@ class VLLMBackend:
                             content["image_url"] = {
                                 "url": f"data:image/jpeg;base64,{base64_img}"
                             }
-            payload["messages"] = req.input_text.copy()
+            payload["messages"] = parsed_input.copy()
             payload["logprobs"] = True
             return HttpRequest(endpoint="/v1/chat/completions", payload=payload)
         else:

@@ -1,4 +1,3 @@
-import json
 from io import BytesIO
 from typing import Any
 
@@ -178,7 +177,7 @@ def get_geometry3k_rl_dataset(
         )
         return {
             "messages": messages,
-            "messages_chat": json.dumps(messages_chat),
+            "messages_chat": messages_chat,
             "images": processed_images,
         }
 
