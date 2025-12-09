@@ -217,6 +217,7 @@ class GenerationHyperparameters:
                 "top_k",  # Not supported by OpenAI
                 "stop_token_ids",  # Not supported by OpenAI
                 "lora_name",  # Not supported by OpenAI
+                "max_tokens",  # deprecated by "completions", not used in "responses", should be `max_new_tokens` in "openai-agents"
             }
         )
         # TODO: move the excluded args into extra body, so they can be passed through the client request
