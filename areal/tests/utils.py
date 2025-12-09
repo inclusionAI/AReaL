@@ -58,7 +58,7 @@ def get_model_path(local_path: str, hf_id: str) -> str:
         return downloaded_path
     except Exception as e:
         logger.error(f"Failed to download model {hf_id}: {e}")
-        raise e
+        raise
 
 
 def get_dataset_path(local_path: str, hf_id: str) -> str:
@@ -81,7 +81,7 @@ def get_dataset_path(local_path: str, hf_id: str) -> str:
         return downloaded_path
     except Exception as e:
         logger.error(f"Failed to download dataset {hf_id}: {e}")
-        raise e
+        raise
 
 
 class TestWorkflow(RolloutWorkflow):
