@@ -5,7 +5,7 @@ from datasets import load_dataset
 from PIL import Image
 from PIL.Image import Image as ImageObject
 from torchvision import transforms
-
+import json
 
 def pad_to_square(img: Image.Image, fill=(0, 0, 0)) -> Image.Image:
     w, h = img.size
@@ -153,11 +153,27 @@ def get_geometry3k_rl_dataset(
                 .replace("different", ""),
             }
         ]
+        messages_chat = [
+            {
+                "role": "user",
+                "content": [
+                    # NOTE: The prompt formatting with the image token `<image>` is not needed
+                    # since the prompt will be processed automatically by the API server.
+                    # Leave the "url" field empty. It will be filled in the engine.
+                    {"type": "image_url","image_url": {"url":""}},
+                    {"type":"text",
+                     "text": sample["problem"].replace("<image>", "").replace("different", ""),
+                    },
+
+                ],
+            }
+        ]
         messages.insert(0, system_prompt)
+        messages_chat.insert(0, system_prompt)
         messages = processor.tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
         )
-        return {"messages": messages, "images": processed_images}
+        return {"messages": messages,"messages_chat":json.dumps(messages_chat), "images": processed_images}
 
     dataset = dataset.map(process).remove_columns(["problem"])
 
