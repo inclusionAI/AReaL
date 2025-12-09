@@ -84,18 +84,18 @@ class DistributedBatch(abc.ABC):
         """
         raise NotImplementedError()
 
-    def union(self, other: "DistributedBatch") -> "DistributedBatch":
-        """Merge another batch with this one.
+    def union_(self, other: "DistributedBatch") -> "DistributedBatch":
+        """In-place merge another batch into this one.
 
         Parameters
         ----------
         other : DistributedBatch
-            Another batch to merge with
+            Another batch to merge into this batch
 
         Returns
         -------
         DistributedBatch
-            Merged batch
+            Merged batch (self)
         """
         raise NotImplementedError()
 

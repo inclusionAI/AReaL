@@ -532,27 +532,9 @@ class DistributedBatchMemory(DistributedBatch):
             batches.append(self.__class__(dataset=split_data, metadata=None))
         return batches
 
-    def union(self, other: DistributedBatchMemory) -> DistributedBatchMemory:
-        """Merge another batch with this one in-place.
-
-        Both batches must be in the same status (either both LOCAL or both REMOTE).
-
-        Parameters
-        ----------
-        other : DistributedBatchMemory
-            The batch to merge with this one
-
-        Returns
-        -------
-        DistributedBatchMemory
-            Self (modified in-place)
-
-        Raises
-        ------
-        FrameworkError
-            If batches are in different statuses
-        """
-        self._require_same_status(other, operation="union")
+    def union_(self, other: DistributedBatchMemory) -> DistributedBatchMemory:
+        """In-place merge. Mutates ``self`` and returns it."""
+        self._require_same_status(other, operation="union_")
 
         if self.is_remote:
             self._union_metadata(other)
@@ -879,8 +861,8 @@ class DistributedBatchMemory(DistributedBatch):
         # Special handling for DistributedBatchMemory values
         # The key is expected to match the field key in value's metadata (set via result_key)
         if isinstance(value, DistributedBatchMemory):
-            # Merge using union (modifies self in-place)
-            self.union(value)
+            # Merge using in-place union
+            self.union_(value)
             return
 
         if self.metadata is not None:

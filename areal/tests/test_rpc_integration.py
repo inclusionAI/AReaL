@@ -1,16 +1,15 @@
 import importlib
-import io
-import pickle
 import sys
 import types
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
+import orjson
 import pytest
 import torch
 
 from areal.api.engine_api import TrainEngine
-from areal.scheduler.rpc.serialization import serialize_value
+from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 
 
 @dataclass
@@ -158,9 +157,7 @@ class TestSyncRPCServer:
         }
 
         # Serialize data
-        buffer = io.BytesIO()
-        pickle.dump(data, buffer)
-        data_bytes = buffer.getvalue()
+        data_bytes = orjson.dumps(serialize_value(data))
 
         # Store data
         resp = client.put(
@@ -179,9 +176,7 @@ class TestSyncRPCServer:
         shard_id = "test-shard-2"
         data = {"input_ids": torch.tensor([[1, 2]])}
 
-        buffer = io.BytesIO()
-        pickle.dump(data, buffer)
-        data_bytes = buffer.getvalue()
+        data_bytes = orjson.dumps(serialize_value(data))
 
         resp = client.put(f"/data/{shard_id}", data=data_bytes)
         assert resp.status_code == 200
@@ -195,9 +190,7 @@ class TestSyncRPCServer:
         }
 
         # Store data first
-        buffer = io.BytesIO()
-        pickle.dump(original_data, buffer)
-        data_bytes = buffer.getvalue()
+        data_bytes = orjson.dumps(serialize_value(original_data))
 
         store_resp = client.put(
             f"/data/{shard_id}?global_step=5",
@@ -211,7 +204,7 @@ class TestSyncRPCServer:
         assert get_resp.status_code == 200
         assert get_resp.content_type == "application/octet-stream"
 
-        retrieved_data = pickle.loads(get_resp.data)
+        retrieved_data = deserialize_value(orjson.loads(get_resp.data))
         assert "input_ids" in retrieved_data
         assert "labels" in retrieved_data
         assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"])
@@ -234,9 +227,7 @@ class TestSyncRPCServer:
         }
 
         # Store data
-        buffer = io.BytesIO()
-        pickle.dump(original_data, buffer)
-        data_bytes = buffer.getvalue()
+        data_bytes = orjson.dumps(serialize_value(original_data))
 
         client.put(f"/data/{shard_id}?global_step=1", data=data_bytes)
 
@@ -244,7 +235,7 @@ class TestSyncRPCServer:
         resp = client.get(f"/data/{shard_id}?offset=2")
         assert resp.status_code == 200
 
-        retrieved_data = pickle.loads(resp.data)
+        retrieved_data = deserialize_value(orjson.loads(resp.data))
         assert retrieved_data["input_ids"].shape[0] == 2
         assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"][2:])
         assert torch.equal(retrieved_data["labels"], original_data["labels"][2:])
@@ -258,9 +249,7 @@ class TestSyncRPCServer:
         }
 
         # Store data
-        buffer = io.BytesIO()
-        pickle.dump(original_data, buffer)
-        data_bytes = buffer.getvalue()
+        data_bytes = orjson.dumps(serialize_value(original_data))
 
         client.put(f"/data/{shard_id}?global_step=1", data=data_bytes)
 
@@ -268,7 +257,7 @@ class TestSyncRPCServer:
         resp = client.get(f"/data/{shard_id}?batch_size=2")
         assert resp.status_code == 200
 
-        retrieved_data = pickle.loads(resp.data)
+        retrieved_data = deserialize_value(orjson.loads(resp.data))
         assert retrieved_data["input_ids"].shape[0] == 2
         assert retrieved_data["labels"].shape[0] == 2
         assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"][:2])
@@ -283,9 +272,7 @@ class TestSyncRPCServer:
         }
 
         # Store data
-        buffer = io.BytesIO()
-        pickle.dump(original_data, buffer)
-        data_bytes = buffer.getvalue()
+        data_bytes = orjson.dumps(serialize_value(original_data))
 
         client.put(f"/data/{shard_id}?global_step=1", data=data_bytes)
 
@@ -293,7 +280,7 @@ class TestSyncRPCServer:
         resp = client.get(f"/data/{shard_id}?offset=1&batch_size=2")
         assert resp.status_code == 200
 
-        retrieved_data = pickle.loads(resp.data)
+        retrieved_data = deserialize_value(orjson.loads(resp.data))
         assert retrieved_data["input_ids"].shape[0] == 2
         assert retrieved_data["labels"].shape[0] == 2
         assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"][1:3])
@@ -310,9 +297,7 @@ class TestSyncRPCServer:
         ]
 
         data = {"input_ids": torch.tensor([[1, 2]])}
-        buffer = io.BytesIO()
-        pickle.dump(data, buffer)
-        data_bytes = buffer.getvalue()
+        data_bytes = orjson.dumps(serialize_value(data))
 
         for shard_id, step in shards:
             resp = client.put(
@@ -342,9 +327,7 @@ class TestSyncRPCServer:
         shard_id = "shard-clear-test"
         data = {"input_ids": torch.tensor([[1, 2]])}
 
-        buffer = io.BytesIO()
-        pickle.dump(data, buffer)
-        data_bytes = buffer.getvalue()
+        data_bytes = orjson.dumps(serialize_value(data))
 
         # Store with step 10
         client.put(f"/data/{shard_id}?global_step=10", data=data_bytes)
@@ -375,9 +358,7 @@ class TestSyncRPCServer:
             "labels": torch.tensor([0, 1]),
         }
 
-        buffer = io.BytesIO()
-        pickle.dump(data, buffer)
-        data_bytes = buffer.getvalue()
+        data_bytes = orjson.dumps(serialize_value(data))
 
         client.put(
             f"/data/{shard_id}?global_step=1",
@@ -398,13 +379,9 @@ class TestSyncRPCServer:
         data1 = {"input_ids": torch.tensor([[1, 2]])}
         data2 = {"input_ids": torch.tensor([[3, 4], [5, 6]])}
 
-        buffer1 = io.BytesIO()
-        pickle.dump(data1, buffer1)
-        data_bytes1 = buffer1.getvalue()
+        data_bytes1 = orjson.dumps(serialize_value(data1))
 
-        buffer2 = io.BytesIO()
-        pickle.dump(data2, buffer2)
-        data_bytes2 = buffer2.getvalue()
+        data_bytes2 = orjson.dumps(serialize_value(data2))
 
         client.put("/data/stats-shard-1?global_step=1", data=data_bytes1)
         client.put("/data/stats-shard-2?global_step=1", data=data_bytes2)

@@ -150,7 +150,7 @@ class TestBatchMemory:
         batch1 = DistributedBatchMemory.from_dict(data1)
         batch2 = DistributedBatchMemory.from_dict(data2)
 
-        merged = batch1.union(batch2)
+        merged = batch1.union_(batch2)
         assert len(merged) == 2
         assert torch.equal(merged.dataset["input_ids"], torch.tensor([[1, 2], [3, 4]]))
 
@@ -437,7 +437,7 @@ class TestRollout:
         batch1 = DistributedBatchMemory.from_list(data1)
         batch2 = DistributedBatchMemory.from_list(data2)
 
-        merged = batch1.union(batch2)
+        merged = batch1.union_(batch2)
 
         assert len(merged) == 12
         assert merged.dataset["prompt"] == [item["prompt"] for item in prompt_task_data]
@@ -761,7 +761,7 @@ class TestScalarAndListSupport:
         batch1 = DistributedBatchMemory.from_dict(data1)
         batch2 = DistributedBatchMemory.from_dict(data2)
 
-        merged = batch1.union(batch2)
+        merged = batch1.union_(batch2)
         assert len(merged) == 4
         assert merged.dataset["labels"] == [1, 2, 3, 4]
         assert merged.dataset["scores"] == [0.1, 0.2, 0.3, 0.4]
@@ -782,7 +782,7 @@ class TestScalarAndListSupport:
         batch1 = DistributedBatchMemory.from_dict(data1)
         batch2 = DistributedBatchMemory.from_dict(data2)
 
-        merged = batch1.union(batch2)
+        merged = batch1.union_(batch2)
         assert len(merged) == 4
         assert merged.dataset["labels"] == [1, 0, 0, 1]
 
@@ -1017,7 +1017,7 @@ class TestScalarAndListSupport:
         batch1_union = DistributedBatchMemory.from_dict(data1)
         batch2_union = DistributedBatchMemory.from_dict(data2)
 
-        merged = batch1_union.union(batch2_union)
+        merged = batch1_union.union_(batch2_union)
         assert len(merged) == 4
         assert merged["sequences"] == [[1, 2], [3, 4], [5, 6], [7, 8]]
         assert merged["labels"] == [1, 0, 1, 0]
@@ -1240,7 +1240,7 @@ class TestTrain:
         batch1 = DistributedBatchMemory.from_dict(data1)
         batch2 = DistributedBatchMemory.from_dict(data2)
 
-        merged = batch1.union(batch2)
+        merged = batch1.union_(batch2)
 
         assert len(merged) == 512
         for key in rollout_res_data.keys():
@@ -1553,7 +1553,7 @@ class TestDistributedBatchMemoryMetadata:
 
         batch1 = DistributedBatchMemory.from_metadata(metadata1)
         batch2 = DistributedBatchMemory.from_metadata(metadata2)
-        result = batch1.union(batch2)
+        result = batch1.union_(batch2)
 
         assert result.metadata is not None
         assert result.metadata.total_batch_size == 50
@@ -1834,7 +1834,7 @@ class TestDistributedBatchMemoryExtended:
         batch2 = DistributedBatchMemory.from_metadata(metadata)
 
         with pytest.raises(Exception):  # FrameworkError
-            batch1.union(batch2)
+            batch1.union_(batch2)
 
     def test_group_shards_by_keys_same_keys(self):
         """Test _group_shards_by_keys with same keys."""
@@ -1965,7 +1965,7 @@ class TestDistributedBatchMemoryExtended:
 
         # concat should only work with all metadata or all local
         with pytest.raises(
-            FrameworkError, match="Cannot concatenate batches with mixed modes"
+            FrameworkError, match="Cannot concatenate batches with mixed statuses"
         ):
             DistributedBatchMemory.concat([batch1, batch2])
 
@@ -2124,7 +2124,7 @@ class TestDistributedBatchMemoryExtended:
             }
         )
 
-        result = batch1.union(batch2)
+        result = batch1.union_(batch2)
         assert "input_ids" in result.dataset
         assert "key1" in result.dataset
         assert "key2" in result.dataset
