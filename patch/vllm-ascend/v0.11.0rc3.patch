@@ -1,0 +1,53 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 272bdb13..869293fc 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -22,9 +22,9 @@ find_package(Torch REQUIRED)
+ 
+ run_python(TORCH_VERSION
+   "import torch; print(torch.__version__)" "Failed to locate torch path")
+-# check torch version is 2.7.1
+-if(NOT ${TORCH_VERSION} VERSION_EQUAL "2.7.1")
+-  message(FATAL_ERROR "Expected PyTorch version 2.7.1, but found ${TORCH_VERSION}")
++# check torch version is 2.8.0
++if(NOT ${TORCH_VERSION} VERSION_EQUAL "2.8.0")
++  message(FATAL_ERROR "Expected PyTorch version 2.8.0, but found ${TORCH_VERSION}")
+ endif()
+ 
+ set(RUN_MODE "npu" CACHE STRING "cpu/sim/npu")
+diff --git a/pyproject.toml b/pyproject.toml
+index 916b9845..2172e70a 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -13,8 +13,8 @@ requires = [
+     "setuptools>=64",
+     "setuptools-scm>=8",
+     "transformers<=4.57.1",
+-    "torch-npu==2.7.1",
+-    "torch==2.7.1",
++    "torch-npu==2.8.0",
++    "torch==2.8.0",
+     "torchvision",
+     "wheel",
+     "msgpack",
+diff --git a/requirements.txt b/requirements.txt
+index 999d2ce7..368913ef 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -10,7 +10,7 @@ pyyaml
+ scipy
+ setuptools>=64
+ setuptools-scm>=8
+-torch==2.7.1
++torch==2.8.0
+ torchvision
+ wheel
+ opencv-python-headless<=4.11.0.86 # Required to avoid numpy version conflict with vllm
+@@ -25,6 +25,6 @@ numba
+ # Install torch_npu
+ #--pre
+ #--extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi
+-torch-npu==2.7.1
++torch-npu==2.8.0
+ 
+ transformers<=4.57.1
