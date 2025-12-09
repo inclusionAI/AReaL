@@ -293,13 +293,16 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Parse tool calls.
         tool_calls = None
-        if tool_choice != "none" and tools:
-            tool_calls, output_text, response.stop_reason = process_tool_calls(
-                output_text,
-                tools,
-                self.tool_call_parser,
-                response.stop_reason,
-            )
+        try:
+            if tool_choice != "none" and tools:
+                tool_calls, output_text, response.stop_reason = process_tool_calls(
+                    output_text,
+                    tools,
+                    self.tool_call_parser,
+                    response.stop_reason,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to parse tool calls from output text: {e}")
 
         # Create proper ChatCompletion object with all required fields
         output_message = ChatCompletionMessage(
@@ -546,14 +549,17 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         # Parse tool calls.
         tool_calls = None
-        if not is_omitted(tool_choice) and tool_choice != "none" and tools:
-            tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
-                output_text,
-                tools,
-                self.tool_call_parser,
-                engine_resp.stop_reason,
-                use_responses=True,
-            )
+        try:
+            if not is_omitted(tool_choice) and tool_choice != "none" and tools:
+                tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
+                    output_text,
+                    tools,
+                    self.tool_call_parser,
+                    engine_resp.stop_reason,
+                    use_responses=True,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to parse tool calls from output text: {e}")
 
         # Extract reasoning tokens from output
         reasoning_token_count = self._count_reasoning_tokens(output_text)
