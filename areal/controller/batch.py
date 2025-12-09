@@ -963,6 +963,7 @@ class DistributedBatchMemory(DistributedBatch):
                 f"size={total_size}, "
                 f"batch_id={self.metadata.batch_id}, "
                 f"num_shards={len(self.metadata.shards)}, "
+                f"global_step={self.metadata.global_step}, "
                 f"data_loaded={self.dataset is not None}>"
             )
 
