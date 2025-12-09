@@ -2,13 +2,14 @@ import os
 import sys
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import GRPOConfig, SGLangConfig, load_expr_config
+from areal.api.cli_args import GRPOConfig, SGLangConfig, load_expr_config, vLLMConfig
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.controller.rollout_controller import RolloutController
 from areal.controller.train_controller import TrainController
 from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.scheduler.local import LocalScheduler
 from areal.utils import stats_tracker
 from areal.utils.data import (
@@ -58,17 +59,31 @@ def main(args):
     )
 
     # Initialize inference engine
+
+    if allocation_mode.gen_backend == "sglang":
+        engine_class = RemoteSGLangEngine
+        server_args = SGLangConfig.build_args(
+            sglang_config=config.sglang,
+            tp_size=allocation_mode.gen.tp_size,
+            base_gpu_id=0,
+        )
+    elif allocation_mode.gen_backend == "vllm":
+        engine_class = RemotevLLMEngine
+        server_args = vLLMConfig.build_args(
+            vllm_config=config.vllm,
+            tp_size=allocation_mode.gen.tp_size,
+            pp_size=allocation_mode.gen.pp_size,
+        )
+    else:
+        raise ValueError(f"Unsupported gen_backend: '{allocation_mode.gen_backend}'")
+
     rollout = RolloutController(
-        RemoteSGLangEngine, config=config.rollout, scheduler=scheduler
+        engine_class, config=config.rollout, scheduler=scheduler
     )
     rollout.initialize(
         role="rollout",
         alloc_mode=allocation_mode,
-        server_args=SGLangConfig.build_args(
-            sglang_config=config.sglang,
-            tp_size=allocation_mode.gen.tp_size,
-            base_gpu_id=0,
-        ),
+        server_args=server_args,
     )
 
     weight_update_meta = WeightUpdateMeta.from_disk(
