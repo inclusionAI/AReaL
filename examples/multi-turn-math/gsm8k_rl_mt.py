@@ -159,26 +159,25 @@ def main(args):
         train_dataset=train_dataset,
         valid_dataset=valid_dataset,
     ) as trainer:
+        max_turns = config.agent_run_args.get("max_turns", 2)
+        log_path = StatsLogger.get_log_path(config.stats_logger)
+
         workflow = MultiturnRLVRWorkflow(
             reward_fn=gsm8k_reward_fn,
             gconfig=config.gconfig,
             tokenizer=trainer.tokenizer,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
+            dump_dir=os.path.join(log_path, "generated"),
             export_style=config.export_style,
-            max_turns=config.agent_run_args.get("max_turns", 2),
+            max_turns=max_turns,
         )
         eval_workflow = MultiturnRLVRWorkflow(
             reward_fn=gsm8k_reward_fn,
-            gconfig=config.gconfig.new(temperature=0.6),
+            gconfig=config.gconfig.new(temperature=0.6, n_samples=1),
             tokenizer=trainer.tokenizer,
             rollout_stat_scope="eval-rollout",
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-            ),
+            dump_dir=os.path.join(log_path, "generated-eval"),
             export_style=config.export_style,
-            max_turns=config.agent_run_args.get("max_turns", 2),
+            max_turns=max_turns,
         )
         trainer.train(workflow, eval_workflow)
 
