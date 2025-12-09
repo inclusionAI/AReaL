@@ -1,4 +1,5 @@
 import functools
+import os
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -27,8 +28,20 @@ def _gather_logprobs_entropy(
     return log_probs_labels, entropy
 
 
-# remove torch.compile due to npu problems
-if not is_npu_available:
+def _should_use_torch_compile() -> bool:
+    if is_npu_available:
+        return False
+
+    if os.environ.get("AREAL_IS_IN_CI", "0") == "1":
+        return False
+
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+
+    return True
+
+
+if _should_use_torch_compile():
     _gather_logprobs = torch.compile(_gather_logprobs)
     _gather_logprobs_entropy = torch.compile(_gather_logprobs_entropy)
 
