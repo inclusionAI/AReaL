@@ -106,14 +106,14 @@ vllm:
 
 # datasets
 train_dataset:
-  batch_size: 28
+  batch_size: 32
   pin_memory: true
   num_workers: 4
   path: hiyouga/geometry3k
   type: rl
 
 valid_dataset:
-  batch_size: 28
+  batch_size: 32
   pin_memory: true
   num_workers: 4
   path: hiyouga/geometry3k
