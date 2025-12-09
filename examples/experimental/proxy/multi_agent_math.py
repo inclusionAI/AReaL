@@ -1,4 +1,4 @@
-from typing import Any
+import asyncio
 
 from agents import Agent as OpenAIAgent
 from agents import (
@@ -6,12 +6,12 @@ from agents import (
     RunConfig,
     SQLiteSession,
     handoff,
-    set_default_openai_api,
 )
 from agents import Runner as OpenAIRunner
 from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 
-set_default_openai_api("chat_completions")
+from areal.api.cli_args import GenerationHyperparameters
+from areal.utils.proxy_utils import run_and_submit_rewards
 
 
 def gsm8k_reward_fn(result, answer):
@@ -21,15 +21,6 @@ def gsm8k_reward_fn(result, answer):
 
 
 class MultiAgentMathAgent:
-    def __init__(
-        self,
-        max_tokens_per_turn: int = 1024,
-        max_turns: int = 8,
-    ):
-        self.max_tokens_per_turn = max_tokens_per_turn
-        self.max_turns = max_turns
-        self.reward_fn = gsm8k_reward_fn
-
     def _create_agent_workflow(self) -> OpenAIAgent:
         """Create a multi-agent workflow using handoffs for different reasoning stages."""
 
@@ -131,28 +122,23 @@ class MultiAgentMathAgent:
 
         return main_agent
 
-    async def run_agent(self, data):
+    async def run_agent(
+        self, messages: list[dict], answer: str, max_turns: int, run_config: RunConfig
+    ):
         """Run the multi-agent workflow for math problem solving."""
-        run_config = RunConfig(
-            tracing_disabled=True,
-            model_settings=ModelSettings(
-                temperature=1.0,
-                extra_args={"max_completion_tokens": self.max_tokens_per_turn},
-            ),
-        )
 
         agent = self._create_agent_workflow()
         session = SQLiteSession("math")
-        content = data["messages"][-1]["content"]
+        content = messages[-1]["content"]
 
-        max_attempts = self.max_turns
+        max_attempts = max_turns
         reward = 0
 
         for attempt in range(max_attempts):
             result = await OpenAIRunner.run(
                 agent, input=content, session=session, run_config=run_config
             )
-            reward = self.reward_fn(result=result.final_output, answer=data["answer"])
+            reward = gsm8k_reward_fn(result=result.final_output, answer=answer)
 
             if reward == 1:
                 break
@@ -161,14 +147,14 @@ class MultiAgentMathAgent:
             if attempt < max_attempts - 1:
                 content = f"""The previous attempt didn't get the correct answer.
                 Please try a different approach with more careful reasoning.
-                Original problem: {data["messages"][-1]["content"]}
+                Original problem: {content}
 
                 Previous attempt: {result.final_output}
 
                 Please provide a new solution with step-by-step reasoning."""
             else:
                 content = f"""This is your final attempt. Please be extremely careful and thorough.
-                Original problem: {data["messages"][-1]["content"]}
+                Original problem: {content}
 
                 Previous attempts: {result.final_output}
 
@@ -177,8 +163,36 @@ class MultiAgentMathAgent:
         return reward
 
 
-async def run_agent_return_reward(data: Any) -> float:
+async def run_agent_return_reward(data: dict) -> float:
+    messages = data["messages"]
+    answer = data["answer"]
+    agent_run_args = data.get("agent_run_args", {})
+    gconfig = data.get("gconfig", {})
+
+    max_turns = agent_run_args.get("max_turns", 8)
+    model_settings = GenerationHyperparameters(**gconfig).to_openai_args_dict(
+        api_format="openai-agents"
+    )
+    run_config = RunConfig(
+        model="default",  # no need to pass
+        tracing_disabled=True,
+        model_settings=ModelSettings(**model_settings),
+    )
+
     agent = MultiAgentMathAgent()
-    result = await agent.run_agent(data)
-    reward = result
+    reward = await agent.run_agent(
+        messages=messages, answer=answer, max_turns=max_turns, run_config=run_config
+    )
     return reward
+
+
+async def run_and_submit(data: dict):
+    await run_and_submit_rewards(func=run_agent_return_reward, data=data)
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+
+    data = json.loads(sys.stdin.readline())
+    asyncio.run(run_and_submit(data=data))

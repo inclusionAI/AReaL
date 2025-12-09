@@ -1,19 +1,19 @@
 import asyncio
 import subprocess
-from typing import Any
 
 from agents import (
     Agent,
     ModelSettings,
     RunConfig,
+    RunResult,
     SQLiteSession,
     function_tool,
-    set_default_openai_api,
 )
 from agents import Runner as OpenAIRunner
 from pydantic import BaseModel
 
-set_default_openai_api("chat_completions")
+from areal.api.cli_args import GenerationHyperparameters
+from areal.utils.proxy_utils import run_and_submit_rewards
 
 
 # Define response model for MCP tool calls
@@ -112,36 +112,23 @@ def install_python_package(package_name: str, env_name: str = "system") -> dict:
     return install_python_package_impl(package_name, env_name)
 
 
-# Create Python programming assistant Agent
-agent = Agent(
-    name="RLVR Math with Code Interpreter",
-    tools=[
-        run_python_code,
-        # list_python_environments,
-        # install_python_package,
-    ],
-)
-
-
 ######### run agent
-async def run_agent(data):
-    content = data["messages"][-1]["content"]
-
-    run_config = RunConfig(
-        tracing_disabled=True,
-        model_settings=ModelSettings(
-            temperature=1.0,
-            top_p=1.0,
-            # max_tokens=16384,
-        ),
+async def run_agent(messages: list[dict], run_config: RunConfig) -> RunResult:
+    # Create Python programming assistant Agent
+    agent = Agent(
+        name="RLVR Math with Code Interpreter",
+        tools=[
+            run_python_code,
+            # list_python_environments,
+            # install_python_package,
+        ],
     )
-    session = SQLiteSession("math")
 
-    result = await OpenAIRunner.run(
+    content = messages[-1]["content"]
+    session = SQLiteSession("math")
+    return await OpenAIRunner.run(
         agent, input=content, session=session, run_config=run_config
     )
-
-    return result
 
 
 ########## reward function
@@ -151,41 +138,64 @@ def gsm8k_reward_fn(result, answer):
     return float(process_results(result, answer)[0])
 
 
-async def run_agent_return_reward(data: Any) -> float:
-    result = await run_agent(data)
-    reward = gsm8k_reward_fn(result.final_output, data["answer"])
+async def run_agent_return_reward(data: dict) -> float:
+    messages = data["messages"]
+    answer = data["answer"]
+    gconfig = data.get("gconfig", {})
+    model_settings = GenerationHyperparameters(**gconfig).to_openai_args_dict(
+        api_format="openai-agents"
+    )
+    run_config = RunConfig(
+        model="default",  # no need to pass
+        tracing_disabled=True,
+        model_settings=ModelSettings(**model_settings),
+    )
+    result = await run_agent(messages=messages, run_config=run_config)
+    reward = gsm8k_reward_fn(result.final_output, answer)
     return reward
 
 
-async def main():
-    """Main function to run the Python programming assistant"""
-
-    print("Python Programming Assistant started!")
-    print("Type 'quit' to exit the program\n")
-
-    while True:
-        try:
-            user_input = input("User: ").strip()
-
-            if user_input.lower() in ["quit", "exit"]:
-                print("Goodbye!")
-                break
-
-            if not user_input:
-                continue
-
-            result = await run_agent(
-                {"messages": [{"role": "user", "content": user_input}]}
-            )
-            print(f"\nAssistant: {result.final_output}\n")
-            print("-" * 50)
-
-        except KeyboardInterrupt:
-            print("\n\nProgram interrupted by user")
-            break
-        except Exception as e:
-            print(f"\nError: {str(e)}")
+async def run_and_submit(data: dict):
+    await run_and_submit_rewards(func=run_agent_return_reward, data=data)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import json
+    import sys
+
+    data = json.loads(sys.stdin.readline())
+    asyncio.run(run_and_submit(data))
+
+
+# async def main():
+#     """Main function to run the Python programming assistant"""
+
+#     print("Python Programming Assistant started!")
+#     print("Type 'quit' to exit the program\n")
+
+#     while True:
+#         try:
+#             user_input = input("User: ").strip()
+
+#             if user_input.lower() in ["quit", "exit"]:
+#                 print("Goodbye!")
+#                 break
+
+#             if not user_input:
+#                 continue
+
+#             result = await run_agent(
+#                 {"messages": [{"role": "user", "content": user_input}]}
+#             )
+#             print(f"\nAssistant: {result.final_output}\n")
+#             print("-" * 50)
+
+#         except KeyboardInterrupt:
+#             print("\n\nProgram interrupted by user")
+#             break
+#         except Exception as e:
+#             print(f"\nError: {str(e)}")
+
+
+# if __name__ == "__main__":
+#     asyncio.run(main())
