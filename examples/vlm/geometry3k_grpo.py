@@ -8,25 +8,27 @@ from areal.experimental.trainer import PPOTrainer
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.vision_rlvr import VisionRLVRWorkflow
-from mathruler.grader import extract_boxed_content, grade_answer
 
-def format_reward(predict_str: str) -> float:
-    pattern = re.compile(r"<think>.*</think>.*\\boxed\{.*\}.*", re.DOTALL)
-    match_result = re.fullmatch(pattern, predict_str)
-    return 1.0 if match_result else 0.0
+def extract_answer(pred_str, data_name, use_last_number=True):
+    match = re.findall(r"\[([0-9\.]+)\]", pred_str)
+    if match:
+        return match[-1]
 
+    return ""
 
-def acc_reward(predict_str: str, ground_truth: str) -> float:
-    answer = extract_boxed_content(predict_str)
-    return 1.0 if grade_answer(answer, ground_truth) else 0.0
 
 def geometry3k_reward_fn(
-    prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    Format_reward = format_reward(completions)
-    Acc_reward = acc_reward(completions, answer)
-    format_score = 0.1
-    score = (1.0 - format_score) * (Acc_reward) + format_score * Format_reward
-    return score
+    prompt, completions, prompt_ids, completion_ids, answer, **kwargs
+):
+    sol = extract_answer(completions, data_name="")  # str number
+    ans = answer
+    
+    if sol is None:
+        return 0
+    if ans is None:
+        return 0
+
+    return float(sol.strip() == ans.strip())
 
 
 def main(args):

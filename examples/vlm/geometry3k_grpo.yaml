@@ -1,4 +1,4 @@
-experiment_name: clevr_count_70k-grpo
+experiment_name: geometry3k-grpo
 trial_name: trial1
 
 seed: 1
@@ -14,7 +14,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang:d1p1t1+d7p1t1
+allocation_mode: vllm:d4p1t1+d4p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -109,14 +109,14 @@ train_dataset:
   batch_size: 28
   pin_memory: true
   num_workers: 4
-  path: /home/ma-user/work/datasets/geometry3k
+  path: hiyouga/geometry3k
   type: rl
 
 valid_dataset:
   batch_size: 28
   pin_memory: true
   num_workers: 4
-  path: /home/ma-user/work/datasets/geometry3k
+  path: hiyouga/geometry3k
   type: rl
 
 # Utilities
