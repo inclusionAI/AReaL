@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import json5
+from pydantic import BaseModel
 from qwen_agent.agents.fncall_agent import FnCallAgent
 from qwen_agent.llm.schema import Message
 from transformers import PreTrainedTokenizer
@@ -82,6 +83,9 @@ class MultiTurnReactAgent(FnCallAgent):
     def count_tokens(self, messages):
         message_strs = []
         for msg in messages:
+            if isinstance(msg, BaseModel):
+                msg = msg.model_dump()
+                assert "role" in msg and "content" in msg
             message_strs.append(
                 f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
             )
@@ -101,9 +105,9 @@ class MultiTurnReactAgent(FnCallAgent):
                     stop=["\n<tool_response>", "<tool_response>"],
                     max_completion_tokens=self.max_tokens_per_turn,
                 )
-                content = completion.choices[0].message.content
-                assert content, "Error: LLM response is empty."
-                return completion, content
+                message = completion.choices[0].message
+                assert message, "Error: LLM response is empty."
+                return completion, message
             except RuntimeError as e:
                 logger.warning(
                     f"RuntimeError during LLM call_server at attempt {attempts}: {e}"
@@ -152,9 +156,10 @@ class MultiTurnReactAgent(FnCallAgent):
             round += 1
             stats["turns"] += 1
             num_llm_calls_available -= 1
-            completion, content = await self.call_server(client, messages)
+            completion, message = await self.call_server(client, messages)
+            content = message.content
             completions.append(completion)
-            messages.append({"role": "assistant", "content": content})
+            messages.append(message)
             if "<tool_call>" in content and "</tool_call>" in content:
                 tool_call = content.split("<tool_call>")[1].split("</tool_call>")[0]
                 try:
@@ -202,18 +207,15 @@ class MultiTurnReactAgent(FnCallAgent):
                         "<think>your final thinking</think>\n<answer>your answer</answer>",
                     }
                 )
-                completion, content = await self.call_server(client, messages)
+                completion, message = await self.call_server(client, messages)
                 completions.append(completion)
-                messages.append({"role": "assistant", "content": content})
+                content = message.content
+                messages.append(message)
                 if "<answer>" in content and "</answer>" in content:
-                    prediction = (
-                        messages[-1]["content"]
-                        .split("<answer>")[1]
-                        .split("</answer>")[0]
-                    )
+                    prediction = content.split("<answer>")[1].split("</answer>")[0]
                     termination = "generate an answer as token limit reached"
                 else:
-                    prediction = messages[-1]["content"]
+                    prediction = content
                     termination = (
                         "format error: generate an answer as token limit reached"
                     )
@@ -233,10 +235,8 @@ class MultiTurnReactAgent(FnCallAgent):
                     )
                 return result
 
-        if "<answer>" in messages[-1]["content"]:
-            prediction = (
-                messages[-1]["content"].split("<answer>")[1].split("</answer>")[0]
-            )
+        if "<answer>" in content:
+            prediction = content.split("<answer>")[1].split("</answer>")[0]
             termination = "answer"
         else:
             prediction = "No answer found."
@@ -246,7 +246,9 @@ class MultiTurnReactAgent(FnCallAgent):
         result = {
             "question": question,
             "answer": answer,
-            "messages": messages,
+            "messages": [
+                m.model_dump() if isinstance(m, BaseModel) else m for m in messages
+            ],
             "prediction": prediction,
             "termination": termination,
             "completions": completions,  # final completion
