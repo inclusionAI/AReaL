@@ -22,14 +22,15 @@ def acc_reward(predict_str: str, ground_truth: str) -> float:
     answer = extract_boxed_content(predict_str)
     return 1.0 if grade_answer(answer, ground_truth) else 0.0
 
+
 def geometry3k_reward_fn(
-    prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
+    prompt, completions, prompt_ids, completion_ids, answer, **kwargs
+):
     Format_reward = format_reward(completions)
     Acc_reward = acc_reward(completions, answer)
     format_score = 0.1
     score = (1.0 - format_score) * (Acc_reward) + format_score * Format_reward
     return score
-
 
 
 def main(args):
