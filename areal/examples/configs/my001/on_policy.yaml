@@ -5,7 +5,7 @@ seed: 42
 total_train_epochs: 10
 total_train_steps: 1145
 weight_update_type: "astate"
-enable_colocate_mode: false
+enable_colocate_mode: true
 async_training: false
 
 storage_prefix: "/storage/openpsi"
