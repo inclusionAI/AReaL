@@ -150,7 +150,8 @@ def get_geometry3k_rl_dataset(
                 "role": "user",
                 "content": sample["problem"]
                 .replace("<image>", image_token)
-                .replace("different", "")+instruction_following,
+                .replace("different", "")
+                + instruction_following,
             }
         ]
         messages_chat = [
@@ -160,11 +161,14 @@ def get_geometry3k_rl_dataset(
                     # NOTE: The prompt formatting with the image token `<image>` is not needed
                     # since the prompt will be processed automatically by the API server.
                     # Leave the "url" field empty. It will be filled in the engine.
-                    {"type": "image_url","image_url": {"url":""}},
-                    {"type":"text",
-                     "text": sample["problem"].replace("<image>", "").replace("different", "")+instruction_following,
+                    {"type": "image_url", "image_url": {"url": ""}},
+                    {
+                        "type": "text",
+                        "text": sample["problem"]
+                        .replace("<image>", "")
+                        .replace("different", "")
+                        + instruction_following,
                     },
-
                 ],
             }
         ]
@@ -172,7 +176,11 @@ def get_geometry3k_rl_dataset(
         messages = processor.tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
         )
-        return {"messages": messages,"messages_chat":json.dumps(messages_chat), "images": processed_images}
+        return {
+            "messages": messages,
+            "messages_chat": json.dumps(messages_chat),
+            "images": processed_images,
+        }
 
     dataset = dataset.map(process).remove_columns(["problem"])
 

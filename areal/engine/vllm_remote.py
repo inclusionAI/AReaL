@@ -57,13 +57,15 @@ class VLLMBackend:
             images = iter(req.image_data)
             req.input_text = json.loads(req.input_text[0])
             for msg in req.input_text:
-                if isinstance(msg['content'], list):
-                    for content in msg['content']:
+                if isinstance(msg["content"], list):
+                    for content in msg["content"]:
                         if content.get("type") == "image_url":
                             try:
                                 base64_img = next(images)
                             except StopIteration:
-                                raise ValueError("Not enough images in req.image_data to match image_url entries.")
+                                raise ValueError(
+                                    "Not enough images in req.image_data to match image_url entries."
+                                )
                             content["image_url"] = {
                                 "url": f"data:image/jpeg;base64,{base64_img}"
                             }
@@ -88,8 +90,8 @@ class VLLMBackend:
             output_logprobs = meta_info["logprobs"]["token_logprobs"]
         elif "content" in meta_info["logprobs"]:
             outputs = meta_info["logprobs"]["content"]
-            output_tokens = [int(t['token'].split(":")[1]) for t in outputs]
-            output_logprobs = [t['logprob'] for t in outputs]
+            output_tokens = [int(t["token"].split(":")[1]) for t in outputs]
+            output_logprobs = [t["logprob"] for t in outputs]
         else:
             raise ValueError("Unexpected vLLM response format.")
 

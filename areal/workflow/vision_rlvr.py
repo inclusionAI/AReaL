@@ -127,7 +127,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             image_data=byte_images,
-            input_text=[data["messages_chat"]] if 'messages_chat' in data else None,
+            input_text=[data["messages_chat"]] if "messages_chat" in data else None,
             gconfig=self.gconfig.new(n_samples=1),
             tokenizer=self.tokenizer,
             processor=self.processor,
