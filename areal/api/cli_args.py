@@ -4,7 +4,7 @@ import os
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import uvloop
 import yaml
@@ -12,15 +12,16 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
-from transformers import PreTrainedTokenizerFast
 
-from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, pkg_version
 from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
     PROX_LOGP_METHODS_ALL,
 )
 from areal.utils.pkg_version import is_version_less
+
+if TYPE_CHECKING:
+    from transformers import PreTrainedTokenizerFast
 
 uvloop.install()
 
@@ -174,7 +175,7 @@ class GenerationHyperparameters:
         args.update(kwargs)
         return GenerationHyperparameters(**args)
 
-    def new_with_stop_and_pad_token_ids(self, tokenizer: PreTrainedTokenizerFast):
+    def new_with_stop_and_pad_token_ids(self, tokenizer: "PreTrainedTokenizerFast"):
         """Create a new generation hyperparameters with stop and pad token ids added."""
         new_stop_token_ids = self.stop_token_ids.copy()
         if tokenizer.pad_token_id not in new_stop_token_ids:
@@ -183,8 +184,29 @@ class GenerationHyperparameters:
             new_stop_token_ids.append(tokenizer.eos_token_id)
         return self.new(stop_token_ids=new_stop_token_ids)
 
-    def to_openai_args_dict(
+    def to_openai_completions_args_dict(
         self, exclude_args: list[str] | None = None
+    ) -> dict[str, Any]:
+        return self.to_openai_args_dict(
+            exclude_args=exclude_args, api_format="completions"
+        )
+
+    def to_openai_responses_args_dict(
+        self, exclude_args: list[str] | None = None
+    ) -> dict[str, Any]:
+        return self.to_openai_args_dict(
+            exclude_args=exclude_args, api_format="responses"
+        )
+
+    def to_openai_agents_model_settings_dict(
+        self, exclude_args: list[str] | None = None
+    ) -> dict[str, Any]:
+        return self.to_openai_args_dict(
+            exclude_args=exclude_args, api_format="openai-agents"
+        )
+
+    def to_openai_args_dict(
+        self, exclude_args: list[str] | None = None, api_format: str = "completions"
     ) -> dict[str, Any]:
         """Convert the generation hyperparameters to a dictionary of arguments for OpenAI client."""
         final_exclude_args = set(exclude_args) if exclude_args is not None else set()
@@ -199,10 +221,16 @@ class GenerationHyperparameters:
         )
         # TODO: move the excluded args into extra body, so they can be passed through the client request
 
-        mapping = {
-            "n_samples": "n",
-            "max_new_tokens": "max_completion_tokens",
-        }
+        mapping = {"n_samples": "n"}
+        if api_format == "completions":
+            mapping["max_new_tokens"] = "max_completion_tokens"
+        elif api_format == "responses":
+            mapping["max_new_tokens"] = "max_output_tokens"
+        elif api_format == "openai-agents":
+            mapping["max_new_tokens"] = "max_tokens"
+        else:
+            raise ValueError(f"Unsupported API format: {api_format}")
+
         res = {}
         for k, v in asdict(self).items():
             if k in final_exclude_args:
@@ -956,6 +984,8 @@ class SGLangConfig:
             args["lora_target_modules"] = [
                 x.replace("-linear", "") for x in args["lora_target_modules"]
             ]
+        from areal.platforms import current_platform
+
         args = dict(
             # Model and tokenizer
             tokenizer_path=sglang_config.model_path,
