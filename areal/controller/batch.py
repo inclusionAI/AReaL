@@ -30,8 +30,8 @@ from areal.utils.errors import FrameworkError
 logger = logging.getLogger("DistributedBatchMemory")
 
 
-class BatchMode(Enum):
-    """Explicit mode enum for DistributedBatchMemory.
+class BatchStatus(Enum):
+    """Explicit status enum for DistributedBatchMemory.
 
     Attributes
     ----------
@@ -55,11 +55,11 @@ class DistributedBatchMemory(DistributedBatch):
     The control plane only passes metadata, and actual data is fetched on-demand
     via HTTP from distributed nodes.
 
-    The class supports two modes:
-    - LOCAL mode: Data is stored locally in memory (dataset is not None)
-    - REMOTE mode: Only metadata is present; data fetched on-demand via HTTP
+    The class supports two statuses:
+    - LOCAL status: Data is stored locally in memory (dataset is not None)
+    - REMOTE status: Only metadata is present; data fetched on-demand via HTTP
 
-    Use the `mode` property to check the current mode, and `is_local`/`is_remote`
+    Use the `status` property to check the current status, and `is_local`/`is_remote`
     for convenience checks.
 
     Attributes
@@ -83,32 +83,25 @@ class DistributedBatchMemory(DistributedBatch):
         Parameters
         ----------
         dataset : dict[str, torch.Tensor | Any] | None
-            The actual data stored locally. If provided, batch is in LOCAL mode.
+            The actual data stored locally. If provided, batch is in LOCAL status.
         metadata : BatchMetadata | None
             Metadata describing the distributed batch. If provided without dataset,
-            batch is in REMOTE mode.
+            batch is in REMOTE status.
         """
         self.dataset = dataset
         self.metadata = metadata
 
     @property
-    def mode(self) -> BatchMode:
-        """Get the current mode of this batch.
-
-        Returns
-        -------
-        BatchMode
-            The current mode: LOCAL, REMOTE, or EMPTY
-        """
+    def status(self) -> BatchStatus:
+        """Get the current status of this batch (LOCAL, REMOTE, or EMPTY)."""
         has_data = self.dataset is not None and len(self.dataset) > 0
         has_meta = self.metadata is not None
 
         if has_data:
-            return BatchMode.LOCAL
-        elif has_meta:
-            return BatchMode.REMOTE
-        else:
-            return BatchMode.EMPTY
+            return BatchStatus.LOCAL
+        if has_meta:
+            return BatchStatus.REMOTE
+        return BatchStatus.EMPTY
 
     @property
     def is_local(self) -> bool:
@@ -117,39 +110,41 @@ class DistributedBatchMemory(DistributedBatch):
         Returns
         -------
         bool
-            True if batch is in LOCAL mode
+            True if batch is in LOCAL status
         """
-        return self.mode == BatchMode.LOCAL
+        return self.status == BatchStatus.LOCAL
 
     @property
     def is_remote(self) -> bool:
-        """Check if this batch is in metadata-only mode.
+        """Check if this batch is in metadata-only status.
 
         Returns
         -------
         bool
-            True if batch is in REMOTE mode
+            True if batch is in REMOTE status
         """
-        return self.mode == BatchMode.REMOTE
+        return self.status == BatchStatus.REMOTE
 
-    def _require_mode(self, *allowed_modes: BatchMode, operation: str) -> None:
-        """Assert that current mode is one of the allowed modes."""
-        if self.mode not in allowed_modes:
+    def _require_status(self, *allowed_statuses: BatchStatus, operation: str) -> None:
+        """Assert that current status is one of the allowed status."""
+        if self.status not in allowed_statuses:
             raise FrameworkError(
                 "FrameworkError",
-                "BatchModeError",
-                f"Operation '{operation}' requires mode {[m.name for m in allowed_modes]}, "
-                f"but current mode is {self.mode.name}",
+                "BatchStatusError",
+                f"Operation '{operation}' requires status {[m.name for m in allowed_statuses]}, "
+                f"but current status is {self.status.name}",
             )
 
-    def _require_same_mode(self, other: DistributedBatchMemory, operation: str) -> None:
-        """Assert that both batches are in the same mode."""
-        if self.mode != other.mode:
+    def _require_same_status(
+        self, other: DistributedBatchMemory, operation: str
+    ) -> None:
+        """Assert that both batches are in the same status."""
+        if self.status != other.status:
             raise FrameworkError(
                 "FrameworkError",
-                "BatchModeError",
-                f"Operation '{operation}' requires both batches in same mode. "
-                f"Self is {self.mode.name}, other is {other.mode.name}",
+                "BatchStatusError",
+                f"Operation '{operation}' requires both batches in same status. "
+                f"Self is {self.status.name}, other is {other.status.name}",
             )
 
     @classmethod
@@ -172,7 +167,7 @@ class DistributedBatchMemory(DistributedBatch):
     def from_dict(cls, dict_dataset: dict[str, Tensor | Any]):
         """Create a DistributedBatchMemory from dictionary format dataset.
 
-        This creates a LOCAL mode batch with data stored in memory.
+        This creates a LOCAL status batch with data stored in memory.
 
         Parameters
         ----------
@@ -182,7 +177,7 @@ class DistributedBatchMemory(DistributedBatch):
         Returns
         -------
         DistributedBatchMemory
-            New DistributedBatchMemory instance in LOCAL mode
+            New DistributedBatchMemory instance in LOCAL status
         """
         validate_dict_dataset(dict_dataset)
         return cls(dataset=dict_dataset, metadata=None)
@@ -191,7 +186,7 @@ class DistributedBatchMemory(DistributedBatch):
     def from_metadata(cls, metadata: BatchMetadata) -> DistributedBatchMemory:
         """Create a DistributedBatchMemory from metadata (without actual data).
 
-        This creates a REMOTE mode batch. The data will be fetched lazily
+        This creates a REMOTE status batch. The data will be fetched lazily
         when get_data() is called.
 
         Parameters
@@ -202,7 +197,7 @@ class DistributedBatchMemory(DistributedBatch):
         Returns
         -------
         DistributedBatchMemory
-            New DistributedBatchMemory instance in REMOTE mode
+            New DistributedBatchMemory instance in REMOTE status
         """
         return cls(dataset=None, metadata=metadata)
 
@@ -230,7 +225,7 @@ class DistributedBatchMemory(DistributedBatch):
         the sequence of samples in the concatenated result matches the
         original dataset order.
 
-        Supports both REMOTE mode (metadata) and LOCAL mode (data).
+        Supports both REMOTE status (metadata) and LOCAL status (data).
 
         Parameters
         ----------
@@ -245,14 +240,14 @@ class DistributedBatchMemory(DistributedBatch):
         Raises
         ------
         FrameworkError
-            If batch is in EMPTY mode
+            If batch is in EMPTY status
         """
-        # REMOTE mode: split shards across dp_size groups
+        # REMOTE status: split shards across dp_size groups
         if self.is_remote:
             return self._chunk_metadata(dp_size)
 
-        # LOCAL mode: split actual data
-        self._require_mode(BatchMode.LOCAL, operation="chunk")
+        # LOCAL status: split actual data
+        self._require_status(BatchStatus.LOCAL, operation="chunk")
 
         total = self._get_total_size()
         part_size = (total + dp_size - 1) // dp_size
@@ -461,16 +456,16 @@ class DistributedBatchMemory(DistributedBatch):
 
         Notes
         -----
-        For REMOTE mode, this method will fall back to simple chunking
+        For REMOTE status, this method will fall back to simple chunking
         since we cannot determine sequence lengths without fetching the data.
         """
-        # REMOTE mode: fall back to simple chunking
+        # REMOTE status: fall back to simple chunking
         # FFD requires sequence length information which is not available in metadata yet
         if self.is_remote:
             return self.chunk(dp_size)
 
-        # LOCAL mode: use FFD algorithm
-        self._require_mode(BatchMode.LOCAL, operation="chunk_by_ffd")
+        # LOCAL status: use FFD algorithm
+        self._require_status(BatchStatus.LOCAL, operation="chunk_by_ffd")
 
         total_size = self._get_total_size()
         if total_size % group_size != 0:
@@ -540,7 +535,7 @@ class DistributedBatchMemory(DistributedBatch):
     def union(self, other: DistributedBatchMemory) -> DistributedBatchMemory:
         """Merge another batch with this one in-place.
 
-        Both batches must be in the same mode (either both LOCAL or both REMOTE).
+        Both batches must be in the same status (either both LOCAL or both REMOTE).
 
         Parameters
         ----------
@@ -555,9 +550,9 @@ class DistributedBatchMemory(DistributedBatch):
         Raises
         ------
         FrameworkError
-            If batches are in different modes
+            If batches are in different statuses
         """
-        self._require_same_mode(other, operation="union")
+        self._require_same_status(other, operation="union")
 
         if self.is_remote:
             self._union_metadata(other)
@@ -567,7 +562,7 @@ class DistributedBatchMemory(DistributedBatch):
         return self
 
     def _union_metadata(self, other: DistributedBatchMemory) -> None:
-        """Merge two batches in metadata mode by modifying self in-place."""
+        """Merge two batches in metadata status by modifying self in-place."""
         # Combine shards from both batches
         all_shards = self.metadata.shards + other.metadata.shards
         max_global_step = max(self.metadata.global_step, other.metadata.global_step)
@@ -585,7 +580,7 @@ class DistributedBatchMemory(DistributedBatch):
         self.dataset = None
 
     def _union_local_data(self, other: DistributedBatchMemory) -> None:
-        """Merge two batches in local data mode by modifying self in-place."""
+        """Merge two batches in local data status by modifying self in-place."""
         # Merge data directly into self.dataset
         for k, v in other.dataset.items():
             if k in self.dataset:
@@ -607,11 +602,11 @@ class DistributedBatchMemory(DistributedBatch):
 
     def _get_total_size(self) -> int:
         """Get the total size of the dataset, supporting both tensor and scalar types."""
-        # Metadata mode: return total_batch_size from metadata
+        # Metadata status: return total_batch_size from metadata
         if self.metadata is not None:
             return self.metadata.total_batch_size
 
-        # Local data mode: calculate from dataset
+        # Local data status: calculate from dataset
         if not self.dataset:
             return 0
 
@@ -766,17 +761,17 @@ class DistributedBatchMemory(DistributedBatch):
         """
         assert data is not None and len(data) != 0
 
-        # Check if we have mixed modes (some REMOTE, some LOCAL)
+        # Check if we have mixed statuses (some REMOTE, some LOCAL)
         has_metadata = [item.is_remote for item in data]
         if not all(has_metadata) and any(has_metadata):
             raise FrameworkError(
                 "FrameworkError",
                 "DistributedBatchMemoryError",
-                "Cannot concatenate batches with mixed modes. "
-                "All batches must be either in REMOTE mode or LOCAL mode.",
+                "Cannot concatenate batches with mixed statuses. "
+                "All batches must be either in REMOTE status or LOCAL status.",
             )
 
-        # If all are in REMOTE mode, concatenate metadata
+        # If all are in REMOTE status, concatenate metadata
         if all(item.is_remote for item in data):
             all_shards = []
             max_global_step = 0
@@ -854,7 +849,7 @@ class DistributedBatchMemory(DistributedBatch):
             raise FrameworkError(
                 "FrameworkError",
                 "DistributedBatchMemoryError",
-                "Cannot access items in REMOTE mode. Call get_data() first to fetch data.",
+                "Cannot access items in REMOTE status. Call get_data() first to fetch data.",
             )
 
         if self.dataset is None:
@@ -892,11 +887,11 @@ class DistributedBatchMemory(DistributedBatch):
             raise FrameworkError(
                 "FrameworkError",
                 "DistributedBatchMemoryError",
-                "Cannot assign regular value to metadata-mode batch. "
+                "Cannot assign regular value to metadata-status batch. "
                 "Use union() with a DistributedBatchMemory object, or get_data() first.",
             )
 
-        # Local data mode: proceed with assignment
+        # Local data status: proceed with assignment
         if self.dataset:
             expected_total_size = self._get_total_size()
             if isinstance(value, torch.Tensor):
@@ -928,7 +923,7 @@ class DistributedBatchMemory(DistributedBatch):
             raise FrameworkError(
                 "FrameworkError",
                 "DistributedBatchMemoryError",
-                "Cannot delete items in REMOTE mode. Call get_data() first to fetch data.",
+                "Cannot delete items in REMOTE status. Call get_data() first to fetch data.",
             )
 
         if self.dataset is None:
@@ -955,16 +950,16 @@ class DistributedBatchMemory(DistributedBatch):
             )
 
     def __str__(self):
-        mode_name = self.mode.name
+        status_name = self.status.name
         total_size = self._get_total_size()
 
-        if self.mode == BatchMode.EMPTY:
-            return f"DistributedBatchMemory<mode={mode_name}, empty>"
+        if self.status == BatchStatus.EMPTY:
+            return f"DistributedBatchMemory<status={status_name}, empty>"
 
         if self.is_remote:
-            # Show metadata information for REMOTE mode
+            # Show metadata information for REMOTE status
             return (
-                f"DistributedBatchMemory<mode={mode_name}, "
+                f"DistributedBatchMemory<status={status_name}, "
                 f"size={total_size}, "
                 f"batch_id={self.metadata.batch_id}, "
                 f"num_shards={len(self.metadata.shards)}, "
@@ -972,7 +967,7 @@ class DistributedBatchMemory(DistributedBatch):
                 f"data_loaded={self.dataset is not None}>"
             )
 
-        # LOCAL mode: show data details
+        # LOCAL status: show data details
         keys = list(self.dataset.keys())
         shapes = {}
         for k, v in self.dataset.items():
@@ -983,7 +978,7 @@ class DistributedBatchMemory(DistributedBatch):
             else:
                 shapes[k] = f"scalar({type(v).__name__})"
         return (
-            f"DistributedBatchMemory<mode={mode_name}, "
+            f"DistributedBatchMemory<status={status_name}, "
             f"size={total_size}, keys={keys}, shapes={shapes}>"
         )
 
