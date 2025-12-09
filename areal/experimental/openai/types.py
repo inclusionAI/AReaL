@@ -18,15 +18,18 @@ class InteractionWithTokenLogpReward:
     """Internal structure to store completions/responses with their rewards."""
 
     # Common
-    model_response: ModelResponse
+    model_response: ModelResponse | None = None
     reward: float | None = None
     parent: InteractionWithTokenLogpReward | None = None
     chat_template_type: str = "hf"
     _cache: dict[str, torch.Tensor] | None = None
 
+    # Fields used for parent-child relationship resolving
+    messages: list[dict] = field(default_factory=list)
+    output_message_list: list[dict] | None = None
+
     # Completion fields (optional for response)
     completion: ChatCompletion | None = None
-    messages: list[dict] = field(default_factory=list)
 
     # Response fields (optional for completion)
     response: Response | None = None
@@ -45,27 +48,50 @@ class InteractionWithTokenLogpReward:
     def input_name_for_logging(self) -> str:
         return "messages" if self.is_completion else "input_data"
 
-    def get_parent_data_for_logging(self) -> str:
-        if self.parent is None:
-            return ""
+    @property
+    def current_data(self) -> list[dict] | str | ResponseInputParam:
         if self.is_completion:
-            return str(self.parent.messages)
+            return self.messages
         else:
-            return str(self.parent.input_data)
+            return self.input_data
 
-    def get_current_data_for_logging(self) -> str:
+    @property
+    def parent_data(self) -> list[dict] | str | ResponseInputParam | None:
+        if self.parent is None:
+            return None
+        return self.parent.current_data
+
+    @property
+    def interaction_id(self) -> str:
         if self.is_completion:
-            return str(self.messages)
+            return self.completion.id
         else:
-            return str(self.input_data)
+            return self.response.id
+
+    @property
+    def created_at(self) -> float:
+        if self.is_completion:
+            return float(self.completion.created)
+        else:
+            return float(self.response.created_at)
+
+    @property
+    def remaining_messages(self) -> list[dict]:
+        if self.parent is None:
+            return self.messages
+        assert self.parent.output_message_list is not None, (
+            "Parent output message is not set."
+        )
+        parent_len = len(self.parent.messages + self.parent.output_message_list)
+        return self.messages[parent_len:]
 
     def to_tensor_dict(self) -> dict[str, torch.Tensor]:
         if self._cache is not None:
             return self._cache
         resp = self.model_response
+        assert resp is not None, "Model response is not set."
         self.seq_tokens = seq = resp.input_tokens + resp.output_tokens
-        if self.parent:
-            assert self.chat_template_type == "concat"
+        if self.chat_template_type == "concat" and self.parent is not None:
             parent_res = self.parent.to_tensor_dict()
             parent_logprobs = parent_res["logprobs"].squeeze(0).tolist()
             parent_loss_mask = parent_res["loss_mask"].squeeze(0).tolist()
@@ -100,8 +126,8 @@ class InteractionWithTokenLogpReward:
                     f"Parent input token ids: {self.parent.model_response.input_tokens}\n"
                     f"Parent output token ids: {self.parent.model_response.output_tokens}\n"
                     f"Child input token ids: {resp.input_tokens}\n"
-                    f"Parent input {input_name}: {self.get_parent_data_for_logging()}\n"
-                    f"Child input {input_name}: {self.get_current_data_for_logging()}",
+                    f"Parent input {input_name}: {self.parent_data}\n"
+                    f"Child input {input_name}: {self.current_data}",
                 )
                 logprobs = [0.0] * resp.input_len + resp.output_logprobs
                 loss_mask = [0] * resp.input_len + [1] * resp.output_len

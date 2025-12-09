@@ -68,9 +68,11 @@ class MultiTurnMathAgent:
                 max_completion_tokens=self.max_tokens_per_turn,
             )
             completions.append(response)
-            content = response.choices[0].message.content
-            messages.append({"role": "assistant", "content": content})
-            reward = await self.async_reward_fn(result=content, answer=data["answer"])
+            message = response.choices[0].message
+            messages.append(message)
+            reward = await self.async_reward_fn(
+                result=message.content, answer=data["answer"]
+            )
             client.set_reward(response.id, reward)
             if reward == 1:
                 break
