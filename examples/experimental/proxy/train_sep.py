@@ -167,6 +167,9 @@ class GSM8kAgentWorkflow(AgentWorkflow):
                     )
                 )
             else:
+                # NOTE: running Python subprocess can be slow, use process pool instead
+                # Only use subprocess for agents implemented in other languages, like Typescript or Go
+                logger.info(f"Running command: {self.run_agent_cmd}")
                 process = await asyncio.create_subprocess_exec(
                     *shlex.split(self.run_agent_cmd),
                     env={**os.environ.copy(), **extra_envs},
@@ -180,8 +183,7 @@ class GSM8kAgentWorkflow(AgentWorkflow):
                 )
                 if process.returncode != 0:
                     raise RuntimeError(f"Subprocess Error:\n{stderr.decode()}")
-                else:
-                    logger.info(f"Subprocess Output:\n{stdout.decode()}")
+                # logger.info(f"Subprocess Output:\n{stdout.decode()}")
 
     async def arun_episode(self, task_id: str, data: dict):
         await asyncio.gather(
