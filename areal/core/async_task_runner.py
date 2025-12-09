@@ -234,18 +234,29 @@ class AsyncTaskRunner(Generic[T]):
         self.thread.start()
         self._loop_ready.wait()
 
-    def destroy(self):
+    def destroy(self, timeout: float = 30.0):
         """Shutdown the task runner and wait for thread cleanup.
 
         This method signals the background thread to exit and waits for
         it to complete. All pending tasks will be cancelled.
+
+        Parameters
+        ----------
+        timeout : float, optional
+            Maximum time in seconds to wait for thread to exit.
+            Default is 30.0 seconds.
         """
         self.exiting.set()
         self.paused.clear()
 
         self._signal_new_input()
         if self.thread is not None:
-            self.thread.join()
+            self.thread.join(timeout=timeout)
+            if self.thread.is_alive():
+                if self.logger:
+                    self.logger.warning(
+                        f"Background thread did not exit within {timeout}s timeout."
+                    )
 
     def register_shutdown_hook(self, hook: Callable[[], Awaitable[None]]) -> None:
         """Register an async cleanup function to be called during shutdown.
