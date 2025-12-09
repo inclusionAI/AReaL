@@ -1,0 +1,7 @@
+{
+    "transformer_layer_cls_to_wrap": "Qwen3MoeDecoderLayer",
+    "cpu_ram_efficient_loading": true,
+    "cpu_offload": {
+        "offload_params": true
+    }
+}
