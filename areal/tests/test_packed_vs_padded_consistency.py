@@ -9,6 +9,7 @@ from torch.testing import assert_close
 from areal.api.cli_args import TrainEngineConfig
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.platforms import current_platform
+from areal.tests.utils import get_model_path
 from areal.utils.data import concat_padded_tensors, tensor_container_to
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.network import find_free_ports
@@ -44,12 +45,12 @@ def mock_padded_llm_data():
     )
 
 
-QWEN3_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
-if not os.path.exists(QWEN3_PATH):
-    QWEN3_PATH = "Qwen/Qwen3-0.6B"
-QWEN25_PATH = "/storage/openpsi/models/Qwen__Qwen2.5-1.5B/"
-if not os.path.exists(QWEN25_PATH):
-    QWEN25_PATH = "Qwen/Qwen2.5-1.5B"
+QWEN3_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+)
+QWEN25_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen2.5-1.5B/", "Qwen/Qwen2.5-1.5B"
+)
 
 
 @pytest.mark.parametrize(
@@ -108,15 +109,15 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
         assert not dist.is_initialized()
 
 
-QWEN25_VL_PATH = "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct"
-if not os.path.exists(QWEN25_VL_PATH):
-    QWEN25_VL_PATH = "Qwen/Qwen2.5-VL-3B-Instruct"
-QWEN3_VL_PATH = "/storage/openpsi/models/Qwen3-VL-2B-Instruct"
-if not os.path.exists(QWEN3_VL_PATH):
-    QWEN3_VL_PATH = "Qwen/Qwen3-VL-2B-Instruct"
-GEMMA3_PATH = "/storage/openpsi/models/google__gemma-3-4b-it/"
-if not os.path.exists(GEMMA3_PATH):
-    GEMMA3_PATH = "google/gemma-3-4b-it"
+QWEN25_VL_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen2.5-VL-3B-Instruct", "Qwen/Qwen2.5-VL-3B-Instruct"
+)
+QWEN3_VL_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen3-VL-2B-Instruct", "Qwen/Qwen3-VL-2B-Instruct"
+)
+GEMMA3_PATH = get_model_path(
+    "/storage/openpsi/models/google__gemma-3-4b-it/", "google/gemma-3-4b-it"
+)
 
 
 def mock_padded_vlm_data(model_path):
