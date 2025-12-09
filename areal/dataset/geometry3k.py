@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 from typing import Any
 
@@ -5,7 +6,7 @@ from datasets import load_dataset
 from PIL import Image
 from PIL.Image import Image as ImageObject
 from torchvision import transforms
-import json
+
 
 def pad_to_square(img: Image.Image, fill=(0, 0, 0)) -> Image.Image:
     w, h = img.size

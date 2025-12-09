@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -5,7 +6,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
-import json
+
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig, vLLMConfig
@@ -71,7 +72,7 @@ class VLLMBackend:
             return HttpRequest(endpoint="/v1/chat/completions", payload=payload)
         else:
             payload["prompt"] = req.input_ids.copy()
-            return HttpRequest(endpoint="/v1/completions", payload=payload) 
+            return HttpRequest(endpoint="/v1/completions", payload=payload)
 
     def parse_generation_response(
         self, response: dict[str, Any]
@@ -98,13 +99,12 @@ class VLLMBackend:
                 output_logprobs=[],
                 stop_reason=stop_reason,
             )
-        
         return HttpGenerationResult(
             output_tokens=output_tokens,
             output_logprobs=output_logprobs,
             stop_reason=stop_reason,
         )
-    
+
     def build_disk_weight_update_requests(
         self, meta: WeightUpdateMeta, lora_initialized: bool
     ) -> WeightUpdateRequests:
