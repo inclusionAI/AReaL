@@ -69,6 +69,9 @@ class SessionData:
         self.start_time = start_time or time.time()
         self.end_time = end_time
         self.messages = messages or []
+        self.completed_event = asyncio.Event()
+        if completed:
+            self.completed_event.set()
 
     def export_interactions(
         self, discount: float, style: str
@@ -207,6 +210,7 @@ def build_app(
         if session_id not in state.session_cache:
             raise HTTPException(status_code=400, detail="Session not found")
         state.session_cache[session_id].completed = True
+        state.session_cache[session_id].completed_event.set()
         return {"message": "success"}
 
     @app.post(f"/v1/{{session_id}}/{RL_SET_REWARD_PATHNAME}")
@@ -408,10 +412,11 @@ class ProxyServer:
         self, session_id: str, ensure_completed: bool = True
     ) -> SessionData:
         if ensure_completed:
-            while (session_id not in self.session_cache) or (
-                not self.session_cache[session_id].completed
-            ):
+            # Wait for session to exist (should be quick, but handle race condition)
+            while session_id not in self.session_cache:
                 await asyncio.sleep(0.1)
+            # Wait for session to be completed using event (non-blocking, efficient)
+            await self.session_cache[session_id].completed_event.wait()
         return self.session_cache[session_id]
 
     async def get_results(
