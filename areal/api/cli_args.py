@@ -253,7 +253,10 @@ class GenerationHyperparameters:
                         f"Unsupported arg for openai format: `{k}` with value {current_value}"
                     )
                 continue
-            res[mapping.get(k, k)] = v
+            key = mapping.get(k, k)
+            if key in res:
+                logger.warning(f"Overriding key: {key} from {k} with value: {v}")
+            res[key] = v
 
         return res
 
