@@ -107,7 +107,7 @@ class AsyncRewardWrapper:
                 if cls._instance_counts[executor_key] <= 0:
                     if executor_key in cls._executors:
                         executor = cls._executors.pop(executor_key)
-                        executor.shutdown(wait=True)
+                        executor.shutdown(wait=False, cancel_futures=True)
                         logger.debug(
                             f"ProcessPoolExecutor with {executor_key} workers shut down"
                         )
