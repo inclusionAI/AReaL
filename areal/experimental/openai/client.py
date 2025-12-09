@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import uuid
 from collections.abc import Iterable
@@ -301,8 +302,11 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                     self.tool_call_parser,
                     response.stop_reason,
                 )
-        except Exception as e:
-            logger.warning(f"Failed to parse tool calls from output text: {e}")
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"Failed to parse tool calls from output text: {e}, output_text:\n"
+                f"{output_text}"
+            )
 
         # Create proper ChatCompletion object with all required fields
         output_message = ChatCompletionMessage(
@@ -558,8 +562,11 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                     engine_resp.stop_reason,
                     use_responses=True,
                 )
-        except Exception as e:
-            logger.warning(f"Failed to parse tool calls from output text: {e}")
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"Failed to parse tool calls from output text: {e}, output_text:\n"
+                f"{output_text}"
+            )
 
         # Extract reasoning tokens from output
         reasoning_token_count = self._count_reasoning_tokens(output_text)
