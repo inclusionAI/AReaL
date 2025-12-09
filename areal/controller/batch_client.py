@@ -37,13 +37,9 @@ class BatchDataClient:
     async def fetch_shard(
         self, session: aiohttp.ClientSession, shard: ShardMetadata
     ) -> dict[str, Any]:
-        """Fetch a logical shard (sub-range) from a physical shard."""
+        """Fetch a shard from a node."""
         url = f"http://{shard.node_addr}/data/{shard.shard_id}"
         params = {}
-        if shard.offset > 0:
-            params["offset"] = shard.offset
-        if shard.batch_size > 0:
-            params["batch_size"] = shard.batch_size
 
         try:
             async with session.get(
@@ -98,11 +94,10 @@ class BatchDataClient:
         session: aiohttp.ClientSession,
         node_addr: str,
         shard_id: str,
-        global_step: int,
         data: dict[str, Any],
     ) -> None:
         """Store a shard on a node."""
-        url = f"http://{node_addr}/data/{shard_id}?global_step={global_step}"
+        url = f"http://{node_addr}/data/{shard_id}"
 
         # Serialize using serialize_value to handle tensors, then encode with orjson
         serialized_data = serialize_value(data)
@@ -132,26 +127,28 @@ class BatchDataClient:
                 f"Error storing shard {shard_id} to {node_addr}: {e}"
             ) from e
 
-    async def clear_batches(self, node_addrs: set[str], global_step: int) -> None:
-        """Clear old data on multiple nodes."""
+    async def clear_batches(self, node_addrs: set[str], shard_ids: list[str]) -> None:
+        """Clear specific shards on multiple nodes."""
         connector = aiohttp.TCPConnector(limit=self.connection_limit)
         async with aiohttp.ClientSession(
             timeout=self.timeout, connector=connector
         ) as session:
             tasks = [
-                self._clear_node(session, node_addr, global_step)
+                self._clear_node(session, node_addr, shard_ids)
                 for node_addr in node_addrs
             ]
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _clear_node(
-        self, session: aiohttp.ClientSession, node_addr: str, global_step: int
+        self, session: aiohttp.ClientSession, node_addr: str, shard_ids: list[str]
     ) -> None:
-        """Clear old data on a single node."""
-        url = f"http://{node_addr}/data/clear?global_step={global_step}"
+        """Clear specific shards on a single node."""
+        url = f"http://{node_addr}/data/clear"
 
         try:
-            async with session.delete(url, timeout=self.timeout) as response:
+            async with session.delete(
+                url, json={"shard_ids": shard_ids}, timeout=self.timeout
+            ) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     logger.warning(

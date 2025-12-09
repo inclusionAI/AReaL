@@ -736,9 +736,11 @@ class TrainController:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
     # ==================== DISTRIBUTED BATCH RPC WRAPPERS ====================
-    def clear_batches(self, global_step: int):
-        """Clear all data with step less than global_step"""
+    def clear_batches(self, target: DistributedBatchMemory | list[str] | None):
+        """Clear specified shard data on workers."""
         server_addrs = {
             f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
         }
-        DistributedBatchMemory.clear(global_step, server_addrs)
+        if target is None:
+            return
+        DistributedBatchMemory.clear(target, server_addrs)

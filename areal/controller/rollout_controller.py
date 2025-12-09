@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -35,13 +36,13 @@ class _RemoteRolloutTaskInput:
     workflow: str
     workflow_kwargs: dict[str, Any]
     should_accept_fn: str
-    task_id: int | None = None
+    task_id: str | None = None
 
 
 @dataclass
 class _RemoteRolloutResult:
     trajectory: dict[str, Any] | DistributedBatchMemory
-    task_id: int | None = None
+    task_id: str | None = None
 
 
 class RolloutController:
@@ -295,6 +296,7 @@ class RolloutController:
                         raise_timeout=False,
                         http_timeout=self.config.request_timeout,
                         return_distributed_batch=True,
+                        task_id=task_id,
                     )
 
                 # TimeourError will be catched below
@@ -353,8 +355,8 @@ class RolloutController:
             workflow=workflow_str,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
-            # NOTE: For now we don't trace tasks at the controller level
-            task_id=None,
+            # Generate a UUID for tracing task lifecycle
+            task_id=uuid.uuid4().hex,
         )
 
         # Delegate to dispatcher
@@ -426,7 +428,7 @@ class RolloutController:
                         workflow=workflow_str,
                         workflow_kwargs=workflow_kwargs,
                         should_accept_fn=should_accept_fn,
-                        task_id=None,
+                        task_id=uuid.uuid4().hex,
                     )
 
         if not hasattr(self, "data_generator"):
@@ -545,9 +547,9 @@ class RolloutController:
         return self.dispatcher.runner
 
     # ==================== DISTRIBUTED BATCH RPC WRAPPERS ====================
-    def clear_batches(self, global_step: int):
-        """Clear all data with step less than global_step"""
+    def clear_batches(self, target: DistributedBatchMemory | list[str]):
+        """Clear shard data on workers."""
         server_addrs = {
             f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
         }
-        DistributedBatchMemory.clear(global_step, server_addrs)
+        DistributedBatchMemory.clear(target, server_addrs)

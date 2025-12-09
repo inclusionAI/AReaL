@@ -105,13 +105,7 @@ class DistributedBatchMemory(DistributedBatch):
 
     @property
     def is_local(self) -> bool:
-        """Check if data is available locally (no fetch needed).
-
-        Returns
-        -------
-        bool
-            True if batch is in LOCAL status
-        """
+        """Check if data is available locally (no fetch needed)."""
         return self.status == BatchStatus.LOCAL
 
     @property
@@ -268,8 +262,18 @@ class DistributedBatchMemory(DistributedBatch):
         return batches
 
     @staticmethod
+    def _infer_shard_size(shard: ShardMetadata) -> int:
+        """从 tensor 元数据推断 shard 大小（使用首维度）。"""
+        if not shard.fields:
+            return 0
+        first_meta = next(iter(shard.fields.values()))
+        if not first_meta.shape:
+            return 0
+        return first_meta.shape[0]
+
+    @classmethod
     def _group_shards_by_keys(
-        shards: list[ShardMetadata],
+        cls, shards: list[ShardMetadata]
     ) -> tuple[list[list[ShardMetadata]], int]:
         """Group shards by fields.keys() and calculate total batch size.
         Shards with identical keys (fields.keys()) are grouped together.
@@ -295,13 +299,10 @@ class DistributedBatchMemory(DistributedBatch):
                     f"Groups {i} and {j} have overlapping keys: {overlap}"
                 )
 
-        # Calculate total batch size for each group
         group_totals = [
-            sum(shard.batch_size for shard in group) for group in groups_list
+            sum(cls._infer_shard_size(shard) for shard in group)
+            for group in groups_list
         ]
-
-        # Validate: all groups should have the same total batch_size
-        # This ensures consistency across different field groups
         if len(group_totals) > 1:
             assert len(set(group_totals)) == 1, (
                 f"Different groups have inconsistent total batch_sizes: {group_totals}"
@@ -316,54 +317,29 @@ class DistributedBatchMemory(DistributedBatch):
         shard_group: list[ShardMetadata],
         dp_size: int,
     ) -> list[list[ShardMetadata]]:
-        """Chunk a single shard group across dp_size data parallel processes.
+        """Evenly split ``shard_group`` into ``dp_size`` contiguous parts."""
+        if dp_size <= 0:
+            raise FrameworkError(
+                "FrameworkError",
+                "DistributedBatchMemoryError",
+                "dp_size must be positive",
+            )
 
-        Splits shards in the group evenly across dp_size groups while preserving
-        sample ordering. A physical shard can be split into multiple logical
-        sub-shards using offset and batch_size to represent sub-ranges.
-        """
-        if not shard_group:
+        total = len(shard_group)
+        if total == 0:
             return [[] for _ in range(dp_size)]
 
-        # Calculate total batch size for this group
-        total = sum(shard.batch_size for shard in shard_group)
+        base = total // dp_size
+        remainder = total % dp_size
 
-        # Pre-calculate sample ranges for each dp group
-        part_size = (total + dp_size - 1) // dp_size
-        group_ranges = []
-        for i in range(dp_size):
-            start = i * part_size
-            end = min(start + part_size, total)
-            group_ranges.append((start, end))
-
-        # Distribute shards to groups based on sample ranges
-        dp_groups: list[list[ShardMetadata]] = [[] for _ in range(dp_size)]
-        current_sample_idx = 0
-
-        for shard in shard_group:
-            shard_start = current_sample_idx
-            shard_end = current_sample_idx + shard.batch_size
-            current_sample_idx = shard_end
-
-            # Find which dp groups this shard overlaps with
-            for dp_idx, (group_start, group_end) in enumerate(group_ranges):
-                overlap_start = max(shard_start, group_start)
-                overlap_end = min(shard_end, group_end)
-
-                if overlap_start < overlap_end:
-                    # Calculate offset within the original shard
-                    offset_in_shard = overlap_start - shard_start
-                    length = overlap_end - overlap_start
-
-                    sub_shard = ShardMetadata(
-                        node_id=shard.node_id,
-                        node_addr=shard.node_addr,
-                        shard_id=shard.shard_id,
-                        batch_size=length,
-                        offset=shard.offset + offset_in_shard,
-                        fields=shard.fields,
-                    )
-                    dp_groups[dp_idx].append(sub_shard)
+        dp_groups: list[list[ShardMetadata]] = []
+        start = 0
+        for idx in range(dp_size):
+            # 前 remainder 个分组多分一个
+            size = base + (1 if idx < remainder else 0)
+            end = start + size
+            dp_groups.append(shard_group[start:end])
+            start = end
 
         return dp_groups
 
@@ -400,25 +376,6 @@ class DistributedBatchMemory(DistributedBatch):
         # the merged batch_size should equal each group's batch_size (not sum)
         shards_per_dp_rank: list[list[ShardMetadata]] = [[] for _ in range(dp_size)]
 
-        # Calculate batch_size for each dp rank from the first field group
-        # (all field groups should have the same chunk sizes after chunking)
-        if chunked_per_dp:
-            batch_size_per_dp_rank = [
-                sum(shard.batch_size for shard in chunked_per_dp[0][dp_idx])
-                for dp_idx in range(dp_size)
-            ]
-
-            # Validate: all field groups should have the same chunk sizes for each dp rank
-            for group_idx, dp_chunks in enumerate(chunked_per_dp):
-                for dp_idx in range(dp_size):
-                    group_dp_size = sum(shard.batch_size for shard in dp_chunks[dp_idx])
-                    assert group_dp_size == batch_size_per_dp_rank[dp_idx], (
-                        f"Group {group_idx} dp_idx {dp_idx} has batch_size {group_dp_size}, "
-                        f"expected {batch_size_per_dp_rank[dp_idx]}"
-                    )
-        else:
-            batch_size_per_dp_rank = [0] * dp_size
-
         # Merge shards from all field groups for each dp rank
         for dp_chunks in chunked_per_dp:
             for dp_idx in range(dp_size):
@@ -429,8 +386,6 @@ class DistributedBatchMemory(DistributedBatch):
         for i in range(dp_size):
             new_metadata = BatchMetadata(
                 batch_id=f"{self.metadata.batch_id}_chunk_{i}",
-                global_step=self.metadata.global_step,
-                total_batch_size=batch_size_per_dp_rank[i],
                 shards=shards_per_dp_rank[i],
             )
             batches.append(self.__class__(dataset=None, metadata=new_metadata))
@@ -460,7 +415,7 @@ class DistributedBatchMemory(DistributedBatch):
         since we cannot determine sequence lengths without fetching the data.
         """
         # REMOTE status: fall back to simple chunking
-        # FFD requires sequence length information which is not available in metadata yet
+        # TODO: FFD requires sequence length information which is not available in metadata yet
         if self.is_remote:
             return self.chunk(dp_size)
 
@@ -547,16 +502,10 @@ class DistributedBatchMemory(DistributedBatch):
         """Merge two batches in metadata status by modifying self in-place."""
         # Combine shards from both batches
         all_shards = self.metadata.shards + other.metadata.shards
-        max_global_step = max(self.metadata.global_step, other.metadata.global_step)
-
-        # Calculate total_batch_size (validates different fields have same total)
-        _, total_batch_size = self._group_shards_by_keys(all_shards)
 
         # Update self.metadata directly
         self.metadata = BatchMetadata(
             batch_id=str(uuid.uuid4()),
-            global_step=max_global_step,
-            total_batch_size=total_batch_size,
             shards=all_shards,
         )
         self.dataset = None
@@ -583,10 +532,10 @@ class DistributedBatchMemory(DistributedBatch):
         self.metadata = None
 
     def _get_total_size(self) -> int:
-        """Get the total size of the dataset, supporting both tensor and scalar types."""
-        # Metadata status: return total_batch_size from metadata
+        """Get the total size of the dataset"""
         if self.metadata is not None:
-            return self.metadata.total_batch_size
+            _, total_size = self._group_shards_by_keys(self.metadata.shards)
+            return total_size
 
         # Local data status: calculate from dataset
         if not self.dataset:
@@ -756,20 +705,13 @@ class DistributedBatchMemory(DistributedBatch):
         # If all are in REMOTE status, concatenate metadata
         if all(item.is_remote for item in data):
             all_shards = []
-            max_global_step = 0
             for item in data:
                 all_shards.extend(item.metadata.shards)
-                max_global_step = max(max_global_step, item.metadata.global_step)
-
-            # Calculate total_batch_size (validates different fields have same total)
-            _, total_batch_size = cls._group_shards_by_keys(all_shards)
 
             return cls(
                 dataset=None,
                 metadata=BatchMetadata(
                     batch_id=str(uuid.uuid4()),
-                    global_step=max_global_step,
-                    total_batch_size=total_batch_size,
                     shards=all_shards,
                 ),
             )
@@ -945,7 +887,6 @@ class DistributedBatchMemory(DistributedBatch):
                 f"size={total_size}, "
                 f"batch_id={self.metadata.batch_id}, "
                 f"num_shards={len(self.metadata.shards)}, "
-                f"global_step={self.metadata.global_step}, "
                 f"data_loaded={self.dataset is not None}>"
             )
 

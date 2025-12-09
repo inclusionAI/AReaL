@@ -26,15 +26,12 @@ class ShardMetadata:
     node_id: str
     node_addr: str
     shard_id: str
-    batch_size: int
-    offset: int = 0
     fields: dict[str, TensorMetadata] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         return (
             f"ShardMetadata(node_id={self.node_id}, node_addr={self.node_addr}, "
-            f"shard_id={self.shard_id}, offset={self.offset}, "
-            f"batch_size={self.batch_size}, fields={list(self.fields.keys())})"
+            f"shard_id={self.shard_id}, fields={list(self.fields.keys())})"
         )
 
 
@@ -43,14 +40,11 @@ class BatchMetadata:
     """Metadata for a distributed batch sharded across multiple nodes."""
 
     batch_id: str
-    global_step: int
-    total_batch_size: int
     shards: list[ShardMetadata] = field(default_factory=list)
 
     def __repr__(self) -> str:
         return (
-            f"BatchMetadata(batch_id={self.batch_id}, global_step={self.global_step}, "
-            f"total_batch_size={self.total_batch_size}, num_shards={len(self.shards)}, "
+            f"BatchMetadata(batch_id={self.batch_id}, num_shards={len(self.shards)}, "
             f"shards={self.shards})"
         )
 

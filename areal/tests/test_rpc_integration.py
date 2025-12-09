@@ -161,7 +161,7 @@ class TestSyncRPCServer:
 
         # Store data
         resp = client.put(
-            f"/data/{shard_id}?global_step=10",
+            f"/data/{shard_id}",
             data=data_bytes,
             content_type="application/octet-stream",
         )
@@ -171,8 +171,8 @@ class TestSyncRPCServer:
         assert resp_data["status"] == "ok"
         assert resp_data["shard_id"] == shard_id
 
-    def test_store_batch_data_default_step(self, client):
-        """Test storing batch data with default global_step."""
+    def test_store_batch_data_simple(self, client):
+        """Test storing batch data without query parameters."""
         shard_id = "test-shard-2"
         data = {"input_ids": torch.tensor([[1, 2]])}
 
@@ -193,7 +193,7 @@ class TestSyncRPCServer:
         data_bytes = orjson.dumps(serialize_value(original_data))
 
         store_resp = client.put(
-            f"/data/{shard_id}?global_step=5",
+            f"/data/{shard_id}",
             data=data_bytes,
             content_type="application/octet-stream",
         )
@@ -229,7 +229,7 @@ class TestSyncRPCServer:
         # Store data
         data_bytes = orjson.dumps(serialize_value(original_data))
 
-        client.put(f"/data/{shard_id}?global_step=1", data=data_bytes)
+        client.put(f"/data/{shard_id}", data=data_bytes)
 
         # Retrieve with offset=2 (should get last 2 samples)
         resp = client.get(f"/data/{shard_id}?offset=2")
@@ -251,7 +251,7 @@ class TestSyncRPCServer:
         # Store data
         data_bytes = orjson.dumps(serialize_value(original_data))
 
-        client.put(f"/data/{shard_id}?global_step=1", data=data_bytes)
+        client.put(f"/data/{shard_id}", data=data_bytes)
 
         # Retrieve with batch_size=2 (should get first 2 samples)
         resp = client.get(f"/data/{shard_id}?batch_size=2")
@@ -274,7 +274,7 @@ class TestSyncRPCServer:
         # Store data
         data_bytes = orjson.dumps(serialize_value(original_data))
 
-        client.put(f"/data/{shard_id}?global_step=1", data=data_bytes)
+        client.put(f"/data/{shard_id}", data=data_bytes)
 
         # Retrieve with offset=1 and batch_size=2 (should get samples at indices 1-2)
         resp = client.get(f"/data/{shard_id}?offset=1&batch_size=2")
@@ -287,28 +287,26 @@ class TestSyncRPCServer:
         assert torch.equal(retrieved_data["labels"], original_data["labels"][1:3])
 
     def test_clear_batch_data(self, client):
-        """Test clearing old batch data."""
-        # Store multiple shards with different global_steps
-        shards = [
-            ("shard-1", 5),
-            ("shard-2", 10),
-            ("shard-3", 15),
-            ("shard-4", 20),
-        ]
+        """Test clearing batch data by shard_ids."""
+        # Store multiple shards
+        shard_ids = ["shard-1", "shard-2", "shard-3", "shard-4"]
 
         data = {"input_ids": torch.tensor([[1, 2]])}
         data_bytes = orjson.dumps(serialize_value(data))
 
-        for shard_id, step in shards:
+        for shard_id in shard_ids:
             resp = client.put(
-                f"/data/{shard_id}?global_step={step}",
+                f"/data/{shard_id}",
                 data=data_bytes,
                 content_type="application/octet-stream",
             )
             assert resp.status_code == 200
 
-        # Clear shards with step < 15 (should remove shard-1 and shard-2)
-        clear_resp = client.delete("/data/clear?global_step=15")
+        # Clear shard-1 and shard-2
+        clear_resp = client.delete(
+            "/data/clear",
+            json={"shard_ids": ["shard-1", "shard-2"]},
+        )
         assert clear_resp.status_code == 200
         clear_data = clear_resp.get_json()
         assert clear_data["status"] == "ok"
@@ -322,18 +320,18 @@ class TestSyncRPCServer:
         assert client.get("/data/shard-3").status_code == 200
         assert client.get("/data/shard-4").status_code == 200
 
-    def test_clear_batch_data_default_step(self, client):
-        """Test clearing batch data with default global_step."""
+    def test_clear_batch_data_empty_list(self, client):
+        """Test clearing batch data with empty shard_ids list."""
         shard_id = "shard-clear-test"
         data = {"input_ids": torch.tensor([[1, 2]])}
 
         data_bytes = orjson.dumps(serialize_value(data))
 
-        # Store with step 10
-        client.put(f"/data/{shard_id}?global_step=10", data=data_bytes)
+        # Store shard
+        client.put(f"/data/{shard_id}", data=data_bytes)
 
-        # Clear with default step (0) - should not clear anything with step >= 0
-        clear_resp = client.delete("/data/clear")
+        # Clear with empty list - should not clear anything
+        clear_resp = client.delete("/data/clear", json={"shard_ids": []})
         assert clear_resp.status_code == 200
         clear_data = clear_resp.get_json()
         assert clear_data["cleared_count"] == 0
@@ -361,7 +359,7 @@ class TestSyncRPCServer:
         data_bytes = orjson.dumps(serialize_value(data))
 
         client.put(
-            f"/data/{shard_id}?global_step=1",
+            f"/data/{shard_id}",
             data=data_bytes,
             content_type="application/octet-stream",
         )
@@ -383,8 +381,8 @@ class TestSyncRPCServer:
 
         data_bytes2 = orjson.dumps(serialize_value(data2))
 
-        client.put("/data/stats-shard-1?global_step=1", data=data_bytes1)
-        client.put("/data/stats-shard-2?global_step=1", data=data_bytes2)
+        client.put("/data/stats-shard-1", data=data_bytes1)
+        client.put("/data/stats-shard-2", data=data_bytes2)
 
         stats_resp = client.get("/data/stats")
         assert stats_resp.status_code == 200

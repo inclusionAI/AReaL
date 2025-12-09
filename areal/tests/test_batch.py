@@ -1396,14 +1396,11 @@ class TestDistributedBatchMemoryMetadata:
         """Test creating batch from metadata."""
         metadata = BatchMetadata(
             batch_id="test-batch",
-            global_step=5,
-            total_batch_size=10,
             shards=[
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
                     shard_id="shard-0",
-                    batch_size=10,
                     fields={
                         "input_ids": TensorMetadata(
                             shape=(10, 5),
@@ -1422,29 +1419,33 @@ class TestDistributedBatchMemoryMetadata:
         """Test concatenating batches with metadata."""
         metadata1 = BatchMetadata(
             batch_id="batch-1",
-            global_step=1,
-            total_batch_size=5,
             shards=[
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
                     shard_id="shard-0",
-                    batch_size=5,
-                    fields={},
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(5, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
                 ),
             ],
         )
         metadata2 = BatchMetadata(
             batch_id="batch-2",
-            global_step=2,
-            total_batch_size=3,
             shards=[
                 ShardMetadata(
                     node_id="node-1",
                     node_addr="localhost:8766",
                     shard_id="shard-1",
-                    batch_size=3,
-                    fields={},
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(3, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
                 ),
             ],
         )
@@ -1454,16 +1455,13 @@ class TestDistributedBatchMemoryMetadata:
         result = DistributedBatchMemory.concat([batch1, batch2])
 
         assert result.metadata is not None
-        assert result.metadata.total_batch_size == 8
+        assert len(result) == 8  # 5 + 3
         assert len(result.metadata.shards) == 2
-        assert result.metadata.global_step == 2  # max of input steps
 
     def test_serialization_metadata(self):
         """Test serialization and deserialization with metadata."""
         metadata = BatchMetadata(
             batch_id="test",
-            global_step=1,
-            total_batch_size=10,
             shards=[],
         )
         batch = DistributedBatchMemory.from_metadata(metadata)
@@ -1481,14 +1479,11 @@ class TestDistributedBatchMemoryMetadata:
         """Test chunking with metadata mode."""
         metadata = BatchMetadata(
             batch_id="test-batch",
-            global_step=5,
-            total_batch_size=100,
             shards=[
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
                     shard_id="shard-0",
-                    batch_size=50,
                     fields={
                         "input_ids": TensorMetadata(
                             shape=(50, 128), dtype="torch.int64"
@@ -1499,7 +1494,6 @@ class TestDistributedBatchMemoryMetadata:
                     node_id="node-1",
                     node_addr="localhost:8766",
                     shard_id="shard-1",
-                    batch_size=50,
                     fields={
                         "input_ids": TensorMetadata(
                             shape=(50, 128), dtype="torch.int64"
@@ -1517,36 +1511,40 @@ class TestDistributedBatchMemoryMetadata:
         assert all(chunk.metadata is not None for chunk in chunks)
         assert all(chunk.dataset is None for chunk in chunks)
         # Total size should be preserved
-        total_size = sum(chunk.metadata.total_batch_size for chunk in chunks)
+        total_size = sum(len(chunk) for chunk in chunks)
         assert total_size == 100
 
     def test_union_metadata(self):
         """Test union with metadata mode."""
         metadata1 = BatchMetadata(
             batch_id="batch-1",
-            global_step=1,
-            total_batch_size=30,
             shards=[
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
                     shard_id="shard-0",
-                    batch_size=30,
-                    fields={},
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(30, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
                 ),
             ],
         )
         metadata2 = BatchMetadata(
             batch_id="batch-2",
-            global_step=2,
-            total_batch_size=20,
             shards=[
                 ShardMetadata(
                     node_id="node-1",
                     node_addr="localhost:8766",
                     shard_id="shard-1",
-                    batch_size=20,
-                    fields={},
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(20, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
                 ),
             ],
         )
@@ -1556,18 +1554,27 @@ class TestDistributedBatchMemoryMetadata:
         result = batch1.union_(batch2)
 
         assert result.metadata is not None
-        assert result.metadata.total_batch_size == 50
+        assert len(result) == 50  # 30 + 20
         assert len(result.metadata.shards) == 2
-        assert result.metadata.global_step == 2  # max of input steps
         assert result.dataset is None
 
     def test_get_total_size_metadata(self):
         """Test _get_total_size with metadata mode."""
         metadata = BatchMetadata(
             batch_id="test",
-            global_step=1,
-            total_batch_size=123,
-            shards=[],
+            shards=[
+                ShardMetadata(
+                    node_id="node-0",
+                    node_addr="localhost:8765",
+                    shard_id="shard-0",
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(123, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
+                ),
+            ],
         )
         batch = DistributedBatchMemory.from_metadata(metadata)
 
@@ -1600,7 +1607,6 @@ class TestBatchMetadata:
             node_id="node-0",
             node_addr="localhost:8765",
             shard_id="shard-0",
-            batch_size=32,
             fields={
                 "input_ids": TensorMetadata(
                     shape=(32, 128),
@@ -1609,29 +1615,36 @@ class TestBatchMetadata:
             },
         )
         assert meta.node_id == "node-0"
-        assert meta.batch_size == 32
+        # Batch size can be inferred from first field's shape[0]
+        assert meta.fields["input_ids"].shape[0] == 32
         assert "input_ids" in meta.fields
 
     def test_batch_metadata_node_addrs(self):
         """Test getting all node addresses from batch metadata."""
         metadata = BatchMetadata(
             batch_id="test",
-            global_step=1,
-            total_batch_size=64,
             shards=[
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="192.168.1.10:8765",
                     shard_id="shard-0",
-                    batch_size=32,
-                    fields={},
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(32, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
                 ),
                 ShardMetadata(
                     node_id="node-1",
                     node_addr="192.168.1.11:8765",
                     shard_id="shard-1",
-                    batch_size=32,
-                    fields={},
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(32, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
                 ),
             ],
         )
@@ -1671,8 +1684,7 @@ class TestRPCDistributedBatchReturn:
         # Should return DistributedBatchMemory with metadata
         assert isinstance(batch, DistributedBatchMemory)
         assert batch.metadata is not None
-        assert batch.metadata.global_step == 42
-        assert batch.metadata.total_batch_size == 10
+        assert len(batch) == 10
         assert len(batch.metadata.shards) == 1
         assert "logits" in batch.metadata.shards[0].fields
 
@@ -1702,8 +1714,7 @@ class TestRPCDistributedBatchReturn:
         # Should return DistributedBatchMemory with metadata
         assert isinstance(batch, DistributedBatchMemory)
         assert batch.metadata is not None
-        assert batch.metadata.global_step == 100
-        assert batch.metadata.total_batch_size == 8
+        assert len(batch) == 8
         assert "logits" in batch.metadata.shards[0].fields
         assert "values" in batch.metadata.shards[0].fields
 
@@ -1751,9 +1762,19 @@ class TestDistributedBatchMemoryExtended:
         """Test __len__ with metadata."""
         metadata = BatchMetadata(
             batch_id="test",
-            global_step=1,
-            total_batch_size=42,
-            shards=[],
+            shards=[
+                ShardMetadata(
+                    node_id="node-0",
+                    node_addr="localhost:8765",
+                    shard_id="shard-0",
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(42, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
+                ),
+            ],
         )
         batch = DistributedBatchMemory.from_metadata(metadata)
 
@@ -1763,15 +1784,25 @@ class TestDistributedBatchMemoryExtended:
         """Test __str__ with metadata."""
         metadata = BatchMetadata(
             batch_id="test",
-            global_step=1,
-            total_batch_size=10,
-            shards=[],
+            shards=[
+                ShardMetadata(
+                    node_id="node-0",
+                    node_addr="localhost:8765",
+                    shard_id="shard-0",
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(10, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
+                ),
+            ],
         )
         batch = DistributedBatchMemory.from_metadata(metadata)
 
         s = str(batch)
         assert "DistributedBatchMemory" in s
-        assert "batch_id=test" in s
+        assert "test" in s
 
     def test_get_total_size_tensor(self):
         """Test _get_total_size with tensor."""
@@ -1812,9 +1843,19 @@ class TestDistributedBatchMemoryExtended:
         """Test chunk_by_ffd falls back to chunk in metadata mode."""
         metadata = BatchMetadata(
             batch_id="test",
-            global_step=1,
-            total_batch_size=10,
-            shards=[],
+            shards=[
+                ShardMetadata(
+                    node_id="node-0",
+                    node_addr="localhost:8765",
+                    shard_id="shard-0",
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(10, 10),
+                            dtype="torch.int64",
+                        ),
+                    },
+                ),
+            ],
         )
         batch = DistributedBatchMemory.from_metadata(metadata)
 
@@ -1827,9 +1868,19 @@ class TestDistributedBatchMemoryExtended:
         batch1 = DistributedBatchMemory.from_dict({"input_ids": torch.tensor([[1, 2]])})
         metadata = BatchMetadata(
             batch_id="test",
-            global_step=1,
-            total_batch_size=1,
-            shards=[],
+            shards=[
+                ShardMetadata(
+                    node_id="node-0",
+                    node_addr="localhost:8765",
+                    shard_id="shard-0",
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(1, 2),
+                            dtype="torch.int64",
+                        ),
+                    },
+                ),
+            ],
         )
         batch2 = DistributedBatchMemory.from_metadata(metadata)
 
@@ -1843,14 +1894,12 @@ class TestDistributedBatchMemoryExtended:
                 node_id="node-0",
                 node_addr="localhost:8000",
                 shard_id="shard-0",
-                batch_size=5,
                 fields={"input_ids": TensorMetadata(shape=(5, 10), dtype="int64")},
             ),
             ShardMetadata(
                 node_id="node-1",
                 node_addr="localhost:8001",
                 shard_id="shard-1",
-                batch_size=5,
                 fields={"input_ids": TensorMetadata(shape=(5, 10), dtype="int64")},
             ),
         ]
@@ -1867,14 +1916,12 @@ class TestDistributedBatchMemoryExtended:
                 node_id="node-0",
                 node_addr="localhost:8000",
                 shard_id="shard-0",
-                batch_size=5,
                 fields={"input_ids": TensorMetadata(shape=(5, 10), dtype="int64")},
             ),
             ShardMetadata(
                 node_id="node-1",
                 node_addr="localhost:8001",
                 shard_id="shard-1",
-                batch_size=5,
                 fields={"labels": TensorMetadata(shape=(5,), dtype="int64")},
             ),
         ]
@@ -1892,7 +1939,6 @@ class TestDistributedBatchMemoryExtended:
                 node_id="node-0",
                 node_addr="localhost:8000",
                 shard_id="shard-0",
-                batch_size=5,
                 fields={
                     "input_ids": TensorMetadata(shape=(5, 10), dtype="int64"),
                     "labels": TensorMetadata(shape=(5,), dtype="int64"),
@@ -1902,7 +1948,6 @@ class TestDistributedBatchMemoryExtended:
                 node_id="node-1",
                 node_addr="localhost:8001",
                 shard_id="shard-1",
-                batch_size=5,
                 fields={
                     "input_ids": TensorMetadata(shape=(5, 10), dtype="int64"),
                     "attention_mask": TensorMetadata(shape=(5, 10), dtype="int64"),
@@ -1920,24 +1965,20 @@ class TestDistributedBatchMemoryExtended:
                 node_id="node-0",
                 node_addr="localhost:8000",
                 shard_id="shard-0",
-                batch_size=4,
-                offset=0,
                 fields={"input_ids": TensorMetadata(shape=(4, 10), dtype="int64")},
             ),
             ShardMetadata(
                 node_id="node-1",
                 node_addr="localhost:8001",
                 shard_id="shard-1",
-                batch_size=4,
-                offset=0,
                 fields={"input_ids": TensorMetadata(shape=(4, 10), dtype="int64")},
             ),
         ]
 
         chunks = DistributedBatchMemory._chunk_shard_group(shards, dp_size=2)
         assert len(chunks) == 2
-        # Each chunk should have at least one sub-shard
-        assert sum(len(chunk) for chunk in chunks) > 0
+        # Each chunk should have at least one shard
+        assert sum(len(chunk) for chunk in chunks) >= 2
 
     def test_concat_empty_list_error(self):
         """Test concat with empty list raises error."""
@@ -1957,9 +1998,19 @@ class TestDistributedBatchMemoryExtended:
         batch1 = DistributedBatchMemory.from_dict({"input_ids": torch.tensor([[1, 2]])})
         metadata = BatchMetadata(
             batch_id="test",
-            global_step=1,
-            total_batch_size=1,
-            shards=[],
+            shards=[
+                ShardMetadata(
+                    node_id="node-0",
+                    node_addr="localhost:8765",
+                    shard_id="shard-0",
+                    fields={
+                        "input_ids": TensorMetadata(
+                            shape=(1, 2),
+                            dtype="torch.int64",
+                        ),
+                    },
+                ),
+            ],
         )
         batch2 = DistributedBatchMemory.from_metadata(metadata)
 
@@ -1982,7 +2033,6 @@ class TestDistributedBatchMemoryExtended:
                     node_id=f"node-{i % 4}",
                     node_addr=f"localhost:{8765 + (i % 4)}",
                     shard_id=f"shard-{i}",
-                    batch_size=5,
                     fields={
                         "input_ids": TensorMetadata(
                             shape=(5, 128), dtype="torch.int64"
@@ -2001,7 +2051,6 @@ class TestDistributedBatchMemoryExtended:
                     node_id=f"node-{i % 4}",
                     node_addr=f"localhost:{8765 + (i % 4)}",
                     shard_id=f"shard-{i}",
-                    batch_size=20,
                     fields={
                         "prox_logp": TensorMetadata(shape=(20,), dtype="torch.float32"),
                     },
@@ -2010,8 +2059,6 @@ class TestDistributedBatchMemoryExtended:
 
         metadata = BatchMetadata(
             batch_id="test-complex-batch",
-            global_step=10,
-            total_batch_size=80,  # Both groups sum to 80
             shards=shards,
         )
         batch = DistributedBatchMemory.from_metadata(metadata)
@@ -2026,7 +2073,7 @@ class TestDistributedBatchMemoryExtended:
         assert all(chunk.dataset is None for chunk in chunks)
 
         # Verify total batch_size is preserved across chunks
-        total_size = sum(chunk.metadata.total_batch_size for chunk in chunks)
+        total_size = sum(len(chunk) for chunk in chunks)
         assert total_size == 80
 
         # Verify each chunk has shards from both key groups
@@ -2074,8 +2121,8 @@ class TestDistributedBatchMemoryExtended:
 
             # Verify batch_size distribution: each chunk should have ~20 samples
             # (80 total / 4 dp processes = 20 per chunk)
-            assert chunk.metadata.total_batch_size == 20, (
-                f"Chunk {chunk_idx} should have batch_size=20, got {chunk.metadata.total_batch_size}"
+            assert len(chunk) == 20, (
+                f"Chunk {chunk_idx} should have batch_size=20, got {len(chunk)}"
             )
 
         # Verify all original shards are present (by shard_id)
