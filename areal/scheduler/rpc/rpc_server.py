@@ -449,7 +449,7 @@ def call_engine_method():
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
-# ==================== Batch Reletad Functions ====================
+# ==================== Batch Related Functions ====================
 def _ensure_tensor_on_cpu(value: Any) -> Any:
     """Recursively ensure all tensors in a value are on CPU."""
     if isinstance(value, torch.Tensor):
@@ -468,7 +468,7 @@ def _ensure_tensor_on_cpu(value: Any) -> Any:
 
 def _is_batch_metadata(data: Any) -> bool:
     """Check if data is a DistributedBatchMemory metadata wrapper."""
-    return isinstance(data, dict) and data.get("__distributed_batch_metadata__")
+    return isinstance(data, dict) and bool(data.get("__distributed_batch_metadata__"))
 
 
 def _get_batch_metadata(data: Any) -> BatchMetadata | None:
@@ -501,8 +501,8 @@ def _extract_input_batch_metadata(data: Any) -> list[BatchMetadata]:
 async def _aresolve_batch_metadata(data: Any) -> Any:
     """Resolve DistributedBatchMemory metadata to actual data.
 
-    Recursively traverses data structures (same traversal logic as _extract_input_batch_metadata)
-    and replaces DistributedBatchMemory metadata with actual data fetched from remote nodes.
+    Recursively traverses data structures and replaces DistributedBatchMemory
+    metadata with actual data fetched from remote nodes.
     """
     if isinstance(data, dict):
         metadata = _get_batch_metadata(data)
@@ -570,8 +570,6 @@ def _create_matched_batch_metadata(
         Current node identifier
     node_addr : str
         Current node address
-    task_id : str | None
-        Optional task ID prefix (not used, kept for compatibility)
 
     Returns
     -------
@@ -581,7 +579,6 @@ def _create_matched_batch_metadata(
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
     # Group input shards by task_id and calculate offsets
-    # Process shards in order to maintain correct offset calculation
     task_id_to_shards: dict[str, list[ShardMetadata]] = {}
     task_id_to_size: dict[str, int] = {}
     task_id_offsets: dict[str, int] = {}
@@ -597,7 +594,6 @@ def _create_matched_batch_metadata(
         task_id_to_shards[task_id].append(shard)
         shard_size = shard.tensor_metadata.shape[0]
         # Only count the first shard of each task_id for offset calculation
-        # (assuming all shards with same task_id have same batch_size)
         if len(task_id_to_shards[task_id]) == 1:
             task_id_to_size[task_id] = shard_size
             current_offset += shard_size
@@ -611,8 +607,6 @@ def _create_matched_batch_metadata(
     output_shards = []
 
     for task_id, input_shards in task_id_to_shards.items():
-        # Calculate total batch size for this task_id group
-        # Use the size from the first shard (all shards with same task_id should have same size)
         total_size = task_id_to_size[task_id]
         offset = task_id_offsets[task_id]
 
@@ -620,13 +614,8 @@ def _create_matched_batch_metadata(
         for result_key in result_keys:
             tensor = data_to_store[result_key]
 
-            # Slice the tensor for this task_id group
             sliced_tensor = tensor[offset : offset + total_size].clone().cpu()
-
-            # Create shard_id with same task_id but new key
             shard_id = ShardId(task_id=task_id, key=result_key)
-
-            # Store shard data (single tensor, not dict)
             with _batch_storage_lock:
                 _batch_storage[shard_id] = sliced_tensor
                 serialized_data = serialize_value(sliced_tensor)
@@ -638,14 +627,12 @@ def _create_matched_batch_metadata(
                 f"batch_size={total_size}, node_addr={node_addr})"
             )
 
-            # Create tensor metadata
             tensor_metadata = TensorMetadata(
                 shape=tuple(sliced_tensor.shape),
                 dtype=str(sliced_tensor.dtype),
                 device=str(sliced_tensor.device),
             )
 
-            # Create shard metadata
             output_shard = ShardMetadata(
                 node_id=node_id,
                 node_addr=node_addr,
@@ -654,7 +641,6 @@ def _create_matched_batch_metadata(
             )
             output_shards.append(output_shard)
 
-    # Create batch metadata with matched structure
     batch_metadata = BatchMetadata(
         batch_id=str(uuid.uuid4()),
         shards=output_shards,
@@ -723,11 +709,9 @@ def _handle_distributed_batch_return(
     node_addr = f"{_server_host}:{_server_port}"
 
     # If input_batch_metadata is not provided, create a fake one
-    # to reuse _create_matched_batch_metadata logic
     if input_batch_metadata is None or not input_batch_metadata.shards:
         task_id = task_id or str(uuid.uuid4())
 
-        # Find the first tensor to determine batch size
         first_tensor = next(
             (v for v in data_to_store.values() if isinstance(v, torch.Tensor)), None
         )
@@ -735,9 +719,6 @@ def _handle_distributed_batch_return(
             return result
 
         batch_size = first_tensor.shape[0] if len(first_tensor.shape) > 0 else 1
-
-        # Create a single fake shard with dummy key
-        # This will be used to create one task_id group
         fake_shard_id = ShardId(task_id=task_id, key="__dummy_input__")
         fake_tensor_metadata = TensorMetadata(
             shape=(batch_size,),
@@ -820,7 +801,6 @@ def retrieve_batch_data(shard_id: str):
 
             data = _batch_storage[shard_id_obj]
 
-        # Serialize using serialize_value to handle tensors, then encode with orjson
         serialized_data = serialize_value(data)
         data_bytes = orjson.dumps(serialized_data)
 
@@ -853,11 +833,9 @@ def clear_batch_data():
                 jsonify({"status": "error", "message": "'shard_ids' must be a list"}),
                 400,
             )
-        # Convert string shard_ids to ShardId objects
-        shard_id_objs = []
-        for sid in shard_ids:
-            if isinstance(sid, str):
-                shard_id_objs.append(ShardId.from_string(sid))
+        shard_id_objs = [
+            ShardId.from_string(sid) for sid in shard_ids if isinstance(sid, str)
+        ]
 
         if not shard_id_objs:
             return jsonify({"status": "ok", "cleared_count": 0})

@@ -92,7 +92,7 @@ class BatchDataClient:
         raise last_exc
 
     async def fetch_shards(self, metadata: BatchMetadata) -> list[dict[str, Any]]:
-        """Fetch all shards for a batch and return raw shard data.
+        """Fetch all shards for a batch.
 
         Shards with the same task_id are grouped together into a single dict.
         Returns a list of dicts, where each dict contains all data for one task_id.
@@ -110,7 +110,6 @@ class BatchDataClient:
             tasks = [self.fetch_shard(session, shard) for shard in metadata.shards]
             shard_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Group shards by task_id and merge their data into single dicts
             task_data_map: dict[str, dict[str, Any]] = defaultdict(dict)
             failures: list[str] = []
 
@@ -141,7 +140,6 @@ class BatchDataClient:
         """Store a shard on a node."""
         url = f"http://{node_addr}/data/{shard_id}"
 
-        # Serialize using serialize_value to handle tensors, then encode with orjson
         serialized_data = serialize_value(data)
         data_bytes = orjson.dumps(serialized_data)
 
@@ -192,8 +190,6 @@ class BatchDataClient:
         """Clear specific shards on a single node."""
         url = f"http://{node_addr}/data/clear"
 
-        # Convert ShardId objects to strings for JSON serialization
-        # ShardId.__str__() returns "task_id:key" format
         shard_id_strings = [str(shard_id) for shard_id in shard_ids]
 
         try:

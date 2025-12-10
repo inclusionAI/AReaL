@@ -213,9 +213,8 @@ def main(args):
                     tokenizer=tokenizer,
                 )
 
-            if global_step > config.rollout.max_head_offpolicyness:
-                with stats_tracker.record_timing("clear_batches"):
-                    actor.clear_batches(batch)
+            with stats_tracker.record_timing("clear_batches"):
+                actor.clear_batches(batch)
 
             # Upload statistics to the logger (e.g., wandb)
             stats_logger.commit(epoch, step, global_step, actor.export_stats())

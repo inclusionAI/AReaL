@@ -12,6 +12,7 @@ from torch import Tensor
 from areal.api.controller_api import DistributedBatch
 from areal.controller.batch_metadata import (
     BatchMetadata,
+    ShardId,
     ShardMetadata,
 )
 
@@ -264,18 +265,7 @@ class DistributedBatchMemory(DistributedBatch):
     def _group_shards_by_task_id(
         self, shards: list[ShardMetadata]
     ) -> dict[str, list[ShardMetadata]]:
-        """Group shards by task_id.
-
-        Parameters
-        ----------
-        shards : list[ShardMetadata]
-            List of shard metadata to group
-
-        Returns
-        -------
-        dict[str, list[ShardMetadata]]
-            Dictionary mapping task_id to list of shards with that task_id
-        """
+        """Group shards by task_id."""
         task_id_to_shards: dict[str, list[ShardMetadata]] = defaultdict(list)
         for shard in shards:
             task_id = shard.shard_id.task_id
@@ -283,7 +273,10 @@ class DistributedBatchMemory(DistributedBatch):
         return task_id_to_shards
 
     def _chunk_metadata(self, dp_size: int) -> list[DistributedBatchMemory]:
-        """Split metadata across data parallel processes."""
+        """Split metadata across data parallel processes.
+
+        Groups shards by task_id and distributes task groups across dp_size processes.
+        """
 
         if self.metadata is None:
             raise FrameworkError(
@@ -299,15 +292,10 @@ class DistributedBatchMemory(DistributedBatch):
                 "dp_size must be positive",
             )
 
-        # Step 1: Group shards by task_id
-        # Each task_id group contains all shards (with different keys) for that task_id
         task_id_to_shards = self._group_shards_by_task_id(self.metadata.shards)
-
-        # Convert to list of (task_id, shards) tuples for distribution
         task_groups = list(task_id_to_shards.items())
 
         if not task_groups:
-            # No shards, return empty batches with metadata
             batches = []
             for i in range(dp_size):
                 new_metadata = BatchMetadata(
@@ -317,25 +305,15 @@ class DistributedBatchMemory(DistributedBatch):
                 batches.append(self.__class__(dataset=None, metadata=new_metadata))
             return batches
 
-        # Step 2: Distribute task_id groups across dp_size processes
-        # Balance by number of task_ids per rank, not by shard count
-        # This ensures each DistributedBatchMemory gets roughly the same number of task_ids
-
-        # Initialize shard lists and task_id counts for each dp rank
+        # Distribute task_id groups across dp_size processes
         shards_per_dp_rank: list[list[ShardMetadata]] = [[] for _ in range(dp_size)]
         task_id_counts_per_rank = [0] * dp_size
 
-        # Distribute task groups: assign each complete task_id group to the rank
-        # with the fewest task_ids so far
         for task_id, shards in task_groups:
-            # Find the rank with the fewest task_ids
             target_rank = min(range(dp_size), key=lambda i: task_id_counts_per_rank[i])
-            # Assign all shards of this task_id to the target rank
             shards_per_dp_rank[target_rank].extend(shards)
             task_id_counts_per_rank[target_rank] += 1
 
-        # Step 3: Create chunked batches
-        # Always create metadata for all batches, even if shards list is empty
         batches = []
         for i in range(dp_size):
             new_metadata = BatchMetadata(
@@ -454,10 +432,7 @@ class DistributedBatchMemory(DistributedBatch):
 
     def _union_metadata(self, other: DistributedBatchMemory) -> None:
         """Merge two batches in metadata status by modifying self in-place."""
-        # Combine shards from both batches
         all_shards = self.metadata.shards + other.metadata.shards
-
-        # Update self.metadata directly
         self.metadata = BatchMetadata(
             batch_id=str(uuid.uuid4()),
             shards=all_shards,
@@ -466,7 +441,6 @@ class DistributedBatchMemory(DistributedBatch):
 
     def _union_local_data(self, other: DistributedBatchMemory) -> None:
         """Merge two batches in local data status by modifying self in-place."""
-        # Merge data directly into self.dataset
         for k, v in other.dataset.items():
             if k in self.dataset:
                 if isinstance(self.dataset[k], torch.Tensor) and isinstance(
@@ -486,11 +460,10 @@ class DistributedBatchMemory(DistributedBatch):
         self.metadata = None
 
     def _get_total_size(self) -> int:
-        """Get the total size of the dataset"""
+        """Get the total size of the dataset."""
         if self.metadata is not None:
             if not self.metadata.shards:
                 return 0
-            # Group shards by task_id
             task_id_to_shards = self._group_shards_by_task_id(self.metadata.shards)
 
             total_size = 0
@@ -504,7 +477,6 @@ class DistributedBatchMemory(DistributedBatch):
 
             return total_size
 
-        # Local data status: calculate from dataset
         if not self.dataset:
             return 0
 
@@ -514,7 +486,6 @@ class DistributedBatchMemory(DistributedBatch):
         elif isinstance(first_value, list):
             return len(first_value)
         else:
-            # For scalar values, assume it's a single sample
             return 1
 
     def _merge_shards(self, shard_data_list: list[dict[str, Any]]) -> dict[str, Any]:
@@ -522,7 +493,6 @@ class DistributedBatchMemory(DistributedBatch):
         if not shard_data_list:
             return {}
 
-        # Check if all shards have the same keys
         all_keys = set()
         for shard_data in shard_data_list:
             all_keys.update(shard_data.keys())
@@ -541,7 +511,10 @@ class DistributedBatchMemory(DistributedBatch):
         shard_data_list: list[dict[str, Any]],
         all_keys: set[str],
     ) -> dict[str, Any]:
-        """Merge shards that may have different keys."""
+        """Merge shards that may have different keys.
+
+        Handles padding for tensors with different sequence lengths.
+        """
         result = {}
 
         for key in sorted(all_keys):
@@ -604,8 +577,6 @@ class DistributedBatchMemory(DistributedBatch):
         if self.metadata is not None:
             client = self.get_client()
 
-            # NOTE: get_data() is synchronous and cannot be called from async context.
-            # Use asyncio.run() to fetch data in a dedicated event loop.
             async def _fetch_shards():
                 shard_data_list = await client.fetch_shards(self.metadata)
                 return self._merge_shards(shard_data_list)
@@ -645,21 +616,9 @@ class DistributedBatchMemory(DistributedBatch):
 
     @classmethod
     def concat(cls, data: list[DistributedBatchMemory]) -> DistributedBatchMemory:
-        """Concatenate multiple DistributedBatchMemory objects
-
-        Parameters
-        ----------
-        data : list[DistributedBatchMemory]
-            List of DistributedBatchMemory objects to concatenate
-
-        Returns
-        -------
-        DistributedBatchMemory
-            Single concatenated DistributedBatchMemory object
-        """
+        """Concatenate multiple DistributedBatchMemory objects."""
         assert data is not None and len(data) != 0
 
-        # Check if we have mixed statuses (some REMOTE, some LOCAL)
         has_metadata = [item.is_remote for item in data]
         if not all(has_metadata) and any(has_metadata):
             raise FrameworkError(
@@ -669,7 +628,6 @@ class DistributedBatchMemory(DistributedBatch):
                 "All batches must be either in REMOTE status or LOCAL status.",
             )
 
-        # If all are in REMOTE status, concatenate metadata
         if all(item.is_remote for item in data):
             all_shards = []
             for item in data:
@@ -683,12 +641,10 @@ class DistributedBatchMemory(DistributedBatch):
                 ),
             )
 
-        # Concatenate local data
         datasets = [k.dataset for k in data]
         if not datasets:
             merged_data = {}
         else:
-            # Verify all datasets have the same keys
             all_keys = set()
             for dataset in datasets:
                 all_keys.update(dataset.keys())
@@ -703,27 +659,44 @@ class DistributedBatchMemory(DistributedBatch):
                     f"Found key sets: {[sorted(ks) for ks in key_sets]}",
                 )
 
-            # All datasets have the same keys, use concat_padded_tensors
             merged_data = concat_padded_tensors(datasets)
 
         return cls(dataset=merged_data, metadata=None)
 
     @classmethod
-    async def aclear(cls, global_step: int, node_addrs: set[str] | None = None):
+    async def aclear(
+        cls,
+        target: DistributedBatchMemory | list[str],
+        node_addrs: set[str],
+    ):
         """Clear old batch data from distributed nodes."""
-        if node_addrs is None or len(node_addrs) == 0:
+        if not node_addrs:
             return
 
         client = cls.get_client()
-        await client.clear_batches(node_addrs, global_step)
+
+        # Extract shard_ids from target
+        if isinstance(target, DistributedBatchMemory):
+            if target.metadata is None or not target.metadata.shards:
+                return
+            shard_ids = [shard.shard_id for shard in target.metadata.shards]
+        elif isinstance(target, list):
+            shard_ids = [ShardId.from_string(s) for s in target]
+        else:
+            raise TypeError(
+                f"target must be DistributedBatchMemory or list[str], got {type(target)}"
+            )
+
+        await client.clear_batches(node_addrs, shard_ids)
 
     @classmethod
-    def clear(cls, global_step: int, node_addrs: set[str] | None = None):
+    def clear(
+        cls,
+        target: DistributedBatchMemory | list[str],
+        node_addrs: set[str],
+    ):
         """Synchronous version of clear()."""
-        if node_addrs is None or len(node_addrs) == 0:
-            return
-
-        asyncio.run(cls.aclear(global_step, node_addrs))
+        asyncio.run(cls.aclear(target, node_addrs))
 
     def __getstate__(self):
         return {
@@ -767,8 +740,6 @@ class DistributedBatchMemory(DistributedBatch):
                 "FrameworkError", "DistributedBatchMemoryError", "key must be str"
             )
 
-        # Special handling for DistributedBatchMemory values
-        # The key is expected to match the field key in value's metadata (set via result_key)
         if isinstance(value, DistributedBatchMemory):
             # Merge using in-place union
             self.union_(value)
@@ -782,7 +753,6 @@ class DistributedBatchMemory(DistributedBatch):
                 "Use union() with a DistributedBatchMemory object, or get_data() first.",
             )
 
-        # Local data status: proceed with assignment
         if self.dataset:
             expected_total_size = self._get_total_size()
             if isinstance(value, torch.Tensor):
@@ -800,16 +770,12 @@ class DistributedBatchMemory(DistributedBatch):
                         f"The batch size of the list does not match. Expected {expected_total_size}, actual {len(value)}",
                     )
 
-        # Ensure dataset exists
         if self.dataset is None:
             self.dataset = {}
         self.dataset[key] = value
 
     def __delitem__(self, key):
-        """Support two deletion methods:
-        - int index: delete sample at specified position
-        - str key: delete entire attribute
-        """
+        """Delete item by int index or str key."""
         if self.is_remote:
             raise FrameworkError(
                 "FrameworkError",
@@ -825,12 +791,10 @@ class DistributedBatchMemory(DistributedBatch):
             )
 
         if isinstance(key, int):
-            # Convert to list format for deletion
             list_dataset = convert_dict_to_list(self.dataset)
             del list_dataset[key]
             self.dataset = convert_list_to_dict(list_dataset)
         elif isinstance(key, str):
-            # Delete entire attribute directly
             if key in self.dataset:
                 del self.dataset[key]
         else:
@@ -848,7 +812,6 @@ class DistributedBatchMemory(DistributedBatch):
             return f"DistributedBatchMemory<status={status_name}, empty>"
 
         if self.is_remote:
-            # Show metadata information for REMOTE status
             return (
                 f"DistributedBatchMemory<status={status_name}, "
                 f"size={total_size}, "
@@ -857,7 +820,6 @@ class DistributedBatchMemory(DistributedBatch):
                 f"data_loaded={self.dataset is not None}>"
             )
 
-        # LOCAL status: show data details
         keys = list(self.dataset.keys())
         shapes = {}
         for k, v in self.dataset.items():
