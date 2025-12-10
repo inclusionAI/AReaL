@@ -22,10 +22,21 @@ class BatchDataClient:
     """HTTP client for fetching distributed batch data."""
 
     def __init__(
-        self, timeout: float = 300.0, connection_limit: int = DEFAULT_CONNECTION_LIMIT
+        self,
+        timeout: float = 300.0,
+        connection_limit: int = DEFAULT_CONNECTION_LIMIT,
+        connect_timeout: float | None = None,
+        read_timeout: float | None = None,
+        retries: int = 2,
+        backoff_factor: float = 0.5,
     ):
-        self.timeout = aiohttp.ClientTimeout(total=timeout)
+        # Split timeout so we can surface slow connects vs slow reads.
+        self.timeout = aiohttp.ClientTimeout(
+            total=timeout, connect=connect_timeout, sock_read=read_timeout
+        )
         self.connection_limit = connection_limit
+        self.retries = retries
+        self.backoff_factor = backoff_factor
 
     async def fetch_shard(
         self, session: aiohttp.ClientSession, shard: ShardMetadata
@@ -34,38 +45,51 @@ class BatchDataClient:
         url = f"http://{shard.node_addr}/data/{shard.shard_id}"
         params = {}
 
-        try:
-            async with session.get(
-                url, params=params, timeout=self.timeout
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise RuntimeError(
-                        f"Failed to fetch shard {shard.shard_id} from {shard.node_addr}: "
-                        f"HTTP {response.status} - {error_text}"
+        last_exc: Exception | None = None
+        for attempt in range(self.retries + 1):
+            try:
+                async with session.get(
+                    url, params=params, timeout=self.timeout
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        raise RuntimeError(
+                            f"Failed to fetch shard {shard.shard_id} from {shard.node_addr}: "
+                            f"HTTP {response.status} - {error_text}"
+                        )
+
+                    data_bytes = await response.read()
+                    serialized_data = orjson.loads(data_bytes)
+                    data = deserialize_value(serialized_data)
+
+                    assert isinstance(data, torch.Tensor)
+                    result = {shard.shard_id.key: data}
+
+                    logger.info(
+                        f"Fetched shard {shard.shard_id} from {shard.node_addr} "
+                        f"({len(data_bytes)} bytes)"
                     )
+                    return result
 
-                data_bytes = await response.read()
-                serialized_data = orjson.loads(data_bytes)
-                data = deserialize_value(serialized_data)
-
-                assert isinstance(data, torch.Tensor)
-                result = {shard.shard_id.key: data}
-
-                logger.debug(
-                    f"Fetched shard {shard.shard_id} from {shard.node_addr} "
-                    f"({len(data_bytes)} bytes)"
+            except asyncio.TimeoutError:
+                last_exc = RuntimeError(
+                    f"Timeout fetching shard {shard.shard_id} from {shard.node_addr}"
                 )
-                return result
+            except Exception as e:
+                last_exc = RuntimeError(
+                    f"Error fetching shard {shard.shard_id} from {shard.node_addr}: {e}"
+                )
 
-        except asyncio.TimeoutError as e:
-            raise RuntimeError(
-                f"Timeout fetching shard {shard.shard_id} from {shard.node_addr}"
-            ) from e
-        except Exception as e:
-            raise RuntimeError(
-                f"Error fetching shard {shard.shard_id} from {shard.node_addr}: {e}"
-            ) from e
+            if attempt < self.retries:
+                delay = self.backoff_factor * (2**attempt)
+                logger.warning(
+                    f"Retrying shard {shard.shard_id} from {shard.node_addr} after attempt "
+                    f"{attempt + 1}/{self.retries + 1} failed: {last_exc}; sleep {delay}s"
+                )
+                await asyncio.sleep(delay)
+
+        assert last_exc is not None
+        raise last_exc
 
     async def fetch_shards(self, metadata: BatchMetadata) -> list[dict[str, Any]]:
         """Fetch all shards for a batch and return raw shard data.
@@ -84,14 +108,26 @@ class BatchDataClient:
                 f"Fetching {len(metadata.shards)} shards for batch {metadata.batch_id}"
             )
             tasks = [self.fetch_shard(session, shard) for shard in metadata.shards]
-            shard_data_list = await asyncio.gather(*tasks)
+            shard_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Group shards by task_id and merge their data into single dicts
             task_data_map: dict[str, dict[str, Any]] = defaultdict(dict)
+            failures: list[str] = []
 
-            for shard, shard_data in zip(metadata.shards, shard_data_list):
+            for shard, shard_result in zip(metadata.shards, shard_results):
+                if isinstance(shard_result, Exception):
+                    failures.append(
+                        f"{shard.shard_id}@{shard.node_addr}: {shard_result}"
+                    )
+                    continue
+
                 task_id = shard.shard_id.task_id
-                task_data_map[task_id].update(shard_data)
+                task_data_map[task_id].update(shard_result)
+
+            if failures:
+                raise RuntimeError(
+                    "Failed to fetch shards: " + "; ".join(sorted(failures))
+                )
 
             return list(task_data_map.values())
 
