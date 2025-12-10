@@ -18,10 +18,12 @@ import requests
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
+from transformers import PreTrainedTokenizerFast
 
 from openai.types.chat import ChatCompletion, CompletionCreateParams
 from openai.types.responses import Response, ResponseCreateParams
 
+from areal.api.engine_api import InferenceEngine
 from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.client import ArealOpenAI
 from areal.utils.logging import getLogger
@@ -336,8 +338,12 @@ class ProxyServer:
         self,
         port: int | None = None,
         *,
-        client: ArealOpenAI | None = None,
         name: str = "proxy server",
+        client: ArealOpenAI | None = None,
+        rollout: InferenceEngine | None = None,
+        tokenizer: PreTrainedTokenizerFast | None = None,
+        tool_call_parser: str = "qwen25",
+        chat_template_type: str = "hf",
         session_cache: dict[str, SessionData] | None = None,
         buffer_size: int | None = None,  # buffer size for session ids queue
         limit_active_tasks: bool = True,
@@ -345,6 +351,14 @@ class ProxyServer:
         uvicorn_log_level: int = logging.WARNING,
     ):
         self.port = port if port is not None else find_free_ports(1)[0]
+        if client is None:
+            if rollout is None or tokenizer is None:
+                raise ValueError(
+                    "rollout and tokenizer are required if client is not provided"
+                )
+            client = self._create_client(
+                rollout, tokenizer, tool_call_parser, chat_template_type
+            )
         self.client = client
         self.name = name
         self.session_cache = session_cache if session_cache is not None else {}
@@ -372,6 +386,20 @@ class ProxyServer:
     @property
     def local_addr(self) -> str:
         return f"http://{self._localhost}:{self.port}"
+
+    def _create_client(
+        self,
+        rollout: InferenceEngine,
+        tokenizer: PreTrainedTokenizerFast,
+        tool_call_parser: str,
+        chat_template_type: str,
+    ) -> ArealOpenAI:
+        return ArealOpenAI(
+            engine=rollout,
+            tokenizer=tokenizer,
+            tool_call_parser=tool_call_parser,
+            chat_template_type=chat_template_type,
+        )
 
     def check_health(self, timeout: int = 20) -> bool:
         try:

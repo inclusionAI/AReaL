@@ -190,6 +190,7 @@ async def run_and_submit(data: dict):
     await run_and_submit_rewards(func=run_agent_return_reward, data=data)
 
 
+# Compatible to be run in subprocess mode
 if __name__ == "__main__":
     import json
     import sys

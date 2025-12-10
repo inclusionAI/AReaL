@@ -11,7 +11,6 @@ from areal.api.cli_args import GenerationHyperparameters, PPOConfig, load_expr_c
 from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
 from areal.dataset import get_custom_dataset
-from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.proxy import (
     ProxyServer,
     ProxySession,
@@ -55,7 +54,7 @@ class ProxyWorkflow(RolloutWorkflow):
         agent_module_path: str,
         agent_run_args: dict | None = None,
         rollout_stat_scope: str = "rollout",
-        export_style: str = "individual",
+        export_style: str = "concat",
         dump_dir: str | None = None,
     ):
         self.proxy_server = proxy_server
@@ -83,7 +82,7 @@ class ProxyWorkflow(RolloutWorkflow):
         async with ProxySession(base_url=self.base_url, task_id=task_id) as session:
             extra_envs = {
                 "OPENAI_BASE_URL": session.session_url,
-                "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
+                "OPENAI_API_KEY": "dummy",  # os.environ["OPENAI_API_KEY"],
                 "AREAL_SESSION_ID": session.session_id,
                 "AREAL_TASK_ID": task_id,
             }
@@ -120,12 +119,13 @@ class ProxyWorkflow(RolloutWorkflow):
 class ProxyPPOConfig(PPOConfig):
     tool_call_parser: str = field(
         default="qwen25",
-        metadata={"help": "Tool call parser that used by ArealOpenAI client."},
+        metadata={"help": "Tool call parser that used by ProxyServer."},
     )
     export_style: str = field(
-        default="individual",
+        default="concat",
         metadata={
-            "help": "Style for exporting completion results from the proxy server."
+            "help": "Style for exporting completion results from the proxy server.",
+            "choices": ["individual", "concat"],
         },
     )
     agent_module_path: str | None = field(
@@ -164,48 +164,41 @@ def main(args):
         cpu_count = os.cpu_count() or 64
         num_processes = config.rollout.max_concurrent_rollouts or cpu_count
 
-        client = ArealOpenAI(
-            engine=trainer.rollout,
-            tokenizer=tokenizer,
-            tool_call_parser=config.tool_call_parser,
-            chat_template_type=chat_template_type,
-        )
-        proxy_server = ProxyServer(client=client, name="rollout proxy server")
-        proxy_server.start(wait_until_ready=True)
-        workflow = ProxyWorkflow(
-            proxy_server=proxy_server,
-            gconfig=config.gconfig,
-            base_url=f"{proxy_server.public_addr}/v1",
-            max_concurrent_processes=num_processes // world_size,
-            agent_module_path=config.agent_module_path,
-            agent_run_args=config.agent_run_args,
-            rollout_stat_scope="rollout",
-            export_style=config.export_style,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
-        )
+        def _get_server_and_workflow(rollout: InferenceEngine, is_eval: bool = False):
+            name = "train" if not is_eval else "eval"
+            temperature = 0.6 if is_eval else 1.0
+            rollout_stat_scope = "rollout" if not is_eval else "eval-rollout"
+            dump_dir = "generated" if not is_eval else "generated-eval"
 
-        eval_client = ArealOpenAI(
-            engine=trainer.eval_rollout,
-            tokenizer=tokenizer,
-            tool_call_parser=config.tool_call_parser,
-            chat_template_type=chat_template_type,
+            server = ProxyServer(
+                rollout=rollout,
+                tokenizer=tokenizer,
+                tool_call_parser=config.tool_call_parser,
+                chat_template_type=chat_template_type,
+                name=f"{name} proxy server",
+            )
+            server.start(wait_until_ready=True)
+            workflow = ProxyWorkflow(
+                proxy_server=server,
+                gconfig=config.gconfig.new(temperature=temperature),
+                base_url=f"{server.public_addr}/v1",
+                max_concurrent_processes=num_processes // world_size,
+                agent_module_path=config.agent_module_path,
+                agent_run_args=config.agent_run_args,
+                rollout_stat_scope=rollout_stat_scope,
+                export_style=config.export_style,
+                dump_dir=os.path.join(
+                    StatsLogger.get_log_path(config.stats_logger),
+                    dump_dir,
+                ),
+            )
+            return server, workflow
+
+        proxy_server, workflow = _get_server_and_workflow(
+            trainer.rollout, is_eval=False
         )
-        eval_proxy_server = ProxyServer(client=eval_client, name="eval proxy server")
-        eval_proxy_server.start(wait_until_ready=True)
-        eval_workflow = ProxyWorkflow(
-            proxy_server=eval_proxy_server,
-            gconfig=config.gconfig.new(temperature=0.6),
-            base_url=f"{eval_proxy_server.public_addr}/v1",
-            max_concurrent_processes=num_processes // world_size,
-            agent_module_path=config.agent_module_path,
-            agent_run_args=config.agent_run_args,
-            rollout_stat_scope="eval-rollout",
-            export_style=config.export_style,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-            ),
+        eval_proxy_server, eval_workflow = _get_server_and_workflow(
+            trainer.eval_rollout, is_eval=True
         )
 
         trainer.train(workflow, eval_workflow)

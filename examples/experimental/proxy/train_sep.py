@@ -41,7 +41,7 @@ class ProxyWorkflow(RolloutWorkflow):
         self,
         proxy_server: ProxyServer,
         rollout_stat_scope: str = "rollout",
-        export_style: str = "individual",
+        export_style: str = "concat",
         dump_dir: str | None = None,
     ):
         self.proxy_server = proxy_server
@@ -151,7 +151,7 @@ class GSM8kAgentWorkflow(AgentWorkflow):
         async with ProxySession(base_url=self.base_url, task_id=task_id) as session:
             extra_envs = {
                 "OPENAI_BASE_URL": session.session_url,
-                "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
+                "OPENAI_API_KEY": "dummy",  # os.environ["OPENAI_API_KEY"],
                 "AREAL_SESSION_ID": session.session_id,
                 "AREAL_TASK_ID": task_id,
             }
@@ -212,9 +212,16 @@ async def prepare_batch(
 
 @dataclass
 class ProxyPPOConfig(PPOConfig):
+    tool_call_parser: str = field(
+        default="qwen25",
+        metadata={"help": "Tool call parser that used by ProxyServer."},
+    )
     export_style: str = field(
-        default="individual",
-        metadata={"help": "Export style for the proxy server."},
+        default="concat",
+        metadata={
+            "help": "Export style for the proxy server.",
+            "choices": ["individual", "concat"],
+        },
     )
     process_mode: str = field(
         default="process_pool",
@@ -265,6 +272,11 @@ def main(args):
         rank = trainer.actor.data_parallel_rank
         world_size = trainer.actor.data_parallel_world_size
         chat_template_type = "hf" if config.export_style == "individual" else "concat"
+        cpu_count = os.cpu_count() or 64
+        num_processes = config.rollout.max_concurrent_rollouts or cpu_count
+        if config.process_mode == "subprocess":
+            # divide by 4 to avoid overloading the CPU, adjust based on your needs
+            num_processes = min(cpu_count, num_processes) // 4
 
         # Agent loop for training and eval
         train_finished = False
@@ -294,98 +306,61 @@ def main(args):
                     f"rank {rank}, {global_step} rollout steps completed for {name} agent"
                 )
 
-        # Prepare train proxy server, agent and workflow
-        client = ArealOpenAI(
-            engine=trainer.rollout,
-            tokenizer=tokenizer,
-            tool_call_parser="qwen25",
-            chat_template_type=chat_template_type,
-        )
-        proxy_server = ProxyServer(client=client)
-        proxy_server.start(wait_until_ready=True)
+        def _get_server_workflow_and_agent_thread(
+            rollout: InferenceEngine, dataset: Dataset, is_eval: bool = False
+        ):
+            # Prepare proxy server, workflow and agent thread
+            name = "train" if not is_eval else "eval"
+            temperature = 0.6 if is_eval else 1.0
+            rollout_stat_scope = "rollout" if not is_eval else "eval-rollout"
+            dump_dir = "generated" if not is_eval else "generated-eval"
 
-        cpu_count = os.cpu_count() or 64
-        num_processes = config.rollout.max_concurrent_rollouts or cpu_count
-        if config.process_mode == "subprocess":
-            # divide by 4 to avoid overloading the CPU, adjust based on your needs
-            num_processes = min(cpu_count, num_processes) // 4
-
-        agent_train_dataloader = create_dataloader(
-            train_dataset,
-            rank=rank,
-            world_size=world_size,
-            dataset_config=config.train_dataset,
-        )
-        agent_workflow = GSM8kAgentWorkflow(
-            gconfig=config.gconfig,
-            base_url=f"{proxy_server.public_addr}/v1",
-            max_concurrent_processes=num_processes // world_size,
-            agent_module_path=config.agent_module_path,
-            run_agent_cmd=config.run_agent_cmd,
-            agent_run_args=config.agent_run_args,
-            process_mode=config.process_mode,
-        )
-
-        agent_thread = threading.Thread(
-            target=asyncio.run,
-            args=(run_agent(agent_train_dataloader, agent_workflow, name="train"),),
-        )
-        agent_thread.start()
-
-        workflow = ProxyWorkflow(
-            proxy_server=proxy_server,
-            rollout_stat_scope="rollout",
-            export_style=config.export_style,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
-        )
-
-        # Prepare eval proxy server, agent and workflow
-        eval_client = ArealOpenAI(
-            engine=trainer.eval_rollout,
-            tokenizer=tokenizer,
-            tool_call_parser="qwen25",
-            chat_template_type=chat_template_type,
-        )
-        eval_proxy_server = ProxyServer(client=eval_client)
-        eval_proxy_server.start(wait_until_ready=True)
-
-        eval_agent_train_dataloader = create_dataloader(
-            valid_dataset,
-            rank=rank,
-            world_size=world_size,
-            dataset_config=config.valid_dataset,
-        )
-        eval_agent_workflow = GSM8kAgentWorkflow(
-            gconfig=config.gconfig.new(temperature=0.6),
-            base_url=f"{eval_proxy_server.public_addr}/v1",
-            max_concurrent_processes=num_processes // world_size,
-            agent_module_path=config.agent_module_path,
-            run_agent_cmd=config.run_agent_cmd,
-            agent_run_args=config.agent_run_args,
-            process_mode=config.process_mode,
-        )
-
-        eval_agent_thread = threading.Thread(
-            target=asyncio.run,
-            args=(
-                run_agent(
-                    eval_agent_train_dataloader, eval_agent_workflow, name="eval"
+            server = ProxyServer(
+                rollout=rollout,
+                tokenizer=tokenizer,
+                tool_call_parser=config.tool_call_parser,
+                chat_template_type=chat_template_type,
+                name=f"{name} proxy server",
+            )
+            server.start(wait_until_ready=True)
+            workflow = ProxyWorkflow(
+                proxy_server=server,
+                rollout_stat_scope=rollout_stat_scope,
+                export_style=config.export_style,
+                dump_dir=os.path.join(
+                    StatsLogger.get_log_path(config.stats_logger), dump_dir
                 ),
-            ),
-        )
-        eval_agent_thread.start()
+            )
+            agent_dataloader = create_dataloader(
+                dataset,
+                rank=rank,
+                world_size=world_size,
+                dataset_config=config.train_dataset,
+            )
+            agent_workflow = GSM8kAgentWorkflow(
+                gconfig=config.gconfig.new(temperature=temperature),
+                base_url=f"{server.public_addr}/v1",
+                max_concurrent_processes=num_processes // world_size,
+                agent_module_path=config.agent_module_path,
+                run_agent_cmd=config.run_agent_cmd,
+                agent_run_args=config.agent_run_args,
+                process_mode=config.process_mode,
+            )
+            agent_thread = threading.Thread(
+                target=asyncio.run,
+                args=(run_agent(agent_dataloader, agent_workflow, name=name),),
+            )
+            agent_thread.start()
+            return server, workflow, agent_thread
 
-        eval_workflow = ProxyWorkflow(
-            proxy_server=eval_proxy_server,
-            rollout_stat_scope="eval-rollout",
-            export_style=config.export_style,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-            ),
+        proxy_server, workflow, agent_thread = _get_server_workflow_and_agent_thread(
+            trainer.rollout, train_dataset, is_eval=False
         )
-
+        eval_proxy_server, eval_workflow, eval_agent_thread = (
+            _get_server_workflow_and_agent_thread(
+                trainer.eval_rollout, valid_dataset, is_eval=True
+            )
+        )
         # Start training and eval loop
         trainer.train(workflow, eval_workflow)
 

@@ -159,43 +159,10 @@ async def run_and_submit(data: dict):
     await run_and_submit_rewards(func=run_agent_return_reward, data=data)
 
 
+# Compatible to be run in subprocess mode
 if __name__ == "__main__":
     import json
     import sys
 
     data = json.loads(sys.stdin.readline())
     asyncio.run(run_and_submit(data))
-
-
-# async def main():
-#     """Main function to run the Python programming assistant"""
-
-#     print("Python Programming Assistant started!")
-#     print("Type 'quit' to exit the program\n")
-
-#     while True:
-#         try:
-#             user_input = input("User: ").strip()
-
-#             if user_input.lower() in ["quit", "exit"]:
-#                 print("Goodbye!")
-#                 break
-
-#             if not user_input:
-#                 continue
-
-#             result = await run_agent(
-#                 {"messages": [{"role": "user", "content": user_input}]}
-#             )
-#             print(f"\nAssistant: {result.final_output}\n")
-#             print("-" * 50)
-
-#         except KeyboardInterrupt:
-#             print("\n\nProgram interrupted by user")
-#             break
-#         except Exception as e:
-#             print(f"\nError: {str(e)}")
-
-
-# if __name__ == "__main__":
-#     asyncio.run(main())
