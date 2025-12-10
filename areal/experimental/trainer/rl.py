@@ -164,6 +164,8 @@ class PPOTrainer:
         workflow: RolloutWorkflow,
         eval_workflow: RolloutWorkflow | None = None,
         dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        total_epochs: int | None = None,
+        granularity: int | None = None,
     ):
         config = self.config
         start_step = (
@@ -172,7 +174,10 @@ class PPOTrainer:
             else 0
         )
 
-        total_epochs = config.total_train_epochs
+        if total_epochs is None:
+            total_epochs = config.total_train_epochs
+        if total_epochs <= 0:
+            raise ValueError(f"Total epochs must be positive: {total_epochs}")
         steps_per_epoch = len(self.train_dataloader)
         max_steps = total_epochs * steps_per_epoch
 
@@ -198,7 +203,7 @@ class PPOTrainer:
             ):
                 batch = self.actor.prepare_batch(
                     self.train_dataloader,
-                    granularity=self.config.actor.group_size,
+                    granularity=granularity or self.config.actor.group_size,
                     workflow=workflow,
                     should_accept_fn=dynamic_filter_fn,
                 )

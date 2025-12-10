@@ -20,7 +20,7 @@ model:
   trial_name: ${trial_name}
   path: Qwen/Qwen3-1.7B
   init_from_scratch: false
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 4096

@@ -1,5 +1,4 @@
 import asyncio
-import os
 from unittest.mock import Mock
 
 import pytest
@@ -18,6 +17,7 @@ from areal.controller import RolloutController
 from areal.controller.batch import DistributedBatchMemory
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.scheduler.local import LocalScheduler
+from areal.tests.utils import get_model_path
 from areal.utils.hf_utils import load_hf_tokenizer
 
 
@@ -946,9 +946,9 @@ def test_parametrized_capacity_settings(
     controller.destroy()
 
 
-QWEN3_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
-if not os.path.exists(QWEN3_PATH):
-    QWEN3_PATH = "Qwen/Qwen3-0.6B"
+QWEN3_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+)
 
 
 @pytest.mark.parametrize("model_path", [QWEN3_PATH])
