@@ -382,6 +382,7 @@ def local_main(config, run_id: int = 0):
                 ),
                 **_env_vars,
                 **tms_env_vars,
+                AREAL_SPMD_MODE=str(1),
             ),
         )
 

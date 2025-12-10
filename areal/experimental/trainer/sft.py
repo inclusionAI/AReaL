@@ -14,7 +14,8 @@ from areal.api.cli_args import (
     ValidDatasetConfig,
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo
-from areal.engine.sft.lm_engine import FSDPLMEngine, MegatronLMEngine
+from areal.api.scheduler_api import Scheduler
+from areal.engine.sft.lm_engine import FSDPLMEngine, LMController, MegatronLMEngine
 from areal.platforms import current_platform
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
@@ -25,6 +26,7 @@ from areal.utils.data import (
 )
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
+from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.perf_tracer import Category
@@ -41,6 +43,7 @@ class SFTTrainer:
         config: SFTConfig,
         train_dataset: Dataset,
         valid_dataset: Dataset | None = None,
+        scheduler: Scheduler | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
         # Configure performance tracer
@@ -51,6 +54,12 @@ class SFTTrainer:
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
             config.tokenizer_path
         )
+        self.scheduler = scheduler
+        if is_single_controller() and self.scheduler is None:
+            raise RuntimeError(
+                "Scheduler must be provided in single controller mode, "
+                "otherwise the script should be started with areal.launcher"
+            )
 
         # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
@@ -133,32 +142,15 @@ class SFTTrainer:
             epoch = global_step // steps_per_epoch
             step = global_step % steps_per_epoch
 
-            batch = next(data_generator)
-
             with (
-                stats_tracker.record_timing("to_device"),
+                stats_tracker.record_timing("load_bcast"),
                 perf_tracer.trace_scope(
-                    "train.to_device",
+                    "train.load_bcast",
                     category=Category.IO,
                     args={"global_step": global_step},
                 ),
             ):
-                # NOTE: data are identical across model+context parallel group
-                batch = tensor_container_to(batch, current_platform.current_device())
-
-            with (
-                stats_tracker.record_timing("bcast"),
-                perf_tracer.trace_scope(
-                    "train.bcast",
-                    category=Category.COMM,
-                    args={"global_step": global_step},
-                ),
-            ):
-                batch = broadcast_tensor_container(
-                    batch,
-                    src_rank=self.actor.current_data_parallel_head(),
-                    group=self.actor.context_and_model_parallel_group,
-                )
+                batch = self._load_bcast_from(data_generator)
 
             with (
                 stats_tracker.record_timing("train_step"),
@@ -241,7 +233,9 @@ class SFTTrainer:
             collate_fn=pad_sequences_to_tensors,
         )
 
-    def _create_actor(self, actor_config: TrainEngineConfig):
+    def _create_actor(
+        self, actor_config: TrainEngineConfig
+    ) -> FSDPLMEngine | MegatronLMEngine | LMController:
         if self.allocation_mode.train_backend == "fsdp":
             actor = FSDPLMEngine(config=actor_config)
         elif self.allocation_mode.train_backend == "megatron":
@@ -250,8 +244,25 @@ class SFTTrainer:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
+        if is_single_controller():
+            actor = actor.as_controller(self.scheduler)
         actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
+
+    def _load_bcast_from(self, data_generator):
+        batch = next(data_generator)
+
+        if is_single_controller():
+            return batch
+
+        # NOTE: data are identical across model+context parallel group
+        batch = tensor_container_to(batch, current_platform.current_device())
+        batch = broadcast_tensor_container(
+            batch,
+            src_rank=self.actor.current_data_parallel_head(),
+            group=self.actor.context_and_model_parallel_group,
+        )
+        return batch
 
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
         # Save as HF models for evaluation
@@ -263,7 +274,10 @@ class SFTTrainer:
             tokenizer=self.tokenizer,
             processor=self.processor,
         )
-        dist.barrier(device_ids=[self.actor.device.index])
+
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
@@ -286,19 +300,20 @@ class SFTTrainer:
             processor=self.processor,
         )
 
-        dist.barrier(device_ids=[self.actor.device.index])
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _evaluate_fn(self):
-        for data in self.valid_dataloader:
-            data = tensor_container_to(data, current_platform.current_device())
-            data = broadcast_tensor_container(
-                data,
-                src_rank=self.actor.current_data_parallel_head(),
-                group=self.actor.context_and_model_parallel_group,
-            )
+        data_generator = cycle_dataloader(self.valid_dataloader, num_cycles=1)
+        for _ in range(len(self.valid_dataloader)):
+            data = self._load_bcast_from(data_generator)
             self.actor.evaluate_lm(data)
-        dist.barrier(device_ids=[self.actor.device.index])
+
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _evaluate(
@@ -315,7 +330,9 @@ class SFTTrainer:
             epoch_step,
             global_step,
         )
-        dist.barrier(device_ids=[self.actor.device.index])
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _export_and_commit_stats(self, epoch: int, epoch_step: int, global_step: int):
@@ -323,7 +340,9 @@ class SFTTrainer:
         stats = self.actor.export_stats()
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
-        dist.barrier(device_ids=[self.actor.device.index])
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def __enter__(self):

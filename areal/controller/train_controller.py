@@ -78,6 +78,14 @@ class TrainController:
         """
         pass
 
+    @property
+    def data_parallel_rank(self) -> int:
+        return 0
+
+    @property
+    def data_parallel_world_size(self) -> int:
+        return 1
+
     def initialize(
         self,
         role: str,

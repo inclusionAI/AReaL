@@ -16,21 +16,30 @@ from areal.api.cli_args import (
     PPOActorConfig,
     PPOConfig,
     PPOCriticConfig,
+    SGLangConfig,
     TrainDatasetConfig,
     ValidDatasetConfig,
+    vLLMConfig,
 )
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow
+from areal.controller import RolloutController
 from areal.engine.megatron_engine import MegatronEngine
-from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor
-from areal.engine.ppo.critic import FSDPPPOCritic, MegatronPPOCritic
+from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor, PPOActorController
+from areal.engine.ppo.critic import (
+    FSDPPPOCritic,
+    MegatronPPOCritic,
+    PPOCriticController,
+)
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
+from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.perf_tracer import Category
@@ -47,6 +56,7 @@ class PPOTrainer:
         config: PPOConfig,
         train_dataset: Dataset,
         valid_dataset: Dataset | None = None,
+        scheduler: Scheduler | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
         # Configure performance tracer
@@ -57,6 +67,12 @@ class PPOTrainer:
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
             config.tokenizer_path
         )
+        self.scheduler = scheduler
+        if is_single_controller() and self.scheduler is None:
+            raise RuntimeError(
+                "Scheduler must be provided in single controller mode, "
+                "otherwise the script should be started with areal.launcher"
+            )
 
         # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
@@ -104,12 +120,16 @@ class PPOTrainer:
         # Initialize models
         self.parallel_strategy = self.allocation_mode.train
         assert self.parallel_strategy is not None
-        engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
-        self.actor.initialize(**engine_init_kwargs)
+        engine_init_kwargs = {
+            "addr": None,
+            "ft_spec": ft_spec,
+            "alloc_mode": self.allocation_mode,
+        }
+        self.actor.initialize(**engine_init_kwargs, role="actor")
         if self.critic is not None:
-            self.critic.initialize(**engine_init_kwargs)
+            self.critic.initialize(**engine_init_kwargs, role="critic")
         if self.ref is not None:
-            self.ref.initialize(**engine_init_kwargs)
+            self.ref.initialize(**engine_init_kwargs, role="ref")
 
         # Prepare weight update meta and connect to inference engine
         if self.config.actor.weight_update_mode == "disk":
@@ -161,8 +181,10 @@ class PPOTrainer:
 
     def train(
         self,
-        workflow: RolloutWorkflow,
-        eval_workflow: RolloutWorkflow | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None = None,
+        eval_workflow_kwargs: dict[str, Any] | None = None,
         dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
     ):
         config = self.config
@@ -200,6 +222,7 @@ class PPOTrainer:
                     self.train_dataloader,
                     granularity=self.config.actor.group_size,
                     workflow=workflow,
+                    workflow_kwargs=workflow_kwargs,
                     should_accept_fn=dynamic_filter_fn,
                 )
 
@@ -328,6 +351,7 @@ class PPOTrainer:
             ):
                 self._evaluate(
                     eval_workflow=eval_workflow,
+                    eval_workflow_kwargs=eval_workflow_kwargs,
                     epoch=epoch,
                     epoch_step=step,
                     global_step=global_step,
@@ -372,7 +396,9 @@ class PPOTrainer:
             dataset_config=dataset_config,
         )
 
-    def _create_actor(self, actor_config: PPOActorConfig):
+    def _create_actor(
+        self, actor_config: PPOActorConfig
+    ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
         if self.allocation_mode.train_backend == "fsdp":
             actor = FSDPPPOActor(config=actor_config)
         elif self.allocation_mode.train_backend == "megatron":
@@ -381,10 +407,14 @@ class PPOTrainer:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
+        if is_single_controller():
+            actor = actor.as_controller(self.scheduler)
         actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
-    def _create_critic(self, critic_config: PPOCriticConfig):
+    def _create_critic(
+        self, critic_config: PPOCriticConfig
+    ) -> FSDPPPOCritic | MegatronPPOCritic | PPOCriticController:
         if self.allocation_mode.train_backend == "fsdp":
             critic = FSDPPPOCritic(config=critic_config)
         elif self.allocation_mode.train_backend == "megatron":
@@ -393,17 +423,29 @@ class PPOTrainer:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
+        if is_single_controller():
+            critic = critic.as_controller(self.scheduler)
         critic.create_process_group(parallel_strategy=self.allocation_mode.train)
         return critic
 
     def _init_rollout(
         self, rollout_config: InferenceEngineConfig, is_eval: bool = False
-    ) -> InferenceEngine:
+    ) -> InferenceEngine | RolloutController:
         # Initialize inference engine
         if self.allocation_mode.gen_backend == "sglang":
             engine = RemoteSGLangEngine(deepcopy(rollout_config))
+            server_args = SGLangConfig.build_args(
+                sglang_config=self.config.sglang,
+                tp_size=self.allocation_mode.gen.tp_size,
+                base_gpu_id=0,
+            )
         elif self.allocation_mode.gen_backend == "vllm":
             engine = RemotevLLMEngine(deepcopy(rollout_config))
+            server_args = vLLMConfig.build_args(
+                vllm_config=self.config.vllm,
+                tp_size=self.allocation_mode.gen.tp_size,
+                pp_size=self.allocation_mode.gen.pp_size,
+            )
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.gen_backend}, expected sglang or vllm"
@@ -412,7 +454,19 @@ class PPOTrainer:
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             engine.config.max_head_offpolicyness = int(1e12)
-        engine.initialize(train_data_parallel_size=self.allocation_mode.train.dp_size)
+
+        if not is_single_controller():
+            engine.initialize(
+                train_data_parallel_size=self.allocation_mode.train.dp_size
+            )
+            return engine
+
+        engine = engine.as_controller(self.scheduler)
+        engine.initialize(
+            role="rollout",
+            alloc_mode=self.allocation_mode,
+            server_args=server_args,
+        )
         return engine
 
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
@@ -435,7 +489,9 @@ class PPOTrainer:
                 processor=self.processor,
                 name="critic",
             )
-        dist.barrier(device_ids=[self.actor.device.index])
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
@@ -460,23 +516,29 @@ class PPOTrainer:
             processor=self.processor,
         )
 
-        dist.barrier(device_ids=[self.actor.device.index])
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
-    def _evaluate_fn(self, eval_workflow: RolloutWorkflow):
+    def _evaluate_fn(self, eval_workflow: RolloutWorkflow, eval_workflow_kwargs):
         if self.actor.is_data_parallel_head():
             cnt = 0
             for data in self.valid_dataloader:
                 for item in data:
-                    self.eval_rollout.submit(item, eval_workflow)
+                    self.eval_rollout.submit(item, eval_workflow, eval_workflow_kwargs)
                     cnt += 1
             self.eval_rollout.wait(cnt, timeout=None)
-        dist.barrier(device_ids=[self.actor.device.index])
+
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _evaluate(
         self,
         eval_workflow: RolloutWorkflow | None,
+        eval_workflow_kwargs,
         epoch: int,
         epoch_step: int,
         global_step: int,
@@ -484,12 +546,18 @@ class PPOTrainer:
         if self.valid_dataloader is None or eval_workflow is None:
             return
         self.evaluator.evaluate(
-            functools.partial(self._evaluate_fn, eval_workflow=eval_workflow),
+            functools.partial(
+                self._evaluate_fn,
+                eval_workflow=eval_workflow,
+                eval_workflow_kwargs=eval_workflow_kwargs,
+            ),
             epoch,
             epoch_step,
             global_step,
         )
-        dist.barrier(device_ids=[self.actor.device.index])
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _export_and_commit_stats(self, epoch: int, epoch_step: int, global_step: int):
@@ -497,7 +565,9 @@ class PPOTrainer:
         stats = self.actor.export_stats()
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
-        dist.barrier(device_ids=[self.actor.device.index])
+        if is_single_controller():
+            return
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def __enter__(self):

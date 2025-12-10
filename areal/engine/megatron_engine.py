@@ -121,7 +121,7 @@ class MegatronEngine(TrainEngine):
         self.own_global_group = False
         self.is_offload: bool = False
 
-    def initialize(self, addr: str | None, ft_spec: FinetuneSpec):
+    def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
         try:
             self.seed = get_seed()
         except ValueError:
