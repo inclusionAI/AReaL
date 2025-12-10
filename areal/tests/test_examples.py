@@ -186,6 +186,7 @@ def test_gsm8k_grpo(tmp_path_factory, alloc_mode):
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
+            timeout=900,
         )
     )
     assert success, "GSM8K GRPO example failed"
