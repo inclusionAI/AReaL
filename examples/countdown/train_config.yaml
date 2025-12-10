@@ -38,7 +38,7 @@ actor:
   path: Qwen/Qwen2.5-3B-Instruct
   init_from_scratch: false
   disable_dropout: true
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 8192

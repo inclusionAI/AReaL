@@ -113,6 +113,7 @@ log_config = {
 def getLogger(
     name: str | None = None,
     type_: Literal["plain", "benchmark", "colored", "system"] | None = None,
+    level: int = LOGLEVEL,
 ):
     # Fix the logging config automatically set by transformer_engine
     # by reset config everytime getLogger is called.
@@ -130,7 +131,7 @@ def getLogger(
     if name not in log_config["loggers"]:
         log_config["loggers"][name] = {
             "handlers": [f"{type_}Handler"],
-            "level": LOGLEVEL,
+            "level": level,
         }
         logging.config.dictConfig(log_config)
     return logging.getLogger(name)

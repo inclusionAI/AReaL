@@ -51,6 +51,13 @@ def multi_gpu_scheduler(tmp_path):
     )
 
 
+@pytest.fixture(autouse=True)
+def mock_kill_process_tree():
+    """Automatically mock kill_process_tree to prevent LocalScheduler.__del__ from killing fake PIDs."""
+    with patch("areal.scheduler.local.kill_process_tree") as mock_kill:
+        yield mock_kill
+
+
 def create_mock_process(pid=1234, is_alive=True, exit_code=None):
     """Create a mock subprocess.Popen process.
 
@@ -980,8 +987,7 @@ class TestDeleteWorkers:
         scheduler._workers["role2"] = [worker2]
         scheduler._allocated_ports = {8000, 8001}
 
-        with patch("areal.scheduler.local.kill_process_tree"):
-            scheduler.delete_workers("role1")
+        scheduler.delete_workers("role1")
 
         # role1 should be deleted, role2 should remain
         assert "role1" not in scheduler._workers
@@ -1008,8 +1014,7 @@ class TestDeleteWorkers:
         scheduler._workers["role2"] = [worker2]
         scheduler._allocated_ports = {8000, 8001}
 
-        with patch("areal.scheduler.local.kill_process_tree"):
-            scheduler.delete_workers(None)
+        scheduler.delete_workers(None)
 
         # All workers should be deleted
         assert len(scheduler._workers) == 0
@@ -1027,13 +1032,14 @@ class TestDeleteWorkers:
         )
         scheduler._allocated_ports = {8000, 8001, 8002}
 
-        with patch("areal.scheduler.local.kill_process_tree"):
-            scheduler._cleanup_workers([worker])
+        scheduler._cleanup_workers([worker])
 
         # Ports 8000 and 8001 should be released
         assert scheduler._allocated_ports == {8002}
 
-    def test_cleanup_workers_handles_errors(self, scheduler, tmp_path):
+    def test_cleanup_workers_handles_errors(
+        self, scheduler, tmp_path, mock_kill_process_tree
+    ):
         """Should continue cleanup even if terminating a process fails."""
         worker1 = create_worker_info(
             worker_id="test/0", ports=["8000"], log_file=str(tmp_path / "test_0.log")
@@ -1043,12 +1049,10 @@ class TestDeleteWorkers:
         )
 
         # First termination fails, second succeeds
-        with patch(
-            "areal.scheduler.local.kill_process_tree",
-            side_effect=[Exception("Failed to terminate"), None],
-        ):
-            # Should not raise, just log error
-            scheduler._cleanup_workers([worker1, worker2])
+        # Configure the autouse mock to raise exception on first call
+        mock_kill_process_tree.side_effect = [Exception("Failed to terminate"), None]
+        # Should not raise, just log error
+        scheduler._cleanup_workers([worker1, worker2])
 
 
 class TestProcessTermination:
