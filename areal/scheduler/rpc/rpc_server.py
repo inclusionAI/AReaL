@@ -22,6 +22,7 @@ from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.controller.batch import DistributedBatchMemory
 from areal.controller.batch_metadata import (
     BatchMetadata,
+    ShardId,
     ShardMetadata,
     TensorMetadata,
 )
@@ -41,9 +42,9 @@ _engine: TrainEngine | InferenceEngine | None = None
 
 # Global batch data storage for distributed batch memory
 # Storage: shard_id -> dict[str, Tensor]
-_batch_storage: dict[str, dict[str, Tensor]] = {}
+_batch_storage: dict[ShardId, Tensor] = {}
 _batch_storage_lock = Lock()
-_batch_storage_stats: dict[str, int] = defaultdict(int)
+_batch_storage_stats: dict[ShardId, int] = defaultdict(int)
 
 # NCCL worker thread for executing non-/data/ endpoints in a single thread
 # This ensures NCCL compatibility while allowing /data/ requests to be processed concurrently
@@ -344,23 +345,10 @@ def call_engine_method():
         input_metadata_list = []
         input_metadata_list.extend(_extract_input_batch_metadata(args))
         input_metadata_list.extend(_extract_input_batch_metadata(kwargs))
-
-        # Merge all input metadata into a single BatchMetadata if multiple exist
-        input_batch_metadata = None
-        if input_metadata_list:
-            # Collect all shards from all input metadata
-            all_shards = []
-            for metadata in input_metadata_list:
-                all_shards.extend(metadata.shards)
-            if all_shards:
-                input_batch_metadata = BatchMetadata(
-                    batch_id=input_metadata_list[0].batch_id,
-                    shards=all_shards,
-                )
-                logger.info(
-                    f"Extracted input batch metadata: {len(all_shards)} shards, "
-                    f"shard_ids={[s.shard_id for s in all_shards]}"
-                )
+        assert len(input_metadata_list) <= 1, (
+            "Only one input batch metadata is supported"
+        )
+        input_batch_metadata = input_metadata_list[0] if input_metadata_list else None
 
         try:
             logger.info(
@@ -421,7 +409,6 @@ def call_engine_method():
                     result = _handle_distributed_batch_return(
                         result,
                         result_key,
-                        _engine,
                         task_id=task_id,
                         input_batch_metadata=input_batch_metadata,
                     )
@@ -462,15 +449,27 @@ def call_engine_method():
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
+# ==================== Batch Reletad Functions ====================
+def _is_batch_metadata(data: Any) -> bool:
+    """Check if data is a DistributedBatchMemory metadata wrapper."""
+    return isinstance(data, dict) and data.get("__distributed_batch_metadata__")
+
+
+def _get_batch_metadata(data: Any) -> BatchMetadata | None:
+    """Extract BatchMetadata from a DistributedBatchMemory metadata wrapper."""
+    if _is_batch_metadata(data):
+        return data.get("metadata")
+    return None
+
+
 def _extract_input_batch_metadata(data: Any) -> list[BatchMetadata]:
     """Extract all DistributedBatchMemory metadata from input data."""
     metadata_list = []
 
     if isinstance(data, dict):
-        if data.get("__distributed_batch_metadata__"):
-            metadata = data.get("metadata")
-            if metadata is not None:
-                metadata_list.append(metadata)
+        metadata = _get_batch_metadata(data)
+        if metadata is not None:
+            metadata_list.append(metadata)
         else:
             # Recursively check dict values
             for v in data.values():
@@ -484,25 +483,28 @@ def _extract_input_batch_metadata(data: Any) -> list[BatchMetadata]:
 
 
 async def _aresolve_batch_metadata(data: Any) -> Any:
-    """Async version of _resolve_batch_metadata."""
-    if isinstance(data, dict) and data.get("__distributed_batch_metadata__"):
-        metadata = data.get("metadata")
+    """Resolve DistributedBatchMemory metadata to actual data.
+
+    Recursively traverses data structures (same traversal logic as _extract_input_batch_metadata)
+    and replaces DistributedBatchMemory metadata with actual data fetched from remote nodes.
+    """
+    if isinstance(data, dict):
+        metadata = _get_batch_metadata(data)
         if metadata is not None:
             batch = DistributedBatchMemory.from_metadata(metadata)
             return await batch.aget_data()
-        return {}
+        else:
+            # Recursively resolve dict values
+            resolved_items = await asyncio.gather(
+                *[_aresolve_batch_metadata(v) for v in data.values()]
+            )
+            return {k: v for k, v in zip(data.keys(), resolved_items)}
     elif isinstance(data, (list, tuple)):
         # Recursively resolve list/tuple elements
         resolved_items = await asyncio.gather(
             *[_aresolve_batch_metadata(item) for item in data]
         )
         return type(data)(resolved_items)
-    elif isinstance(data, dict):
-        # Recursively resolve dict values
-        resolved_items = await asyncio.gather(
-            *[_aresolve_batch_metadata(v) for v in data.values()]
-        )
-        return {k: v for k, v in zip(data.keys(), resolved_items)}
     else:
         return data
 
@@ -534,19 +536,18 @@ def _create_matched_batch_metadata(
     input_batch_metadata: BatchMetadata,
     node_id: str,
     node_addr: str,
-    task_id: str | None,
 ) -> DistributedBatchMemory:
     """Create batch metadata matching input structure with tensor splitting.
 
     This function creates shards matching the input metadata structure:
-    1. Same number of shards as input
-    2. Same shard_ids as input
+    1. Groups input shards by task_id
+    2. For each task_id, creates output shards for each key in data_to_store
     3. Splits tensors along dimension 0 if sizes don't match
 
     Parameters
     ----------
     data_to_store : dict[str, Tensor]
-        Result data to split and store
+        Result data to split and store (keys become shard_id.key)
     input_batch_metadata : BatchMetadata
         Input batch metadata to match
     node_id : str
@@ -554,7 +555,7 @@ def _create_matched_batch_metadata(
     node_addr : str
         Current node address
     task_id : str | None
-        Optional task ID prefix
+        Optional task ID prefix (not used, kept for compatibility)
 
     Returns
     -------
@@ -563,54 +564,79 @@ def _create_matched_batch_metadata(
     """
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
-    shards_has_same_keys, _ = DistributedBatchMemory._group_shards_by_keys(
-        input_batch_metadata.shards
-    )
-    # Split data and create shards
+    # Group input shards by task_id and calculate offsets
+    # Process shards in order to maintain correct offset calculation
+    task_id_to_shards: dict[str, list[ShardMetadata]] = {}
+    task_id_to_size: dict[str, int] = {}
+    task_id_offsets: dict[str, int] = {}
+
+    current_offset = 0
+    for shard in input_batch_metadata.shards:
+        task_id = shard.shard_id.task_id
+        if task_id not in task_id_to_shards:
+            task_id_to_shards[task_id] = []
+            task_id_offsets[task_id] = current_offset
+            task_id_to_size[task_id] = 0
+
+        task_id_to_shards[task_id].append(shard)
+        shard_size = shard.tensor_metadata.shape[0]
+        # Only count the first shard of each task_id for offset calculation
+        # (assuming all shards with same task_id have same batch_size)
+        if len(task_id_to_shards[task_id]) == 1:
+            task_id_to_size[task_id] = shard_size
+            current_offset += shard_size
+
+    # Get result keys (these will become the new shard_id.key values)
+    result_keys = list(data_to_store.keys())
+    if not result_keys:
+        raise ValueError("data_to_store must contain at least one tensor")
+
+    # Create output shards
     output_shards = []
-    offset = 0
 
-    input_shards = shards_has_same_keys[0]
-    for i, input_shard in enumerate(input_shards):
-        shard_id = input_shard.shard_id
-        shard_size = DistributedBatchMemory._infer_shard_size(input_shard)
+    for task_id, input_shards in task_id_to_shards.items():
+        # Calculate total batch size for this task_id group
+        # Use the size from the first shard (all shards with same task_id should have same size)
+        total_size = task_id_to_size[task_id]
+        offset = task_id_offsets[task_id]
 
-        # Extract shard data by slicing tensors along dimension 0
-        shard_data = {}
-        for key, value in data_to_store.items():
-            shard_data[key] = value[offset : offset + shard_size].clone()
+        # For each result key, create a shard with the same task_id
+        for result_key in result_keys:
+            tensor = data_to_store[result_key]
 
-        # Store shard data
-        with _batch_storage_lock:
-            _batch_storage[shard_id] = shard_data
-            serialized_data = serialize_value(shard_data)
-            data_bytes = orjson.dumps(serialized_data)
-            _batch_storage_stats[shard_id] = len(data_bytes)
+            # Slice the tensor for this task_id group
+            sliced_tensor = tensor[offset : offset + total_size].clone()
 
-        logger.debug(
-            f"Stored shard {shard_id} (size={len(data_bytes)} bytes, "
-            f"batch_size={shard_size}, node_addr={node_addr})"
-        )
+            # Create shard_id with same task_id but new key
+            shard_id = ShardId(task_id=task_id, key=result_key)
 
-        # Create field metadata for this shard
-        fields = {}
-        for key, value in shard_data.items():
-            fields[key] = TensorMetadata(
-                shape=tuple(value.shape),
-                dtype=str(value.dtype),
-                device=str(value.device),
+            # Store shard data (single tensor, not dict)
+            with _batch_storage_lock:
+                _batch_storage[shard_id] = sliced_tensor
+                serialized_data = serialize_value(sliced_tensor)
+                data_bytes = orjson.dumps(serialized_data)
+                _batch_storage_stats[shard_id] = len(data_bytes)
+
+            logger.debug(
+                f"Stored shard {shard_id} (size={len(data_bytes)} bytes, "
+                f"batch_size={total_size}, node_addr={node_addr})"
             )
 
-        # Create shard metadata matching input structure but with updated fields
-        output_shard = ShardMetadata(
-            node_id=node_id,
-            node_addr=node_addr,
-            shard_id=shard_id,  # Use same shard_id as input
-            fields=fields,
-        )
-        output_shards.append(output_shard)
+            # Create tensor metadata
+            tensor_metadata = TensorMetadata(
+                shape=tuple(sliced_tensor.shape),
+                dtype=str(sliced_tensor.dtype),
+                device=str(sliced_tensor.device),
+            )
 
-        offset += shard_size
+            # Create shard metadata
+            output_shard = ShardMetadata(
+                node_id=node_id,
+                node_addr=node_addr,
+                shard_id=shard_id,
+                tensor_metadata=tensor_metadata,
+            )
+            output_shards.append(output_shard)
 
     # Create batch metadata with matched structure
     batch_metadata = BatchMetadata(
@@ -630,7 +656,6 @@ def _create_matched_batch_metadata(
 def _handle_distributed_batch_return(
     result: Any,
     result_key: str | None,
-    engine: TrainEngine | InferenceEngine,
     task_id: str | None = None,
     input_batch_metadata: BatchMetadata | None = None,
 ) -> Any:
@@ -643,26 +668,6 @@ def _handle_distributed_batch_return(
     - ``torch.Tensor``
     - ``dict[str, torch.Tensor]``
     - ``list[dict[str, torch.Tensor]]``
-
-    Other types are returned as-is.
-
-    Parameters
-    ----------
-    result : Any
-        The result from engine method
-    result_key : str | None
-        Key to use when converting Tensor to dict
-    engine : TrainEngine | InferenceEngine
-        Engine instance (to get version/node info)
-    task_id : str | None
-        Optional task ID to use as shard_id
-    input_batch_metadata : BatchMetadata | None
-        Optional input batch metadata to match shard structure
-
-    Returns
-    -------
-    Any
-        DistributedBatchMemory metadata or original result
     """
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
@@ -672,7 +677,6 @@ def _handle_distributed_batch_return(
             _handle_distributed_batch_return(
                 r,
                 result_key,
-                engine,
                 task_id=task_id,
                 input_batch_metadata=input_batch_metadata,
             )
@@ -683,9 +687,9 @@ def _handle_distributed_batch_return(
     data_to_store = None
     if isinstance(result, torch.Tensor):
         if result_key is None:
-            result_key = "data"
+            result_key = "default_key"
         data_to_store = {result_key: result}
-    elif isinstance(result, dict) and any(
+    elif isinstance(result, dict) and all(
         isinstance(v, torch.Tensor) for v in result.values()
     ):
         data_to_store = result
@@ -702,60 +706,46 @@ def _handle_distributed_batch_return(
     global _server_host, _server_port
     node_addr = f"{_server_host}:{_server_port}"
 
-    # If input_batch_metadata is provided, match its structure
-    if input_batch_metadata is not None and input_batch_metadata.shards:
-        return _create_matched_batch_metadata(
-            data_to_store,
-            input_batch_metadata,
-            node_id,
-            node_addr,
-            task_id,
+    # If input_batch_metadata is not provided, create a fake one
+    # to reuse _create_matched_batch_metadata logic
+    if input_batch_metadata is None or not input_batch_metadata.shards:
+        task_id = task_id or str(uuid.uuid4())
+
+        # Find the first tensor to determine batch size
+        first_tensor = next(
+            (v for v in data_to_store.values() if isinstance(v, torch.Tensor)), None
         )
-    else:
-        # Original behavior: create single shard
-        shard_id = task_id or str(uuid.uuid4())
+        if first_tensor is None:
+            return result
 
-        # Store data in local batch storage
-        with _batch_storage_lock:
-            _batch_storage[shard_id] = data_to_store
-            # Serialize using serialize_value to handle tensors, then encode with orjson
-            serialized_data = serialize_value(data_to_store)
-            data_bytes = orjson.dumps(serialized_data)
-            _batch_storage_stats[shard_id] = len(data_bytes)
-        logger.info(
-            f"Stored result as shard {shard_id} (size={len(data_bytes)} bytes, "
-            f"node_addr={node_addr})"
+        batch_size = first_tensor.shape[0] if len(first_tensor.shape) > 0 else 1
+
+        # Create a single fake shard with dummy key
+        # This will be used to create one task_id group
+        fake_shard_id = ShardId(task_id=task_id, key="__dummy_input__")
+        fake_tensor_metadata = TensorMetadata(
+            shape=(batch_size,),
+            dtype=str(first_tensor.dtype),
+            device=str(first_tensor.device),
         )
-
-        # Create field metadata (only for tensor fields)
-        fields = {}
-        for key, value in data_to_store.items():
-            if isinstance(value, torch.Tensor):
-                fields[key] = TensorMetadata(
-                    shape=tuple(value.shape),
-                    dtype=str(value.dtype),
-                    device=str(value.device),
-                )
-
-        # Create shard and batch metadata
-        shard = ShardMetadata(
+        fake_shard = ShardMetadata(
             node_id=node_id,
             node_addr=node_addr,
-            shard_id=shard_id,
-            fields=fields,
+            shard_id=fake_shard_id,
+            tensor_metadata=fake_tensor_metadata,
         )
 
-        batch_metadata = BatchMetadata(
+        input_batch_metadata = BatchMetadata(
             batch_id=str(uuid.uuid4()),
-            shards=[shard],
+            shards=[fake_shard],
         )
 
-        batch = DistributedBatchMemory.from_metadata(batch_metadata)
-        logger.debug(
-            f"Created DistributedBatchMemory: {batch_metadata.batch_id}, num_shards=1"
-        )
-
-        return batch
+    return _create_matched_batch_metadata(
+        data_to_store,
+        input_batch_metadata,
+        node_id,
+        node_addr,
+    )
 
 
 # ==================== Batch Data Storage Endpoints ====================
@@ -765,80 +755,65 @@ def store_batch_data(shard_id: str):
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
     try:
+        # Convert string shard_id to ShardId
+        shard_id_obj = ShardId.from_string(shard_id)
+
         data_bytes = request.get_data()
         # Deserialize from orjson, then deserialize_value to restore tensors
         serialized_data = orjson.loads(data_bytes)
         data = deserialize_value(serialized_data)
 
         with _batch_storage_lock:
-            _batch_storage[shard_id] = data
-            _batch_storage_stats[shard_id] = len(data_bytes)
+            _batch_storage[shard_id_obj] = data
+            _batch_storage_stats[shard_id_obj] = len(data_bytes)
 
-        logger.debug(f"Stored batch shard {shard_id} (size={len(data_bytes)} bytes)")
+        logger.debug(
+            f"Stored batch shard {shard_id_obj} (size={len(data_bytes)} bytes)"
+        )
+        # Echo back the original shard_id string to avoid adding default keys
         return jsonify({"status": "ok", "shard_id": shard_id})
 
     except Exception as e:
-        logger.error(f"Error storing batch shard {shard_id}: {e}")
+        logger.error(f"Error storing batch shard {shard_id_obj}: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/data/<shard_id>", methods=["GET"])
 def retrieve_batch_data(shard_id: str):
-    """Retrieve batch data shard. Query params: offset (default: 0), batch_size (default: all)."""
+    """Retrieve batch data shard."""
     global _batch_storage, _batch_storage_lock
 
-    logger.debug(f"Received data get request for shard {shard_id}")
-    try:
-        # Parse optional query parameters for logical shard slicing
-        offset = request.args.get("offset", type=int, default=0)
-        batch_size = request.args.get("batch_size", type=int, default=None)
+    # Convert string shard_id to ShardId
+    shard_id_obj = ShardId.from_string(shard_id)
 
+    logger.debug(f"Received data get request for shard {shard_id_obj}")
+    try:
         with _batch_storage_lock:
-            if shard_id not in _batch_storage:
+            if shard_id_obj not in _batch_storage:
                 return (
                     jsonify(
-                        {"status": "error", "message": f"Shard {shard_id} not found"}
+                        {
+                            "status": "error",
+                            "message": f"Shard {shard_id_obj} not found",
+                        }
                     ),
                     404,
                 )
 
-            data = _batch_storage[shard_id]
-
-        # Slice the data if offset or batch_size is specified
-        if offset > 0 or batch_size is not None:
-            data = _slice_shard_data(data, offset, batch_size)
-            logger.debug(
-                f"Sliced shard {shard_id}: offset={offset}, batch_size={batch_size}"
-            )
+            data = _batch_storage[shard_id_obj]
 
         # Serialize using serialize_value to handle tensors, then encode with orjson
         serialized_data = serialize_value(data)
         data_bytes = orjson.dumps(serialized_data)
 
         logger.info(
-            f"Retrieved batch shard {shard_id} (offset={offset}, batch_size={batch_size}, "
-            f"size={len(data_bytes)} bytes)"
+            f"Retrieved batch shard {shard_id_obj} (size={len(data_bytes)} bytes)"
         )
         return Response(data_bytes, mimetype="application/octet-stream")
 
     except Exception as e:
-        logger.error(f"Error retrieving batch shard {shard_id}: {e}")
+        logger.error(f"Error retrieving batch shard {shard_id_obj}: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
-
-
-def _slice_shard_data(
-    data: dict[str, Tensor], offset: int, batch_size: int | None
-) -> dict[str, Tensor]:
-    """Slice shard data along batch dimension."""
-    sliced: dict[str, Tensor] = {}
-    for key, value in data.items():
-        if isinstance(value, torch.Tensor):
-            if batch_size is not None:
-                sliced[key] = value[offset : offset + batch_size].clone()
-            else:
-                sliced[key] = value[offset:].clone()
-
-    return sliced
 
 
 @app.route("/data/clear", methods=["DELETE"])
@@ -860,19 +835,26 @@ def clear_batch_data():
                 jsonify({"status": "error", "message": "'shard_ids' must be a list"}),
                 400,
             )
-        shard_ids = [sid for sid in shard_ids if isinstance(sid, str)]
-        if not shard_ids:
+        # Convert string shard_ids to ShardId objects
+        shard_id_objs = []
+        for sid in shard_ids:
+            if isinstance(sid, str):
+                shard_id_objs.append(ShardId.from_string(sid))
+
+        if not shard_id_objs:
             return jsonify({"status": "ok", "cleared_count": 0})
 
         with _batch_storage_lock:
             cleared_count = 0
-            for shard_id in shard_ids:
-                if shard_id in _batch_storage:
-                    del _batch_storage[shard_id]
-                    _batch_storage_stats.pop(shard_id, None)
+            for shard_id_obj in shard_id_objs:
+                if shard_id_obj in _batch_storage:
+                    del _batch_storage[shard_id_obj]
+                    _batch_storage_stats.pop(shard_id_obj, None)
                     cleared_count += 1
 
-        logger.info(f"Cleared {cleared_count} batch shards: {shard_ids}")
+        logger.info(
+            f"Cleared {cleared_count} batch shards: {[str(sid) for sid in shard_id_objs]}"
+        )
         return jsonify({"status": "ok", "cleared_count": cleared_count})
 
     except Exception as e:

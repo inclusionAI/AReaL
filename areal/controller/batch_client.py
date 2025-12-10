@@ -1,19 +1,21 @@
 """HTTP client for distributed batch memory retrieval."""
 
 import asyncio
+from collections import defaultdict
 from typing import Any
 
 import aiohttp
 import orjson
+import torch
 
-from areal.controller.batch_metadata import BatchMetadata, ShardMetadata
+from areal.controller.batch_metadata import BatchMetadata, ShardId, ShardMetadata
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging
 
 logger = logging.getLogger("BatchClient")
 
 # Default connection limit for batch data fetching
-DEFAULT_CONNECTION_LIMIT = 100
+DEFAULT_CONNECTION_LIMIT = 1000
 
 
 class BatchDataClient:
@@ -22,15 +24,6 @@ class BatchDataClient:
     def __init__(
         self, timeout: float = 300.0, connection_limit: int = DEFAULT_CONNECTION_LIMIT
     ):
-        """Initialize the batch data client.
-
-        Parameters
-        ----------
-        timeout : float
-            Request timeout in seconds
-        connection_limit : int
-            Maximum number of concurrent connections
-        """
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.connection_limit = connection_limit
 
@@ -53,22 +46,17 @@ class BatchDataClient:
                     )
 
                 data_bytes = await response.read()
-                # Deserialize from orjson, then deserialize_value to restore tensors
                 serialized_data = orjson.loads(data_bytes)
                 data = deserialize_value(serialized_data)
 
-                # Infer batch size from fields if available
-                batch_size_info = ""
-                if shard.fields:
-                    first_field = next(iter(shard.fields.values()))
-                    if first_field.shape:
-                        batch_size_info = f", batch_size={first_field.shape[0]}"
+                assert isinstance(data, torch.Tensor)
+                result = {shard.shard_id.key: data}
 
                 logger.debug(
                     f"Fetched shard {shard.shard_id} from {shard.node_addr} "
-                    f"({len(data_bytes)} bytes{batch_size_info})"
+                    f"({len(data_bytes)} bytes)"
                 )
-                return data
+                return result
 
         except asyncio.TimeoutError as e:
             raise RuntimeError(
@@ -80,7 +68,11 @@ class BatchDataClient:
             ) from e
 
     async def fetch_shards(self, metadata: BatchMetadata) -> list[dict[str, Any]]:
-        """Fetch all shards for a batch and return raw shard data."""
+        """Fetch all shards for a batch and return raw shard data.
+
+        Shards with the same task_id are grouped together into a single dict.
+        Returns a list of dicts, where each dict contains all data for one task_id.
+        """
         if not metadata.shards:
             return []
 
@@ -93,14 +85,22 @@ class BatchDataClient:
             )
             tasks = [self.fetch_shard(session, shard) for shard in metadata.shards]
             shard_data_list = await asyncio.gather(*tasks)
-            return shard_data_list
+
+            # Group shards by task_id and merge their data into single dicts
+            task_data_map: dict[str, dict[str, Any]] = defaultdict(dict)
+
+            for shard, shard_data in zip(metadata.shards, shard_data_list):
+                task_id = shard.shard_id.task_id
+                task_data_map[task_id].update(shard_data)
+
+            return list(task_data_map.values())
 
     async def store_shard(
         self,
         session: aiohttp.ClientSession,
         node_addr: str,
-        shard_id: str,
-        data: dict[str, Any],
+        shard_id: ShardId,
+        data: torch.Tensor,
     ) -> None:
         """Store a shard on a node."""
         url = f"http://{node_addr}/data/{shard_id}"
@@ -111,7 +111,10 @@ class BatchDataClient:
 
         try:
             async with session.put(
-                url, data=data_bytes, timeout=self.timeout
+                url,
+                data=data_bytes,
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=self.timeout,
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -133,7 +136,9 @@ class BatchDataClient:
                 f"Error storing shard {shard_id} to {node_addr}: {e}"
             ) from e
 
-    async def clear_batches(self, node_addrs: set[str], shard_ids: list[str]) -> None:
+    async def clear_batches(
+        self, node_addrs: set[str], shard_ids: list[ShardId]
+    ) -> None:
         """Clear specific shards on multiple nodes."""
         connector = aiohttp.TCPConnector(limit=self.connection_limit)
         async with aiohttp.ClientSession(
@@ -146,14 +151,18 @@ class BatchDataClient:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _clear_node(
-        self, session: aiohttp.ClientSession, node_addr: str, shard_ids: list[str]
+        self, session: aiohttp.ClientSession, node_addr: str, shard_ids: list[ShardId]
     ) -> None:
         """Clear specific shards on a single node."""
         url = f"http://{node_addr}/data/clear"
 
+        # Convert ShardId objects to strings for JSON serialization
+        # ShardId.__str__() returns "task_id:key" format
+        shard_id_strings = [str(shard_id) for shard_id in shard_ids]
+
         try:
             async with session.delete(
-                url, json={"shard_ids": shard_ids}, timeout=self.timeout
+                url, json={"shard_ids": shard_id_strings}, timeout=self.timeout
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()

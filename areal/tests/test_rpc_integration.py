@@ -183,14 +183,11 @@ class TestSyncRPCServer:
 
     def test_retrieve_batch_data(self, client):
         """Test retrieving batch data shard."""
-        shard_id = "test-shard-3"
-        original_data = {
-            "input_ids": torch.tensor([[1, 2, 3], [4, 5, 6], [7, 8, 9]]),
-            "labels": torch.tensor([0, 1, 2]),
-        }
+        shard_id = "test-shard-3:input_ids"
+        original_tensor = torch.tensor([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
 
-        # Store data first
-        data_bytes = orjson.dumps(serialize_value(original_data))
+        # Store data first (single tensor)
+        data_bytes = orjson.dumps(serialize_value(original_tensor))
 
         store_resp = client.put(
             f"/data/{shard_id}",
@@ -205,10 +202,9 @@ class TestSyncRPCServer:
         assert get_resp.content_type == "application/octet-stream"
 
         retrieved_data = deserialize_value(orjson.loads(get_resp.data))
-        assert "input_ids" in retrieved_data
-        assert "labels" in retrieved_data
-        assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"])
-        assert torch.equal(retrieved_data["labels"], original_data["labels"])
+        # _batch_storage stores the data as-is, so a stored tensor returns as a tensor
+        assert isinstance(retrieved_data, torch.Tensor)
+        assert torch.equal(retrieved_data, original_tensor)
 
     def test_retrieve_batch_data_not_found(self, client):
         """Test retrieving non-existent shard returns 404."""
@@ -218,73 +214,26 @@ class TestSyncRPCServer:
         assert resp_data["status"] == "error"
         assert "not found" in resp_data["message"].lower()
 
-    def test_retrieve_batch_data_with_offset(self, client):
-        """Test retrieving batch data with offset parameter."""
-        shard_id = "test-shard-4"
-        original_data = {
-            "input_ids": torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]]),
-            "labels": torch.tensor([0, 1, 2, 3]),
-        }
+    def test_retrieve_batch_data_complete(self, client):
+        """Test retrieving complete batch data."""
+        # Store a single tensor (new format: single tensor per shard)
+        shard_id = "test-shard-4:input_ids"
+        original_tensor = torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]])
 
-        # Store data
-        data_bytes = orjson.dumps(serialize_value(original_data))
+        # Store data as single tensor
+        data_bytes = orjson.dumps(serialize_value(original_tensor))
 
         client.put(f"/data/{shard_id}", data=data_bytes)
 
-        # Retrieve with offset=2 (should get last 2 samples)
-        resp = client.get(f"/data/{shard_id}?offset=2")
+        # Retrieve complete data
+        resp = client.get(f"/data/{shard_id}")
         assert resp.status_code == 200
 
         retrieved_data = deserialize_value(orjson.loads(resp.data))
-        assert retrieved_data["input_ids"].shape[0] == 2
-        assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"][2:])
-        assert torch.equal(retrieved_data["labels"], original_data["labels"][2:])
-
-    def test_retrieve_batch_data_with_batch_size(self, client):
-        """Test retrieving batch data with batch_size parameter."""
-        shard_id = "test-shard-5"
-        original_data = {
-            "input_ids": torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]]),
-            "labels": torch.tensor([0, 1, 2, 3]),
-        }
-
-        # Store data
-        data_bytes = orjson.dumps(serialize_value(original_data))
-
-        client.put(f"/data/{shard_id}", data=data_bytes)
-
-        # Retrieve with batch_size=2 (should get first 2 samples)
-        resp = client.get(f"/data/{shard_id}?batch_size=2")
-        assert resp.status_code == 200
-
-        retrieved_data = deserialize_value(orjson.loads(resp.data))
-        assert retrieved_data["input_ids"].shape[0] == 2
-        assert retrieved_data["labels"].shape[0] == 2
-        assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"][:2])
-        assert torch.equal(retrieved_data["labels"], original_data["labels"][:2])
-
-    def test_retrieve_batch_data_with_offset_and_batch_size(self, client):
-        """Test retrieving batch data with both offset and batch_size."""
-        shard_id = "test-shard-6"
-        original_data = {
-            "input_ids": torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]),
-            "labels": torch.tensor([0, 1, 2, 3, 4]),
-        }
-
-        # Store data
-        data_bytes = orjson.dumps(serialize_value(original_data))
-
-        client.put(f"/data/{shard_id}", data=data_bytes)
-
-        # Retrieve with offset=1 and batch_size=2 (should get samples at indices 1-2)
-        resp = client.get(f"/data/{shard_id}?offset=1&batch_size=2")
-        assert resp.status_code == 200
-
-        retrieved_data = deserialize_value(orjson.loads(resp.data))
-        assert retrieved_data["input_ids"].shape[0] == 2
-        assert retrieved_data["labels"].shape[0] == 2
-        assert torch.equal(retrieved_data["input_ids"], original_data["input_ids"][1:3])
-        assert torch.equal(retrieved_data["labels"], original_data["labels"][1:3])
+        # _batch_storage stores the data as-is, so a stored tensor returns as a tensor
+        assert isinstance(retrieved_data, torch.Tensor)
+        # The data should match what was stored
+        assert torch.equal(retrieved_data, original_tensor)
 
     def test_clear_batch_data(self, client):
         """Test clearing batch data by shard_ids."""

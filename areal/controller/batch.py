@@ -261,87 +261,26 @@ class DistributedBatchMemory(DistributedBatch):
             batches.append(self.__class__(dataset=split_data, metadata=None))
         return batches
 
-    @staticmethod
-    def _infer_shard_size(shard: ShardMetadata) -> int:
-        """从 tensor 元数据推断 shard 大小（使用首维度）。"""
-        if not shard.fields:
-            return 0
-        first_meta = next(iter(shard.fields.values()))
-        if not first_meta.shape:
-            return 0
-        return first_meta.shape[0]
+    def _group_shards_by_task_id(
+        self, shards: list[ShardMetadata]
+    ) -> dict[str, list[ShardMetadata]]:
+        """Group shards by task_id.
 
-    @classmethod
-    def _group_shards_by_keys(
-        cls, shards: list[ShardMetadata]
-    ) -> tuple[list[list[ShardMetadata]], int]:
-        """Group shards by fields.keys() and calculate total batch size.
-        Shards with identical keys (fields.keys()) are grouped together.
-        Shards with any different keys belong to different groups.
+        Parameters
+        ----------
+        shards : list[ShardMetadata]
+            List of shard metadata to group
+
+        Returns
+        -------
+        dict[str, list[ShardMetadata]]
+            Dictionary mapping task_id to list of shards with that task_id
         """
-        if not shards:
-            return [], 0
-
-        # Group shards by their fields.keys() (using sorted tuple as key)
-        groups_dict: dict[tuple[str, ...], list[ShardMetadata]] = defaultdict(list)
+        task_id_to_shards: dict[str, list[ShardMetadata]] = defaultdict(list)
         for shard in shards:
-            keys_tuple = tuple(sorted(shard.fields.keys()))
-            groups_dict[keys_tuple].append(shard)
-
-        groups_list = list(groups_dict.values())
-
-        # Validate: different groups should not have overlapping keys
-        group_keys_list = [set(group[0].fields.keys()) for group in groups_list]
-        for i in range(len(group_keys_list)):
-            for j in range(i + 1, len(group_keys_list)):
-                overlap = group_keys_list[i] & group_keys_list[j]
-                assert not overlap, (
-                    f"Groups {i} and {j} have overlapping keys: {overlap}"
-                )
-
-        group_totals = [
-            sum(cls._infer_shard_size(shard) for shard in group)
-            for group in groups_list
-        ]
-        if len(group_totals) > 1:
-            assert len(set(group_totals)) == 1, (
-                f"Different groups have inconsistent total batch_sizes: {group_totals}"
-            )
-
-        # Return groups and total batch size (use first group's total if multiple groups)
-        total_batch_size = group_totals[0] if group_totals else 0
-        return groups_list, total_batch_size
-
-    @staticmethod
-    def _chunk_shard_group(
-        shard_group: list[ShardMetadata],
-        dp_size: int,
-    ) -> list[list[ShardMetadata]]:
-        """Evenly split ``shard_group`` into ``dp_size`` contiguous parts."""
-        if dp_size <= 0:
-            raise FrameworkError(
-                "FrameworkError",
-                "DistributedBatchMemoryError",
-                "dp_size must be positive",
-            )
-
-        total = len(shard_group)
-        if total == 0:
-            return [[] for _ in range(dp_size)]
-
-        base = total // dp_size
-        remainder = total % dp_size
-
-        dp_groups: list[list[ShardMetadata]] = []
-        start = 0
-        for idx in range(dp_size):
-            # 前 remainder 个分组多分一个
-            size = base + (1 if idx < remainder else 0)
-            end = start + size
-            dp_groups.append(shard_group[start:end])
-            start = end
-
-        return dp_groups
+            task_id = shard.shard_id.task_id
+            task_id_to_shards[task_id].append(shard)
+        return task_id_to_shards
 
     def _chunk_metadata(self, dp_size: int) -> list[DistributedBatchMemory]:
         """Split metadata across data parallel processes."""
@@ -360,28 +299,43 @@ class DistributedBatchMemory(DistributedBatch):
                 "dp_size must be positive",
             )
 
-        # Step 1: Group shards by fields.keys()
-        shards_by_field_keys, _ = self._group_shards_by_keys(self.metadata.shards)
+        # Step 1: Group shards by task_id
+        # Each task_id group contains all shards (with different keys) for that task_id
+        task_id_to_shards = self._group_shards_by_task_id(self.metadata.shards)
 
-        # Step 2: Chunk each field group across dp_size processes
-        # Result: list[list[list[ShardMetadata]]] - [field_group_idx][dp_rank_idx][shards]
-        chunked_per_dp = []
-        for field_group in shards_by_field_keys:
-            dp_chunks = self._chunk_shard_group(field_group, dp_size)
-            chunked_per_dp.append(dp_chunks)
+        # Convert to list of (task_id, shards) tuples for distribution
+        task_groups = list(task_id_to_shards.items())
 
-        # Step 3: Merge results from different field groups
-        # Combine shards from all field groups for each dp rank
-        # Since different groups have non-overlapping keys but same total batch_size,
-        # the merged batch_size should equal each group's batch_size (not sum)
+        if not task_groups:
+            # No shards, return empty batches with metadata
+            batches = []
+            for i in range(dp_size):
+                new_metadata = BatchMetadata(
+                    batch_id=f"{self.metadata.batch_id}_chunk_{i}",
+                    shards=[],
+                )
+                batches.append(self.__class__(dataset=None, metadata=new_metadata))
+            return batches
+
+        # Step 2: Distribute task_id groups across dp_size processes
+        # Balance by number of task_ids per rank, not by shard count
+        # This ensures each DistributedBatchMemory gets roughly the same number of task_ids
+
+        # Initialize shard lists and task_id counts for each dp rank
         shards_per_dp_rank: list[list[ShardMetadata]] = [[] for _ in range(dp_size)]
+        task_id_counts_per_rank = [0] * dp_size
 
-        # Merge shards from all field groups for each dp rank
-        for dp_chunks in chunked_per_dp:
-            for dp_idx in range(dp_size):
-                shards_per_dp_rank[dp_idx].extend(dp_chunks[dp_idx])
+        # Distribute task groups: assign each complete task_id group to the rank
+        # with the fewest task_ids so far
+        for task_id, shards in task_groups:
+            # Find the rank with the fewest task_ids
+            target_rank = min(range(dp_size), key=lambda i: task_id_counts_per_rank[i])
+            # Assign all shards of this task_id to the target rank
+            shards_per_dp_rank[target_rank].extend(shards)
+            task_id_counts_per_rank[target_rank] += 1
 
-        # Create chunked batches
+        # Step 3: Create chunked batches
+        # Always create metadata for all batches, even if shards list is empty
         batches = []
         for i in range(dp_size):
             new_metadata = BatchMetadata(
@@ -534,7 +488,20 @@ class DistributedBatchMemory(DistributedBatch):
     def _get_total_size(self) -> int:
         """Get the total size of the dataset"""
         if self.metadata is not None:
-            _, total_size = self._group_shards_by_keys(self.metadata.shards)
+            if not self.metadata.shards:
+                return 0
+            # Group shards by task_id
+            task_id_to_shards = self._group_shards_by_task_id(self.metadata.shards)
+
+            total_size = 0
+            for shards in task_id_to_shards.values():
+                if (
+                    shards
+                    and shards[0].tensor_metadata
+                    and shards[0].tensor_metadata.shape
+                ):
+                    total_size += shards[0].tensor_metadata.shape[0]
+
             return total_size
 
         # Local data status: calculate from dataset

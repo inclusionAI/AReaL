@@ -16,6 +16,35 @@ class TensorMetadata:
 
 
 @dataclass
+class ShardId:
+    """Identifier for a shard, composed of task_id and key."""
+
+    task_id: str
+    key: str
+
+    def __str__(self) -> str:
+        return f"{self.task_id}:{self.key}"
+
+    def __repr__(self) -> str:
+        return f"ShardId(task_id={self.task_id}, key={self.key})"
+
+    def __hash__(self) -> int:
+        return hash((self.task_id, self.key))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ShardId):
+            return False
+        return self.task_id == other.task_id and self.key == other.key
+
+    @classmethod
+    def from_string(cls, s: str, default_key: str = "default") -> ShardId:
+        if ":" in s:
+            parts = s.split(":", 1)
+            return cls(task_id=parts[0], key=parts[1])
+        return cls(task_id=s, key=default_key)
+
+
+@dataclass
 class ShardMetadata:
     """Metadata for a single (sub-)shard stored on one node.
 
@@ -25,13 +54,13 @@ class ShardMetadata:
 
     node_id: str
     node_addr: str
-    shard_id: str
-    fields: dict[str, TensorMetadata] = field(default_factory=dict)
+    shard_id: ShardId
+    tensor_metadata: TensorMetadata | None = None
 
     def __repr__(self) -> str:
         return (
             f"ShardMetadata(node_id={self.node_id}, node_addr={self.node_addr}, "
-            f"shard_id={self.shard_id}, fields={list(self.fields.keys())})"
+            f"shard_id={self.shard_id}, tensor_metadata={self.tensor_metadata})"
         )
 
 

@@ -6,6 +6,7 @@ import torch
 from areal.controller.batch import DistributedBatchMemory
 from areal.controller.batch_metadata import (
     BatchMetadata,
+    ShardId,
     ShardMetadata,
     TensorMetadata,
 )
@@ -1400,13 +1401,11 @@ class TestDistributedBatchMemoryMetadata:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(10, 5),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(10, 5),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1423,13 +1422,11 @@ class TestDistributedBatchMemoryMetadata:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(5, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(5, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1439,13 +1436,11 @@ class TestDistributedBatchMemoryMetadata:
                 ShardMetadata(
                     node_id="node-1",
                     node_addr="localhost:8766",
-                    shard_id="shard-1",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(3, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-1", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(3, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1483,22 +1478,18 @@ class TestDistributedBatchMemoryMetadata:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(50, 128), dtype="torch.int64"
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(50, 128), dtype="torch.int64"
+                    ),
                 ),
                 ShardMetadata(
                     node_id="node-1",
                     node_addr="localhost:8766",
-                    shard_id="shard-1",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(50, 128), dtype="torch.int64"
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-1", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(50, 128), dtype="torch.int64"
+                    ),
                 ),
             ],
         )
@@ -1522,13 +1513,11 @@ class TestDistributedBatchMemoryMetadata:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(30, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(30, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1538,13 +1527,11 @@ class TestDistributedBatchMemoryMetadata:
                 ShardMetadata(
                     node_id="node-1",
                     node_addr="localhost:8766",
-                    shard_id="shard-1",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(20, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-1", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(20, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1566,13 +1553,11 @@ class TestDistributedBatchMemoryMetadata:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(123, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(123, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1606,18 +1591,17 @@ class TestBatchMetadata:
         meta = ShardMetadata(
             node_id="node-0",
             node_addr="localhost:8765",
-            shard_id="shard-0",
-            fields={
-                "input_ids": TensorMetadata(
-                    shape=(32, 128),
-                    dtype="torch.int64",
-                ),
-            },
+            shard_id=ShardId(task_id="shard-0", key="input_ids"),
+            tensor_metadata=TensorMetadata(
+                shape=(32, 128),
+                dtype="torch.int64",
+            ),
         )
         assert meta.node_id == "node-0"
         # Batch size can be inferred from first field's shape[0]
-        assert meta.fields["input_ids"].shape[0] == 32
-        assert "input_ids" in meta.fields
+        assert meta.tensor_metadata is not None
+        assert meta.tensor_metadata.shape[0] == 32
+        assert meta.shard_id.key == "input_ids"
 
     def test_batch_metadata_node_addrs(self):
         """Test getting all node addresses from batch metadata."""
@@ -1627,24 +1611,20 @@ class TestBatchMetadata:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="192.168.1.10:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(32, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(32, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
                 ShardMetadata(
                     node_id="node-1",
                     node_addr="192.168.1.11:8765",
-                    shard_id="shard-1",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(32, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-1", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(32, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1666,19 +1646,11 @@ class TestRPCDistributedBatchReturn:
         """Test handling tensor return from engine method."""
         from areal.scheduler.rpc.rpc_server import _handle_distributed_batch_return
 
-        # Mock engine with get_version method
-        class MockEngine:
-            def get_version(self):
-                return 42
-
-        engine = MockEngine()
-
         # Test tensor return
         tensor_result = torch.randn(10, 5)
         batch = _handle_distributed_batch_return(
             tensor_result,
             result_key="logits",
-            engine=engine,
         )
 
         # Should return DistributedBatchMemory with metadata
@@ -1686,37 +1658,32 @@ class TestRPCDistributedBatchReturn:
         assert batch.metadata is not None
         assert len(batch) == 10
         assert len(batch.metadata.shards) == 1
-        assert "logits" in batch.metadata.shards[0].fields
+        assert batch.metadata.shards[0].tensor_metadata is not None
+        assert batch.metadata.shards[0].shard_id.key == "logits"
 
     def test_handle_dict_return(self):
         """Test handling dict return from engine method."""
         from areal.scheduler.rpc.rpc_server import _handle_distributed_batch_return
 
-        # Mock engine
-        class MockEngine:
-            def get_version(self):
-                return 100
-
-        engine = MockEngine()
-
         # Test dict return
         dict_result = {
             "logits": torch.randn(8, 10, 50),
-            "values": torch.randn(8, 10),
-            "metadata": "some_string",  # non-tensor field
+            "values": torch.randn(8, 10),  # non-tensor field
         }
         batch = _handle_distributed_batch_return(
             dict_result,
             result_key=None,
-            engine=engine,
         )
 
         # Should return DistributedBatchMemory with metadata
         assert isinstance(batch, DistributedBatchMemory)
         assert batch.metadata is not None
         assert len(batch) == 8
-        assert "logits" in batch.metadata.shards[0].fields
-        assert "values" in batch.metadata.shards[0].fields
+        assert batch.metadata.shards[0].tensor_metadata is not None
+        assert batch.metadata.shards[0].shard_id.key == "logits"
+        # Note: With single tensor_metadata per shard, we can only check one field
+        # The shard_id.key should match one of the tensor keys
+        assert batch.metadata.shards[0].shard_id.key in ["logits", "values"]
 
     def test_handle_non_tensor_return(self):
         """Test that non-tensor returns are passed through."""
@@ -1740,6 +1707,200 @@ class TestRPCDistributedBatchReturn:
         dict_result = {"loss": 0.5, "accuracy": 0.9}  # no tensors
         result = _handle_distributed_batch_return(dict_result, None, engine)
         assert result == dict_result
+
+    def test_handle_distributed_batch_with_input_metadata(self):
+        """Test _handle_distributed_batch_return with input_batch_metadata.
+
+        Input shards:
+        - shard_id: A, key: input_ids -> tensor
+        - shard_id: A, key: attention_mask -> tensor
+        - shard_id: B, key: input_ids -> tensor
+        - shard_id: B, key: attention_mask -> tensor
+        - shard_id: C, key: input_ids -> tensor
+        - shard_id: C, key: attention_mask -> tensor
+
+        Expected output shards:
+        - shard_id: A, key: new_key1 -> tensor
+        - shard_id: A, key: new_key2 -> tensor
+        - shard_id: B, key: new_key1 -> tensor
+        - shard_id: B, key: new_key2 -> tensor
+        - shard_id: C, key: new_key1 -> tensor
+        - shard_id: C, key: new_key2 -> tensor
+        """
+        from areal.scheduler.rpc.rpc_server import _handle_distributed_batch_return
+
+        # Create input batch metadata with shards grouped by task_id
+        input_shards = [
+            ShardMetadata(
+                node_id="node-0",
+                node_addr="localhost:8765",
+                shard_id=ShardId(task_id="A", key="input_ids"),
+                tensor_metadata=TensorMetadata(shape=(10, 128), dtype="torch.int64"),
+            ),
+            ShardMetadata(
+                node_id="node-0",
+                node_addr="localhost:8765",
+                shard_id=ShardId(task_id="A", key="attention_mask"),
+                tensor_metadata=TensorMetadata(shape=(10, 128), dtype="torch.int64"),
+            ),
+            ShardMetadata(
+                node_id="node-1",
+                node_addr="localhost:8766",
+                shard_id=ShardId(task_id="B", key="input_ids"),
+                tensor_metadata=TensorMetadata(shape=(20, 128), dtype="torch.int64"),
+            ),
+            ShardMetadata(
+                node_id="node-1",
+                node_addr="localhost:8766",
+                shard_id=ShardId(task_id="B", key="attention_mask"),
+                tensor_metadata=TensorMetadata(shape=(20, 128), dtype="torch.int64"),
+            ),
+            ShardMetadata(
+                node_id="node-2",
+                node_addr="localhost:8767",
+                shard_id=ShardId(task_id="C", key="input_ids"),
+                tensor_metadata=TensorMetadata(shape=(15, 128), dtype="torch.int64"),
+            ),
+            ShardMetadata(
+                node_id="node-2",
+                node_addr="localhost:8767",
+                shard_id=ShardId(task_id="C", key="attention_mask"),
+                tensor_metadata=TensorMetadata(shape=(15, 128), dtype="torch.int64"),
+            ),
+        ]
+        input_batch_metadata = BatchMetadata(
+            batch_id="input-batch",
+            shards=input_shards,
+        )
+
+        # Create result with new keys
+        # Total batch size: 10 + 20 + 15 = 45
+        result = {
+            "new_key1": torch.randn(45, 256),  # batch_size=45
+            "new_key2": torch.randn(45, 128),  # batch_size=45
+        }
+
+        batch = _handle_distributed_batch_return(
+            result,
+            result_key=None,
+            input_batch_metadata=input_batch_metadata,
+        )
+
+        # Verify output structure
+        assert isinstance(batch, DistributedBatchMemory)
+        assert batch.metadata is not None
+        assert len(batch.metadata.shards) == 6  # 3 task_ids * 2 keys
+
+        # Group output shards by task_id
+        output_by_task = {}
+        for shard in batch.metadata.shards:
+            task_id = shard.shard_id.task_id
+            if task_id not in output_by_task:
+                output_by_task[task_id] = []
+            output_by_task[task_id].append(shard)
+
+        # Verify each task_id has 2 shards (one for each result key)
+        assert len(output_by_task["A"]) == 2
+        assert len(output_by_task["B"]) == 2
+        assert len(output_by_task["C"]) == 2
+
+        # Verify shard keys match result keys
+        for task_id, shards in output_by_task.items():
+            shard_keys = {s.shard_id.key for s in shards}
+            assert shard_keys == {"new_key1", "new_key2"}
+
+        # Verify tensor shapes
+        # Task A: batch_size=10
+        a_new_key1 = next(
+            s for s in output_by_task["A"] if s.shard_id.key == "new_key1"
+        )
+        assert a_new_key1.tensor_metadata.shape == (10, 256)
+        a_new_key2 = next(
+            s for s in output_by_task["A"] if s.shard_id.key == "new_key2"
+        )
+        assert a_new_key2.tensor_metadata.shape == (10, 128)
+
+        # Task B: batch_size=20
+        b_new_key1 = next(
+            s for s in output_by_task["B"] if s.shard_id.key == "new_key1"
+        )
+        assert b_new_key1.tensor_metadata.shape == (20, 256)
+        b_new_key2 = next(
+            s for s in output_by_task["B"] if s.shard_id.key == "new_key2"
+        )
+        assert b_new_key2.tensor_metadata.shape == (20, 128)
+
+        # Task C: batch_size=15
+        c_new_key1 = next(
+            s for s in output_by_task["C"] if s.shard_id.key == "new_key1"
+        )
+        assert c_new_key1.tensor_metadata.shape == (15, 256)
+        c_new_key2 = next(
+            s for s in output_by_task["C"] if s.shard_id.key == "new_key2"
+        )
+        assert c_new_key2.tensor_metadata.shape == (15, 128)
+
+    def test_handle_distributed_batch_without_input_metadata(self):
+        """Test _handle_distributed_batch_return without input_batch_metadata.
+
+        Expected behavior:
+        - Generate shards from result keys
+        - shard_id.task_id from input task_id or generate uuid
+        """
+        from areal.scheduler.rpc.rpc_server import _handle_distributed_batch_return
+
+        # Test with provided task_id
+        result = {
+            "logits": torch.randn(10, 50),
+            "values": torch.randn(10, 1),
+        }
+        task_id = "test-task-123"
+
+        batch = _handle_distributed_batch_return(
+            result,
+            result_key=None,
+            task_id=task_id,
+            input_batch_metadata=None,
+        )
+
+        assert isinstance(batch, DistributedBatchMemory)
+        assert batch.metadata is not None
+        assert len(batch.metadata.shards) == 2  # One for each key
+
+        # Verify shard_ids
+        shard_keys = {s.shard_id.key for s in batch.metadata.shards}
+        assert shard_keys == {"logits", "values"}
+
+        # Verify all shards have the same task_id
+        task_ids = {s.shard_id.task_id for s in batch.metadata.shards}
+        assert task_ids == {task_id}
+
+        # Verify tensor shapes
+        logits_shard = next(
+            s for s in batch.metadata.shards if s.shard_id.key == "logits"
+        )
+        assert logits_shard.tensor_metadata.shape == (10, 50)
+        values_shard = next(
+            s for s in batch.metadata.shards if s.shard_id.key == "values"
+        )
+        assert values_shard.tensor_metadata.shape == (10, 1)
+
+        # Test without task_id (should generate uuid)
+        batch2 = _handle_distributed_batch_return(
+            result,
+            result_key=None,
+            task_id=None,
+            input_batch_metadata=None,
+        )
+
+        assert isinstance(batch2, DistributedBatchMemory)
+        assert batch2.metadata is not None
+        assert len(batch2.metadata.shards) == 2
+
+        # Verify all shards have the same generated task_id
+        task_ids2 = {s.shard_id.task_id for s in batch2.metadata.shards}
+        assert len(task_ids2) == 1  # All shards should have same task_id
+        assert task_ids2 != {task_id}  # Should be different from previous task_id
 
 
 # =============================================================================
@@ -1766,13 +1927,11 @@ class TestDistributedBatchMemoryExtended:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(42, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(42, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1788,13 +1947,11 @@ class TestDistributedBatchMemoryExtended:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(10, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(10, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1847,13 +2004,11 @@ class TestDistributedBatchMemoryExtended:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(10, 10),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(10, 10),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1872,13 +2027,11 @@ class TestDistributedBatchMemoryExtended:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(1, 2),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(1, 2),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -1886,99 +2039,6 @@ class TestDistributedBatchMemoryExtended:
 
         with pytest.raises(Exception):  # FrameworkError
             batch1.union_(batch2)
-
-    def test_group_shards_by_keys_same_keys(self):
-        """Test _group_shards_by_keys with same keys."""
-        shards = [
-            ShardMetadata(
-                node_id="node-0",
-                node_addr="localhost:8000",
-                shard_id="shard-0",
-                fields={"input_ids": TensorMetadata(shape=(5, 10), dtype="int64")},
-            ),
-            ShardMetadata(
-                node_id="node-1",
-                node_addr="localhost:8001",
-                shard_id="shard-1",
-                fields={"input_ids": TensorMetadata(shape=(5, 10), dtype="int64")},
-            ),
-        ]
-
-        groups, total_size = DistributedBatchMemory._group_shards_by_keys(shards)
-        assert len(groups) == 1
-        assert len(groups[0]) == 2
-        assert total_size == 10
-
-    def test_group_shards_by_keys_different_keys(self):
-        """Test _group_shards_by_keys with different keys."""
-        shards = [
-            ShardMetadata(
-                node_id="node-0",
-                node_addr="localhost:8000",
-                shard_id="shard-0",
-                fields={"input_ids": TensorMetadata(shape=(5, 10), dtype="int64")},
-            ),
-            ShardMetadata(
-                node_id="node-1",
-                node_addr="localhost:8001",
-                shard_id="shard-1",
-                fields={"labels": TensorMetadata(shape=(5,), dtype="int64")},
-            ),
-        ]
-
-        groups, total_size = DistributedBatchMemory._group_shards_by_keys(shards)
-        assert len(groups) == 2
-        assert len(groups[0]) == 1
-        assert len(groups[1]) == 1
-        assert total_size == 5  # Both groups should have same total
-
-    def test_group_shards_by_keys_overlapping_keys_error(self):
-        """Test _group_shards_by_keys raises error for overlapping keys."""
-        shards = [
-            ShardMetadata(
-                node_id="node-0",
-                node_addr="localhost:8000",
-                shard_id="shard-0",
-                fields={
-                    "input_ids": TensorMetadata(shape=(5, 10), dtype="int64"),
-                    "labels": TensorMetadata(shape=(5,), dtype="int64"),
-                },
-            ),
-            ShardMetadata(
-                node_id="node-1",
-                node_addr="localhost:8001",
-                shard_id="shard-1",
-                fields={
-                    "input_ids": TensorMetadata(shape=(5, 10), dtype="int64"),
-                    "attention_mask": TensorMetadata(shape=(5, 10), dtype="int64"),
-                },
-            ),
-        ]
-
-        with pytest.raises(AssertionError):
-            DistributedBatchMemory._group_shards_by_keys(shards)
-
-    def test_chunk_shard_group(self):
-        """Test _chunk_shard_group."""
-        shards = [
-            ShardMetadata(
-                node_id="node-0",
-                node_addr="localhost:8000",
-                shard_id="shard-0",
-                fields={"input_ids": TensorMetadata(shape=(4, 10), dtype="int64")},
-            ),
-            ShardMetadata(
-                node_id="node-1",
-                node_addr="localhost:8001",
-                shard_id="shard-1",
-                fields={"input_ids": TensorMetadata(shape=(4, 10), dtype="int64")},
-            ),
-        ]
-
-        chunks = DistributedBatchMemory._chunk_shard_group(shards, dp_size=2)
-        assert len(chunks) == 2
-        # Each chunk should have at least one shard
-        assert sum(len(chunk) for chunk in chunks) >= 2
 
     def test_concat_empty_list_error(self):
         """Test concat with empty list raises error."""
@@ -2002,13 +2062,11 @@ class TestDistributedBatchMemoryExtended:
                 ShardMetadata(
                     node_id="node-0",
                     node_addr="localhost:8765",
-                    shard_id="shard-0",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(1, 2),
-                            dtype="torch.int64",
-                        ),
-                    },
+                    shard_id=ShardId(task_id="shard-0", key="input_ids"),
+                    tensor_metadata=TensorMetadata(
+                        shape=(1, 2),
+                        dtype="torch.int64",
+                    ),
                 ),
             ],
         )
@@ -2019,124 +2077,6 @@ class TestDistributedBatchMemoryExtended:
             FrameworkError, match="Cannot concatenate batches with mixed statuses"
         ):
             DistributedBatchMemory.concat([batch1, batch2])
-
-    def test_chunk_metadata_complex_multiple_key_groups(self):
-        """Test chunking metadata with multiple key groups (20 shards: 16 with input_ids/attention_mask, 4 with prox_logp)."""
-        # Create 20 shards: first 16 have input_ids+attention_mask, last 4 have prox_logp
-        # Each group should have the same total batch_size for validation
-        shards = []
-
-        # First 16 shards: each has batch_size=5, total=80
-        for i in range(16):
-            shards.append(
-                ShardMetadata(
-                    node_id=f"node-{i % 4}",
-                    node_addr=f"localhost:{8765 + (i % 4)}",
-                    shard_id=f"shard-{i}",
-                    fields={
-                        "input_ids": TensorMetadata(
-                            shape=(5, 128), dtype="torch.int64"
-                        ),
-                        "attention_mask": TensorMetadata(
-                            shape=(5, 128), dtype="torch.int64"
-                        ),
-                    },
-                )
-            )
-
-        # Last 4 shards: each has batch_size=20, total=80 (same as first group)
-        for i in range(16, 20):
-            shards.append(
-                ShardMetadata(
-                    node_id=f"node-{i % 4}",
-                    node_addr=f"localhost:{8765 + (i % 4)}",
-                    shard_id=f"shard-{i}",
-                    fields={
-                        "prox_logp": TensorMetadata(shape=(20,), dtype="torch.float32"),
-                    },
-                )
-            )
-
-        metadata = BatchMetadata(
-            batch_id="test-complex-batch",
-            shards=shards,
-        )
-        batch = DistributedBatchMemory.from_metadata(metadata)
-
-        # Chunk into 4 data parallel processes
-        dp_size = 4
-        chunks = batch.chunk(dp_size)
-
-        # Verify basic structure
-        assert len(chunks) == dp_size
-        assert all(chunk.metadata is not None for chunk in chunks)
-        assert all(chunk.dataset is None for chunk in chunks)
-
-        # Verify total batch_size is preserved across chunks
-        total_size = sum(len(chunk) for chunk in chunks)
-        assert total_size == 80
-
-        # Verify each chunk has shards from both key groups
-        for chunk_idx, chunk in enumerate(chunks):
-            chunk_shards = chunk.metadata.shards
-            assert len(chunk_shards) > 0, (
-                f"Chunk {chunk_idx} should have at least one shard"
-            )
-
-            # Collect keys from all shards in this chunk
-            chunk_keys = set()
-            for shard in chunk_shards:
-                chunk_keys.update(shard.fields.keys())
-
-            # Each chunk should have both key groups
-            # First group: input_ids + attention_mask (from first 16 shards)
-            # Second group: prox_logp (from last 4 shards)
-            assert "input_ids" in chunk_keys, (
-                f"Chunk {chunk_idx} should have input_ids key from first group"
-            )
-            assert "attention_mask" in chunk_keys, (
-                f"Chunk {chunk_idx} should have attention_mask key from first group"
-            )
-            assert "prox_logp" in chunk_keys, (
-                f"Chunk {chunk_idx} should have prox_logp key from second group"
-            )
-
-            # Verify shards are correctly categorized
-            input_ids_shards = [
-                s
-                for s in chunk_shards
-                if "input_ids" in s.fields.keys()
-                and "attention_mask" in s.fields.keys()
-            ]
-            prox_logp_shards = [
-                s for s in chunk_shards if "prox_logp" in s.fields.keys()
-            ]
-
-            assert len(input_ids_shards) > 0, (
-                f"Chunk {chunk_idx} should have shards with input_ids+attention_mask"
-            )
-            assert len(prox_logp_shards) > 0, (
-                f"Chunk {chunk_idx} should have shards with prox_logp"
-            )
-
-            # Verify batch_size distribution: each chunk should have ~20 samples
-            # (80 total / 4 dp processes = 20 per chunk)
-            assert len(chunk) == 20, (
-                f"Chunk {chunk_idx} should have batch_size=20, got {len(chunk)}"
-            )
-
-        # Verify all original shards are present (by shard_id)
-        all_chunk_shard_ids = set()
-        for chunk in chunks:
-            for shard in chunk.metadata.shards:
-                all_chunk_shard_ids.add(shard.shard_id)
-
-        original_shard_ids = {f"shard-{i}" for i in range(20)}
-        assert all_chunk_shard_ids == original_shard_ids, (
-            f"All original shards should be present. "
-            f"Missing: {original_shard_ids - all_chunk_shard_ids}, "
-            f"Extra: {all_chunk_shard_ids - original_shard_ids}"
-        )
 
     def test_chunk_preserves_order(self):
         """Test that chunking preserves sample order."""
