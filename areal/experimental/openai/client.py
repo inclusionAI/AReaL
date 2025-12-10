@@ -172,6 +172,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         max_tokens: int | None | NotGiven = NOT_GIVEN,
         max_total_tokens: int | None | NotGiven = NOT_GIVEN,
         metadata: Metadata | None | NotGiven = NOT_GIVEN,
+        n: int | None | NotGiven = NOT_GIVEN,
         stop: str | None | list[str] | None | NotGiven = NOT_GIVEN,
         store: bool | None | NotGiven = NOT_GIVEN,
         temperature: float | None | NotGiven = NOT_GIVEN,
@@ -184,10 +185,13 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
-        if not isinstance(messages, list):
+        if not isinstance(messages, Iterable):
             raise TypeError(
-                "messages must be provided as a list of dictionaries or BaseModel instances."
+                "messages must be provided as an iterable of dictionaries or BaseModel instances."
             )
+        if not is_omitted(n) and n != 1:
+            raise NotImplementedError("n != 1 is not supported yet")
+        n = 1
 
         messages_list_raw = list(messages)
         if not messages_list_raw:
@@ -281,7 +285,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Create generation config
         gconfig = GenerationHyperparameters(
-            n_samples=1,
+            n_samples=n,
             temperature=temp,
             max_new_tokens=max_new_tokens,
             top_p=top_p_val,
