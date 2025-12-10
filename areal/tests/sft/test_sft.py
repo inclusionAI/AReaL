@@ -8,6 +8,7 @@ import yaml
 from sh import Command
 
 from areal.api.cli_args import SFTConfig, load_expr_config
+from areal.tests.utils import get_dataset_path, get_model_path
 
 
 def test_sft(tmp_path: str):
@@ -18,16 +19,22 @@ def test_sft(tmp_path: str):
         ["--config", os.path.join(base_dir, "config.yaml")], SFTConfig
     )
 
+    # Use get_model_path to check local or download from HuggingFace
     local_model_path = config.model.path.replace("/", "__")
-    local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
-    if os.path.exists(local_model_path):
-        config.model.path = local_model_path
-        config.tokenizer_path = local_model_path
+    model_path = get_model_path(
+        os.path.join("/storage/openpsi/models", local_model_path),
+        config.model.path,
+    )
+    config.model.path = model_path
+    config.tokenizer_path = model_path
 
+    # Use get_dataset_path to check local or download from HuggingFace
     local_dataset_path = config.train_dataset.path.replace("/", "__")
-    local_dataset_path = os.path.join("/storage/openpsi/data", local_dataset_path)
-    if os.path.exists(local_dataset_path):
-        config.train_dataset.path = local_dataset_path
+    dataset_path = get_dataset_path(
+        os.path.join("/storage/openpsi/data", local_dataset_path),
+        config.train_dataset.path,
+    )
+    config.train_dataset.path = dataset_path
 
     # save new config
     os.makedirs(os.path.join(tmp_path, "config"), exist_ok=True)
