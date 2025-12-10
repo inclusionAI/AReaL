@@ -27,8 +27,11 @@ def _gather_logprobs_entropy(
     return log_probs_labels, entropy
 
 
-# remove torch.compile due to npu problems
-if not is_npu_available:
+def _should_use_torch_compile() -> bool:
+    return not is_npu_available
+
+
+if _should_use_torch_compile():
     _gather_logprobs = torch.compile(_gather_logprobs)
     _gather_logprobs_entropy = torch.compile(_gather_logprobs_entropy)
 

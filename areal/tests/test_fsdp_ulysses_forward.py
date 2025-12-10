@@ -27,8 +27,9 @@ def _run_test_with_torchrun(n_gpus: int):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 @pytest.mark.parametrize("world_size", [2])
-def test_fsdp_ulysses_train_batch_2gpu(world_size):
+def test_fsdp_ulysses_forward_2gpu(world_size):
     if current_platform.device_count() < world_size:
         pytest.skip(f"This test requires {world_size} gpus")
     _run_test_with_torchrun(world_size)

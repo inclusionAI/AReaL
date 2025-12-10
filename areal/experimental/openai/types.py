@@ -40,20 +40,38 @@ class InteractionWithTokenLogpReward:
         return self.completion is not None
 
     @property
+    def is_response(self) -> bool:
+        return self.response is not None
+
+    @property
     def api_type(self) -> str:
+        # TODO: replace api_type value with enum
         """API type (completion/response)."""
-        return "completion" if self.is_completion else "response"
+        if self.is_completion:
+            return "completion"
+        elif self.is_response:
+            return "response"
+        else:
+            return "none"
 
     @property
     def input_name_for_logging(self) -> str:
-        return "messages" if self.is_completion else "input_data"
+        # TODO: replace input_name value with enum
+        if self.is_completion:
+            return "messages"
+        elif self.is_response:
+            return "input_data"
+        else:
+            return "none"
 
     @property
-    def current_data(self) -> list[dict] | str | ResponseInputParam:
+    def current_data(self) -> list[dict] | str | ResponseInputParam | None:
         if self.is_completion:
             return self.messages
-        else:
+        elif self.is_response:
             return self.input_data
+        else:
+            return None
 
     @property
     def parent_data(self) -> list[dict] | str | ResponseInputParam | None:
@@ -62,18 +80,22 @@ class InteractionWithTokenLogpReward:
         return self.parent.current_data
 
     @property
-    def interaction_id(self) -> str:
+    def interaction_id(self) -> str | None:
         if self.is_completion:
             return self.completion.id
-        else:
+        elif self.is_response:
             return self.response.id
+        else:
+            return None
 
     @property
-    def created_at(self) -> float:
+    def created_at(self) -> float | None:
         if self.is_completion:
             return float(self.completion.created)
-        else:
+        elif self.is_response:
             return float(self.response.created_at)
+        else:
+            return None
 
     @property
     def remaining_messages(self) -> list[dict]:

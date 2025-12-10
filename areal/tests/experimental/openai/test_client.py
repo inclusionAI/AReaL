@@ -10,15 +10,16 @@ import requests
 
 from areal.api.cli_args import SGLangConfig
 from areal.experimental.openai import ArealOpenAI
+from areal.tests.utils import get_model_path
 from areal.utils import network, seeding
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.proc import kill_process_tree
 
 EXPR_NAME = "test_openai"
 TRIAL_NAME = "trial_0"
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen3-0.6B"
+MODEL_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+)
 PORT, DIST_PORT = network.find_free_ports(2)
 HOST = network.gethostip()
 # set a large timeout since we may need to download the model from hub

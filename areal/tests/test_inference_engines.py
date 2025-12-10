@@ -13,14 +13,15 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
+from areal.tests.utils import get_model_path
 from areal.utils import network
 from areal.utils.data import concat_padded_tensors, get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.pkg_version import is_available
 
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen3-0.6B"
+MODEL_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+)
 
 IS_VLLM_INSTALLED = is_available("vllm")
 
