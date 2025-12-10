@@ -19,7 +19,6 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import StepInfo
 from areal.api.workflow_api import RolloutWorkflow
 from areal.dataset import get_custom_dataset
-from areal.experimental.openai.client import ArealOpenAI
 from areal.experimental.openai.proxy import (
     ProxyServer,
     ProxySession,
