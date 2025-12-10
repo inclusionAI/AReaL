@@ -3,7 +3,6 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -26,12 +25,6 @@ from areal.utils.data import (
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
     from areal.core.workflow_executor import WorkflowExecutor
-
-
-@dataclass
-class ForwardBackwardOutputs:
-    mb_outputs: list[torch.Tensor] | None
-    losses: list[torch.Tensor] | None
 
 
 class TrainEngine(abc.ABC):
@@ -219,7 +212,7 @@ class TrainEngine(abc.ABC):
         self,
         input_: dict[str, Any],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
-    ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]:
+    ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList, torch.Tensor]:
         """Split input batch into micro-batches for gradient accumulation.
 
         Parameters
@@ -232,29 +225,25 @@ class TrainEngine(abc.ABC):
         Returns
         -------
         tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]
-            An iterator over micro-batch dictionaries and the MicroBatchList metadata.
+            An iterator over micro-batch dictionaries, the MicroBatchList iterator with metadata and total_loss_weight.
         """
         raise NotImplementedError()
 
     @abc.abstractmethod
     def _forward_compute_mb(
         self,
-        mb_input: dict[str, Any],
+        mb_input: tuple[Any, ...],
         post_process_fn: Callable[[torch.Tensor, dict[str, Any]], Any],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
         **kwargs,
     ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
         """Compute forward pass and prepare loss function closure for a single micro-batch.
 
         Parameters
         ----------
-        mb_input : dict[str, Any]
-            A dictionary containing the micro-batch input data.
+        mb_input : tuple[Any, ...]
+            A tuple containing the micro-batch input data.
         post_process_fn : Callable[[torch.Tensor, dict[str, Any]], Any]
             A function that processes the model output.
-        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
-            A function that computes the weight for this micro-batch, typically
-            the number of tokens.
         **kwargs
             Additional keyword arguments for specific implementations.
 
@@ -287,7 +276,6 @@ class TrainEngine(abc.ABC):
         """Advance the learning rate scheduler by one step."""
         raise NotImplementedError()
 
-    @abc.abstractmethod
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 
@@ -299,25 +287,19 @@ class TrainEngine(abc.ABC):
     def forward_backward_batch(
         self,
         data_iterator: Iterable[dict[str, torch.Tensor]],
-        loss_fn: Callable[[torch.Tensor, dict[str, Any]], torch.Tensor] | None = None,
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
+        post_process: Callable[[torch.Tensor, dict], torch.Tensor] | None = None,
         return_outputs: bool = False,
         forward_only: bool = False,
-    ) -> ForwardBackwardOutputs:
+    ):
         """Process micro-batches through forward and optionally backward pass.
 
         Parameters
         ----------
         data_iterator : Iterable[dict[str, torch.Tensor]]
             An iterable that yields micro-batch dictionaries containing packed tensors.
-        loss_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor], optional
-            A function that computes the normalized loss. Required when
-            ``forward_only=False`` or when ``return_outputs=False`` in forward-only mode.
-        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
-            A function that computes the weight for each micro-batch, typically
-            the number of tokens. Used for proper loss scaling.
-        on_output : Callable[[torch.Tensor, dict[str, Any]], Any], optional
+        post_process : Callable[[torch.Tensor, dict[str, Any]], Any], optional
             A function that processes the model output.
+
         return_outputs : bool, optional
             If True, collect and return model outputs (logits) instead of losses.
             Only used when ``forward_only=True``. By default False.

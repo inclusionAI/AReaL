@@ -43,7 +43,7 @@ from transformers import (
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import ForwardBackwardOutputs, InferenceEngine
+from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.dist_rollout import DistRolloutCoordinator
@@ -53,7 +53,6 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, pkg_version, stats_tracker
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
-    MicroBatchIterator,
     MicroBatchList,
     amend_position_ids,
     create_mb_iterator,
@@ -623,21 +622,10 @@ class FSDPEngine(BaseTrainEngine):
         self,
         # An iterator that yields micro-batches, wrapping the metadata during splitting mb for downstream tasks.
         data_iterator: Iterable[dict[str, torch.Tensor]],
-        loss_fn: Callable[..., torch.Tensor] | None = None,
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
+        post_process: Callable[[torch.Tensor, dict], torch.Tensor] | None = None,
         return_outputs: bool = False,
         forward_only: bool = False,
-    ) -> ForwardBackwardOutputs | None:
-        results = []
-        losses_list = []
-        batch_type = (
-            "train_batch"
-            if not forward_only
-            else ("forward_batch" if return_outputs else "eval_batch")
-        )
-        if isinstance(data_iterator, MicroBatchIterator):
-            total_loss_weight = data_iterator.kwargs["total_loss_weight"]
-
+    ):
         for mb_input, padded_mb_input, pad_length in data_iterator:
             if self.parallel_helper.sp_size > 1:
                 input_ids = padded_mb_input["input_ids"]
@@ -678,98 +666,36 @@ class FSDPEngine(BaseTrainEngine):
                 inputs = padded_mb_input
                 ulysses_pad_size = 0
 
-            # post process for training and evaluating to calculate loss
-            def loss_fn_wrap(output, inputs):
-                if not self.config.is_critic:
-                    logprobs, entropy = self._compute_logprobs_entropy(
-                        output, inputs, ulysses_pad_size
-                    )
-                    vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
-                        output, ulysses_pad_size
-                    )
-                    if pad_length > 0:
-                        logprobs = logprobs[:-pad_length]
-                        entropy = entropy[:-pad_length]
-                        vocab_min_logits = vocab_min_logits[:-pad_length]
-                        vocab_max_logits = vocab_max_logits[:-pad_length]
-                    loss = loss_fn(
-                        logprobs,
-                        entropy,
-                        mb_input,
-                        vocab_min_logits=vocab_min_logits,
-                        vocab_max_logits=vocab_max_logits,
-                    )
-                else:
-                    values = self._compute_values(output.squeeze(-1), ulysses_pad_size)
-                    if pad_length > 0:
-                        values = values[:-pad_length]
-                    loss = loss_fn(values, mb_input)
-                return loss
-
-            # post process for inferring to calculate loss
-            def post_hook_wrap(output, inputs):
-                if not self.config.is_critic:
-                    result = self._compute_logprobs(output, inputs, ulysses_pad_size)
-                else:
-                    result = self._compute_values(output.squeeze(-1), ulysses_pad_size)
-                if pad_length > 0:
-                    result = result[:-pad_length]
-                return result
-
             logits, post_process_fn = self._forward_compute_mb(
-                inputs,
-                loss_fn_wrap if loss_weight_fn is not None else post_hook_wrap,
-                loss_weight_fn,
+                (inputs, mb_input, pad_length, ulysses_pad_size), post_process
             )
-
-            if loss_weight_fn is not None:
-                loss_scale = loss_weight_fn(mb_input) / total_loss_weight
-                # Scale loss for accumulation
-                # To reverse the gradient averaging for SP groups
-                loss_scale *= self.parallel_helper.dp_size
-            else:
-                loss_scale = torch.tensor(1.0, device=logits.device)
-
-            if batch_type == "train_batch":
-                loss, _ = post_process_fn(logits)
-                loss *= loss_scale
+            loss, _ = post_process_fn(logits)
+            if not forward_only:
                 with trace_scope("fsdp_engine.train_batch.backward"):
                     loss.backward()
 
-            if batch_type == "eval_batch":
-                _, result = post_process_fn(logits)
-                loss = result["loss"] * loss_scale
-                losses_list.append(loss)
-
-            if batch_type == "forward_batch":
-                _, result = post_process_fn(logits)
-                results.append(result.get("output"))
-
-        return ForwardBackwardOutputs(mb_outputs=results, losses=losses_list)
-
     def _forward_compute_mb(
         self,
-        mb_input: dict[str, Any],
-        post_process_fn: Callable[..., Any],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        mb_input: tuple[
+            Any, ...
+        ],  # mb_input contains data iterator element and pre-process result
+        post_process_fn: Callable[[torch.Tensor, dict[str, Any]], Any],
         **kwargs,
     ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
+        inputs, mb_input, pad_length, ulysses_pad_size = mb_input
         with trace_scope("fsdp_engine.forward"):
-            outputs = self.model(**mb_input)
+            outputs = self.model(**inputs)
         output = outputs.logits.squeeze(0)
 
-        def _post_process_fn(input_, output_):
-            result = {}
-            loss = torch.tensor(1.0, device=output_.device)
-            if loss_weight_fn is not None:
-                loss = post_process_fn(output_, input_)
-                result["loss"] = loss.clone().detach()
-            else:
-                output_ = post_process_fn(output_, input_)
-                result["output"] = output_
-            return loss, result
+        def _post_process_fn(inputs, output):
+            # as far as we use hook method, dict result is not used so far.
+            return post_process_fn(output, inputs), {}
 
-        return output, functools.partial(_post_process_fn, mb_input)
+        # utilize inputs as data bus for hook method.
+        inputs["mb_input"] = mb_input
+        inputs["pad_length"] = pad_length
+        inputs["ulysses_pad_size"] = ulysses_pad_size
+        return output, functools.partial(_post_process_fn, inputs)
 
     def _sp_all_gather(self, tensor: torch.Tensor) -> torch.Tensor:
         gathered = dist_F.all_gather(tensor, group=self.sp_group)
@@ -863,7 +789,7 @@ class FSDPEngine(BaseTrainEngine):
         self,
         input_: dict[str, Any],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
-    ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]:
+    ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList, torch.Tensor]:
         mb_list = self.prepare_mb_list(input_)
         mb_list = mb_list.to(self.device)
 
@@ -881,9 +807,81 @@ class FSDPEngine(BaseTrainEngine):
             total_loss_weight = torch.tensor(1.0, device=self.device)
 
         mb_fields = ["mbs", "padded_mbs", "padding_lengths"]
-        return create_mb_iterator(
-            mb_list, mb_fields=mb_fields, total_loss_weight=total_loss_weight
-        ), mb_list
+        return (
+            create_mb_iterator(mb_list, mb_fields=mb_fields),
+            mb_list,
+            total_loss_weight,
+        )
+
+    def _post_eval(
+        self,
+        losses: list[torch.Tensor],
+    ) -> torch.Tensor:
+        loss = torch.stack(losses).sum(dtype=torch.float32)
+        dist.all_reduce(loss, group=self.dp_group)
+        return loss
+
+    def _post_hook(
+        self,
+        output: torch.Tensor,
+        inputs: dict,
+    ) -> torch.Tensor:
+        ulysses_pad_size = inputs.pop("ulysses_pad_size", 1)
+        pad_length = inputs.pop("pad_length", 0)
+        if not self.config.is_critic:
+            result = self._compute_logprobs(output, inputs, ulysses_pad_size)
+        else:
+            result = self._compute_values(output.squeeze(-1), ulysses_pad_size)
+        if pad_length > 0:
+            result = result[:-pad_length]
+        return result
+
+    def _loss_compute(
+        self,
+        output: torch.Tensor,
+        inputs: dict[str, Any],
+        forward_only: bool,
+        total_loss_weight: torch.Tensor,
+        loss_fn: Callable[..., torch.Tensor],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    ) -> torch.Tensor:
+        ulysses_pad_size = inputs.pop("ulysses_pad_size", 1)
+        pad_length = inputs.pop("pad_length", 0)
+        mb_input = inputs.pop("mb_input", None)
+        if not self.config.is_critic:
+            logprobs, entropy = self._compute_logprobs_entropy(
+                output, inputs, ulysses_pad_size
+            )
+            vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
+                output, ulysses_pad_size
+            )
+            if pad_length > 0:
+                logprobs = logprobs[:-pad_length]
+                entropy = entropy[:-pad_length]
+                vocab_min_logits = vocab_min_logits[:-pad_length]
+                vocab_max_logits = vocab_max_logits[:-pad_length]
+            loss = loss_fn(
+                logprobs,
+                entropy,
+                mb_input,
+                vocab_min_logits=vocab_min_logits,
+                vocab_max_logits=vocab_max_logits,
+            )
+        else:
+            values = self._compute_values(output.squeeze(-1), ulysses_pad_size)
+            if pad_length > 0:
+                values = values[:-pad_length]
+            loss = loss_fn(values, mb_input)
+
+        loss_scale = loss_weight_fn(mb_input) / total_loss_weight
+        # Scale loss for accumulation
+        # To reverse the gradient averaging for SP groups
+        loss_scale *= self.parallel_helper.dp_size
+        if forward_only:
+            loss = loss.detach() * loss_scale
+        else:
+            loss *= loss_scale
+        return loss
 
     def _ensure_ready(self):
         if self.is_offload:
