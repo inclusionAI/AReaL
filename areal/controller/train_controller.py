@@ -517,56 +517,6 @@ class TrainController:
         """
         self._custom_function_call("step_lr_scheduler")
 
-    # ==================== SFT RPC WRAPPERS ====================
-    def train_lm(
-        self,
-        input_: DistributedBatch,
-        *args,
-        **kwargs,
-    ) -> dict[str, float]:
-        """Train language model across workers.
-
-        Parameters
-        ----------
-        input_ : DistributedBatch
-            The distributed input data for language model training
-        *args
-            Additional positional arguments passed to the engine
-        **kwargs
-            Additional keyword arguments passed to the engine
-
-        Returns
-        -------
-        dict[str, float]
-            Scalar statistics after training
-        """
-        return self._custom_function_call("train_lm", input_, *args, **kwargs)
-
-    def evaluate_lm(
-        self,
-        input_: DistributedBatch,
-        *args,
-        **kwargs,
-    ) -> torch.Tensor | None:
-        """Evaluate language model across workers.
-
-        Parameters
-        ----------
-        input_ : DistributedBatch
-            The distributed input data for language model evaluation
-        *args
-            Additional positional arguments passed to the engine
-        **kwargs
-            Additional keyword arguments passed to the engine
-
-        Returns
-        -------
-        torch.Tensor or None
-            A scalar loss or None
-        """
-        return self._custom_function_call("evaluate_lm", input_, *args, **kwargs)
-
-    # =================== GRPO ========================================
     def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
         if self.rollout is not None and self.rollout != rollout:
             logger.warning(
@@ -608,66 +558,6 @@ class TrainController:
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
         )
-
-    def compute_logp(
-        self,
-        *args,
-        **kwargs,
-    ):
-        """Compute log probabilities across workers.
-
-        Parameters
-        ----------
-        *args
-            Positional arguments passed to the engine
-        **kwargs
-            Keyword arguments passed to the engine
-
-        Returns
-        -------
-        Any
-            Log probabilities computed by the engine
-        """
-        return self._custom_function_call("compute_logp", *args, **kwargs)
-
-    def compute_advantages(
-        self,
-        *args,
-        **kwargs,
-    ):
-        """Compute advantages across workers.
-
-        Parameters
-        ----------
-        *args
-            Positional arguments passed to the engine
-        **kwargs
-            Keyword arguments passed to the engine
-
-        Returns
-        -------
-        Any
-            Advantages computed by the engine
-        """
-        return self._custom_function_call("compute_advantages", *args, **kwargs)
-
-    def ppo_update(
-        self,
-        input_: DistributedBatch,
-    ) -> dict[str, float]:
-        """Perform PPO update step with the given batch.
-
-        Parameters
-        ----------
-        input_ : DistributedBatch
-            The distributed input data containing trajectories for PPO update
-
-        Returns
-        -------
-        Dict[str, float]
-            Scalar statistics after PPO update
-        """
-        return self._custom_function_call("ppo_update", input_)
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         raise NotImplementedError()
