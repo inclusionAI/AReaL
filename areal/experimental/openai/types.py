@@ -87,7 +87,7 @@ class InteractionWithTokenLogpReward:
             return None
 
     @property
-    def created_at(self) -> float:
+    def created_at(self) -> float | None:
         if self.is_completion:
             return float(self.completion.created)
         elif self.is_response:
