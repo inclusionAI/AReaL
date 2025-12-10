@@ -50,5 +50,5 @@ agent_module_path: "examples.experimental.proxy.gsm8k_agent"
 
 ## The configuration file for the examples
 
-- `examples/math/gsm8k_grpo.yaml`: Used by `gsm8k_agent.py`, `gsm8k_openai_agent.py` and `math_with_python_tool.py`
-- `examples/multi-turn-math/gsm8k_grpo_mt.yaml`: Used by `gsm8k_multi_turn_agent.py` and `multi_agent_math.py`
+The `config.yaml` file is identical to `examples/multi-turn-math/gsm8k_grpo_mt.yaml` and can be used by any examples here.
+You may modify the configuration file to fit your needs, or override configuration values in the command line (see quick start above as an example).

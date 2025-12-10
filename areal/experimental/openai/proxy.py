@@ -326,7 +326,6 @@ def build_app(
             create_fn=client.responses.create,
             request=request,
             session_id=session_id,
-            extra_ignored_args=["request_id"],
         )
 
     return app
