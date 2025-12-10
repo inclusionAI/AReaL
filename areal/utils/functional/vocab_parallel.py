@@ -1,5 +1,4 @@
 import functools
-import os
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -7,7 +6,6 @@ import torch
 from torch import distributed as dist
 
 from areal.platforms import is_npu_available
-from areal.tests.utils import is_in_ci
 
 T = TypeVar("T", torch.Tensor, tuple[torch.Tensor, torch.Tensor])
 
@@ -30,10 +28,7 @@ def _gather_logprobs_entropy(
 
 
 def _should_use_torch_compile() -> bool:
-    if is_npu_available or is_in_ci() or os.environ.get("PYTEST_CURRENT_TEST"):
-        return False
-
-    return True
+    return not is_npu_available
 
 
 if _should_use_torch_compile():
