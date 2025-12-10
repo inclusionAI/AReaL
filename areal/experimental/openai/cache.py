@@ -122,10 +122,9 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             return True
 
         # Construct parent-child relationships using longest prefix rule
-        # Sort potential parents by (message length desc, created_at desc)
-        # to find the longest prefix match first.
+        # Sort potential parents by message length to find the longest prefix match first.
         interactions = sorted(
-            self.values(), key=lambda x: (len(x.messages), x.created_at), reverse=True
+            self.values(), key=lambda x: len(x.messages), reverse=True
         )
 
         # Reset parents before rebuilding
