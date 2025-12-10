@@ -845,10 +845,6 @@ class ArealOpenAI(AsyncOpenAI):
         )
         return self.export_interactions(style)
 
-    def clear_cache(self) -> None:
-        """Clear the internal interaction cache."""
-        self._cache.clear()
-
 
 def is_omitted(value) -> bool:
     """Check if a value is NOT_GIVEN or Omit type or None."""
