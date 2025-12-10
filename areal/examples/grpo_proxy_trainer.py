@@ -6,6 +6,7 @@ import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from typing import Any
 
 from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -79,7 +80,7 @@ class ProxyAgentConfig(GRPOConfig):
         metadata={"help": "Number of parallel processes for running agents."},
     )
 
-    agent_module_path: str = field(
+    agent_module_path: Any = field(
         default="examples.any_agents.agent.math.math_agent",
         metadata={"help": "Module path for the agent definition."},
     )
@@ -407,10 +408,7 @@ def main(args):
                                 ),
                                 run_agent_return_reward_path=config.agent_module_path,
                                 process_pool_executor_size=config.agent_process_pool_size,
-                                dump_dir=os.path.join(
-                                    StatsLogger.get_log_path(config.stats_logger),
-                                    "generated",
-                                ),
+                                dump_dir="generated",
                                 rollout_stat_scope="rollout",
                                 export_style=config.export_style,
                             )

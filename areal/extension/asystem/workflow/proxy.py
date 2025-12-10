@@ -31,13 +31,22 @@ logger = logging.getLogger(__name__)
 
 
 def sync_run_task(
-    data, proxy_addr, run_agent_return_reward: Callable[[Any], Awaitable[float]]
+    data, proxy_addr, run_agent_return_reward: Callable[[Any], Awaitable[float | tuple[float, dict]]]
 ):
     async def run_task(data, proxy_addr, run_agent_return_reward: Callable):
         async with ProxySession(base_url=proxy_addr) as session:
             session_id = session.session_id
             try:
-                reward = await run_agent_return_reward(data)
+                res = await run_agent_return_reward(data)
+                if isinstance(res, tuple):
+                    assert len(res) == 2
+                    reward, stats = res
+                    assert isinstance(stats, dict)
+                    stats_tracker.scalar(
+                        **stats,
+                    )
+                else:
+                    reward = res
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -115,7 +124,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
         chat_template_type: str = "concat",
         # proxy_server: ProxyServer,
         # run_agent_return_reward: Callable[[Any], Awaitable[float]],
-        run_agent_return_reward_path: str = None,
+        run_agent_return_reward_path: str | dict[str, str] = None,
         process_pool_executor_size: int = 128,
         dump_dir: str | None = None,
         rollout_stat_scope: str = "rollout",
@@ -136,9 +145,18 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
         assert run_agent_return_reward_path is not None, (
             "run_agent_return_reward_path must not be None"
         )
-        self.run_agent_return_reward = import_from_string(
-            ".".join([run_agent_return_reward_path, "run_agent_return_reward"]),
-        )
+        if isinstance(run_agent_return_reward_path, dict):
+            self.run_agent_return_reward = {}
+            for task_type, path in run_agent_return_reward_path.items():
+                self.run_agent_return_reward[task_type] = import_from_string(
+                    ".".join([path, "run_agent_return_reward"]),
+                )
+        elif isinstance(run_agent_return_reward_path, str):
+            self.run_agent_return_reward = import_from_string(
+                ".".join([run_agent_return_reward_path, "run_agent_return_reward"]),
+            )
+        else:
+            raise ValueError(f"run_agent_return_reward_path must be a dict or str, but got {type(run_agent_return_reward_path)}")
         self.dump_dir = dump_dir
         self.export_style = export_style
 
@@ -154,12 +172,24 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
             chat_template_type=self.chat_template_type,
         )
         self.proxy_server = self.proxy_server_warpper.get_proxy_server()
+
+        if isinstance(self.run_agent_return_reward, dict):
+            task_type = data.get("task", "default")
+            run_agent_return_reward = self.run_agent_return_reward.get(
+                task_type,
+                self.run_agent_return_reward.get("default", None),
+            )
+            if run_agent_return_reward is None:
+                raise ValueError(f"No run_agent_return_reward found for task_type {task_type}")
+        else:
+            run_agent_return_reward = self.run_agent_return_reward
+
         futures = [
             self.process_pool_executor.submit(
                 sync_run_task,
                 data,
                 f"{self.proxy_server.public_addr}/{self.api_version}",
-                self.run_agent_return_reward,
+                run_agent_return_reward,
             )
             for _ in range(self.n_samples)
         ]
@@ -194,7 +224,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                     continue
                 version = completion_list[0].model_response.output_version
 
-                dump_path = os.path.join(self.dump_dir, str(version))
+                dump_path = os.path.join(os.environ.get("LOG_DIR", ""), self.dump_dir, str(version))
                 await aiofiles.os.makedirs(dump_path, exist_ok=True)
                 # Get the unique identifier for this prompt
                 qid = None
