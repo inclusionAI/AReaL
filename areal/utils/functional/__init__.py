@@ -4,6 +4,7 @@ from areal.utils.functional.functional import (
     ppo_actor_loss_fn,
     ppo_critic_loss_fn,
     reward_overlong_penalty,
+    sapo_loss_fn,
 )
 from areal.utils.functional.vocab_parallel import (
     gather_logprobs,
@@ -17,6 +18,7 @@ __all__ = [
     "ppo_actor_loss_fn",
     "ppo_critic_loss_fn",
     "reward_overlong_penalty",
+    "sapo_loss_fn",
     # logprobs.py
     "gather_logprobs",
     "gather_logprobs_entropy",
