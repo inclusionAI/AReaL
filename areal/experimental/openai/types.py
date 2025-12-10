@@ -45,6 +45,7 @@ class InteractionWithTokenLogpReward:
 
     @property
     def api_type(self) -> str:
+        # TODO: replace api_type value with enum
         """API type (completion/response)."""
         if self.is_completion:
             return "completion"
@@ -55,6 +56,7 @@ class InteractionWithTokenLogpReward:
 
     @property
     def input_name_for_logging(self) -> str:
+        # TODO: replace input_name value with enum
         if self.is_completion:
             return "messages"
         elif self.is_response:
