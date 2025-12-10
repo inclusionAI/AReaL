@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import TracebackType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import aiohttp
 import requests
@@ -19,8 +19,8 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from openai.types.chat.chat_completion import ChatCompletion
-from openai.types.responses import Response
+from openai.types.chat import ChatCompletion, CompletionCreateParams
+from openai.types.responses import Response, ResponseCreateParams
 
 from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.client import ArealOpenAI
@@ -42,6 +42,7 @@ from areal.utils.proxy_utils import (
     post_json_with_retry,
     set_interaction_reward,
     set_last_interaction_reward,
+    validate_json_request,
 )
 
 if TYPE_CHECKING:
@@ -100,12 +101,6 @@ def build_app(
     limit_active_tasks: bool = True,
     logger: logging.Logger | None = None,
 ):
-    from sglang.srt.entrypoints.http_server import validate_json_request
-    from sglang.srt.entrypoints.openai.protocol import (
-        ChatCompletionRequest,
-        ResponsesRequest,
-    )
-
     app = FastAPI()
 
     session_cache = session_cache if session_cache is not None else {}
@@ -239,7 +234,7 @@ def build_app(
 
     async def _call_client_create(
         create_fn: Callable[..., Awaitable[ChatCompletion | Response]],
-        request: BaseModel,
+        request: TypedDict | BaseModel,
         session_id: str,
         extra_ignored_args: list[str] | None = None,
     ) -> ChatCompletion | Response:
@@ -260,7 +255,9 @@ def build_app(
             and k not in areal_client_disallowed_args
         )
 
-        kwargs = request.model_dump()
+        kwargs = (
+            request.model_dump() if isinstance(request, BaseModel) else dict(request)
+        )
         dropped_args = []
         for k, v in kwargs.items():
             if k not in areal_client_allowed_args:
@@ -269,11 +266,15 @@ def build_app(
         for k, _ in dropped_args:
             del kwargs[k]
 
+        def _is_default_value(k: str, v: Any) -> bool:
+            if isinstance(request, BaseModel):
+                return v == type(request).model_fields[k].default
+            return False
+
         dropped_non_default_args = [
             (k, v)
             for k, v in dropped_args
-            if k not in areal_client_ignored_args
-            and v != type(request).model_fields[k].default
+            if k not in areal_client_ignored_args and not _is_default_value(k, v)
         ]
         if len(dropped_non_default_args):
             dropped_args_str = "\n".join(
@@ -306,7 +307,7 @@ def build_app(
         dependencies=[Depends(validate_json_request)],
     )
     async def chat_completions(
-        request: ChatCompletionRequest, session_id: str
+        request: CompletionCreateParams, session_id: str
     ) -> ChatCompletion:
         client = get_client()
         return await _call_client_create(
@@ -319,7 +320,7 @@ def build_app(
         f"/v1/{{session_id}}/{RESPONSES_PATHNAME}",
         dependencies=[Depends(validate_json_request)],
     )
-    async def responses(request: ResponsesRequest, session_id: str) -> Response:
+    async def responses(request: ResponseCreateParams, session_id: str) -> Response:
         client = get_client()
         return await _call_client_create(
             create_fn=client.responses.create,
@@ -513,3 +514,13 @@ class ProxySession(aiohttp.ClientSession):
 
         await post_json_with_retry(self, f"{self.session_id}/{RL_END_SESSION_PATHNAME}")
         await super().__aexit__(exc_type, exc_val, exc_tb)
+
+
+if __name__ == "__main__":
+    server = ProxyServer()
+    server.start(wait_until_ready=True)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        server.close()
