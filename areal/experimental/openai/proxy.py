@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import requests
@@ -234,7 +234,7 @@ def build_app(
 
     async def _call_client_create(
         create_fn: Callable[..., Awaitable[ChatCompletion | Response]],
-        request: TypedDict | BaseModel,
+        request: dict[str, Any] | BaseModel,
         session_id: str,
         extra_ignored_args: list[str] | None = None,
     ) -> ChatCompletion | Response:
