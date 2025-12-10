@@ -312,8 +312,8 @@ class MultiTurnReactAgent(FnCallAgent):
             reward = parse_judge_result(judge_response)
         except Exception as e:
             logger.warning(f"Error in calling LLM judge: {e}")
-            self.judge_client.clear_cache()
             reward = 0.0
+        self.judge_client.clear_cache()
         return reward
 
     async def make_trajectory(
