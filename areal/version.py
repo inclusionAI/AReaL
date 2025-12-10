@@ -5,7 +5,7 @@ from pathlib import Path
 
 class VersionInfo:
     def __init__(self):
-        self.__version__ = "0.4.1"
+        self.__version__ = "0.5.0"
         self.__branch__ = ""
         self.__commit__ = ""
         self.__is_dirty__ = False
