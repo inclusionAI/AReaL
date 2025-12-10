@@ -29,10 +29,11 @@ from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
 from areal.api.cli_args import MicroBatchSpec, TrainEngineConfig
-from areal.api.engine_api import ForwardBackwardOutputs, InferenceEngine, TrainEngine
+from areal.api.engine_api import ForwardBackwardOutputs, InferenceEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.dist_rollout import DistRolloutCoordinator
+from areal.engine.base_train_engine import BaseTrainEngine
 from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
@@ -92,7 +93,7 @@ class _MegatronModelList(list):
             yield parameter
 
 
-class MegatronEngine(TrainEngine):
+class MegatronEngine(BaseTrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
         self.hf_config: PretrainedConfig
@@ -1026,7 +1027,6 @@ class MegatronEngine(TrainEngine):
         return_outputs: bool = False,
         forward_only: bool = False,
     ) -> ForwardBackwardOutputs:
-        global num_microbatches, max_seqlen
         if isinstance(data_iterator, MicroBatchIterator):
             max_seqlen = data_iterator.kwargs["max_seqlen"]
             num_microbatches = data_iterator.kwargs["num_microbatches"]
@@ -1122,58 +1122,15 @@ class MegatronEngine(TrainEngine):
             losses = [item["loss"] for item in results]
         return ForwardBackwardOutputs(mb_outputs=mb_outputs, losses=losses)
 
-    @trace_perf("megatron_engine.train_batch", category="compute")
-    def train_batch(
-        self,
-        input_: dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-    ) -> dict[str, float]:
-        if self.is_offload:
-            self.onload()
-
-        assert self.model is not None, "Model is not initialized."
-        return super().train_batch(
-            input_, loss_fn=loss_fn, loss_weight_fn=loss_weight_fn
-        )
-
-    @trace_perf("megatron_engine.eval_batch", category="compute")
-    @torch.no_grad()
-    def eval_batch(
-        self,
-        input_: dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-    ) -> torch.Tensor | None:
+    def _ensure_ready(self):
         if self.is_offload:
             self.onload()
         assert self.model is not None, "Model is not initialized."
-        return super().eval_batch(
-            input_, loss_fn=loss_fn, loss_weight_fn=loss_weight_fn
-        )
 
-    @trace_perf("megatron_engine.forward", category="compute")
-    @torch.no_grad()
-    def forward_batch(
-        self,
-        input_: dict[str, Any],
-        output_seqlens: list[int] | None = None,
-        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
-    ) -> Any | None:
-        if self.is_offload:
-            self.onload()
-
-        assert self.model is not None, "Model is not initialized."
-
-        def safe_aggregate_fn(output):
-            if mpu.is_pipeline_last_stage():
-                return aggregate_fn(output)
-            return None
-
-        result = super().forward_batch(input_, output_seqlens, safe_aggregate_fn)
+    def _post_forward_batch(self, result, aggregate_fn):
         res = None
         if mpu.is_pipeline_last_stage():
-            res = result
+            res = aggregate_fn(result)
         # Broadcast the shape of the result tensor
         res = broadcast_tensor(
             res,

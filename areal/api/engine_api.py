@@ -21,10 +21,6 @@ from areal.api.io_struct import (
 )
 from areal.utils.data import (
     MicroBatchList,
-    pack_tensor_dict,
-    pad_and_stack_tensors_along_first_dim,
-    reorder_list,
-    unpack_sequence,
 )
 
 if TYPE_CHECKING:
@@ -39,12 +35,6 @@ class ForwardBackwardOutputs:
 
 
 class TrainEngine(abc.ABC):
-    def __init__(self):
-        self.is_offload = None
-        self.sp_group = None
-        self.parallel_helper = None
-        self.dp_group = None
-
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Initialize PyTorch distributed communication groups.
 
@@ -224,6 +214,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def _split_micro_batch(
         self,
         input_: dict[str, Any],
@@ -245,6 +236,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def _forward_compute_mb(
         self,
         mb_input: dict[str, Any],
@@ -274,10 +266,12 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def optimizer_zero_grad(self):
         """Zero out all gradients in the optimizer."""
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def optimizer_step(self):
         """Perform a single optimization step.
 
@@ -288,10 +282,12 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def lr_scheduler_step(self):
         """Advance the learning rate scheduler by one step."""
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 
@@ -299,6 +295,7 @@ class TrainEngine(abc.ABC):
         """
         return self.lr_scheduler_step()
 
+    @abc.abstractmethod
     def forward_backward_batch(
         self,
         data_iterator: Iterable[dict[str, torch.Tensor]],
@@ -319,6 +316,8 @@ class TrainEngine(abc.ABC):
         loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
             A function that computes the weight for each micro-batch, typically
             the number of tokens. Used for proper loss scaling.
+        on_output : Callable[[torch.Tensor, dict[str, Any]], Any], optional
+            A function that processes the model output.
         return_outputs : bool, optional
             If True, collect and return model outputs (logits) instead of losses.
             Only used when ``forward_only=True``. By default False.
@@ -367,10 +366,7 @@ class TrainEngine(abc.ABC):
             Scalar statistics after training, e.g., the current learning rate,
             gradient norm, etc.
         """
-        self.optimizer_zero_grad()
-        _data_iterator, _ = self._split_micro_batch(input_, loss_weight_fn)
-        self.forward_backward_batch(_data_iterator, loss_fn, loss_weight_fn)
-        return self.optimizer_step()
+        raise NotImplementedError()
 
     @torch.no_grad()
     def eval_batch(
@@ -406,13 +402,7 @@ class TrainEngine(abc.ABC):
             A scalar loss or None. The evaluation statistics should be aggregated
             with `stats_tracker`.
         """
-        _data_iterator, _ = self._split_micro_batch(input_, loss_weight_fn)
-        output = self.forward_backward_batch(
-            _data_iterator, loss_fn, loss_weight_fn, forward_only=True
-        )
-        loss = torch.stack(output.losses).sum(dtype=torch.float32)
-        dist.all_reduce(loss, group=self.dp_group)
-        return loss
+        raise NotImplementedError()
 
     @torch.no_grad()
     def forward_batch(
@@ -443,27 +433,7 @@ class TrainEngine(abc.ABC):
             For actor (is_critic=False): logprobs tensor aggregated by `aggregate_fn`.
             For critic (is_critic=True): values tensor aggregated by `aggregate_fn`.
         """
-        cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
-
-        if output_seqlens is None:
-            output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
-        assert output_seqlens is not None
-
-        _data_iterator, mb_list = self._split_micro_batch(input_)
-
-        result = self.forward_backward_batch(
-            _data_iterator,
-            forward_only=True,
-            return_outputs=True,
-        )
-
-        res = aggregate_fn(result.mb_outputs)
-        if res is not None:
-            output_seqlens = [output_seqlens[i] for i in mb_list.forward_indices]
-            unpacked = unpack_sequence(res, lens=output_seqlens, dim=0)
-            reordered = reorder_list(unpacked, mb_list.backward_indices)
-            res = pad_and_stack_tensors_along_first_dim(reordered)
-        return res
+        raise NotImplementedError
 
     @torch.no_grad()
     def forward(

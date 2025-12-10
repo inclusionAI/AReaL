@@ -43,10 +43,11 @@ from transformers import (
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.engine_api import ForwardBackwardOutputs, InferenceEngine, TrainEngine
+from areal.api.engine_api import ForwardBackwardOutputs, InferenceEngine
 from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.dist_rollout import DistRolloutCoordinator
+from areal.engine.base_train_engine import BaseTrainEngine
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, pkg_version, stats_tracker
@@ -57,11 +58,8 @@ from areal.utils.data import (
     amend_position_ids,
     create_mb_iterator,
     pack_tensor_dict,
-    pad_and_stack_tensors_along_first_dim,
     pad_mb_list,
-    reorder_list,
     split_padded_tensor_dict_into_mb_list,
-    unpack_sequence,
     unsqueeze_mb_list,
 )
 from areal.utils.device import clear_memory, log_gpu_stats
@@ -92,7 +90,7 @@ from areal.utils.ulysses import (
 )
 
 
-class FSDPEngine(TrainEngine):
+class FSDPEngine(BaseTrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
         self.optimizer_config = config.optimizer
@@ -887,54 +885,12 @@ class FSDPEngine(TrainEngine):
             mb_list, mb_fields=mb_fields, total_loss_weight=total_loss_weight
         ), mb_list
 
-    @trace_perf("fsdp_engine.train_batch", category="compute")
-    def train_batch(
-        self,
-        input_: dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-    ) -> dict[str, float]:
-        """Train on a batch using gradient accumulation."""
-        if self.is_offload:
-            self.onload()
-
-        assert self.optimizer is not None
-        assert self.optimizer_config is not None
-        assert self.lr_scheduler is not None
-
-        if self.parallel_helper.sp_size > 1:
-            set_ulysses_sequence_parallel_group(self.sp_group)
-        return super().train_batch(input_, loss_fn, loss_weight_fn)
-
-    @trace_perf("fsdp_engine.eval_batch", category="compute")
-    @torch.no_grad()
-    def eval_batch(
-        self,
-        input_: dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-    ) -> torch.Tensor | None:
-        """Evaluate on a batch."""
+    def _ensure_ready(self):
         if self.is_offload:
             self.onload()
 
         if self.parallel_helper.sp_size > 1:
             set_ulysses_sequence_parallel_group(self.sp_group)
-        return super().eval_batch(input_, loss_fn, loss_weight_fn)
-
-    @trace_perf("fsdp_engine.forward_batch", category="compute")
-    @torch.no_grad()
-    def forward_batch(
-        self,
-        input_: dict[str, Any],
-        output_seqlens: list[int] | None = None,
-        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
-    ) -> Any | None:
-        if self.is_offload:
-            self.onload()
-        if self.parallel_helper.sp_size > 1:
-            set_ulysses_sequence_parallel_group(self.sp_group)
-        return super().forward_batch(input_, output_seqlens, aggregate_fn)
 
     def create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:
@@ -1148,6 +1104,8 @@ class FSDPEngine(TrainEngine):
     # Exposed APIs
     def optimizer_zero_grad(self):
         assert self.optimizer is not None
+        assert self.optimizer_config is not None
+        assert self.lr_scheduler is not None
         self.optimizer.zero_grad()
 
     def optimizer_step(self):
