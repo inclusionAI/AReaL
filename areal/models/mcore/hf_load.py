@@ -262,14 +262,18 @@ def _weight_to_mcore_tp(
             and hf_scale_invs[0] is not None
         ):
             scale_inv = hf_scale_invs[0]
-            if weight_block_size is not None and partition_dim is not None:
-                scale_inv_shape = _get_shape(scale_inv)
-                # slices = _get_tp_slice_for_scale_inv(
-                #     scale_inv_shape, x_shape, partition_dim, tp_rank, tp_size, weight_block_size
-                # )
-                slices = _get_tp_slice(scale_inv_shape, partition_dim, tp_rank, tp_size)
-                scale_inv = scale_inv[slices]
-
+            if weight_block_size is not None:
+                if partition_dim is not None:
+                    scale_inv_shape = _get_shape(scale_inv)
+                    # slices = _get_tp_slice_for_scale_inv(
+                    #     scale_inv_shape, x_shape, partition_dim, tp_rank, tp_size, weight_block_size
+                    # )
+                    slices = _get_tp_slice(
+                        scale_inv_shape, partition_dim, tp_rank, tp_size
+                    )
+                    scale_inv = scale_inv[slices]
+                else:
+                    scale_inv = scale_inv[:]
     if dtype is not None:
         res = res.to(dtype)
     return res, scale_inv
