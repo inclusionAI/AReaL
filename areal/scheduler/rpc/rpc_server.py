@@ -450,6 +450,22 @@ def call_engine_method():
 
 
 # ==================== Batch Reletad Functions ====================
+def _ensure_tensor_on_cpu(value: Any) -> Any:
+    """Recursively ensure all tensors in a value are on CPU."""
+    if isinstance(value, torch.Tensor):
+        # Move to CPU if on GPU, detach to avoid gradient tracking
+        if value.is_cuda:
+            return value.detach().cpu()
+        return value.detach() if value.requires_grad else value
+    elif isinstance(value, dict):
+        return {k: _ensure_tensor_on_cpu(v) for k, v in value.items()}
+    elif isinstance(value, (list, tuple)):
+        converted = [_ensure_tensor_on_cpu(item) for item in value]
+        return type(value)(converted)
+    else:
+        return value
+
+
 def _is_batch_metadata(data: Any) -> bool:
     """Check if data is a DistributedBatchMemory metadata wrapper."""
     return isinstance(data, dict) and data.get("__distributed_batch_metadata__")
@@ -605,7 +621,7 @@ def _create_matched_batch_metadata(
             tensor = data_to_store[result_key]
 
             # Slice the tensor for this task_id group
-            sliced_tensor = tensor[offset : offset + total_size].clone()
+            sliced_tensor = tensor[offset : offset + total_size].clone().cpu()
 
             # Create shard_id with same task_id but new key
             shard_id = ShardId(task_id=task_id, key=result_key)
@@ -763,8 +779,10 @@ def store_batch_data(shard_id: str):
         serialized_data = orjson.loads(data_bytes)
         data = deserialize_value(serialized_data)
 
+        cpu_data = _ensure_tensor_on_cpu(data)
+
         with _batch_storage_lock:
-            _batch_storage[shard_id_obj] = data
+            _batch_storage[shard_id_obj] = cpu_data
             _batch_storage_stats[shard_id_obj] = len(data_bytes)
 
         logger.debug(
