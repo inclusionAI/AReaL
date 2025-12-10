@@ -563,27 +563,17 @@ def _create_matched_batch_metadata(
     """
     global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
-    input_shards = input_batch_metadata.shards
-
-    # Calculate total batch size from result data
-    first_tensor = next(iter(data_to_store.values()))
-    assert isinstance(first_tensor, torch.Tensor)
-    total_batch_size = first_tensor.shape[0]
-
-    # Calculate expected batch sizes per shard from input metadata
-    expected_sizes = []
-    for shard in input_shards:
-        first_field = next(iter(shard.fields.values()))
-        expected_sizes.append(first_field.shape[0])
-
-    assert sum(expected_sizes) == total_batch_size
+    shards_has_same_keys, _ = DistributedBatchMemory._group_shards_by_keys(
+        input_batch_metadata.shards
+    )
     # Split data and create shards
     output_shards = []
     offset = 0
 
+    input_shards = shards_has_same_keys[0]
     for i, input_shard in enumerate(input_shards):
         shard_id = input_shard.shard_id
-        shard_size = expected_sizes[i]
+        shard_size = DistributedBatchMemory._infer_shard_size(input_shard)
 
         # Extract shard data by slicing tensors along dimension 0
         shard_data = {}

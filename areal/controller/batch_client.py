@@ -57,10 +57,16 @@ class BatchDataClient:
                 serialized_data = orjson.loads(data_bytes)
                 data = deserialize_value(serialized_data)
 
+                # Infer batch size from fields if available
+                batch_size_info = ""
+                if shard.fields:
+                    first_field = next(iter(shard.fields.values()))
+                    if first_field.shape:
+                        batch_size_info = f", batch_size={first_field.shape[0]}"
+
                 logger.debug(
-                    f"Fetched logical shard {shard.shard_id} from {shard.node_addr} "
-                    f"(offset={shard.offset}, batch_size={shard.batch_size}, "
-                    f"{len(data_bytes)} bytes)"
+                    f"Fetched shard {shard.shard_id} from {shard.node_addr} "
+                    f"({len(data_bytes)} bytes{batch_size_info})"
                 )
                 return data
 
