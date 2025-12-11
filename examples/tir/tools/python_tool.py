@@ -93,11 +93,16 @@ class PythonExecutor(QwenAgentBaseTool):
         self.timeout_length = timeout_length
 
     def call(self, params: str | dict, **kwargs) -> list:
-        try:
-            params = json5.loads(params)
-            code = params["code"]
-        except Exception:
-            code = extract_code(params)
+        if isinstance(params, dict):
+            code = params.get("code", "")
+        elif isinstance(params, str):
+            try:
+                params = json5.loads(params)
+                code = params["code"]
+            except Exception:
+                code = extract_code(params)
+        else:
+            code = ""
 
         if not code.strip():
             return ["", ""]
@@ -185,13 +190,13 @@ class PythonExecutor(QwenAgentBaseTool):
                     all_exec_results.append(result)
                 except StopIteration:
                     break
-                except TimeoutError as error:
-                    print(error)
+                except TimeoutError as e:
+                    logger.info(f"In PythonExecutor: {e}")
                     all_exec_results.append(("", "Timeout Error"))
                     timeout_cnt += 1
-                except Exception as error:
-                    print(error)
-                    exit()
+                except Exception as e:
+                    logger.info(f"In PythonExecutor: {e}\n{traceback.format_exc()}")
+                    all_exec_results.append(("", "Internal Error"))
                 if progress_bar is not None:
                     progress_bar.update(1)
 
