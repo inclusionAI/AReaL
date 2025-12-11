@@ -46,11 +46,12 @@ _batch_storage: dict[ShardId, Tensor] = {}
 _batch_storage_lock = Lock()
 _batch_storage_stats: dict[ShardId, int] = defaultdict(int)
 
-# NCCL worker thread for executing non-/data/ endpoints in a single thread
-# This ensures NCCL compatibility while allowing /data/ requests to be processed concurrently
-_nccl_worker_thread: Thread | None = None
-_nccl_work_queue: Queue[tuple[Callable, tuple, dict, Future]] | None = None
-_nccl_worker_lock = Lock()
+# Engine thread for executing all engine-related endpoints serially
+# This ensures NCCL compatibility by running engine operations in a single thread,
+# while allowing /data/ endpoints to be processed concurrently
+_engine_thread: Thread | None = None
+_engine_work_queue: Queue[tuple[Callable, tuple, dict, Future]] | None = None
+_engine_thread_lock = Lock()
 
 # Server address (set at startup)
 _server_host: str = "0.0.0.0"
@@ -60,24 +61,22 @@ _server_port: int = 8000
 app = Flask(__name__)
 
 
-def _init_nccl_worker():
-    """Initialize the NCCL worker thread for executing non-/data/ endpoints."""
-    global _nccl_worker_thread, _nccl_work_queue
+def _init_engine_thread():
+    global _engine_thread, _engine_work_queue
 
-    with _nccl_worker_lock:
-        if _nccl_worker_thread is not None and _nccl_worker_thread.is_alive():
+    with _engine_thread_lock:
+        if _engine_thread is not None and _engine_thread.is_alive():
             return  # Already initialized
 
-        _nccl_work_queue = Queue()
+        _engine_work_queue = Queue()
 
-        def nccl_worker():
-            """Worker thread that executes non-/data/ endpoints sequentially."""
-            logger.info("NCCL worker thread started")
+        def engine_worker():
+            logger.info("Engine thread started")
             while True:
                 try:
-                    work_item = _nccl_work_queue.get()
+                    work_item = _engine_work_queue.get()
                     if work_item is None:  # Shutdown signal
-                        logger.info("NCCL worker thread shutting down")
+                        logger.info("Engine thread shutting down")
                         break
 
                     func, args, kwargs, future = work_item
@@ -87,30 +86,24 @@ def _init_nccl_worker():
                     except Exception as e:
                         future.set_exception(e)
                     finally:
-                        _nccl_work_queue.task_done()
+                        _engine_work_queue.task_done()
                 except Exception as e:
-                    logger.error(f"Error in NCCL worker thread: {e}")
+                    logger.error(f"Error in engine thread: {e}")
                     if work_item and len(work_item) > 3:
                         work_item[3].set_exception(e)
 
-        _nccl_worker_thread = Thread(target=nccl_worker, daemon=True, name="NCCLWorker")
-        _nccl_worker_thread.start()
-        logger.info("NCCL worker thread initialized")
+        _engine_thread = Thread(target=engine_worker, daemon=True, name="EngineWorker")
+        _engine_thread.start()
+        logger.info("Engine thread initialized")
 
 
-def _submit_to_nccl_worker(func: Callable, *args, **kwargs) -> Any:
-    """Submit a function to the NCCL worker thread for execution.
+def _submit_to_engine_thread(func: Callable, *args, **kwargs) -> Any:
+    global _engine_work_queue
 
-    This ensures all non-/data/ endpoints (which may involve NCCL operations)
-    run in the same thread, maintaining NCCL compatibility while allowing
-    /data/ requests to be processed concurrently in other threads.
-    """
-    global _nccl_work_queue
-
-    _init_nccl_worker()
+    _init_engine_thread()
 
     future = Future()
-    _nccl_work_queue.put((func, args, kwargs, future))
+    _engine_work_queue.put((func, args, kwargs, future))
     return future.result()  # Block until result is available
 
 
@@ -125,7 +118,7 @@ def health_check():
 def configure():
     """Configure worker with experiment config.
 
-    This endpoint is routed to the NCCL worker thread.
+    This endpoint is routed to the engine thread for serial execution.
     """
     try:
         data = request.get_json()
@@ -156,7 +149,7 @@ def configure():
                 "result": None,
             }
 
-        result = _submit_to_nccl_worker(execute_configure)
+        result = _submit_to_engine_thread(execute_configure)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Unexpected error in configure: {e}\n{traceback.format_exc()}")
@@ -167,7 +160,7 @@ def configure():
 def set_env():
     """Set environment variables for the worker process.
 
-    This endpoint is routed to the NCCL worker thread.
+    This endpoint is routed to the engine thread for serial execution.
     """
     try:
         data = request.get_json()
@@ -199,7 +192,7 @@ def set_env():
                 logger.info(f"Set {key}={value}")
             return {"status": "success"}
 
-        result = _submit_to_nccl_worker(execute_set_env)
+        result = _submit_to_engine_thread(execute_set_env)
         return jsonify(result)
 
     except Exception as e:
@@ -212,7 +205,7 @@ def create_engine():
     """
     Create and initialize a TrainEngine or InferenceEngine instance on this worker.
 
-    This endpoint is routed to the NCCL worker thread.
+    This endpoint is routed to the engine thread for serial execution.
 
     Expected JSON payload:
     {
@@ -222,10 +215,6 @@ def create_engine():
             "config": ...,  # Engine config
         }
     }
-
-    Distributed training environment variables (RANK, WORLD_SIZE, MASTER_ADDR,
-    MASTER_PORT, LOCAL_RANK, etc.) should be configured via the `/set_env`
-    endpoint before invoking this endpoint.
     """
     global _engine
 
@@ -267,9 +256,9 @@ def create_engine():
             logger.error(f"Invalid engine type: {e}")
             return jsonify({"error": str(e)}), 400
 
-        # Instantiate engine in NCCL worker thread (may involve NCCL initialization)
-        def create_engine_in_nccl_thread():
-            """Create engine in NCCL worker thread."""
+        # Instantiate engine in engine thread (may involve NCCL initialization)
+        def create_engine_in_engine_thread():
+            """Create engine in engine thread."""
             try:
                 engine = engine_class(*init_args, **init_kwargs)
                 logger.info(f"Engine '{engine_path}' instantiated successfully")
@@ -281,7 +270,7 @@ def create_engine():
                 raise
 
         try:
-            _engine = _submit_to_nccl_worker(create_engine_in_nccl_thread)
+            _engine = _submit_to_engine_thread(create_engine_in_engine_thread)
             return jsonify(
                 {
                     "status": "success",
@@ -304,8 +293,8 @@ def call_engine_method():
     """
     Call a method on the engine instance.
 
-    This endpoint is routed to the NCCL worker thread to ensure
-    all NCCL operations run in the same thread, preventing conflicts.
+    This endpoint is routed to the engine thread to ensure all engine operations
+    run serially in the same thread, preventing NCCL conflicts.
 
     Expected JSON payload:
     {
@@ -367,7 +356,7 @@ def call_engine_method():
                 500,
             )
 
-        def execute_in_nccl_thread():
+        def execute_in_engine_thread():
             try:
                 if should_broadcast and isinstance(_engine, TrainEngine):
                     logger.info(
@@ -424,9 +413,9 @@ def call_engine_method():
                 )
                 raise
 
-        # Submit to NCCL worker thread
+        # Submit to engine thread
         try:
-            result = _submit_to_nccl_worker(execute_in_nccl_thread)
+            result = _submit_to_engine_thread(execute_in_engine_thread)
         except Exception as e:
             error_msg = str(e)
             if "Engine does not have method" in error_msg:
@@ -904,22 +893,22 @@ def cleanup_batch_storage():
     logger.info("Batch storage cleared")
 
 
-def cleanup_nccl_worker():
-    """Clean up NCCL worker thread."""
-    global _nccl_worker_thread, _nccl_work_queue
+def cleanup_engine_thread():
+    """Clean up engine thread on shutdown."""
+    global _engine_thread, _engine_work_queue
 
-    with _nccl_worker_lock:
-        if _nccl_work_queue is not None:
+    with _engine_thread_lock:
+        if _engine_work_queue is not None:
             # Send shutdown signal
-            _nccl_work_queue.put(None)
-            _nccl_work_queue = None
+            _engine_work_queue.put(None)
+            _engine_work_queue = None
 
-        if _nccl_worker_thread is not None:
-            _nccl_worker_thread.join(timeout=5.0)
-            if _nccl_worker_thread.is_alive():
-                logger.warning("NCCL worker thread did not shut down gracefully")
-            _nccl_worker_thread = None
-            logger.info("NCCL worker thread cleaned up")
+        if _engine_thread is not None:
+            _engine_thread.join(timeout=5.0)
+            if _engine_thread.is_alive():
+                logger.warning("Engine thread did not shut down gracefully")
+            _engine_thread = None
+            logger.info("Engine thread cleaned up")
 
 
 def main():
@@ -955,10 +944,6 @@ def main():
     logger.info(f"Starting sync RPC server on {args.host}:{args.port}")
     logger.info(f"Werkzeug log level: {args.werkzeug_log_level}")
 
-    # Run Flask app with multi-threaded mode
-    # /data/ endpoints are processed in request threads (concurrent)
-    # /call and other non-/data/ endpoints are routed to NCCL worker thread
-    # This ensures NCCL compatibility while allowing /data/ requests to be processed concurrently
     try:
         app.run(
             host=args.host,
@@ -971,7 +956,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("Shutting down sync RPC server")
     finally:
-        cleanup_nccl_worker()
+        cleanup_engine_thread()
         cleanup_engine()
         cleanup_batch_storage()
 
