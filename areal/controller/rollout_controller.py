@@ -339,7 +339,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
-    ) -> None:
+    ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         if workflow_kwargs is None:
@@ -348,16 +348,18 @@ class RolloutController:
         # NOTE: RolloutController does not support `should_accept_fn`
         # If the workflow's result should be aborted,
         # `arun_episode` should return None instead.
+        task_id = int(uuid.uuid4())
         task_input = _RemoteRolloutTaskInput(
             data=data,
             workflow=workflow_str,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
-            task_id=int(uuid.uuid4()),
+            task_id=task_id,
         )
 
         # Delegate to dispatcher
         self.dispatcher.submit_task_input(task_input)
+        return task_id
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True

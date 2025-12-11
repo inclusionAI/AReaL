@@ -754,7 +754,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
-    ) -> None:
+    ) -> int:
         """Submit a request to the inference engine and return immediately.
 
         Parameters

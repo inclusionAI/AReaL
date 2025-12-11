@@ -992,7 +992,7 @@ class WorkflowExecutor:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
-    ) -> None:
+    ) -> int:
         """Submit a rollout request to the workflow executor.
 
         Enqueues the request to _pending_inputs. The background producer thread
@@ -1004,17 +1004,18 @@ class WorkflowExecutor:
         resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
 
-        task_id = perf_tracer.register_task()
+        task_id = perf_tracer.register_task() or int(uuid.uuid4())
         task_input = _RolloutTaskInput(
             data=data,
             workflow=resolved_workflow,
             should_accept_fn=resolved_should_accept_fn,
             # Create a task_id from uuid when perf_tracer is not used.
-            task_id=task_id or int(uuid.uuid4()),
+            task_id=task_id,
         )
 
         # Delegate to dispatcher
         self.dispatcher.submit_task_input(task_input)
+        return task_id
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
