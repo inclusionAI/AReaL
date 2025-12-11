@@ -217,6 +217,7 @@ def _test_offload_and_onload(
 
 
 @pytest.mark.parametrize("engine_type", ["FSDP", "Megatron"])
+@pytest.mark.slow
 def test_engine_offload_and_onload(engine_type):
     """Test engine offload releases memory and onload recovers it correctly.
 

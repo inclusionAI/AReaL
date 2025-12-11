@@ -5,9 +5,10 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar, Generic
+from typing import TYPE_CHECKING, Any, TypeVar, Generic, Protocol
 from collections.abc import Generator
 from collections import deque
+import uuid
 
 import torch
 import torch.distributed as dist
@@ -219,25 +220,31 @@ def check_trajectory_format(
 class _RolloutTaskInput:
     """Internal wrapper for rollout-specific task input."""
 
+    task_id: int
     data: dict[str, Any]
     workflow: RolloutWorkflow
     should_accept_fn: Callable[[dict[str, Any]], bool] | None = None
-    task_id: int | None = None
 
 
 @dataclass
 class _RolloutResult:
+    task_id: int
     trajectory: dict[str, Any]
-    task_id: int | None = None
 
 
 # Batch size for fetching from the async task runner
 _MAX_FETCH_BATCH_SIZE = 100
 # Timeout for shutting down threads
 _SHUTDOWN_TIMEOUT_SECONDS = 2.0
+# Timeout for "wait" and "wait_for_task" if timeout parameter is None
+_DEFAULT_WAIT_TIMEOUT_SECONDS = float(7 * 24 * 3600)
 
 
-TInput = TypeVar("TInput")
+class WithTaskID(Protocol):
+    task_id: int
+
+
+TInput = TypeVar("TInput", bound=WithTaskID)
 TResult = TypeVar("TResult")
 
 
@@ -272,7 +279,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         # Unbounded deques for producer/consumer pattern
         self._pending_inputs: deque[TInput] = deque()
-        self._pending_results: deque[TimedResult[TResult]] = deque()
+        self._pending_results: dict[int, TimedResult[TResult]] = {}
+        self._active_task_ids: set[int] = set()
 
         # Condition variables for coordination
         self._input_lock = threading.Lock()
@@ -323,7 +331,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
                 task_fn = self.task_factory(task_input)
                 try:
-                    self.runner.submit(task_fn)
+                    self.runner.submit(task_fn, task_id=task_input.task_id)
                     self.staleness_manager.on_rollout_submitted()
                     if self.enable_tracing:
                         self.logger.info(f"Submit rollout. {self._rollout_stats()}")
@@ -365,7 +373,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
                 with self._result_cv:
                     for result in results:
-                        self._pending_results.append(result)
+                        self._pending_results[result.task_id] = result
                     self._result_cv.notify_all()
 
                 # Newly available capacity after result processing should wake producers
@@ -485,6 +493,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             if self.enable_tracing:
                 self.logger.info(f"Enqueue rollout. {self._rollout_stats()}")
             self._input_cv.notify()
+        with self._result_cv:
+            self._active_task_ids.add(task_input.task_id)
 
     def wait_results(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
@@ -510,7 +520,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         start_time = time.perf_counter()
         if timeout is None:
-            timeout = float(7 * 24 * 3600)
+            timeout = _DEFAULT_WAIT_TIMEOUT_SECONDS
 
         with self._result_cv:
             while len(self._pending_results) < count:
@@ -528,19 +538,51 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
                 self._result_cv.wait(timeout=remaining)
 
-            drained: list[TimedResult[TResult]] = list(self._pending_results)
+            drained: list[TimedResult[TResult]] = list(self._pending_results.values())
             self._pending_results.clear()
 
         drained.sort(key=lambda x: x.create_time)
         selected, pending = drained[:count], drained[count:]
-        if pending:
-            with self._result_cv:
-                self._pending_results.extendleft(reversed(pending))
+        with self._result_cv:
+            if pending:
+                for result in pending:
+                    self._pending_results[result.task_id] = result
                 self._result_cv.notify_all()
+            for r in selected:
+                self._active_task_ids.discard(r.task_id)
 
         random.shuffle(selected)
 
         return [r.data for r in selected]
+
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> TResult | None:
+        """Wait for a specific task result by task_id."""
+        start_time = time.perf_counter()
+        if timeout is None:
+            timeout = _DEFAULT_WAIT_TIMEOUT_SECONDS
+
+        with self._result_cv:
+            if task_id not in self._active_task_ids:
+                raise ValueError(f"Task {task_id} is never submitted.")
+
+            while task_id not in self._pending_results:
+                self._check_thread_exception()
+
+                elapsed = time.perf_counter() - start_time
+                remaining = timeout - elapsed
+                if remaining <= 0:
+                    if raise_timeout:
+                        raise TimeoutError(f"Timed out waiting for task {task_id}.")
+                    return None
+
+                self._result_cv.wait(timeout=remaining)
+
+            found_result = self._pending_results.pop(task_id)
+            self._active_task_ids.remove(task_id)
+            self._result_cv.notify_all()
+            return found_result.data
 
     def active_submit_and_wait(
         self, input_generator: Generator[TInput, None, None], batch_size: int
@@ -991,7 +1033,7 @@ class WorkflowExecutor:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
-    ) -> None:
+    ) -> int:
         """Submit a rollout request to the workflow executor.
 
         Enqueues the request to _pending_inputs. The background producer thread
@@ -1003,16 +1045,18 @@ class WorkflowExecutor:
         resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
 
-        task_id = perf_tracer.register_task()
+        task_id = perf_tracer.register_task() or int(uuid.uuid4())
         task_input = _RolloutTaskInput(
             data=data,
             workflow=resolved_workflow,
             should_accept_fn=resolved_should_accept_fn,
+            # Create a task_id from uuid when perf_tracer is not used.
             task_id=task_id,
         )
 
         # Delegate to dispatcher
         self.dispatcher.submit_task_input(task_input)
+        return task_id
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
@@ -1030,6 +1074,39 @@ class WorkflowExecutor:
         if self.config.enable_rollout_tracing:
             self.logger.info("Rollout results are ready!")
         return [r.trajectory if r is not None else None for r in results]
+
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """
+        Wait for a specific workflow task to complete.
+        Parameters
+        ----------
+        task_id : int
+            The ID of the workflow task to wait for.
+        timeout : float or None, optional
+            Maximum time to wait for the task to complete, in seconds. If None, wait indefinitely.
+        raise_timeout : bool, optional
+            If True, raise TimeoutError if the task does not complete within the timeout.
+        Returns
+        -------
+        dict[str, Any] or None
+            The trajectory dictionary for the completed task, or None if the rollout was rejected.
+        Raises
+        ------
+        ValueError
+            If the task_id is invalid.
+        TimeoutError
+            If the task does not complete within the specified timeout and raise_timeout is True.
+        See Also
+        --------
+        :meth:`~areal.api.engine_api.InferenceEngine.wait_for_task`
+        """
+        result = self.dispatcher.wait_for_task(task_id, timeout, raise_timeout)
+
+        if result is not None and self.config.enable_rollout_tracing:
+            self.logger.info(f"Task {task_id} completed successfully")
+        return result.trajectory if result is not None else None
 
     @trace_perf("workflow_executor.rollout_batch", category="scheduler")
     def rollout_batch(
@@ -1103,7 +1180,8 @@ class WorkflowExecutor:
                         data=item,
                         workflow=resolved_workflow,
                         should_accept_fn=resolved_should_accept_fn,
-                        task_id=perf_tracer.register_task(),
+                        # Create a task_id from uuid when perf_tracer is not used.
+                        task_id=perf_tracer.register_task() or int(uuid.uuid4()),
                     )
 
         if not hasattr(self, "data_generator"):

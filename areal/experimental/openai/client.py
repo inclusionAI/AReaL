@@ -58,9 +58,6 @@ os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 logger = logging.getLogger("AReaLOpenAI Client")
 
 
-CONCAT_PROMPT_TOKEN_IDS_WARNED = False
-
-
 def _ensure_message_dict_list(
     name: str,
     value: list[Any],
@@ -121,16 +118,13 @@ def concat_prompt_token_ids_with_parent(
             k not in ["content", "role"] for k in msg.keys()
         )
         if warn:
-            global CONCAT_PROMPT_TOKEN_IDS_WARNED
-            if not CONCAT_PROMPT_TOKEN_IDS_WARNED:
-                logger.warning(
-                    "When using 'concat' chat template, only 'user' or 'system' role "
-                    "messages with 'content' field are properly handled. Other roles "
-                    "or extra fields may lead to unexpected tokenization results. "
-                    "Please ensure user-side messages are only of 'user' or 'system' "
-                    "role with 'content' field."
-                )
-                CONCAT_PROMPT_TOKEN_IDS_WARNED = True
+            logger.warning(
+                "When using 'concat' chat template, only 'user' or 'system' role "
+                "messages with 'content' field are properly handled. Other roles "
+                "or extra fields may lead to unexpected tokenization results. "
+                "Please ensure user-side messages are only of 'user' or 'system' "
+                "role with 'content' field."
+            )
     message_strs.append(f"{start}assistant\n")
     prompt_token_ids = parent_tokens + tokenizer.encode("".join(message_strs))
     return prompt_token_ids
@@ -329,7 +323,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         output_message = ChatCompletionMessage(
             content=output_text,
             role="assistant",
-            tool_calls=tool_calls,
+            # For all empty tool calls, set tool_calls=None
+            tool_calls=tool_calls or None,
         )
         chat_completion = ChatCompletion(
             id=completion_id,
