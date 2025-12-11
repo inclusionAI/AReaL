@@ -150,7 +150,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                         "Found a parent interaction with similar last message content, "
                         "but not a strict prefix match. If you wish to use concat mode and build a conversation tree:\n"
                         "1. For completion, append `chat_completion.choices[0].message.model_dump()` to your messages.\n"
-                        "2. For response, extend `[o.model_dump() for o in response.output]` to your messages."
+                        "2. For response, extend `[o.model_dump() for o in response.output]` to your messages.\n"
                         f"Different keys in parent last message: {diff_a}\n"
                         f"Different keys in child last message: {diff_b}\n"
                     )
