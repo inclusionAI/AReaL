@@ -164,24 +164,32 @@ def main(args):
 
             if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
                 with stats_tracker.record_timing("recompute_logp"):
-                    logp = actor.compute_logp(batch)
-                    batch["prox_logp"] = logp
+                    prox_logp = actor.compute_logp(
+                        batch,
+                        return_distributed_batch=True,
+                        result_key="prox_logp",
+                    )
+                    batch["prox_logp"] = prox_logp
                     log_gpu_stats("recompute logp")
 
             if ref is not None:
                 with stats_tracker.record_timing("ref_logp"):
-                    batch["ref_logp"] = ref.compute_logp(batch)
+                    ref_logp = ref.compute_logp(
+                        batch,
+                        return_distributed_batch=True,
+                        result_key="ref_logp",
+                    )
+                    batch["ref_logp"] = ref_logp
                     log_gpu_stats("ref logp")
 
             with stats_tracker.record_timing("compute_advantage"):
-                batch = actor.compute_advantages(batch)
+                batch = actor.compute_advantages(batch, return_distributed_batch=True)
                 log_gpu_stats("compute advantages")
 
             with stats_tracker.record_timing("train_step"):
                 actor.ppo_update(batch)
                 actor.step_lr_scheduler()
                 log_gpu_stats("ppo update")
-
             # pause inference for updating weights, save, and evaluation
             rollout.pause()
 
@@ -204,6 +212,9 @@ def main(args):
                     train_dataloader,
                     tokenizer=tokenizer,
                 )
+
+            with stats_tracker.record_timing("clear_batches"):
+                actor.clear_batches(batch)
 
             # Upload statistics to the logger (e.g., wandb)
             stats_logger.commit(epoch, step, global_step, actor.export_stats())

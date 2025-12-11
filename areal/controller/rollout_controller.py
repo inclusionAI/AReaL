@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -20,7 +21,7 @@ from areal.controller.batch import DistributedBatchMemory
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher
 from areal.utils import logging, perf_tracer
-from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.utils.data import cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf
 
@@ -35,13 +36,13 @@ class _RemoteRolloutTaskInput:
     workflow: str
     workflow_kwargs: dict[str, Any]
     should_accept_fn: str
-    task_id: int | None = None
+    task_id: str | None = None
 
 
 @dataclass
 class _RemoteRolloutResult:
-    trajectory: dict[str, Any]
-    task_id: int | None = None
+    trajectory: dict[str, Any] | DistributedBatchMemory
+    task_id: str | None = None
 
 
 class RolloutController:
@@ -294,6 +295,8 @@ class RolloutController:
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
                         http_timeout=self.config.request_timeout,
+                        return_distributed_batch=True,
+                        task_id=task_id,
                     )
 
                 # TimeourError will be catched below
@@ -352,8 +355,8 @@ class RolloutController:
             workflow=workflow_str,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
-            # NOTE: For now we don't trace tasks at the controller level
-            task_id=None,
+            # Generate a UUID for tracing task lifecycle
+            task_id=uuid.uuid4().hex,
         )
 
         # Delegate to dispatcher
@@ -361,12 +364,13 @@ class RolloutController:
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> list[dict[str, Any] | None]:
+    ) -> list[dict[str, Any] | DistributedBatchMemory | None]:
         # Delegate to dispatcher and extract trajectories
         results = self.dispatcher.wait_results(count, timeout, raise_timeout)
         # Log and trace
         if self.config.enable_rollout_tracing:
             logger.info("Rollout results are ready!")
+
         return [r.trajectory if r is not None else None for r in results]
 
     @trace_perf("rollout_controller.rollout_batch", category="scheduler")
@@ -376,7 +380,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> DistributedBatchMemory:
         perf_tracer.instant(
             "rollout_controller.rollout_batch",
             category="scheduler",
@@ -390,12 +394,11 @@ class RolloutController:
                 should_accept_fn=should_accept_fn,
             )
         results = self.wait(count=len(data))
-        # Concatenate into batch tensor format
-        batch = concat_padded_tensors([r for r in results if r is not None])
+        batches = [b for b in results if isinstance(b, DistributedBatchMemory)]
+        if not batches:
+            return DistributedBatchMemory.from_dict({})
 
-        # NOTE: DistributedBatchMemory.from_dict does nothing for now
-        # Just for sync with internal code
-        return DistributedBatchMemory.from_dict(batch)
+        return DistributedBatchMemory.concat(batches)
 
     @trace_perf("rollout_controller.prepare_batch", category="scheduler")
     def prepare_batch(
@@ -404,7 +407,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
-    ):
+    ) -> DistributedBatchMemory:
         """Prepare a batch with controlled staleness.
 
         Continuously submits from dataloader and waits for results, ensuring at least
@@ -425,7 +428,7 @@ class RolloutController:
                         workflow=workflow_str,
                         workflow_kwargs=workflow_kwargs,
                         should_accept_fn=should_accept_fn,
-                        task_id=None,
+                        task_id=uuid.uuid4().hex,
                     )
 
         if not hasattr(self, "data_generator"):
@@ -437,13 +440,15 @@ class RolloutController:
             self.data_generator, batch_size=dataloader.batch_size
         )
 
-        # Extract trajectories and concatenate
+        # Extract trajectories
         trajectories = [r.trajectory if r is not None else None for r in results]
-        batch = concat_padded_tensors([t for t in trajectories if t is not None])
 
-        # NOTE: DistributedBatchMemory.from_dict does nothing for now
-        # Just for sync with internal code
-        return DistributedBatchMemory.from_dict(batch)
+        # Filter out None and only keep DistributedBatchMemory instances
+        batches = [t for t in trajectories if isinstance(t, DistributedBatchMemory)]
+        if not batches:
+            return DistributedBatchMemory.from_dict({})
+
+        return DistributedBatchMemory.concat(batches)
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.
@@ -540,3 +545,11 @@ class RolloutController:
     def runner(self):
         """For backward compatibility. The runner is now owned by the dispatcher."""
         return self.dispatcher.runner
+
+    # ==================== DISTRIBUTED BATCH RPC WRAPPERS ====================
+    def clear_batches(self, target: DistributedBatchMemory | list[str]):
+        """Clear shard data on workers."""
+        server_addrs = {
+            f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
+        }
+        DistributedBatchMemory.clear(target, server_addrs)

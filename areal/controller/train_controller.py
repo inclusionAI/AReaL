@@ -149,7 +149,6 @@ class TrainController:
 
         # Identify DP head workers
         self._identify_dp_heads()
-
         logger.info("TrainController initialization complete")
 
     def _run_async_task(self, task):
@@ -190,7 +189,7 @@ class TrainController:
                 worker_id=worker.id,
                 method="create_process_group",
                 parallel_strategy=self.parallel_strategy,
-                _should_bcast=False,
+                should_broadcast=False,
             )
             for worker in self.workers
         ]
@@ -201,7 +200,7 @@ class TrainController:
                 worker_id=worker.id,
                 method="initialize",
                 ft_spec=ft_spec,
-                _should_bcast=False,
+                should_broadcast=False,
                 **kwargs,
             )
             for worker in self.workers
@@ -318,16 +317,9 @@ class TrainController:
                     k: splits[dp_idx] for k, splits in dp_worker_kwargs.items()
                 }
 
-                # Convert DistributedBatch to dict for RPC serialization
-                # TODO: Consider passing metadata instead of full tensors to reduce
-                # network overhead, especially for large batches
-                worker_args = [
-                    arg.get_data() if isinstance(arg, DistributedBatch) else arg
-                    for arg in worker_args
-                ]
+                worker_args = [self._serialize_arg_for_rpc(arg) for arg in worker_args]
                 worker_kwargs = {
-                    k: v.get_data() if isinstance(v, DistributedBatch) else v
-                    for k, v in worker_kwargs.items()
+                    k: self._serialize_arg_for_rpc(v) for k, v in worker_kwargs.items()
                 }
                 dp_idx += 1
             else:
@@ -346,9 +338,28 @@ class TrainController:
             )
         return await asyncio.gather(*tasks)
 
+    def _serialize_arg_for_rpc(self, arg: Any) -> Any:
+        """Serialize argument for RPC transmission."""
+        if isinstance(arg, DistributedBatch):
+            # If batch has metadata and batch server is enabled, pass metadata
+            if hasattr(arg, "metadata") and arg.metadata is not None:
+                # Return a special dict that indicates metadata mode
+                return {
+                    "__distributed_batch_metadata__": True,
+                    "metadata": arg.metadata,
+                }
+            else:
+                # Legacy mode: get actual data
+                return arg.get_data()
+        return arg
+
     def _merge_results(self, results, method):
         """Merge results from DP heads: pad tensors to max seq_len, concat dicts, return first for others."""
         first_result = results[0]
+
+        # Handle DistributedBatchMemory
+        if isinstance(first_result, DistributedBatchMemory):
+            return DistributedBatchMemory.concat(results)
 
         if isinstance(first_result, torch.Tensor):
             # Pad tensors to max sequence length and concatenate along batch dimension
@@ -399,7 +410,8 @@ class TrainController:
     ) -> list[DistributedBatch]:
         """Split batch across DP groups. Uses chunk_by_ffd if rebalance=True, else simple chunking."""
         # Handle empty batch by replicating to all DP groups
-        if len(input_.get_data()) == 0:
+        # Use _get_total_size() to avoid fetching data
+        if len(input_) == 0:
             return [input_] * self.alloc_mode.train.dp_size
 
         if rebalance:
@@ -722,3 +734,13 @@ class TrainController:
             self._update_weights_from_disk(meta)
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
+
+    # ==================== DISTRIBUTED BATCH RPC WRAPPERS ====================
+    def clear_batches(self, target: DistributedBatchMemory | list[str] | None):
+        """Clear specified shard data on workers."""
+        server_addrs = {
+            f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
+        }
+        if target is None:
+            return
+        DistributedBatchMemory.clear(target, server_addrs)

@@ -138,6 +138,10 @@ def main(args):
                     evaluator.evaluate(evaluate_fn, epoch, step, global_step)
 
                 stats_logger.commit(epoch, step, global_step, engine.export_stats())
+
+                with stats_tracker.record_timing("clear_batches"):
+                    engine.clear_batches(global_step)
+
                 global_step += 1
 
     finally:
