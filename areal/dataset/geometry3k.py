@@ -138,26 +138,48 @@ def get_geometry3k_rl_dataset(
             image_token = processor.boi_token
         else:
             image_token = processor.image_token if processor is not None else "<image>"
-        system_prompt = {
-            "role": "system",
-            "content": (
-                "Solve the following geometric problem based on the image. You may explain your reasoning before providing the final answer. The answer should be enclosed in [ ] and can be a number, decimal, or LaTeX format (e.g. \frac { 4 }{ 9 } \\sqrt { 3 }).\n"
-            ),
-        }
+        instruction_following = (
+            r" You FIRST think about the reasoning process as an internal monologue and then provide the final answer. "
+            r"The reasoning process MUST BE enclosed within <think> </think> tags. "
+            r"The final answer MUST BE put in \boxed{}."
+        )
 
         messages = [
             {
                 "role": "user",
                 "content": sample["problem"]
                 .replace("<image>", image_token)
-                .replace("different", ""),
+                .replace("different", "")
+                + instruction_following,
             }
         ]
-        messages.insert(0, system_prompt)
+        messages_chat = [
+            {
+                "role": "user",
+                "content": [
+                    # NOTE: The prompt formatting with the image token `<image>` is not needed
+                    # since the prompt will be processed automatically by the API server.
+                    # Leave the "url" field empty. It will be filled in the engine.
+                    {"type": "image_url", "image_url": {"url": ""}},
+                    {
+                        "type": "text",
+                        "text": sample["problem"]
+                        .replace("<image>", "")
+                        .replace("different", "")
+                        + instruction_following,
+                    },
+                ],
+            }
+        ]
+
         messages = processor.tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
         )
-        return {"messages": messages, "images": processed_images}
+        return {
+            "messages": messages,
+            "messages_chat": messages_chat,
+            "images": processed_images,
+        }
 
     dataset = dataset.map(process).remove_columns(["problem"])
 
