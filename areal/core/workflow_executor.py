@@ -1153,13 +1153,12 @@ class WorkflowExecutor:
                     resolved_workflow = self._resolve_workflow(
                         workflow, workflow_kwargs
                     )
-                    task_id = perf_tracer.register_task()
                     yield _RolloutTaskInput(
                         data=item,
                         workflow=resolved_workflow,
                         should_accept_fn=resolved_should_accept_fn,
                         # Create a task_id from uuid when perf_tracer is not used.
-                        task_id=task_id or int(uuid.uuid4()),
+                        task_id=perf_tracer.register_task() or int(uuid.uuid4()),
                     )
 
         if not hasattr(self, "data_generator"):
