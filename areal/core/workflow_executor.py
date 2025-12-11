@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, Generic
 from collections.abc import Generator
 from collections import deque
+import uuid
 
 import torch
 import torch.distributed as dist
@@ -219,16 +220,16 @@ def check_trajectory_format(
 class _RolloutTaskInput:
     """Internal wrapper for rollout-specific task input."""
 
+    task_id: int
     data: dict[str, Any]
     workflow: RolloutWorkflow
     should_accept_fn: Callable[[dict[str, Any]], bool] | None = None
-    task_id: int | None = None
 
 
 @dataclass
 class _RolloutResult:
+    task_id: int
     trajectory: dict[str, Any]
-    task_id: int | None = None
 
 
 # Batch size for fetching from the async task runner
@@ -1008,7 +1009,8 @@ class WorkflowExecutor:
             data=data,
             workflow=resolved_workflow,
             should_accept_fn=resolved_should_accept_fn,
-            task_id=task_id,
+            # Create a task_id from uuid when perf_tracer is not used.
+            task_id=task_id or int(uuid.uuid4()),
         )
 
         # Delegate to dispatcher
@@ -1099,11 +1101,13 @@ class WorkflowExecutor:
                     resolved_workflow = self._resolve_workflow(
                         workflow, workflow_kwargs
                     )
+                    task_id = perf_tracer.register_task()
                     yield _RolloutTaskInput(
                         data=item,
                         workflow=resolved_workflow,
                         should_accept_fn=resolved_should_accept_fn,
-                        task_id=perf_tracer.register_task(),
+                        # Create a task_id from uuid when perf_tracer is not used.
+                        task_id=task_id or int(uuid.uuid4()),
                     )
 
         if not hasattr(self, "data_generator"):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -31,17 +32,17 @@ logger = logging.getLogger(__name__)
 # type annotation, which disallows workflow object or types
 @dataclass
 class _RemoteRolloutTaskInput:
+    task_id: int
     data: dict[str, Any]
     workflow: str
     workflow_kwargs: dict[str, Any]
     should_accept_fn: str
-    task_id: int | None = None
 
 
 @dataclass
 class _RemoteRolloutResult:
+    task_id: int
     trajectory: dict[str, Any]
-    task_id: int | None = None
 
 
 class RolloutController:
@@ -352,8 +353,7 @@ class RolloutController:
             workflow=workflow_str,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
-            # NOTE: For now we don't trace tasks at the controller level
-            task_id=None,
+            task_id=int(uuid.uuid4()),
         )
 
         # Delegate to dispatcher
@@ -425,7 +425,7 @@ class RolloutController:
                         workflow=workflow_str,
                         workflow_kwargs=workflow_kwargs,
                         should_accept_fn=should_accept_fn,
-                        task_id=None,
+                        task_id=int(uuid.uuid4()),
                     )
 
         if not hasattr(self, "data_generator"):
