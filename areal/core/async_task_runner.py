@@ -53,6 +53,7 @@ class _TaskInput(Generic[T]):
     async_fn: Callable[..., Awaitable[T]]
     args: tuple
     kwargs: dict
+    task_id: int
 
 
 @dataclass
@@ -205,6 +206,10 @@ class AsyncTaskRunner(Generic[T]):
         self._shutdown_hooks: list[Callable[[], Awaitable[None]]] = []
         self._shutdown_hooks_lock = threading.Lock()
 
+        # Task ID tracking for duplicate detection
+        self._active_task_ids: set[int] = set()
+        self._active_task_ids_lock = threading.Lock()
+
         # Will be set in initialize()
         self.logger = None
         self.thread: threading.Thread | None = None
@@ -349,7 +354,6 @@ class AsyncTaskRunner(Generic[T]):
         self._input_event.set()
 
         running_tasks: dict[str, _Task[T]] = {}
-        task_id = 0
 
         try:
             while not self.exiting.is_set():
@@ -358,8 +362,7 @@ class AsyncTaskRunner(Generic[T]):
                     continue
 
                 # running_tasks is mutated in-place as we enqueue freshly created asyncio tasks
-                tasks_added = self._drain_pending_inputs(running_tasks, task_id)
-                task_id += tasks_added
+                self._drain_pending_inputs(running_tasks)
 
                 if not running_tasks:
                     await self._wait_for_new_tasks()
@@ -403,6 +406,11 @@ class AsyncTaskRunner(Generic[T]):
                             data=cast(T, result),
                         )
                         self.output_queue.put_nowait(timed_result)
+
+                        # Remove task_id from active set now that task is complete
+                        with self._active_task_ids_lock:
+                            self._active_task_ids.discard(task_obj.task_input.task_id)
+
                         if self.enable_tracing and self.logger:
                             self.logger.info(
                                 f"AsyncTaskRunner: Completed task {tid}. "
@@ -448,10 +456,15 @@ class AsyncTaskRunner(Generic[T]):
                     task.cancel()
                 await asyncio.gather(*pending_tasks, return_exceptions=True)
 
+            # Clean up all remaining active task IDs
+            with self._active_task_ids_lock:
+                for task_obj in running_tasks.values():
+                    self._active_task_ids.discard(task_obj.task_input.task_id)
+                self._active_task_ids.clear()
+
     def _drain_pending_inputs(
         self,
         running_tasks: dict[str, _Task[T]],
-        next_task_id: int,
     ) -> int:
         tasks_added = 0
         while not self.paused.is_set():
@@ -460,7 +473,16 @@ class AsyncTaskRunner(Generic[T]):
             except queue.Empty:
                 break
 
-            tid = str(next_task_id + tasks_added)
+            tid = str(task_input.task_id)
+
+            # Note: Duplicate checking is now done in submit() method
+            # This check here is defensive in case of threading issues
+            if tid in running_tasks:
+                raise ValueError(
+                    f"Duplicate task_id: {task_input.task_id}. "
+                    f"Task with this ID is already running."
+                )
+
             coroutine: Coroutine[Any, Any, T] = cast(
                 Coroutine[Any, Any, T],
                 task_input.async_fn(*task_input.args, **task_input.kwargs),
@@ -502,8 +524,9 @@ class AsyncTaskRunner(Generic[T]):
         self,
         async_fn: Callable[..., Awaitable[T]],
         *args,
+        task_id: int,
         **kwargs,
-    ) -> None:
+    ) -> int:
         """Submit an async function for execution.
 
         The function will be executed in the background thread's event
@@ -515,8 +538,15 @@ class AsyncTaskRunner(Generic[T]):
             The async function to execute.
         *args
             Positional arguments to pass to the function.
+        task_id : int
+            Task ID for tracking. Must be unique among currently running tasks.
         **kwargs
             Keyword arguments to pass to the function.
+
+        Returns
+        -------
+        int
+            The task_id that was provided.
 
         Raises
         ------
@@ -524,31 +554,50 @@ class AsyncTaskRunner(Generic[T]):
             If the input queue is full.
         RuntimeError
             If the background thread has died.
+        ValueError
+            If task_id is a duplicate of an existing running task.
 
         Examples
         --------
         >>> async def add(a: int, b: int) -> int:
         ...     return a + b
         >>>
-        >>> runner.submit(add, 5, 10)
-        >>> runner.submit(add, a=3, b=7)
+        >>> runner.submit(add, 5, 10, task_id=1)
+        1
+        >>> runner.submit(add, a=3, b=7, task_id=2)
+        2
         """
         # Check if thread is still alive
         self._check_thread_health()
 
+        # Check for duplicate task_id and add to active set
+        with self._active_task_ids_lock:
+            if task_id in self._active_task_ids:
+                raise ValueError(
+                    f"Duplicate task_id: {task_id}. "
+                    f"Task with this ID is already submitted or running."
+                )
+            self._active_task_ids.add(task_id)
+
         # Create task input wrapper
-        task_input = _TaskInput(async_fn=async_fn, args=args, kwargs=kwargs)
+        task_input = _TaskInput(
+            async_fn=async_fn, args=args, kwargs=kwargs, task_id=task_id
+        )
 
         # Submit to queue
         try:
             self.input_queue.put_nowait(task_input)
         except queue.Full:
+            # Remove from active set if queue is full
+            with self._active_task_ids_lock:
+                self._active_task_ids.discard(task_id)
             raise TaskQueueFullError(
                 "Input queue full. Please increase max_queue_size or "
                 "wait for tasks to complete."
             )
 
         self._signal_new_input()
+        return task_id
 
     def wait(
         self, count: int, timeout: float | None = None, with_timing: bool = False
@@ -623,31 +672,6 @@ class AsyncTaskRunner(Generic[T]):
         if with_timing:
             return results_to_return
         return [r.data for r in results_to_return]
-
-    def submit_batch(
-        self,
-        tasks: list[tuple[Callable[..., Awaitable[T]], tuple, dict]],
-    ) -> None:
-        """Submit multiple tasks at once.
-
-        Convenience method for submitting multiple tasks in a single call.
-
-        Parameters
-        ----------
-        tasks : List[tuple[Callable, tuple, dict]]
-            List of (async_fn, args, kwargs) tuples to submit.
-
-        Examples
-        --------
-        >>> tasks = [
-        ...     (compute, (1,), {}),
-        ...     (compute, (2,), {}),
-        ...     (compute, (3,), {}),
-        ... ]
-        >>> runner.submit_batch(tasks)
-        """
-        for async_fn, args, kwargs in tasks:
-            self.submit(async_fn, *args, **kwargs)
 
     def pause(self):
         """Pause submission of new tasks.

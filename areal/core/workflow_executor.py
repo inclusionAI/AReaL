@@ -324,7 +324,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
                 task_fn = self.task_factory(task_input)
                 try:
-                    self.runner.submit(task_fn)
+                    self.runner.submit(task_fn, task_id=task_input.task_id)
                     self.staleness_manager.on_rollout_submitted()
                     if self.enable_tracing:
                         self.logger.info(f"Submit rollout. {self._rollout_stats()}")
