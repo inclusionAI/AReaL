@@ -117,17 +117,18 @@ def concat_prompt_token_ids_with_parent(
     message_strs = []
     for msg in message_list:
         message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
-        warn = msg["role"] != "user" or any(
+        warn = msg["role"] not in ["user", "system"] or any(
             k not in ["content", "role"] for k in msg.keys()
         )
         if warn:
             global CONCAT_PROMPT_TOKEN_IDS_WARNED
             if not CONCAT_PROMPT_TOKEN_IDS_WARNED:
                 logger.warning(
-                    "When using 'concat' chat template, only 'user' role messages "
-                    "with 'content' field are properly handled. Other roles or extra fields "
-                    "may lead to unexpected tokenization results. "
-                    "Please ensure user-side messages are only of 'user' role with 'content' field."
+                    "When using 'concat' chat template, only 'user' or 'system' role "
+                    "messages with 'content' field are properly handled. Other roles "
+                    "or extra fields may lead to unexpected tokenization results. "
+                    "Please ensure user-side messages are only of 'user' or 'system' "
+                    "role with 'content' field."
                 )
                 CONCAT_PROMPT_TOKEN_IDS_WARNED = True
     message_strs.append(f"{start}assistant\n")
@@ -171,6 +172,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         max_tokens: int | None | NotGiven = NOT_GIVEN,
         max_total_tokens: int | None | NotGiven = NOT_GIVEN,
         metadata: Metadata | None | NotGiven = NOT_GIVEN,
+        n: int | None | NotGiven = NOT_GIVEN,
         stop: str | None | list[str] | None | NotGiven = NOT_GIVEN,
         store: bool | None | NotGiven = NOT_GIVEN,
         temperature: float | None | NotGiven = NOT_GIVEN,
@@ -183,10 +185,13 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
-        if not isinstance(messages, list):
+        if not isinstance(messages, Iterable):
             raise TypeError(
-                "messages must be provided as a list of dictionaries or BaseModel instances."
+                "messages must be provided as an iterable of dictionaries or BaseModel instances."
             )
+        if not is_omitted(n) and n != 1:
+            raise NotImplementedError("n != 1 is not supported yet")
+        n = 1
 
         messages_list_raw = list(messages)
         if not messages_list_raw:
@@ -280,7 +285,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Create generation config
         gconfig = GenerationHyperparameters(
-            n_samples=1,
+            n_samples=n,
             temperature=temp,
             max_new_tokens=max_new_tokens,
             top_p=top_p_val,
@@ -383,6 +388,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
     async def create(
         self,
         *,
+        include: list[str] | None | NotGiven = NOT_GIVEN,
         input: str | ResponseInputParam | NotGiven = NOT_GIVEN,
         instructions: str | None | NotGiven = NOT_GIVEN,
         max_output_tokens: int | None | NotGiven = NOT_GIVEN,
@@ -391,6 +397,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         tools: Iterable[ToolParam] | NotGiven = NOT_GIVEN,
         temperature: float | None | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
+        frequency_penalty: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
         areal_cache: dict[str, InteractionWithTokenLogpReward] | None = None,
         **kwargs: Any,
@@ -415,6 +422,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             messages_list = [
                 {"role": "system", "content": instructions},
             ]
+        if not is_omitted(include) and len(include) > 0:
+            raise NotImplementedError("include is not supported yet")
+
         if is_omitted(input):
             raise ValueError("input is required for Responses.create")
 
@@ -535,7 +545,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             logger.warning("max_output_tokens not specified, defaulting to 512.")
 
         stop = kwargs.get("stop", None)
-        frequency_penalty = kwargs.get("frequency_penalty", 0.0)
+        if is_omitted(frequency_penalty):
+            frequency_penalty = 0.0
 
         # Create generation config and request
         gconfig = GenerationHyperparameters(

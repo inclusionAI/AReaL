@@ -43,6 +43,7 @@ parts:
     - file: algorithms/rloo
     - file: algorithms/dapo
     - file: algorithms/gspo
+    - file: algorithms/sapo
     - file: algorithms/dr.GRPO
     - file: algorithms/litePPO
 

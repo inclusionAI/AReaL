@@ -24,10 +24,10 @@ our project just as you enjoy real-world milk tea (cheers).
   [multi-turn agentic rollout](https://inclusionai.github.io/AReaL/customization/agent.html)
   workflows within a single file, and smooth integration with
   [other agentic tooling frameworks](https://inclusionai.github.io/AReaL/tutorial/agentic_rl.html).
-- 🚀 **Scalability**: Through algorithm-system co-design, AReaL delivers **stable** fully
+- 📈 **Scalability**: Through algorithm-system co-design, AReaL delivers **stable** fully
   asynchronous RL training with **industry-leading speed**. AReaL seamlessly adapts to
   diverse computational environments, scaling from a single node to 1,000+ GPUs.
-- 🔪 **Cutting-Edge Performance**: AReaL produces state-of-the-art
+- ✨ **Cutting-Edge Performance**: AReaL produces state-of-the-art
   [math](/blog/AReaL_v0_2.md), [coding](/blog/AReaL_v0_3.md), and
   [search agents](https://github.com/inclusionAI/ASearcher) with exceptional
   capabilities.
