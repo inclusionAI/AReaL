@@ -34,7 +34,7 @@ class ModelRequest:
     processor: Optional["AutoProcessor"] = None
 
     # vlm+vllm:
-    input_text: list | None = None
+    vision_msg_vllm: list | None = None
 
     def copy(self):
         return ModelRequest(

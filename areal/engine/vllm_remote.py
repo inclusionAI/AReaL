@@ -52,9 +52,9 @@ class VLLMBackend:
         if with_lora and len(gconfig.lora_name) > 0:
             payload["model"] = gconfig.lora_name
 
-        if req.input_text:
+        if req.vision_msg_vllm:
             images = iter(req.image_data)
-            parsed_input = req.input_text[0]
+            parsed_input = req.vision_msg_vllm[0]
             for msg in parsed_input:
                 if isinstance(msg["content"], list):
                     for content in msg["content"]:
