@@ -45,7 +45,9 @@ class ModelRequest:
             tokenizer=self.tokenizer,
             image_data=self.image_data.copy() if self.image_data is not None else None,
             processor=self.processor,
-            vision_msg_vllm=self.vision_msg_vllm.copy() if self.vision_msg_vllm is not None else None,
+            vision_msg_vllm=self.vision_msg_vllm.copy()
+            if self.vision_msg_vllm is not None
+            else None,
         )
 
 
