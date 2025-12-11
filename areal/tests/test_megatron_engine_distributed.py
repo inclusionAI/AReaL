@@ -39,6 +39,7 @@ def _run_test_with_torchrun(
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 def test_qwen3_tensor_parallel(tmp_path_factory):
     if current_platform.device_count() < 2:
         pytest.skip("tensor parallel requires 2 GPUs to run")
@@ -47,6 +48,7 @@ def test_qwen3_tensor_parallel(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 def test_qwen3_pipeline_parallel(tmp_path_factory):
     if current_platform.device_count() < 2:
         pytest.skip("pipeline parallel requires 2 GPUs to run")
@@ -55,6 +57,7 @@ def test_qwen3_pipeline_parallel(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 def test_qwen3_context_parallel(tmp_path_factory):
     if current_platform.device_count() < 2:
         pytest.skip("context parallel requires 2 GPUs to run")
@@ -65,6 +68,7 @@ def test_qwen3_context_parallel(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 def test_qwen3_virtual_pipeline_parallel(tmp_path_factory):
     if current_platform.device_count() < 2:
         pytest.skip("virtual pipeline parallel requires 2 GPUs to run")
@@ -77,6 +81,7 @@ def test_qwen3_virtual_pipeline_parallel(tmp_path_factory):
 
 
 @pytest.mark.multi_gpu
+@pytest.mark.slow
 def test_qwen3moe_expert_parallel(tmp_path_factory):
     if current_platform.device_count() < 4:
         pytest.skip("Qwen3 MoE expert parallel requires 4 GPUs to run")

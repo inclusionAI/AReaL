@@ -55,6 +55,8 @@ def sglang_server():
         server_manager.destroy()
 
 
+# We have integration tests for this now. Skipping in CI.
+@pytest.mark.slow
 def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server):
     # Set environment variables for torch distributed
     os.environ["WORLD_SIZE"] = "1"
