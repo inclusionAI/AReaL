@@ -323,7 +323,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         output_message = ChatCompletionMessage(
             content=output_text,
             role="assistant",
-            # For all empty tool calls, set toll_calls=None
+            # For all empty tool calls, set tool_calls=None
             tool_calls=tool_calls or None,
         )
         chat_completion = ChatCompletion(
