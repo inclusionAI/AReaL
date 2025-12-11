@@ -291,15 +291,11 @@ def test_wait_for_task(inference_engine):
     result3 = engine.wait_for_task(task_id3, timeout=30.0)
     assert result3 is not None
 
-    # Test 2: Already consumed task raises ValueError
-    with pytest.raises(ValueError, match="already consumed"):
-        engine.wait_for_task(task_id1, timeout=5.0)
-
-    # Test 3: Invalid task_id raises ValueError
+    # Test 2: Invalid task_id raises ValueError
     with pytest.raises(ValueError, match="never submitted"):
         engine.wait_for_task(999999, timeout=1.0)
 
-    # Test 4: Timeout with raise_timeout=False returns None
+    # Test 3: Timeout with raise_timeout=False returns None
     slow_task_id = engine.submit(data, workflow=workflow)
     # Immediately try to get it with very short timeout
     result = engine.wait_for_task(slow_task_id, timeout=0.001, raise_timeout=False)

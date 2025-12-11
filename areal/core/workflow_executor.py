@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar, Generic
+from typing import TYPE_CHECKING, Any, TypeVar, Generic, Protocol
 from collections.abc import Generator
 from collections import deque
 import uuid
@@ -238,7 +238,11 @@ _MAX_FETCH_BATCH_SIZE = 100
 _SHUTDOWN_TIMEOUT_SECONDS = 2.0
 
 
-TInput = TypeVar("TInput")
+class WithTaskID(Protocol):
+    task_id: int
+
+
+TInput = TypeVar("TInput", bound=WithTaskID)
 TResult = TypeVar("TResult")
 
 
@@ -275,6 +279,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         self._pending_inputs: deque[TInput] = deque()
         self._pending_results: deque[TimedResult[TResult]] = deque()
         self._result_task_ids: set[int] = set()
+        self._active_task_ids: set[int] = set()
 
         # Condition variables for coordination
         self._input_lock = threading.Lock()
@@ -488,6 +493,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             if self.enable_tracing:
                 self.logger.info(f"Enqueue rollout. {self._rollout_stats()}")
             self._input_cv.notify()
+        with self._result_cv:
+            self._active_task_ids.add(task_input.task_id)
 
     def wait_results(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
@@ -541,6 +548,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             with self._result_cv:
                 self._pending_results.extendleft(reversed(pending))
                 self._result_task_ids.update(r.task_id for r in pending)
+                for r in selected:
+                    self._active_task_ids.remove(r.task_id)
                 self._result_cv.notify_all()
 
         random.shuffle(selected)
@@ -556,6 +565,9 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             timeout = float(7 * 24 * 3600)
 
         with self._result_cv:
+            if task_id not in self._active_task_ids:
+                raise ValueError(f"Task {task_id} is never submitted.")
+
             while task_id not in self._result_task_ids:
                 self._check_thread_exception()
 
@@ -572,13 +584,16 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             self._pending_results.clear()
             self._result_task_ids.clear()
 
-            for i, result in enumerate(drained):
+            i = 0
+            for result in drained:
                 if result.task_id == task_id:
                     break
+                i += 1
 
             found_result = drained.pop(i)
             self._pending_results.extendleft(reversed(drained))
             self._result_task_ids.update(r.task_id for r in drained)
+            self._active_task_ids.remove(task_id)
             self._result_cv.notify_all()
             return found_result.data
 
