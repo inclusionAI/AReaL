@@ -713,7 +713,7 @@ class TrainController:
             replace=True,
         )
 
-        meta.clear_checkpoint = False
+        meta.clear_checkpoint_after_load = False
         self._run_async_task(self.rollout.update_weights_from_disk(meta))
         shutil.rmtree(meta.path, ignore_errors=True)
 

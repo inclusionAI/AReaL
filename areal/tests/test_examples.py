@@ -155,8 +155,10 @@ def test_countdown_example(tmp_path_factory):
     assert success, "Countdown example failed"
 
 
-# Just two random combinations
-@pytest.mark.parametrize("alloc_mode", ["vllm:d1+fsdp:d1", "sglang:d1+megatron:d1"])
+# vLLM is too slow to launch up in CI environments
+# We have tests for vLLM in test_inference_engines.py,
+# so we can skip the integration test of vLLM here.
+@pytest.mark.parametrize("alloc_mode", ["sglang:d1+megatron:d1"])
 @pytest.mark.multi_gpu
 @pytest.mark.ci
 def test_gsm8k_grpo(tmp_path_factory, alloc_mode):

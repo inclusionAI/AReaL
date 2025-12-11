@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +17,9 @@ from areal.api.io_struct import (
     ParamSpec,
     SaveLoadMeta,
     WeightUpdateMeta,
+)
+from areal.utils.data import (
+    MicroBatchList,
 )
 
 if TYPE_CHECKING:
@@ -204,12 +207,111 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
+    def _split_micro_batch(
+        self,
+        input_: dict[str, Any],
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor] | None = None,
+    ) -> tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList, torch.Tensor]:
+        """Split input batch into micro-batches for gradient accumulation.
+
+        Parameters
+        ----------
+        input_ : dict[str, Any]
+            The input batch dictionary.
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor], optional
+            A function to compute the loss weight for each micro-batch.
+
+        Returns
+        -------
+        tuple[Iterable[dict[str, torch.Tensor]], MicroBatchList]
+            An iterator over micro-batch dictionaries, the MicroBatchList iterator with metadata and total_loss_weight.
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def _forward_compute_mb(
+        self,
+        mb_input: tuple[Any, ...],
+        post_process_fn: Callable[[torch.Tensor, dict[str, Any]], Any],
+        **kwargs,
+    ) -> tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]:
+        """Compute forward pass and prepare loss function closure for a single micro-batch.
+
+        Parameters
+        ----------
+        mb_input : tuple[Any, ...]
+            A tuple containing the micro-batch input data.
+        post_process_fn : Callable[[torch.Tensor, dict[str, Any]], Any]
+            A function that processes the model output.
+        **kwargs
+            Additional keyword arguments for specific implementations.
+
+        Returns
+        -------
+        tuple[torch.Tensor, Callable[[torch.Tensor], tuple[torch.Tensor, dict]]]
+            The model output (logits) and a callable that computes loss and returns
+            (loss_tensor, result_dict) for gradient accumulation.
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def optimizer_zero_grad(self):
+        """Zero out all gradients in the optimizer."""
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def optimizer_step(self):
+        """Perform a single optimization step.
+
+        Returns
+        -------
+        dict[str, float]
+            Training statistics containing ``update_successful``, ``grad_norm``, and ``lr``.
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def lr_scheduler_step(self):
+        """Advance the learning rate scheduler by one step."""
+        raise NotImplementedError()
+
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 
-        Since PPO uses minibatch updates, this method should be called periodically
-        (e.g., once per PPO step). It is separated from train_batch to allow
-        for more flexible learning rate scheduling.
+        This is an alias for `lr_scheduler_step()`.
+        """
+        return self.lr_scheduler_step()
+
+    @abc.abstractmethod
+    def forward_backward_batch(
+        self,
+        data_iterator: Iterable[dict[str, torch.Tensor]],
+        post_process: Callable[[torch.Tensor, dict], torch.Tensor] | None = None,
+        return_outputs: bool = False,
+        forward_only: bool = False,
+    ):
+        """Process micro-batches through forward and optionally backward pass.
+
+        Parameters
+        ----------
+        data_iterator : Iterable[dict[str, torch.Tensor]]
+            An iterable that yields micro-batch dictionaries containing packed tensors.
+        post_process : Callable[[torch.Tensor, dict[str, Any]], Any], optional
+            A function that processes the model output.
+
+        return_outputs : bool, optional
+            If True, collect and return model outputs (logits) instead of losses.
+            Only used when ``forward_only=True``. By default False.
+        forward_only : bool, optional
+            If True, only perform forward pass (no backward pass or gradient computation).
+            If False, perform both forward and backward passes for training. By default False.
+
+        Returns
+        -------
+        ForwardBackwardOutputs
+            A dataclass containing ``mb_outputs`` (list of output tensors) when
+            ``return_outputs=True``, or ``losses`` (list of loss tensors) otherwise.
         """
         raise NotImplementedError()
 
@@ -285,7 +387,7 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @torch.no_grad()
-    def forward(
+    def forward_batch(
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
@@ -313,7 +415,19 @@ class TrainEngine(abc.ABC):
             For actor (is_critic=False): logprobs tensor aggregated by `aggregate_fn`.
             For critic (is_critic=True): values tensor aggregated by `aggregate_fn`.
         """
-        raise NotImplementedError()
+        raise NotImplementedError
+
+    @torch.no_grad()
+    def forward(
+        self,
+        input_: dict[str, Any],
+        output_seqlens: list[int] | None = None,
+        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
+    ) -> Any | None:
+        """
+        alias for forward_batch
+        """
+        return self.forward_batch(input_, output_seqlens, aggregate_fn)
 
     def export_stats(self) -> dict[str, float]:
         """Export the statistics recorded in this engine process.
@@ -328,6 +442,12 @@ class TrainEngine(abc.ABC):
         dict[str, float]
             The exported scalar statistics.
         """
+        raise NotImplementedError()
+
+    def onload(self):
+        raise NotImplementedError()
+
+    def offload(self):
         raise NotImplementedError()
 
 
