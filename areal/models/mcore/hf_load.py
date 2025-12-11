@@ -542,9 +542,17 @@ def load_weights_from_hf_with_mbridge_fast(
         local_to_file_map = defaultdict(list)
         for local_name, hf_names in local_to_hf_map.items():
             for name in hf_names:
+                if "_scale_inv" in name:
+                    continue
                 filename = index[name]
                 if filename not in local_to_file_map[local_name]:
                     local_to_file_map[local_name].append(filename)
+                # Also include the scale_inv file if it exists
+                scale_inv_name = f"{name}_scale_inv"
+                if scale_inv_name in index:
+                    scale_inv_filename = index[scale_inv_name]
+                    if scale_inv_filename not in local_to_file_map[local_name]:
+                        local_to_file_map[local_name].append(scale_inv_filename)
 
         grouped_local_names, grouped_filenames = make_filename_bins(local_to_file_map)
 
