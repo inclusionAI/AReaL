@@ -611,7 +611,7 @@ class InferenceEngine(abc.ABC):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         should_accept_fn: Callable | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> int:
         """Submit a request to the inference engine and return immediately.
 
         Should be used together with subsequent `wait`.
@@ -634,6 +634,11 @@ class InferenceEngine(abc.ABC):
         should_accept_fn : Callable, optional
             A function used to decide whether to accept a specific trajectory, i.e., dynamic filtering.
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
+
+        Returns
+        -------
+        int
+            The id assigned to this task
         """
         raise NotImplementedError()
 
@@ -663,6 +668,34 @@ class InferenceEngine(abc.ABC):
         ------
         TimeoutError
             If the timeout is exceeded before enough trajectories are collected
+        """
+        raise NotImplementedError()
+
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """Wait for a specific task to complete by task_id.
+
+        Parameters
+        ----------
+        task_id : int
+            The task ID returned by submit()
+        timeout : float | None, optional
+            Timeout in seconds, by default None
+        raise_timeout : bool, optional
+            Whether to raise TimeoutError on timeout, by default True
+
+        Returns
+        -------
+        dict[str, Any] | None
+            Trajectory dict, or None if rejected or timeout with raise_timeout=False
+
+        Raises
+        ------
+        ValueError
+            If task_id was never submitted or already consumed
+        TimeoutError
+            If timeout expires and raise_timeout=True
         """
         raise NotImplementedError()
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -31,17 +32,17 @@ logger = logging.getLogger(__name__)
 # type annotation, which disallows workflow object or types
 @dataclass
 class _RemoteRolloutTaskInput:
+    task_id: int
     data: dict[str, Any]
     workflow: str
     workflow_kwargs: dict[str, Any]
     should_accept_fn: str
-    task_id: int | None = None
 
 
 @dataclass
 class _RemoteRolloutResult:
+    task_id: int
     trajectory: dict[str, Any]
-    task_id: int | None = None
 
 
 class RolloutController:
@@ -338,7 +339,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
-    ) -> None:
+    ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         if workflow_kwargs is None:
@@ -347,17 +348,18 @@ class RolloutController:
         # NOTE: RolloutController does not support `should_accept_fn`
         # If the workflow's result should be aborted,
         # `arun_episode` should return None instead.
+        task_id = int(uuid.uuid4())
         task_input = _RemoteRolloutTaskInput(
             data=data,
             workflow=workflow_str,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
-            # NOTE: For now we don't trace tasks at the controller level
-            task_id=None,
+            task_id=task_id,
         )
 
         # Delegate to dispatcher
         self.dispatcher.submit_task_input(task_input)
+        return task_id
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
@@ -425,7 +427,7 @@ class RolloutController:
                         workflow=workflow_str,
                         workflow_kwargs=workflow_kwargs,
                         should_accept_fn=should_accept_fn,
-                        task_id=None,
+                        task_id=int(uuid.uuid4()),
                     )
 
         if not hasattr(self, "data_generator"):
