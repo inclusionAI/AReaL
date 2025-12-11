@@ -671,6 +671,34 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """Wait for a specific task to complete by task_id.
+
+        Parameters
+        ----------
+        task_id : int
+            The task ID returned by submit()
+        timeout : float | None, optional
+            Timeout in seconds, by default None
+        raise_timeout : bool, optional
+            Whether to raise TimeoutError on timeout, by default True
+
+        Returns
+        -------
+        dict[str, Any] | None
+            Trajectory dict, or None if rejected or timeout with raise_timeout=False
+
+        Raises
+        ------
+        ValueError
+            If task_id was never submitted or already consumed
+        TimeoutError
+            If timeout expires and raise_timeout=True
+        """
+        raise NotImplementedError()
+
     def rollout_batch(
         self,
         data: list[dict[str, Any]],

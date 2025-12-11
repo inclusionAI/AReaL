@@ -286,6 +286,12 @@ class RemoteSGLangEngine(InferenceEngine):
         """Wait for a specified number of requests to complete."""
         return self._engine.wait(count, timeout, raise_timeout)
 
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """Wait for a specific task to complete by task_id."""
+        return self._engine.wait_for_task(task_id, timeout, raise_timeout)
+
     def rollout_batch(
         self,
         data: list[dict[str, Any]],

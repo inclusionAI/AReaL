@@ -40,10 +40,13 @@ class TimedResult(Generic[T]):
         Task creation time in nanoseconds from time.monotonic_ns().
     data : T
         The actual result data from the completed task.
+    task_id : int
+        The task ID associated with this result.
     """
 
     create_time: int
     data: T
+    task_id: int
 
 
 @dataclass
@@ -404,6 +407,7 @@ class AsyncTaskRunner(Generic[T]):
                         timed_result: TimedResult[T] = TimedResult(
                             create_time=task_obj.create_time,
                             data=cast(T, result),
+                            task_id=task_obj.task_input.task_id,
                         )
                         self.output_queue.put_nowait(timed_result)
 

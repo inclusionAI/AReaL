@@ -274,6 +274,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         # Unbounded deques for producer/consumer pattern
         self._pending_inputs: deque[TInput] = deque()
         self._pending_results: deque[TimedResult[TResult]] = deque()
+        self._result_task_ids: set[int] = set()
 
         # Condition variables for coordination
         self._input_lock = threading.Lock()
@@ -367,6 +368,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                 with self._result_cv:
                     for result in results:
                         self._pending_results.append(result)
+                        self._result_task_ids.add(result.task_id)
                     self._result_cv.notify_all()
 
                 # Newly available capacity after result processing should wake producers
@@ -531,17 +533,54 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
             drained: list[TimedResult[TResult]] = list(self._pending_results)
             self._pending_results.clear()
+            self._result_task_ids.clear()
 
         drained.sort(key=lambda x: x.create_time)
         selected, pending = drained[:count], drained[count:]
         if pending:
             with self._result_cv:
                 self._pending_results.extendleft(reversed(pending))
+                self._result_task_ids.update(r.task_id for r in pending)
                 self._result_cv.notify_all()
 
         random.shuffle(selected)
 
         return [r.data for r in selected]
+
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> TResult | None:
+        """Wait for a specific task result by task_id."""
+        start_time = time.perf_counter()
+        if timeout is None:
+            timeout = float(7 * 24 * 3600)
+
+        with self._result_cv:
+            while task_id not in self._result_task_ids:
+                self._check_thread_exception()
+
+                elapsed = time.perf_counter() - start_time
+                remaining = timeout - elapsed
+                if remaining <= 0:
+                    if raise_timeout:
+                        raise TimeoutError(f"Timed out waiting for task {task_id}.")
+                    return None
+
+                self._result_cv.wait(timeout=remaining)
+
+            drained: list[TimedResult[TResult]] = list(self._pending_results)
+            self._pending_results.clear()
+            self._result_task_ids.clear()
+
+            for i, result in enumerate(drained):
+                if result.task_id == task_id:
+                    break
+
+            found_result = drained.pop(i)
+            self._pending_results.extendleft(reversed(drained))
+            self._result_task_ids.update(r.task_id for r in drained)
+            self._result_cv.notify_all()
+            return found_result.data
 
     def active_submit_and_wait(
         self, input_generator: Generator[TInput, None, None], batch_size: int
@@ -1033,6 +1072,16 @@ class WorkflowExecutor:
         if self.config.enable_rollout_tracing:
             self.logger.info("Rollout results are ready!")
         return [r.trajectory if r is not None else None for r in results]
+
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """Wait for a specific workflow task to complete."""
+        result = self.dispatcher.wait_for_task(task_id, timeout, raise_timeout)
+
+        if result is not None and self.config.enable_rollout_tracing:
+            self.logger.info(f"Task {task_id} completed successfully")
+        return result.trajectory if result is not None else None
 
     @trace_perf("workflow_executor.rollout_batch", category="scheduler")
     def rollout_batch(
