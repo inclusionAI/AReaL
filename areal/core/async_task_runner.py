@@ -462,8 +462,6 @@ class AsyncTaskRunner(Generic[T]):
 
             # Clean up all remaining active task IDs
             with self._active_task_ids_lock:
-                for task_obj in running_tasks.values():
-                    self._active_task_ids.discard(task_obj.task_input.task_id)
                 self._active_task_ids.clear()
 
     def _drain_pending_inputs(

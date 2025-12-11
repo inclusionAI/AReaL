@@ -277,8 +277,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         # Unbounded deques for producer/consumer pattern
         self._pending_inputs: deque[TInput] = deque()
-        self._pending_results: deque[TimedResult[TResult]] = deque()
-        self._result_task_ids: set[int] = set()
+        self._pending_results: dict[int, TimedResult[TResult]] = {}
         self._active_task_ids: set[int] = set()
 
         # Condition variables for coordination
@@ -372,8 +371,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
                 with self._result_cv:
                     for result in results:
-                        self._pending_results.append(result)
-                        self._result_task_ids.add(result.task_id)
+                        self._pending_results[result.task_id] = result
                     self._result_cv.notify_all()
 
                 # Newly available capacity after result processing should wake producers
@@ -538,16 +536,15 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
                 self._result_cv.wait(timeout=remaining)
 
-            drained: list[TimedResult[TResult]] = list(self._pending_results)
+            drained: list[TimedResult[TResult]] = list(self._pending_results.values())
             self._pending_results.clear()
-            self._result_task_ids.clear()
 
         drained.sort(key=lambda x: x.create_time)
         selected, pending = drained[:count], drained[count:]
         if pending:
             with self._result_cv:
-                self._pending_results.extendleft(reversed(pending))
-                self._result_task_ids.update(r.task_id for r in pending)
+                for result in pending:
+                    self._pending_results[result.task_id] = result
                 for r in selected:
                     self._active_task_ids.remove(r.task_id)
                 self._result_cv.notify_all()
@@ -568,7 +565,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             if task_id not in self._active_task_ids:
                 raise ValueError(f"Task {task_id} is never submitted.")
 
-            while task_id not in self._result_task_ids:
+            while task_id not in self._pending_results:
                 self._check_thread_exception()
 
                 elapsed = time.perf_counter() - start_time
@@ -580,19 +577,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
                 self._result_cv.wait(timeout=remaining)
 
-            drained: list[TimedResult[TResult]] = list(self._pending_results)
-            self._pending_results.clear()
-            self._result_task_ids.clear()
-
-            i = 0
-            for result in drained:
-                if result.task_id == task_id:
-                    break
-                i += 1
-
-            found_result = drained.pop(i)
-            self._pending_results.extendleft(reversed(drained))
-            self._result_task_ids.update(r.task_id for r in drained)
+            found_result = self._pending_results.pop(task_id)
             self._active_task_ids.remove(task_id)
             self._result_cv.notify_all()
             return found_result.data
