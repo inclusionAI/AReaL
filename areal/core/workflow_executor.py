@@ -1078,7 +1078,30 @@ class WorkflowExecutor:
     def wait_for_task(
         self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
     ) -> dict[str, Any] | None:
-        """Wait for a specific workflow task to complete."""
+        """
+        Wait for a specific workflow task to complete.
+        Parameters
+        ----------
+        task_id : int
+            The ID of the workflow task to wait for.
+        timeout : float or None, optional
+            Maximum time to wait for the task to complete, in seconds. If None, wait indefinitely.
+        raise_timeout : bool, optional
+            If True, raise TimeoutError if the task does not complete within the timeout.
+        Returns
+        -------
+        dict[str, Any] or None
+            The trajectory dictionary for the completed task, or None if the rollout was rejected.
+        Raises
+        ------
+        ValueError
+            If the task_id is invalid.
+        TimeoutError
+            If the task does not complete within the specified timeout and raise_timeout is True.
+        See Also
+        --------
+        :meth:`~areal.api.engine_api.InferenceEngine.wait_for_task`
+        """
         result = self.dispatcher.wait_for_task(task_id, timeout, raise_timeout)
 
         if result is not None and self.config.enable_rollout_tracing:

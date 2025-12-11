@@ -306,7 +306,7 @@ def test_wait_for_task(inference_engine):
         result = engine.wait_for_task(slow_task_id, timeout=30.0)
         assert result is not None
 
-    # Test 5: Mix wait_for_task with regular wait()
+    # Test 4: Mix wait_for_task with regular wait()
     task_ids = [engine.submit(data, workflow=workflow) for _ in range(4)]
 
     # Get specific task
