@@ -172,7 +172,7 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
     assert torch.allclose(old, new)
 
 
-@torch.no_grad()
+@pytest.mark.slow
 def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     path = tmp_path_factory.mktemp("dcp_engine_test")
