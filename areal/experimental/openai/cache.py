@@ -1,5 +1,6 @@
 import threading
 from collections import OrderedDict
+from typing import Any
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
@@ -105,7 +106,9 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 return False
             return b[: len(a)] == a
 
-        def _is_similar_on_last_message(a: list[dict], b: list[dict]) -> bool:
+        def _is_similar_on_last_message(
+            a: list[dict], b: list[dict]
+        ) -> tuple[bool, dict[str, Any] | None, dict[str, Any] | None]:
             if len(a) > len(b):
                 return False
             last_a_message = a[-1]
