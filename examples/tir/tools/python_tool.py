@@ -90,7 +90,6 @@ class PythonExecutor(QwenAgentBaseTool):
         self.answer_symbol = get_answer_symbol
         self.answer_expr = get_answer_expr
         self.get_answer_from_stdout = get_answer_from_stdout
-        # self.pool = Pool(multiprocess.cpu_count())
         self.timeout_length = timeout_length
 
     def call(self, params: str | dict, **kwargs) -> list:
