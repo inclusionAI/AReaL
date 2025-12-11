@@ -236,6 +236,8 @@ class _RolloutResult:
 _MAX_FETCH_BATCH_SIZE = 100
 # Timeout for shutting down threads
 _SHUTDOWN_TIMEOUT_SECONDS = 2.0
+# Timeout for "wait" and "wait_for_task" if timeout parameter is None
+_DEFAULT_WAIT_TIMEOUT_SECONDS = float(7 * 24 * 3600)
 
 
 class WithTaskID(Protocol):
@@ -518,7 +520,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         start_time = time.perf_counter()
         if timeout is None:
-            timeout = float(7 * 24 * 3600)
+            timeout = _DEFAULT_WAIT_TIMEOUT_SECONDS
 
         with self._result_cv:
             while len(self._pending_results) < count:
@@ -541,13 +543,13 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         drained.sort(key=lambda x: x.create_time)
         selected, pending = drained[:count], drained[count:]
-        if pending:
-            with self._result_cv:
+        with self._result_cv:
+            if pending:
                 for result in pending:
                     self._pending_results[result.task_id] = result
-                for r in selected:
-                    self._active_task_ids.remove(r.task_id)
                 self._result_cv.notify_all()
+            for r in selected:
+                self._active_task_ids.discard(r.task_id)
 
         random.shuffle(selected)
 
@@ -559,7 +561,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         """Wait for a specific task result by task_id."""
         start_time = time.perf_counter()
         if timeout is None:
-            timeout = float(7 * 24 * 3600)
+            timeout = _DEFAULT_WAIT_TIMEOUT_SECONDS
 
         with self._result_cv:
             if task_id not in self._active_task_ids:
