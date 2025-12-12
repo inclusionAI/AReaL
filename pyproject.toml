@@ -46,7 +46,7 @@ dependencies = [
     "torchvision",
     "torchdata",
     "huggingface_hub",
-    "datasets",
+    "datasets>=4.0.0",
     "transformers==4.57.1",
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
