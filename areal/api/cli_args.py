@@ -172,7 +172,7 @@ class GenerationHyperparameters:
     use_beam_search: bool = field(
         default=False,
         metadata={
-            "help": "Enable beam_search in vLLM engine. After enable, the temperature, top-k, top-p will be disable."
+            "help": "Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are ignored."
         },
     )
     beam_width: int = field(
