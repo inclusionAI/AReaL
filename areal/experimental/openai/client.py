@@ -1,6 +1,7 @@
 import datetime
 import os
 import uuid
+import json
 from collections.abc import Iterable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
@@ -180,13 +181,19 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Parse tool calls.
         tool_calls = None
-        if tool_choice != "none" and tools:
-            tool_calls, output_text, response.stop_reason = process_tool_calls(
-                output_text,
-                tools,
-                self.tool_call_parser,
-                self.reasoning_parser,
-                response.stop_reason,
+        try:
+            if tool_choice != "none" and tools:
+                tool_calls, output_text, response.stop_reason = process_tool_calls(
+                    output_text,
+                    tools,
+                    self.tool_call_parser,
+                    self.reasoning_parser,
+                    response.stop_reason,
+                )
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"Failed to parse tool calls from output text: {e}, output_text:\n"
+                f"{output_text}"
             )
 
         # Create proper ChatCompletion object with all required fields
@@ -432,14 +439,20 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         # Parse tool calls.
         tool_calls = None
-        if not is_omitted(tool_choice) and tool_choice != "none" and tools:
-            tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
-                output_text,
-                tools,
-                self.tool_call_parser,
-                self.reasoning_parser,
-                engine_resp.stop_reason,
-                use_responses=True,
+        try:
+            if not is_omitted(tool_choice) and tool_choice != "none" and tools:
+                tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
+                    output_text,
+                    tools,
+                    self.tool_call_parser,
+                    self.reasoning_parser,
+                    engine_resp.stop_reason,
+                    use_responses=True,
+                )
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"Failed to parse tool calls from output text: {e}, output_text:\n"
+                f"{output_text}"
             )
 
         # Extract reasoning tokens from output

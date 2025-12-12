@@ -50,8 +50,8 @@ def sync_run_task(
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                logger.warning(f"Error in sync_run_task: {e}")
-                reward = 0.0
+                logger.error(f"Error in sync_run_task: {e}")
+                raise e
 
             await session.set_reward(reward)
 
