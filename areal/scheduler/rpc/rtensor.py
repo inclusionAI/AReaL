@@ -1,106 +1,68 @@
 import asyncio
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Literal
+from threading import Lock
+from typing import Any
 
 import aiohttp
 import numpy as np
 import orjson
 import torch
 
-from areal.utils import logging
-
-TOKENIZER_ARCHIVE_INLINE_THRESHOLD = 512 * 1024
-TOKENIZER_ZSTD_THRESHOLD = 20 * 1024 * 1024
-TokenizerCompression = Literal["zip", "zstd"]
-
-logger = logging.getLogger("SyncRPCServer")
-
 
 @dataclass(frozen=True)
-class ShardId:
+class TensorShardId:
     """Unique identifier for a tensor shard."""
 
     task_id: str
-    key: str
+    tensor_name: str
 
     def __str__(self) -> str:
-        """Convert to string format: task_id:key"""
-        return f"{self.task_id}:{self.key}"
+        """Convert to string format: task_id:tensor_name"""
+        return f"{self.task_id}:{self.tensor_name}"
 
     @classmethod
-    def from_string(cls, s: str) -> "ShardId":
-        """Parse from string format: task_id:key"""
+    def from_string(cls, s: str) -> "TensorShardId":
+        """Parse from string format: task_id:tensor_name"""
         parts = s.split(":", 1)
         if len(parts) != 2:
-            raise ValueError(f"Invalid ShardId string: {s}")
-        return cls(task_id=parts[0], key=parts[1])
+            raise ValueError(f"Invalid TensorShardId string: {s}")
+        return cls(task_id=parts[0], tensor_name=parts[1])
 
 
 @dataclass
-class ShardInfo:
+class TensorShardInfo:
     """Metadata for a single shard of an RTensor."""
 
-    shard_id: ShardId
+    shard_id: TensorShardId
     node_addr: str
-    shape: list[int]
-    dtype: str
-
-
-@dataclass
-class ShardLayout:
-    shard_id: ShardId
-    size: int
-
-
-@dataclass
-class BatchLayout:
-    layout: list[ShardLayout]
-
-    @staticmethod
-    def find_in_structure(obj):
-        """Find first BatchLayout in a nested structure."""
-        if isinstance(obj, BatchLayout):
-            return obj
-        if isinstance(obj, dict):
-            for v in obj.values():
-                result = BatchLayout.find_in_structure(v)
-                if result:
-                    return result
-        if isinstance(obj, list):
-            for item in obj:
-                result = BatchLayout.find_in_structure(item)
-                if result:
-                    return result
-        return None
-
-    @staticmethod
-    def exists_in_structure(obj):
-        """Check if any BatchLayout exists in a nested structure."""
-        return BatchLayout.find_in_structure(obj) is not None
+    size: int  # Batch size (shape[0]) of this shard
 
 
 @dataclass
 class RTensor:
     """Single tensor distributed as CPU shards across nodes."""
 
-    shards: list[ShardInfo]
-    _data: torch.Tensor | None = None
+    shards: list[TensorShardInfo]
+    data: torch.Tensor | None
 
-    def get_key(self) -> str:
-        """Get key from first shard (all shards must have same key)."""
+    def get_name(self) -> str:
+        """Get tensor_name from first shard (all shards must have same tensor_name)."""
         if not self.shards:
-            raise ValueError("Cannot get key from empty RTensor")
-        key = self.shards[0].shard_id.key
+            raise ValueError("Cannot get tensor_name from empty RTensor")
+        tensor_name = self.shards[0].shard_id.tensor_name
         # Validate consistency
         for shard in self.shards[1:]:
-            if shard.shard_id.key != key:
-                raise ValueError(f"Inconsistent keys: {key} vs {shard.shard_id.key}")
-        return key
+            if shard.shard_id.tensor_name != tensor_name:
+                raise ValueError(
+                    f"Inconsistent tensor_names: {tensor_name} vs {shard.shard_id.tensor_name}"
+                )
+        return tensor_name
 
     def to_local(self) -> torch.Tensor:
         """Fetch all shards via HTTP, concatenate along dim 0."""
-        if self._data is not None:
-            return self._data
+        if not self.data.is_meta:
+            return self.data
 
         # Fetch all shards first
         tensors = self._fetch()
@@ -121,8 +83,8 @@ class RTensor:
                 padded_tensors.append(t)
             tensors = padded_tensors
 
-        self._data = torch.cat(tensors, dim=0)
-        return self._data
+        self.data = torch.cat(tensors, dim=0)
+        return self.data
 
     def _fetch(self):
         """Fetch all shards synchronously."""
@@ -139,7 +101,9 @@ class RTensor:
         return asyncio.run(_fetch_all())
 
     @staticmethod
-    async def _fetch_tensor(session, shard_id: ShardId, node_addr: str) -> torch.Tensor:
+    async def _fetch_tensor(
+        session: aiohttp.ClientSession, shard_id: TensorShardId, node_addr: str
+    ) -> torch.Tensor:
         # Avoid circular import
         from areal.scheduler.rpc.serialization import deserialize_value
 
@@ -149,127 +113,212 @@ class RTensor:
                 raise RuntimeError(f"Failed to fetch shard from {url}: {resp.status}")
             data_bytes = await resp.read()
             serialized_data = orjson.loads(data_bytes)
-            return deserialize_value(serialized_data, fetch_remote=False)
+            return deserialize_value(serialized_data)
 
     @classmethod
-    def from_tensor(cls, tensor: torch.Tensor, task_id: str, key: str, node_addr: str):
-        # Called by inference engine, which produces individual outputs
-        tensor = tensor.detach().cpu()
-        info = ShardInfo(
-            shard_id=ShardId(task_id=task_id, key=key),
+    def from_single(cls, tensor: torch.Tensor, shard_id: TensorShardId, node_addr: str):
+        # Called by inference engine, which produces individual objs
+        if not tensor.is_cpu:
+            raise ValueError("RTensor shards must be on CPU")
+        info = TensorShardInfo(
+            shard_id=shard_id,
             node_addr=node_addr,
-            shape=list(tensor.shape),
-            dtype=str(tensor.dtype),
+            size=tensor.shape[0],
         )
-        return cls(shards=[info], _data=tensor)
+        # Store locally
+        store(shard_id, tensor)
+        return cls(shards=[info], data=tensor.to("meta"))
 
     @classmethod
     def from_batched(
         cls,
         batch_tensor: torch.Tensor,
-        layout: BatchLayout,
-        key: str,
+        layout: "RTensor",
+        tensor_name: str,
         node_addr: str,
     ):
-        # Called by train engine, which produces batched output
+        # Called by train engine, which produces batched obj
         batch_tensor = batch_tensor.detach().cpu()
-        offsets = np.cumsum([0] + [shard.size for shard in layout.layout])
+        offsets = np.cumsum([0] + [shard.size for shard in layout.shards])
         # no clone here because they are read-only slices
         tensors = [batch_tensor[a:b] for a, b in zip(offsets[:-1], offsets[1:])]
 
+        global _storage, _storage_lock
         shards = []
-        for tensor, shard_layout in zip(tensors, layout.layout):
-            info = ShardInfo(
-                shard_id=ShardId(task_id=shard_layout.shard_id.task_id, key=key),
+        for tensor, shard_info in zip(tensors, layout.shards):
+            sid = TensorShardId(
+                task_id=shard_info.shard_id.task_id, tensor_name=tensor_name
+            )
+            info = TensorShardInfo(
+                shard_id=sid,
                 node_addr=node_addr,
-                shape=list(tensor.shape),
-                dtype=str(batch_tensor.dtype),
+                size=tensor.shape[0],
             )
             shards.append(info)
-        return cls(shards=shards, _data=batch_tensor)
+            # Store locally
+            store(sid, tensor)
+        return cls(shards=shards, data=batch_tensor.to("meta"))
 
     @staticmethod
-    def cat(rtensors: list["RTensor"], dim: int = 0) -> "RTensor":
+    def cat(rtensors: list["RTensor"]) -> "RTensor":
         """Concatenate RTensors along existing dimension."""
         if not rtensors:
-            raise ValueError("Cannot concatenate empty list of RTensors")
-        if dim != 0:
-            raise NotImplementedError("Only dim=0 concatenation supported")
-        return RTensor(shards=[shard for r in rtensors for shard in r.shards])
-
-    def store_shards(self, storage_dict, storage_lock):
-        assert self._data is not None, "No data to store for RTensor"
-
-        with storage_lock:
-            offsets = np.cumsum([0] + [s.shape[0] for s in self.shards])
-            for shard_info, s, e in zip(self.shards, offsets[:-1], offsets[1:]):
-                storage_dict[shard_info.shard_id] = self._data[s:e]
+            return RTensor(shards=[], data=torch.tensor([]).to("meta"))
+        return RTensor(
+            shards=[shard for r in rtensors for shard in r.shards],
+            data=torch.cat([r.data for r in rtensors]),
+        )
 
     @staticmethod
-    def from_engine_output(
-        output: Any,
-        input_layouts: Any,
-        key: str | None,
-        task_id: int | None,
+    def find_in_structure(obj) -> "RTensor":
+        """Find first RTensor in a nested structure."""
+        if isinstance(obj, RTensor):
+            return obj
+        if isinstance(obj, dict):
+            for v in obj.values():
+                result = RTensor.find_in_structure(v)
+                if result:
+                    return result
+        if isinstance(obj, list):
+            for item in obj:
+                result = RTensor.find_in_structure(item)
+                if result:
+                    return result
+        return None
+
+    @staticmethod
+    def rtensorize(
+        obj: Any,
+        layouts: Any,
         node_addr: str,
-        storage_dict,
-        storage_lock,
-    ):
-        if output is None:
-            return None
+        tensor_name: str | None = None,
+        task_id: int | None = None,
+    ) -> Any:
+        if isinstance(obj, torch.Tensor):
+            if tensor_name is None:
+                raise ValueError(
+                    "tensor_name must be provided when rtensorizing a tensor"
+                )
 
-        if isinstance(output, torch.Tensor):
             # Determine if batched from input layouts
-            batch_layout = BatchLayout.find_in_structure(input_layouts)
+            layout_rtensor = RTensor.find_in_structure(layouts)
 
-            if batch_layout:
-                assert task_id is None
-                rtensor = RTensor.from_batched(
-                    output, batch_layout, key=key, node_addr=node_addr
+            if layout_rtensor:
+                if task_id is not None:
+                    raise ValueError(
+                        "task_id must be None when using batched layout (e.g., TrainEngine outputs)"
+                    )
+                return RTensor.from_batched(
+                    obj,
+                    layout=layout_rtensor,
+                    tensor_name=tensor_name,
+                    node_addr=node_addr,
                 )
-            else:
-                assert task_id is not None
-                rtensor = RTensor.from_tensor(
-                    output, task_id=task_id, key=key, node_addr=node_addr
+
+            if task_id is None:
+                raise ValueError(
+                    "task_id must be provided when using single shard layout (e.g., InferenceEngine outputs)"
                 )
+            shard_id = TensorShardId(task_id=task_id, tensor_name=tensor_name)
+            return RTensor.from_single(obj, shard_id=shard_id, node_addr=node_addr)
 
-            rtensor.store_shards(storage_dict, storage_lock)
-            return rtensor
-
-        if isinstance(output, dict):
+        if isinstance(obj, dict):
             return {
-                k: RTensor.from_engine_output(
-                    v, input_layouts, k, task_id, node_addr, storage_dict, storage_lock
+                k: RTensor.rtensorize(
+                    obj=v,
+                    layouts=layouts,
+                    tensor_name=k,
+                    task_id=task_id,
+                    node_addr=node_addr,
                 )
-                for k, v in output.items()
+                for k, v in obj.items()
             }
 
-        if isinstance(output, list):
+        if isinstance(obj, list):
             return [
-                RTensor.from_engine_output(
-                    item,
-                    input_layouts,
-                    key,
-                    task_id,
-                    node_addr,
-                    storage_dict,
-                    storage_lock,
+                RTensor.rtensorize(
+                    obj=item,
+                    layouts=layouts,
+                    tensor_name=tensor_name,
+                    task_id=task_id,
+                    node_addr=node_addr,
                 )
-                for item in output
+                for item in obj
             ]
 
-        if isinstance(output, tuple):
+        if isinstance(obj, tuple):
             return tuple(
-                RTensor.from_engine_output(
-                    item,
-                    input_layouts,
-                    key,
-                    task_id,
-                    node_addr,
-                    storage_dict,
-                    storage_lock,
+                RTensor.rtensorize(
+                    obj=item,
+                    layouts=layouts,
+                    tensor_name=tensor_name,
+                    task_id=task_id,
+                    node_addr=node_addr,
                 )
-                for item in output
+                for item in obj
             )
 
-        return output
+        return obj
+
+    @staticmethod
+    def localize(obj: Any) -> Any:
+        """Convert RTensors to local tensors in nested structures.
+
+        Inverse of rtensorize() - fetches remote data and converts to local tensors.
+        """
+        if isinstance(obj, RTensor):
+            return obj.to_local()
+
+        if isinstance(obj, dict):
+            return {k: RTensor.localize(v) for k, v in obj.items()}
+
+        if isinstance(obj, list):
+            return [RTensor.localize(item) for item in obj]
+
+        if isinstance(obj, tuple):
+            return tuple(RTensor.localize(item) for item in obj)
+
+        return obj
+
+
+# Global tensor data storage for distributed batch
+# Storage: shard_id -> dict[str, Tensor]
+_storage: dict[TensorShardId, RTensor] = {}
+_storage_lock = Lock()
+_storage_stats: dict[TensorShardId, int] = defaultdict(int)
+
+
+def store(shard_id: TensorShardId, tensor: torch.Tensor):
+    """Store a tensor shard in global storage."""
+    global _storage, _storage_lock, _storage_stats
+    with _storage_lock:
+        _storage[shard_id] = tensor
+        _storage_stats[shard_id] = tensor.nbytes
+
+
+def fetch(shard_id: TensorShardId) -> torch.Tensor:
+    """Retrieve a tensor shard from global storage."""
+    global _storage, _storage_lock
+    with _storage_lock:
+        tensor = _storage.get(shard_id)
+        if tensor is None:
+            raise KeyError(f"Shard {shard_id} not found in storage")
+        return tensor
+
+
+def remove(shard_id: TensorShardId) -> int:
+    """Remove a tensor shard from global storage."""
+    global _storage, _storage_lock, _storage_stats
+    with _storage_lock:
+        if shard_id in _storage:
+            del _storage[shard_id]
+            del _storage_stats[shard_id]
+            return 1
+        return 0
+
+
+def storage_stats() -> dict[str, int]:
+    """Get current storage stats: shard_id -> size in bytes."""
+    global _storage_stats, _storage_lock, _storage
+    with _storage_lock:
+        return dict(num_tensors=len(_storage), total_bytes=sum(_storage_stats.values()))

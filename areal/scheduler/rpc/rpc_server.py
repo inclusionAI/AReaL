@@ -3,7 +3,6 @@ import logging as stdlib_logging
 import os
 import socket
 import traceback
-from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import Future
 from queue import Queue
@@ -12,12 +11,12 @@ from typing import Any
 
 import orjson
 from flask import Flask, Response, jsonify, request
-from torch import Tensor
 
 from areal.api.cli_args import BaseExperimentConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.platforms import current_platform
-from areal.scheduler.rpc.rtensor import RTensor, ShardId
+from areal.scheduler.rpc import rtensor
+from areal.scheduler.rpc.rtensor import RTensor, TensorShardId
 from areal.scheduler.rpc.serialization import (
     deserialize_value,
     serialize_value,
@@ -34,11 +33,6 @@ logger = logging.getLogger("SyncRPCServer")
 # Global engine instance - must be TrainEngine or InferenceEngine
 _engine: TrainEngine | InferenceEngine | None = None
 
-# Global batch data storage for distributed batch memory
-# Storage: shard_id -> dict[str, Tensor]
-_batch_storage: dict[ShardId, Tensor] = {}
-_batch_storage_lock = Lock()
-_batch_storage_stats: dict[ShardId, int] = defaultdict(int)
 
 # Engine thread for executing all engine-related endpoints serially
 # This ensures NCCL compatibility by running engine operations in a single thread,
@@ -317,22 +311,16 @@ def call_engine_method():
         if not method_name:
             return jsonify({"error": "Missing 'method' field in request"}), 400
 
-        # Extract input layouts for output conversion
-        args_with_layout, args_layouts = deserialize_value(
-            args, fetch_remote=False, return_layout=True
-        )
-        kwargs_with_layout, kwargs_layouts = deserialize_value(
-            kwargs, fetch_remote=False, return_layout=True
-        )
-        input_layouts = {"args": args_layouts, "kwargs": kwargs_layouts}
+        # Deserialize data
+        args = deserialize_value(args)
+        kwargs = deserialize_value(kwargs)
 
-        # Now fetch the actual data
-        args = deserialize_value(args, fetch_remote=True)
-        kwargs = deserialize_value(kwargs, fetch_remote=True)
+        # Fetch remote tensors if any
+        args = RTensor.localize(args)
+        kwargs = RTensor.localize(kwargs)
 
+        # FIXME: remove should_broadcast param
         should_broadcast = kwargs.pop("should_broadcast", True)
-        # wait_for_task method will input a task_id
-        task_id = kwargs.pop("task_id", None)
 
         def execute_in_engine_thread():
             try:
@@ -399,14 +387,17 @@ def call_engine_method():
                 500,
             )
 
-        # Always convert all tensors to RTensors
-        result_with_rtensors = RTensor.from_result(
+        # HACK: `wait_for_task` will input a `task_id` and output the first ever tensor
+        # for this trajectory. We take it as the key in RTensor storage.
+        # Otherwise if the result contains a tensor, it must be a batched GPU computation
+        # with tensor inputs, so we can extract `task_id` from input layouts.
+        task_id = kwargs.pop("task_id", None)
+        # Always convert all tensors to RTensors and store the tensor locally
+        result_with_rtensors = RTensor.rtensorize(
             result,
-            input_layouts=input_layouts,
-            task_id=task_id,
+            layouts=dict(args=args, kwargs=kwargs),
             node_addr=f"{_server_host}:{_server_port}",
-            storage_dict=_batch_storage,
-            storage_lock=_batch_storage_lock,
+            task_id=task_id,
         )
         serialized_result = serialize_value(result_with_rtensors)
         return jsonify({"status": "success", "result": serialized_result})
@@ -420,19 +411,16 @@ def call_engine_method():
 @app.route("/data/<shard_id>", methods=["PUT"])
 def store_batch_data(shard_id: str):
     """Store batch data shard."""
-    global _batch_storage, _batch_storage_lock, _batch_storage_stats
 
     try:
-        shard_id_obj = ShardId.from_string(shard_id)
+        shard_id_obj = TensorShardId.from_string(shard_id)
         data_bytes = request.get_data()
 
         # Deserialize to get tensor (already on CPU)
         serialized_data = orjson.loads(data_bytes)
         data = deserialize_value(serialized_data)
 
-        with _batch_storage_lock:
-            _batch_storage[shard_id_obj] = data
-            _batch_storage_stats[shard_id_obj] = len(data_bytes)
+        rtensor.store(shard_id_obj, data)
 
         logger.debug(
             f"Stored batch shard {shard_id_obj} (size={len(data_bytes)} bytes)"
@@ -447,26 +435,24 @@ def store_batch_data(shard_id: str):
 @app.route("/data/<shard_id>", methods=["GET"])
 def retrieve_batch_data(shard_id: str):
     """Retrieve batch data shard."""
-    global _batch_storage, _batch_storage_lock
 
-    # Convert string shard_id to ShardId
-    shard_id_obj = ShardId.from_string(shard_id)
+    # Convert string shard_id to TensorShardId
+    shard_id_obj = TensorShardId.from_string(shard_id)
 
     logger.debug(f"Received data get request for shard {shard_id_obj}")
     try:
-        with _batch_storage_lock:
-            if shard_id_obj not in _batch_storage:
-                return (
-                    jsonify(
-                        {
-                            "status": "error",
-                            "message": f"Shard {shard_id_obj} not found",
-                        }
-                    ),
-                    404,
-                )
-
-            data = _batch_storage[shard_id_obj]
+        try:
+            data = rtensor.fetch(shard_id_obj)
+        except KeyError:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Shard {shard_id_obj} not found",
+                    }
+                ),
+                404,
+            )
 
         serialized_data = serialize_value(data)
         data_bytes = orjson.dumps(serialized_data)
@@ -490,8 +476,6 @@ def clear_batch_data():
         "shard_ids": ["id1", "id2", ...]
     }
     """
-    global _batch_storage, _batch_storage_lock, _batch_storage_stats
-
     try:
         data = request.get_json(silent=True) or {}
         shard_ids = data.get("shard_ids", [])
@@ -501,49 +485,17 @@ def clear_batch_data():
                 400,
             )
         shard_id_objs = [
-            ShardId.from_string(sid) for sid in shard_ids if isinstance(sid, str)
+            TensorShardId.from_string(sid) for sid in shard_ids if isinstance(sid, str)
         ]
 
-        if not shard_id_objs:
-            return jsonify({"status": "ok", "cleared_count": 0})
-
-        with _batch_storage_lock:
-            cleared_count = 0
-            for shard_id_obj in shard_id_objs:
-                if shard_id_obj in _batch_storage:
-                    del _batch_storage[shard_id_obj]
-                    _batch_storage_stats.pop(shard_id_obj, None)
-                    cleared_count += 1
-
-        logger.info(
-            f"Cleared {cleared_count} batch shards: {[str(sid) for sid in shard_id_objs]}"
-        )
-        return jsonify({"status": "ok", "cleared_count": cleared_count})
+        cleared_count = sum(rtensor.remove(sid) for sid in shard_id_objs)
+        stats = dict(cleared_count=cleared_count, **rtensor.storage_stats())
+        logger.info(f"Cleared {cleared_count} batch shards. Stats: {stats}")
+        stats.update({"status": "ok"})
+        return jsonify(stats)
 
     except Exception as e:
         logger.error(f"Error clearing batch data: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-@app.route("/data/stats", methods=["GET"])
-def batch_data_stats():
-    """Get batch data storage statistics."""
-    global _batch_storage, _batch_storage_lock, _batch_storage_stats
-
-    try:
-        with _batch_storage_lock:
-            total_shards = len(_batch_storage)
-            total_size = sum(_batch_storage_stats.values())
-
-        return jsonify(
-            {
-                "status": "ok",
-                "total_shards": total_shards,
-                "total_size_bytes": total_size,
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error getting batch data stats: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -560,15 +512,6 @@ def cleanup_engine():
         except Exception as e:
             logger.error(f"Error destroying engine: {e}")
         _engine = None
-
-
-def cleanup_batch_storage():
-    """Clean up batch storage on shutdown."""
-    global _batch_storage, _batch_storage_lock, _batch_storage_stats
-    with _batch_storage_lock:
-        _batch_storage.clear()
-        _batch_storage_stats.clear()
-    logger.info("Batch storage cleared")
 
 
 def cleanup_engine_thread():
@@ -636,7 +579,6 @@ def main():
     finally:
         cleanup_engine_thread()
         cleanup_engine()
-        cleanup_batch_storage()
 
 
 if __name__ == "__main__":

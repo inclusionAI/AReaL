@@ -15,8 +15,6 @@ from pydantic import BaseModel, Field
 
 from areal.utils import logging
 
-from .rtensor import BatchLayout, RTensor, ShardLayout
-
 TOKENIZER_ARCHIVE_INLINE_THRESHOLD = 512 * 1024
 TOKENIZER_ZSTD_THRESHOLD = 20 * 1024 * 1024
 TokenizerCompression = Literal["zip", "zstd"]
@@ -28,7 +26,7 @@ class SerializedTensor(BaseModel):
     """Pydantic model for serialized tensor with metadata (inline data)."""
 
     type: Literal["tensor"] = Field(default="tensor")
-    data: str
+    data: str | None = None
     shape: list[int]
     dtype: str
 
@@ -48,6 +46,13 @@ class SerializedTensor(BaseModel):
         SerializedTensor
             Serialized tensor with metadata
         """
+        if tensor.is_meta:
+            return cls(
+                data=None,
+                shape=list(tensor.shape),
+                dtype=str(tensor.dtype),
+            )
+
         # Move to CPU for serialization (detach to avoid gradient tracking)
         cpu_tensor = tensor.detach().cpu()
 
@@ -79,12 +84,15 @@ class SerializedTensor(BaseModel):
         torch.Tensor
             Reconstructed CPU tensor
         """
-        # Decode base64 to bytes
-        buffer = base64.b64decode(self.data.encode("utf-8"))
-
         # Parse dtype string (e.g., "torch.float32" -> torch.float32)
         dtype_str = self.dtype.replace("torch.", "")
         dtype = getattr(torch, dtype_str)
+
+        if self.data is None:
+            return torch.empty(self.shape, dtype=dtype, device="meta")
+
+        # Decode base64 to bytes
+        buffer = base64.b64decode(self.data.encode("utf-8"))
 
         np_array = np.frombuffer(buffer, dtype=self._torch_dtype_to_numpy(dtype))
         # Copy the array to make it writable before converting to tensor
@@ -370,13 +378,6 @@ def serialize_value(value: Any) -> Any:
         Serialized value (JSON-compatible with SerializedTensor and SerializedDataclass dicts)
     """
 
-    # Handle RTensor - must check before torch.Tensor
-    if isinstance(value, RTensor):
-        return {
-            "type": "rtensor",
-            "shards": serialize_value(value.shards),
-        }
-
     # Handle torch.Tensor
     if isinstance(value, torch.Tensor):
         return SerializedTensor.from_tensor(value).model_dump()
@@ -423,9 +424,7 @@ def serialize_value(value: Any) -> Any:
     return value
 
 
-def deserialize_value(
-    value: Any, fetch_remote: bool = False, return_layout: bool = False
-) -> Any:
+def deserialize_value(value: Any) -> Any:
     # Handle dict - check if it's a SerializedDataclass, SerializedTensor
     if isinstance(value, dict):
         # Check for SerializedDataclass marker (check before tensor)
@@ -434,24 +433,10 @@ def deserialize_value(
                 serialized_dc = SerializedDataclass.model_validate(value)
                 dataclass_type, data = serialized_dc.to_dataclass()
 
-                if return_layout:
-                    deserialized_data = {}
-                    layout_data = {}
-                    for key, val in data.items():
-                        result = deserialize_value(
-                            val, fetch_remote=fetch_remote, return_layout=True
-                        )
-                        deserialized_data[key] = result[0]
-                        layout_data[key] = result[1]
-                    return (dataclass_type(**deserialized_data), layout_data)
-                else:
-                    deserialized_data = {
-                        key: deserialize_value(
-                            val, fetch_remote=fetch_remote, return_layout=False
-                        )
-                        for key, val in data.items()
-                    }
-                    return dataclass_type(**deserialized_data)
+                deserialized_data = {
+                    key: deserialize_value(val) for key, val in data.items()
+                }
+                return dataclass_type(**deserialized_data)
             except Exception as e:
                 # If parsing fails, treat as regular dict
                 logger.warning(
@@ -488,74 +473,12 @@ def deserialize_value(
                     f"Failed to deserialize tensor, treating as regular dict: {e}"
                 )
 
-        # Check for RTensor marker
-        if value.get("type") == "rtensor":
-            shards = deserialize_value(
-                value["shards"], fetch_remote=False, return_layout=False
-            )
-            rtensor = RTensor(shards=shards)
-
-            # Extract layout from shards
-            layout = (
-                BatchLayout(
-                    layout=[
-                        ShardLayout(shard_id=s.shard_id, size=s.shape[0])
-                        for s in shards
-                    ]
-                )
-                if shards
-                else None
-            )
-
-            # Decide what to return based on flags
-            if fetch_remote:
-                tensor = rtensor.to_local()
-                if return_layout:
-                    return (tensor, layout)
-                return tensor
-            else:
-                if return_layout:
-                    return (rtensor, layout)
-                return rtensor
-
         # Regular dict - recursively deserialize values
-        if return_layout:
-            deserialized_dict = {}
-            layout_dict = {}
-            for key, val in value.items():
-                result = deserialize_value(
-                    val, fetch_remote=fetch_remote, return_layout=True
-                )
-                deserialized_dict[key] = result[0]
-                layout_dict[key] = result[1]
-            return (deserialized_dict, layout_dict)
-        else:
-            return {
-                key: deserialize_value(
-                    val, fetch_remote=fetch_remote, return_layout=False
-                )
-                for key, val in value.items()
-            }
+        return {key: deserialize_value(val) for key, val in value.items()}
 
     # Handle list - recursively deserialize elements
     if isinstance(value, list):
-        if return_layout:
-            deserialized_list = []
-            layout_list = []
-            for item in value:
-                result = deserialize_value(
-                    item, fetch_remote=fetch_remote, return_layout=True
-                )
-                deserialized_list.append(result[0])
-                layout_list.append(result[1])
-            return (deserialized_list, layout_list)
-        else:
-            return [
-                deserialize_value(item, fetch_remote=fetch_remote, return_layout=False)
-                for item in value
-            ]
+        return [deserialize_value(item) for item in value]
 
     # Primitives pass through unchanged
-    if return_layout:
-        return (value, None)
     return value
