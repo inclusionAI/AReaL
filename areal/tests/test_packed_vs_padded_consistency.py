@@ -75,15 +75,15 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
     )
     engine = FSDPEngine(config)
     engine.create_process_group()
-    engine.create_device_model()
+    engine._create_device_model()
     engine.initialized = True
 
     try:
         # Prepare padded input
         padded_input = mock_padded_llm_data
 
-        # Get packed input using prepare_mb_list
-        mb_list = engine.prepare_mb_list(padded_input)
+        # Get packed input using _prepare_mb_list
+        mb_list = engine._prepare_mb_list(padded_input)
         assert len(mb_list.mbs) == 1
 
         with torch.no_grad():
@@ -242,14 +242,14 @@ def test_vlm_consistency(model_path):
 
     engine = FSDPEngine(config)
     engine.create_process_group()
-    engine.create_device_model()
+    engine._create_device_model()
     engine.initialized = True
 
     padded_input = mock_padded_vlm_data(model_path)
 
     try:
         # Get packed input
-        mb_list = engine.prepare_mb_list(padded_input)
+        mb_list = engine._prepare_mb_list(padded_input)
         assert len(mb_list.mbs) == 1
 
         with torch.no_grad():

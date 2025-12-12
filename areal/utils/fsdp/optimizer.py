@@ -1,4 +1,7 @@
+from collections.abc import Iterator
+
 import torch
+from torch.nn import Parameter
 
 
 def to_precision_dtype(dtype_str: str) -> torch.dtype:
@@ -29,7 +32,7 @@ def to_precision_dtype(dtype_str: str) -> torch.dtype:
 class AnyPrecisionAdamW(torch.optim.Optimizer):
     def __init__(
         self,
-        params: list[torch.Tensor],
+        params: Iterator[Parameter],
         lr: float = 1e-3,
         betas: tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
