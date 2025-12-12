@@ -169,6 +169,18 @@ class GenerationHyperparameters:
         default="",
         metadata={"help": "Lora name to be used for this generation."},
     )
+    use_beam_search: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are ignored."
+        },
+    )
+    beam_width: int = field(
+        default=4,
+        metadata={
+            "help": "The number of beams for beam search, when 'use_beam_search' is enabled."
+        },
+    )
 
     def new(self, **kwargs):
         args = asdict(self)
