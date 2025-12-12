@@ -32,7 +32,7 @@ class TestAsyncTaskRunnerBasic:
             await asyncio.sleep(0.01)
             return a + b
 
-        runner.submit(add, 5, 10)
+        runner.submit(add, 5, 10, task_id=1)
         results = runner.wait(count=1, timeout=2.0)
 
         assert len(results) == 1
@@ -50,35 +50,13 @@ class TestAsyncTaskRunnerBasic:
 
         # Submit 10 tasks
         for i in range(10):
-            runner.submit(compute, i)
+            runner.submit(compute, i, task_id=i)
 
         results = runner.wait(count=10, timeout=5.0)
 
         assert len(results) == 10
         # Results are shuffled, so check that all expected values are present
         assert set(results) == {0, 2, 4, 6, 8, 10, 12, 14, 16, 18}
-        runner.destroy()
-
-    def test_batch_submission(self):
-        """Test batch submission of tasks."""
-        runner = AsyncTaskRunner[str](max_queue_size=50)
-        runner.initialize()
-
-        async def process(text: str) -> str:
-            await asyncio.sleep(0.01)
-            return text.upper()
-
-        tasks = [
-            (process, ("hello",), {}),
-            (process, ("world",), {}),
-            (process, ("async",), {}),
-        ]
-
-        runner.submit_batch(tasks)
-        results = runner.wait(count=3, timeout=2.0)
-
-        assert len(results) == 3
-        assert set(results) == {"HELLO", "WORLD", "ASYNC"}
         runner.destroy()
 
     def test_with_kwargs(self):
@@ -90,8 +68,8 @@ class TestAsyncTaskRunnerBasic:
             await asyncio.sleep(0.01)
             return a * b
 
-        runner.submit(multiply, a=5, b=3)
-        runner.submit(multiply, 4, b=7)
+        runner.submit(multiply, a=5, b=3, task_id=1)
+        runner.submit(multiply, 4, b=7, task_id=2)
 
         results = runner.wait(count=2, timeout=2.0)
 
@@ -114,7 +92,7 @@ class TestAsyncTaskRunnerPauseResume:
 
         # Submit some tasks
         for i in range(5):
-            runner.submit(slow_task, i)
+            runner.submit(slow_task, i, task_id=i)
 
         # Pause immediately
         runner.pause()
@@ -122,7 +100,7 @@ class TestAsyncTaskRunnerPauseResume:
 
         # Submit more tasks while paused
         for i in range(5, 10):
-            runner.submit(slow_task, i)
+            runner.submit(slow_task, i, task_id=i)
 
         # Should not be able to get all results quickly because paused tasks don't start
         start = time.time()
@@ -149,7 +127,7 @@ class TestAsyncTaskRunnerPauseResume:
 
         # Submit tasks while paused
         for i in range(5):
-            runner.submit(fast_task, i)
+            runner.submit(fast_task, i, task_id=i)
 
         # Resume
         runner.resume()
@@ -174,7 +152,7 @@ class TestAsyncTaskRunnerTimeout:
             await asyncio.sleep(5.0)  # Very slow task
             return x
 
-        runner.submit(slow_task, 1)
+        runner.submit(slow_task, 1, task_id=1)
 
         with pytest.raises(TimeoutError, match="Timed out waiting for 1 results"):
             runner.wait(count=1, timeout=0.5)
@@ -197,9 +175,9 @@ class TestAsyncTaskRunnerTimeout:
 
         # Submit 3 fast and 2 slow
         for i in range(3):
-            runner.submit(fast_task, i)
+            runner.submit(fast_task, i, task_id=i)
         for i in range(2):
-            runner.submit(slow_task, i + 100)
+            runner.submit(slow_task, i + 100, task_id=i + 100)
 
         # Should timeout waiting for all 5
         with pytest.raises(TimeoutError, match="only received 3"):
@@ -228,8 +206,8 @@ class TestAsyncTaskRunnerConcurrency:
             return time.time() - start
 
         # Submit 5 tasks that each take 0.2 seconds
-        for _ in range(5):
-            runner.submit(timed_task, 0.2)
+        for i in range(5):
+            runner.submit(timed_task, 0.2, task_id=i)
 
         start = time.time()
         results = runner.wait(count=5, timeout=2.0)
@@ -252,7 +230,7 @@ class TestAsyncTaskRunnerConcurrency:
 
         # Submit 100 tasks
         for i in range(100):
-            runner.submit(compute, i)
+            runner.submit(compute, i, task_id=i)
 
         results = runner.wait(count=100, timeout=10.0)
 
@@ -275,12 +253,12 @@ class TestAsyncTaskRunnerErrorHandling:
             return x
 
         # Fill the queue
-        runner.submit(task, 1)
-        runner.submit(task, 2)
+        runner.submit(task, 1, task_id=1)
+        runner.submit(task, 2, task_id=2)
 
         # Next submission should fail
         with pytest.raises(RuntimeError, match="Input queue full"):
-            runner.submit(task, 3)
+            runner.submit(task, 3, task_id=3)
 
         runner.destroy()
 
@@ -298,8 +276,8 @@ class TestAsyncTaskRunnerErrorHandling:
             return 42
 
         # Submit a failing task and a working task
-        runner.submit(failing_task)
-        runner.submit(working_task)
+        runner.submit(failing_task, task_id=1)
+        runner.submit(working_task, task_id=2)
 
         # The working task should still complete and its result should be retrievable.
         # The failing task will return None but won't crash the runner.
@@ -324,7 +302,7 @@ class TestAsyncTaskRunnerErrorHandling:
 
         # Submit tasks that won't complete
         for i in range(10):
-            runner.submit(long_task, i)
+            runner.submit(long_task, i, task_id=i)
 
         # Should shut down cleanly, cancelling pending tasks
         runner.destroy()
@@ -349,7 +327,7 @@ class TestAsyncTaskRunnerQueueSizes:
 
         # Submit some tasks
         for i in range(5):
-            runner.submit(task, i)
+            runner.submit(task, i, task_id=i)
 
         time.sleep(0.05)
         input_size, output_size = runner.get_queue_sizes()
@@ -373,7 +351,7 @@ class TestAsyncTaskRunnerResultOrdering:
 
         # Submit 10 tasks
         for i in range(10):
-            runner.submit(fast_task, i)
+            runner.submit(fast_task, i, task_id=i)
 
         # Wait for first 3
         results1 = runner.wait(count=3, timeout=2.0)
@@ -404,7 +382,7 @@ class TestAsyncTaskRunnerResultOrdering:
 
         # Submit tasks in order
         for i in range(20):
-            runner.submit(task, i)
+            runner.submit(task, i, task_id=i)
 
         results = runner.wait(count=20, timeout=5.0)
 
@@ -428,7 +406,7 @@ class TestAsyncTaskRunnerWithDifferentTypes:
             await asyncio.sleep(0.01)
             return a + b
 
-        runner.submit(concat, "hello", " world")
+        runner.submit(concat, "hello", " world", task_id=1)
         results = runner.wait(count=1, timeout=2.0)
 
         assert results[0] == "hello world"
@@ -443,8 +421,8 @@ class TestAsyncTaskRunnerWithDifferentTypes:
             await asyncio.sleep(0.01)
             return {key: value}
 
-        runner.submit(create_dict, "a", 1)
-        runner.submit(create_dict, "b", 2)
+        runner.submit(create_dict, "a", 1, task_id=1)
+        runner.submit(create_dict, "b", 2, task_id=2)
 
         results = runner.wait(count=2, timeout=2.0)
 
@@ -465,7 +443,7 @@ class TestAsyncTaskRunnerWithDifferentTypes:
 
         # Submit 10 numbers
         for i in range(10):
-            runner.submit(filter_even, i)
+            runner.submit(filter_even, i, task_id=i)
 
         # Get all results (including None values)
         results = runner.wait(count=10, timeout=2.0)
@@ -559,7 +537,7 @@ class TestAsyncTaskRunnerShutdownHooks:
 
         # Submit tasks that won't complete
         for i in range(5):
-            runner.submit(long_task, i)
+            runner.submit(long_task, i, task_id=i)
 
         runner.register_shutdown_hook(cleanup_hook)
         runner.destroy()

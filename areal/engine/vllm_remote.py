@@ -272,7 +272,7 @@ class RemotevLLMEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
-    ) -> None:
+    ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(data, workflow, workflow_kwargs, should_accept_fn)
 
@@ -281,6 +281,12 @@ class RemotevLLMEngine(InferenceEngine):
     ) -> list[dict[str, Any] | None]:
         """Wait for a specified number of requests to complete."""
         return self._engine.wait(count, timeout, raise_timeout)
+
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """Wait for a specific task to complete by task_id."""
+        return self._engine.wait_for_task(task_id, timeout, raise_timeout)
 
     def rollout_batch(
         self,

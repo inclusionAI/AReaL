@@ -754,7 +754,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
-    ) -> None:
+    ) -> int:
         """Submit a request to the inference engine and return immediately.
 
         Parameters
@@ -799,6 +799,12 @@ class RemoteInfEngine(InferenceEngine):
         return self.workflow_executor.wait(
             count, timeout=timeout, raise_timeout=raise_timeout
         )
+
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """Wait for a specific submitted task to complete."""
+        return self.workflow_executor.wait_for_task(task_id, timeout, raise_timeout)
 
     def rollout_batch(
         self,
