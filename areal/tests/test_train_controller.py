@@ -20,7 +20,6 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Worker
-from areal.controller.batch import DistributedBatchMemory
 from areal.controller.train_controller import TrainController
 
 
@@ -165,7 +164,7 @@ def create_mock_distributed_batch(size=4, seq_len=10):
         "attention_mask": torch.ones(size, seq_len, dtype=torch.bool),
         "loss_mask": torch.ones(size, seq_len, dtype=torch.bool),
     }
-    return DistributedBatchMemory.from_dict(data)
+    return data
 
 
 # ==================== TEST CLASSES ====================
@@ -309,10 +308,6 @@ class TestTrainControllerBatchOperations:
         # Should split into dp_size chunks
         assert len(chunks) == alloc_mode.train.dp_size
 
-        # Each chunk should be a DistributedBatch
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)
-
     def test_align_batches_with_dp_no_rebalance(
         self, train_controller, alloc_mode, ft_spec
     ):
@@ -329,36 +324,9 @@ class TestTrainControllerBatchOperations:
         # Should split into dp_size chunks
         assert len(chunks) == alloc_mode.train.dp_size
 
-        # Each chunk should be a DistributedBatch
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)
-
 
 class TestTrainControllerMergeResults:
     """Tests for result merging from workers."""
-
-    def test_merge_results_with_tensor_dict(self, train_controller):
-        """Test _merge_results with dictionary of tensors."""
-        results = [
-            {"loss": torch.tensor([0.5, 0.6])},
-            {"loss": torch.tensor([0.3, 0.4])},
-        ]
-
-        merged = train_controller._merge_results(results, "some_method")
-
-        # Should concatenate into DistributedBatch
-        assert isinstance(merged, DistributedBatchMemory)
-        assert "loss" in merged.get_data()
-
-    def test_merge_results_with_empty_dict(self, train_controller):
-        """Test _merge_results with empty dictionaries."""
-        results = [{}, {}]
-
-        merged = train_controller._merge_results(results, "some_method")
-
-        # Should return empty DistributedBatch
-        assert isinstance(merged, DistributedBatchMemory)
-        assert len(merged.get_data()) == 0
 
     def test_merge_results_with_non_tensor(self, train_controller):
         """Test _merge_results with non-tensor results."""
@@ -737,7 +705,7 @@ class TestTrainControllerRolloutIntegration:
         )
 
         mock_rollout = Mock()
-        mock_rollout.prepare_batch.return_value = DistributedBatchMemory.from_dict({})
+        mock_rollout.prepare_batch.return_value = {}
         meta = WeightUpdateMeta(type="disk", path="/tmp/test")
         train_controller.connect_engine(mock_rollout, meta)
 
@@ -766,7 +734,7 @@ class TestTrainControllerRolloutIntegration:
         )
 
         mock_rollout = Mock()
-        mock_rollout.rollout_batch.return_value = DistributedBatchMemory.from_dict({})
+        mock_rollout.rollout_batch.return_value = {}
         meta = WeightUpdateMeta(type="disk", path="/tmp/test")
         train_controller.connect_engine(mock_rollout, meta)
 
@@ -1017,7 +985,6 @@ class TestTrainControllerMergeResultsExtended:
 
         merged = train_controller._merge_results(results, "some_method")
 
-        assert isinstance(merged, DistributedBatchMemory)
         # Should have concatenated batches
         assert len(merged) == 4
 
@@ -1058,7 +1025,7 @@ class TestTrainControllerAlignBatches:
             ft_spec=ft_spec,
         )
 
-        empty_batch = DistributedBatchMemory.from_dict({})
+        empty_batch = {}
         chunks = train_controller._align_batches_with_dp(empty_batch, rebalance=True)
 
         # Should replicate empty batch to all DP groups
@@ -1078,8 +1045,6 @@ class TestTrainControllerAlignBatches:
         chunks = train_controller._align_batches_with_dp(batch, rebalance=True)
 
         assert len(chunks) == alloc_mode.train.dp_size
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)
 
     def test_align_batches_without_rebalance(
         self, train_controller, alloc_mode, ft_spec
@@ -1095,5 +1060,3 @@ class TestTrainControllerAlignBatches:
         chunks = train_controller._align_batches_with_dp(batch, rebalance=False)
 
         assert len(chunks) == alloc_mode.train.dp_size
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)

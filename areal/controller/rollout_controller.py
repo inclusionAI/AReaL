@@ -17,11 +17,10 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
-from areal.controller.batch import DistributedBatchMemory
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher
 from areal.utils import logging, perf_tracer
-from areal.utils.data import cycle_dataloader
+from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf
 
@@ -295,7 +294,6 @@ class RolloutController:
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
                         http_timeout=self.config.request_timeout,
-                        return_distributed_batch=True,
                         task_id=task_id,
                     )
 
@@ -365,7 +363,7 @@ class RolloutController:
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> list[dict[str, Any] | DistributedBatchMemory | None]:
+    ) -> list[dict[str, Any] | None]:
         # Delegate to dispatcher and extract trajectories
         results = self.dispatcher.wait_results(count, timeout, raise_timeout)
         # Log and trace
@@ -381,7 +379,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
-    ) -> DistributedBatchMemory:
+    ) -> dict[str, Any]:
         perf_tracer.instant(
             "rollout_controller.rollout_batch",
             category="scheduler",
@@ -395,11 +393,8 @@ class RolloutController:
                 should_accept_fn=should_accept_fn,
             )
         results = self.wait(count=len(data))
-        batches = [b for b in results if isinstance(b, DistributedBatchMemory)]
-        if not batches:
-            return DistributedBatchMemory.from_dict({})
-
-        return DistributedBatchMemory.concat(batches)
+        # Concatenate into batch tensor format
+        return concat_padded_tensors([r for r in results if r is not None])
 
     @trace_perf("rollout_controller.prepare_batch", category="scheduler")
     def prepare_batch(
@@ -408,7 +403,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
-    ) -> DistributedBatchMemory:
+    ) -> dict[str, Any]:
         """Prepare a batch with controlled staleness.
 
         Continuously submits from dataloader and waits for results, ensuring at least
@@ -441,15 +436,9 @@ class RolloutController:
             self.data_generator, batch_size=dataloader.batch_size
         )
 
-        # Extract trajectories
+        # Extract trajectories and concatenate
         trajectories = [r.trajectory if r is not None else None for r in results]
-
-        # Filter out None and only keep DistributedBatchMemory instances
-        batches = [t for t in trajectories if isinstance(t, DistributedBatchMemory)]
-        if not batches:
-            return DistributedBatchMemory.from_dict({})
-
-        return DistributedBatchMemory.concat(batches)
+        return concat_padded_tensors([t for t in trajectories if t is not None])
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.
@@ -548,9 +537,6 @@ class RolloutController:
         return self.dispatcher.runner
 
     # ==================== DISTRIBUTED BATCH RPC WRAPPERS ====================
-    def clear_batches(self, target: DistributedBatchMemory | list[str]):
+    def clear_batches(self, target):
         """Clear shard data on workers."""
-        server_addrs = {
-            f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
-        }
-        DistributedBatchMemory.clear(target, server_addrs)
+        raise NotImplementedError()

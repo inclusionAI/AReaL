@@ -1,16 +1,3 @@
-"""Tensor and dataclass serialization utilities for RPC communication.
-
-This module provides utilities to serialize and deserialize PyTorch tensors
-and dataclass instances for transmission over HTTP/JSON. Tensors are encoded
-as base64 strings and dataclasses preserve their type information with metadata
-stored in Pydantic models.
-
-Assumptions:
-- All tensors are on CPU
-- Gradient tracking (requires_grad) is not preserved
-- Dataclasses are reconstructed with their original types
-"""
-
 import base64
 import importlib
 import importlib.util
@@ -26,8 +13,9 @@ import numpy as np
 import torch
 from pydantic import BaseModel, Field
 
-from areal.controller.batch import DistributedBatchMemory
 from areal.utils import logging
+
+from .rtensor import BatchLayout, RTensor, ShardLayout
 
 TOKENIZER_ARCHIVE_INLINE_THRESHOLD = 512 * 1024
 TOKENIZER_ZSTD_THRESHOLD = 20 * 1024 * 1024
@@ -37,19 +25,7 @@ logger = logging.getLogger("SyncRPCServer")
 
 
 class SerializedTensor(BaseModel):
-    """Pydantic model for serialized tensor with metadata.
-
-    Attributes
-    ----------
-    type : str
-        Type marker, always "tensor"
-    data : str
-        Base64-encoded tensor data
-    shape : List[int]
-        Tensor shape
-    dtype : str
-        String representation of dtype (e.g., "torch.float32")
-    """
+    """Pydantic model for serialized tensor with metadata (inline data)."""
 
     type: Literal["tensor"] = Field(default="tensor")
     data: str
@@ -163,7 +139,7 @@ class SerializedNDArray(BaseModel):
         Type marker, always "ndarray"
     data : str
         Base64-encoded contiguous bytes of the array
-    shape : List[int]
+    shape : list[int]
         Array shape
     dtype : str
         NumPy dtype string representation (e.g., "<f4")
@@ -393,9 +369,13 @@ def serialize_value(value: Any) -> Any:
     Any
         Serialized value (JSON-compatible with SerializedTensor and SerializedDataclass dicts)
     """
-    # Handle None
-    if value is None:
-        return None
+
+    # Handle RTensor - must check before torch.Tensor
+    if isinstance(value, RTensor):
+        return {
+            "type": "rtensor",
+            "shards": serialize_value(value.shards),
+        }
 
     # Handle torch.Tensor
     if isinstance(value, torch.Tensor):
@@ -404,17 +384,6 @@ def serialize_value(value: Any) -> Any:
     # Handle numpy.ndarray
     if isinstance(value, np.ndarray):
         return SerializedNDArray.from_array(value).model_dump()
-
-    # Handle DistributedBatchMemory (check before dataclass)
-    if isinstance(value, DistributedBatchMemory):
-        # Use __getstate__ to get serializable state
-        state = value.__getstate__()
-        # Recursively serialize the state
-        serialized_state = serialize_value(state)
-        return {
-            "type": "distributed_batch_memory",
-            "state": serialized_state,
-        }
 
     # Handle dataclass instances (check before dict, as dataclasses can be dict-like)
     # Note: is_dataclass returns True for both classes and instances, so check it's not a type
@@ -454,54 +423,35 @@ def serialize_value(value: Any) -> Any:
     return value
 
 
-def deserialize_value(value: Any) -> Any:
-    """Recursively deserialize a value, converting SerializedTensor and SerializedDataclass dicts back.
-
-    This function transparently handles:
-    - SerializedTensor dict -> torch.Tensor (CPU, no gradient tracking)
-    - SerializedNDArray dict -> numpy.ndarray
-    - SerializedDataclass dict -> dataclass instance (reconstructed with original type)
-    - SerializedTokenizer dict -> Hugging Face tokenizer
-    - dict -> recursively deserialize values
-    - list -> recursively deserialize elements
-    - primitives -> unchanged
-
-    Parameters
-    ----------
-    value : Any
-        Value to deserialize (potentially containing SerializedTensor and SerializedDataclass dicts)
-
-    Returns
-    -------
-    Any
-        Deserialized value with torch.Tensor and dataclass objects restored
-    """
-    # Handle None
-    if value is None:
-        return None
-
-    # Handle dict - check if it's a SerializedDataclass, SerializedTensor, or DistributedBatchMemory
+def deserialize_value(
+    value: Any, fetch_remote: bool = False, return_layout: bool = False
+) -> Any:
+    # Handle dict - check if it's a SerializedDataclass, SerializedTensor
     if isinstance(value, dict):
-        # Check for DistributedBatchMemory marker
-        if value.get("type") == "distributed_batch_memory":
-            # Deserialize the state
-            state = deserialize_value(value.get("state", {}))
-            # Create instance and restore state
-            instance = DistributedBatchMemory.__new__(DistributedBatchMemory)
-            instance.__setstate__(state)
-            return instance
-
         # Check for SerializedDataclass marker (check before tensor)
         if value.get("type") == "dataclass":
             try:
                 serialized_dc = SerializedDataclass.model_validate(value)
                 dataclass_type, data = serialized_dc.to_dataclass()
-                # Recursively deserialize the fields
-                deserialized_data = {
-                    key: deserialize_value(val) for key, val in data.items()
-                }
-                # Reconstruct the dataclass instance
-                return dataclass_type(**deserialized_data)
+
+                if return_layout:
+                    deserialized_data = {}
+                    layout_data = {}
+                    for key, val in data.items():
+                        result = deserialize_value(
+                            val, fetch_remote=fetch_remote, return_layout=True
+                        )
+                        deserialized_data[key] = result[0]
+                        layout_data[key] = result[1]
+                    return (dataclass_type(**deserialized_data), layout_data)
+                else:
+                    deserialized_data = {
+                        key: deserialize_value(
+                            val, fetch_remote=fetch_remote, return_layout=False
+                        )
+                        for key, val in data.items()
+                    }
+                    return dataclass_type(**deserialized_data)
             except Exception as e:
                 # If parsing fails, treat as regular dict
                 logger.warning(
@@ -538,12 +488,74 @@ def deserialize_value(value: Any) -> Any:
                     f"Failed to deserialize tensor, treating as regular dict: {e}"
                 )
 
+        # Check for RTensor marker
+        if value.get("type") == "rtensor":
+            shards = deserialize_value(
+                value["shards"], fetch_remote=False, return_layout=False
+            )
+            rtensor = RTensor(shards=shards)
+
+            # Extract layout from shards
+            layout = (
+                BatchLayout(
+                    layout=[
+                        ShardLayout(shard_id=s.shard_id, size=s.shape[0])
+                        for s in shards
+                    ]
+                )
+                if shards
+                else None
+            )
+
+            # Decide what to return based on flags
+            if fetch_remote:
+                tensor = rtensor.to_local()
+                if return_layout:
+                    return (tensor, layout)
+                return tensor
+            else:
+                if return_layout:
+                    return (rtensor, layout)
+                return rtensor
+
         # Regular dict - recursively deserialize values
-        return {key: deserialize_value(val) for key, val in value.items()}
+        if return_layout:
+            deserialized_dict = {}
+            layout_dict = {}
+            for key, val in value.items():
+                result = deserialize_value(
+                    val, fetch_remote=fetch_remote, return_layout=True
+                )
+                deserialized_dict[key] = result[0]
+                layout_dict[key] = result[1]
+            return (deserialized_dict, layout_dict)
+        else:
+            return {
+                key: deserialize_value(
+                    val, fetch_remote=fetch_remote, return_layout=False
+                )
+                for key, val in value.items()
+            }
 
     # Handle list - recursively deserialize elements
     if isinstance(value, list):
-        return [deserialize_value(item) for item in value]
+        if return_layout:
+            deserialized_list = []
+            layout_list = []
+            for item in value:
+                result = deserialize_value(
+                    item, fetch_remote=fetch_remote, return_layout=True
+                )
+                deserialized_list.append(result[0])
+                layout_list.append(result[1])
+            return (deserialized_list, layout_list)
+        else:
+            return [
+                deserialize_value(item, fetch_remote=fetch_remote, return_layout=False)
+                for item in value
+            ]
 
     # Primitives pass through unchanged
+    if return_layout:
+        return (value, None)
     return value

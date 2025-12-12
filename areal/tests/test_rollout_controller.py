@@ -14,7 +14,6 @@ from areal.api.cli_args import (
 from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Worker
 from areal.controller import RolloutController
-from areal.controller.batch import DistributedBatchMemory
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.scheduler.local import LocalScheduler
 from areal.tests.utils import get_model_path
@@ -507,7 +506,6 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        assert isinstance(batch, DistributedBatchMemory)
         assert len(batch) == 4
 
         controller.destroy()
@@ -991,7 +989,6 @@ def test_rollout_controller_integration(tmp_path, model_path):
                 tokenizer=tokenizer,
             ),
         )
-        assert isinstance(result, DistributedBatchMemory)
         assert len(result) == bs
     finally:
         rollout.destroy()
