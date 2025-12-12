@@ -53,7 +53,6 @@ class VLLMBackend:
         }
         if payload["use_beam_search"] is True:
             payload["beam_width"] = gconfig.beam_width
-            payload["best_of"] = 1
 
         if with_lora and len(gconfig.lora_name) > 0:
             payload["model"] = gconfig.lora_name
