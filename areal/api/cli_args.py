@@ -178,7 +178,7 @@ class GenerationHyperparameters:
     beam_width: int = field(
         default=4,
         metadata={
-            "help": "The number of beams for beam search, when 'use_beam_search' is enable."
+            "help": "The number of beams for beam search, when 'use_beam_search' is enabled."
         },
     )
 
