@@ -82,8 +82,8 @@ class RTensor:
 
     @classmethod
     def from_batched(cls, batch_tensor: torch.Tensor, layout: "RTensor"):
-        if not batch_tensor.is_cpu:
-            raise ValueError("RTensor shards must be on CPU")
+        if not batch_tensor.is_cpu and not batch_tensor.is_meta:
+            raise ValueError("RTensor shards must be on CPU or meta device")
 
         tensors = cls.split_tensor(batch_tensor, layout)
 
@@ -104,8 +104,10 @@ class RTensor:
         return cls(shards=layout.shards, data=batch_tensor.to("meta"))
 
     @staticmethod
-    def cat(rtensors: list["RTensor"]) -> "RTensor":
+    def cat(rtensors: list["RTensor"], dim=0) -> "RTensor":
         """Concatenate RTensors along existing dimension."""
+        if dim != 0:
+            raise ValueError("RTensor.cat only supports dim=0")
         if not rtensors:
             return RTensor(shards=[], data=torch.tensor([]).to("meta"))
         return RTensor(
@@ -318,6 +320,15 @@ class RTensor:
 
         _collect(obj)
         return shards_by_node
+
+    def __torch_function__(self, func, types, args=(), kwargs=None):
+        if kwargs is None:
+            kwargs = {}
+
+        if func is torch.cat:
+            return RTensor.cat(*args, **kwargs)
+
+        raise NotImplementedError(f"RTensor does not implement torch function {func}")
 
 
 def _pad_cat_dim0(tensors: list[torch.Tensor]) -> torch.Tensor:
