@@ -16,7 +16,7 @@ from areal.api.cli_args import BaseExperimentConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.platforms import current_platform
 from areal.scheduler.rpc import rtensor
-from areal.scheduler.rpc.rtensor import RTensor, TensorShardId
+from areal.scheduler.rpc.rtensor import RTensor
 from areal.scheduler.rpc.serialization import (
     deserialize_value,
     serialize_value,
@@ -387,19 +387,13 @@ def call_engine_method():
                 500,
             )
 
-        # HACK: `wait_for_task` will input a `task_id` and output the first ever tensor
-        # for this trajectory. We take it as the key in RTensor storage.
-        # Otherwise if the result contains a tensor, it must be a batched GPU computation
-        # with tensor inputs, so we can extract `task_id` from input layouts.
-        task_id = kwargs.pop("task_id", None)
         # Always convert all tensors to RTensors and store the tensor locally
-        result_with_rtensors = RTensor.rtensorize(
+        result = RTensor.rtensorize(
             result,
             layouts=dict(args=args, kwargs=kwargs),
             node_addr=f"{_server_host}:{_server_port}",
-            task_id=task_id,
         )
-        serialized_result = serialize_value(result_with_rtensors)
+        serialized_result = serialize_value(result)
         return jsonify({"status": "success", "result": serialized_result})
 
     except Exception as e:
@@ -413,22 +407,19 @@ def store_batch_data(shard_id: str):
     """Store batch data shard."""
 
     try:
-        shard_id_obj = TensorShardId.from_string(shard_id)
         data_bytes = request.get_data()
 
         # Deserialize to get tensor (already on CPU)
         serialized_data = orjson.loads(data_bytes)
         data = deserialize_value(serialized_data)
 
-        rtensor.store(shard_id_obj, data)
+        rtensor.store(shard_id, data)
 
-        logger.debug(
-            f"Stored batch shard {shard_id_obj} (size={len(data_bytes)} bytes)"
-        )
+        logger.debug(f"Stored batch shard {shard_id} (size={len(data_bytes)} bytes)")
         return jsonify({"status": "ok", "shard_id": shard_id})
 
     except Exception as e:
-        logger.error(f"Error storing batch shard {shard_id_obj}: {e}")
+        logger.error(f"Error storing batch shard {shard_id}: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -436,19 +427,16 @@ def store_batch_data(shard_id: str):
 def retrieve_batch_data(shard_id: str):
     """Retrieve batch data shard."""
 
-    # Convert string shard_id to TensorShardId
-    shard_id_obj = TensorShardId.from_string(shard_id)
-
-    logger.debug(f"Received data get request for shard {shard_id_obj}")
+    logger.debug(f"Received data get request for shard {shard_id}")
     try:
         try:
-            data = rtensor.fetch(shard_id_obj)
+            data = rtensor.fetch(shard_id)
         except KeyError:
             return (
                 jsonify(
                     {
                         "status": "error",
-                        "message": f"Shard {shard_id_obj} not found",
+                        "message": f"Shard {shard_id} not found",
                     }
                 ),
                 404,
@@ -457,13 +445,11 @@ def retrieve_batch_data(shard_id: str):
         serialized_data = serialize_value(data)
         data_bytes = orjson.dumps(serialized_data)
 
-        logger.info(
-            f"Retrieved batch shard {shard_id_obj} (size={len(data_bytes)} bytes)"
-        )
+        logger.info(f"Retrieved batch shard {shard_id} (size={len(data_bytes)} bytes)")
         return Response(data_bytes, mimetype="application/octet-stream")
 
     except Exception as e:
-        logger.error(f"Error retrieving batch shard {shard_id_obj}: {e}")
+        logger.error(f"Error retrieving batch shard {shard_id}: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -484,11 +470,8 @@ def clear_batch_data():
                 jsonify({"status": "error", "message": "'shard_ids' must be a list"}),
                 400,
             )
-        shard_id_objs = [
-            TensorShardId.from_string(sid) for sid in shard_ids if isinstance(sid, str)
-        ]
 
-        cleared_count = sum(rtensor.remove(sid) for sid in shard_id_objs)
+        cleared_count = sum(rtensor.remove(sid) for sid in shard_ids)
         stats = dict(cleared_count=cleared_count, **rtensor.storage_stats())
         logger.info(f"Cleared {cleared_count} batch shards. Stats: {stats}")
         stats.update({"status": "ok"})

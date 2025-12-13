@@ -535,8 +535,3 @@ class RolloutController:
     def runner(self):
         """For backward compatibility. The runner is now owned by the dispatcher."""
         return self.dispatcher.runner
-
-    # ==================== DISTRIBUTED BATCH RPC WRAPPERS ====================
-    def clear_batches(self, target):
-        """Clear shard data on workers."""
-        raise NotImplementedError()

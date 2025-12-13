@@ -4,12 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.cli_args import TrainEngineConfig
-from areal.api.controller_api import DistributedBatch
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import (
     AllocationMode,
@@ -19,9 +19,9 @@ from areal.api.io_struct import (
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
-from areal.controller.batch import DistributedBatchMemory
 from areal.controller.rollout_controller import RolloutController
 from areal.platforms import current_platform
+from areal.scheduler.rpc.rtensor import RTensor
 from areal.utils import logging, name_resolve, names
 
 logger = logging.getLogger(__name__)
@@ -269,7 +269,7 @@ class TrainController:
         )
         # Filter to only keep results from DP head workers
         results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
-        return self._merge_results(results, method)
+        return self._merge_results(results)
 
     async def _async_custom_function_call(self, method: str, *args, **kwargs):
         """Async version of _custom_function_call."""
@@ -279,26 +279,36 @@ class TrainController:
         )
         # Filter to only keep results from DP head workers
         results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
-        return self._merge_results(results, method)
+        return self._merge_results(results)
 
     def _dispatch_inputs(self, *args, **kwargs):
-        """Split DistributedBatch across DP groups, replicate other args to all DP heads."""
-        split_args = []
-        for arg in args:
-            if isinstance(arg, DistributedBatch):
-                # Split across DP groups
-                split_args.append(self._align_batches_with_dp(arg, rebalance=True))
-            else:
-                # Replicate to all DP heads
-                split_args.append([arg] * self.parallel_strategy.dp_size)
+        """Split RTensors across DP groups, replicate other args."""
+        results = RTensor.data_parallel_dispatch(
+            (args, kwargs), dp_size=self.parallel_strategy.dp_size
+        )
+        # results is list of (args_tuple, kwargs_dict) pairs, one per DP group
+        # Transpose to match _call_with_dispatched_inputs expectations:
+        # dp_split_args[arg_idx][dp_idx] = value for arg_idx-th arg on dp_idx-th group
+        # dp_worker_kwargs[key][dp_idx] = value for key kwarg on dp_idx-th group
 
-        split_kwargs = {}
-        for k, v in kwargs.items():
-            if isinstance(v, DistributedBatch):
-                split_kwargs[k] = self._align_batches_with_dp(v, rebalance=True)
-            else:
-                split_kwargs[k] = [v] * self.parallel_strategy.dp_size
-        return split_args, split_kwargs
+        dp_size = len(results)
+        num_args = len(args)
+
+        # Transpose args: from list of tuples to list of lists
+        dp_split_args = [
+            [results[dp_idx][0][arg_idx] for dp_idx in range(dp_size)]
+            for arg_idx in range(num_args)
+        ]
+
+        # Transpose kwargs: from list of dicts to dict of lists
+        dp_worker_kwargs = {}
+        if kwargs:
+            for key in kwargs.keys():
+                dp_worker_kwargs[key] = [
+                    results[dp_idx][1][key] for dp_idx in range(dp_size)
+                ]
+
+        return dp_split_args, dp_worker_kwargs
 
     async def _call_with_dispatched_inputs(
         self,
@@ -315,11 +325,6 @@ class TrainController:
                 worker_args = [splits[dp_idx] for splits in dp_split_args]
                 worker_kwargs = {
                     k: splits[dp_idx] for k, splits in dp_worker_kwargs.items()
-                }
-
-                worker_args = [self._serialize_arg_for_rpc(arg) for arg in worker_args]
-                worker_kwargs = {
-                    k: self._serialize_arg_for_rpc(v) for k, v in worker_kwargs.items()
                 }
                 dp_idx += 1
             else:
@@ -338,89 +343,9 @@ class TrainController:
             )
         return await asyncio.gather(*tasks)
 
-    def _serialize_arg_for_rpc(self, arg: Any) -> Any:
-        """Serialize argument for RPC transmission."""
-        if isinstance(arg, DistributedBatch):
-            # If batch has metadata and batch server is enabled, pass metadata
-            if hasattr(arg, "metadata") and arg.metadata is not None:
-                # Return a special dict that indicates metadata mode
-                return {
-                    "__distributed_batch_metadata__": True,
-                    "metadata": arg.metadata,
-                }
-            else:
-                # Legacy mode: get actual data
-                return arg.get_data()
-        return arg
-
-    def _merge_results(self, results, method):
-        """Merge results from DP heads: pad tensors to max seq_len, concat dicts, return first for others."""
-        first_result = results[0]
-
-        # Handle DistributedBatchMemory
-        if isinstance(first_result, DistributedBatchMemory):
-            return DistributedBatchMemory.concat(results)
-
-        if isinstance(first_result, torch.Tensor):
-            # Pad tensors to max sequence length and concatenate along batch dimension
-            # Assumes tensor shape is [batch_size, seq_len, ...]
-            max_length = max(tensor.shape[1] for tensor in results)
-            n_dim = first_result.ndim
-            padded_tensors = []
-            for tensor in results:
-                # Pad format: (pad_left, pad_right) for each dimension from right to left
-                # For 2D: (pad_left_seq, pad_right_seq, pad_left_batch, pad_right_batch)
-                pad_mode = (
-                    (0,) * (2 * (n_dim - 2))
-                    + (0, max_length - tensor.shape[1])  # Pad sequence dimension
-                    + (0, 0)  # No padding for batch dimension
-                )
-                padded_tensor = torch.nn.functional.pad(tensor, pad_mode, value=0.0)
-                padded_tensors.append(padded_tensor)
-            return torch.cat(padded_tensors, dim=0)
-
-        if isinstance(first_result, dict):
-            if len(first_result) == 0:
-                return DistributedBatchMemory.from_dict({})
-
-            if any(isinstance(v, torch.Tensor) for v in first_result.values()):
-                # Check if this looks like a proper batch (has attention_mask)
-                # If so, use DistributedBatchMemory.concat which handles padding correctly
-                if "attention_mask" in first_result:
-                    return DistributedBatchMemory.concat(
-                        [DistributedBatchMemory.from_dict(r) for r in results]
-                    )
-                else:
-                    # Simple tensor dict - concatenate tensors along batch dimension
-                    merged = {}
-                    for key in first_result.keys():
-                        if isinstance(first_result[key], torch.Tensor):
-                            merged[key] = torch.cat([r[key] for r in results], dim=0)
-                        else:
-                            # Non-tensor values are assumed to be identical across workers
-                            merged[key] = first_result[key]
-                    return DistributedBatchMemory.from_dict(merged)
-
-        # For non-tensor, non-dict results, assume they are already synchronized
-        # (e.g., scalar statistics that have been all-reduced)
-        return first_result
-
-    def _align_batches_with_dp(
-        self, input_: DistributedBatch, rebalance=True
-    ) -> list[DistributedBatch]:
-        """Split batch across DP groups. Uses chunk_by_ffd if rebalance=True, else simple chunking."""
-        # Handle empty batch by replicating to all DP groups
-        # Use _get_total_size() to avoid fetching data
-        if len(input_) == 0:
-            return [input_] * self.alloc_mode.train.dp_size
-
-        if rebalance:
-            # Use fair distribution based on sequence lengths (first-fit-decreasing)
-            inputs = input_.chunk_by_ffd(1, self.alloc_mode.train.dp_size)
-        else:
-            # Simple sequential chunking
-            inputs = input_.chunk(self.alloc_mode.train.dp_size)
-        return inputs
+    def _merge_results(self, results):
+        """Merge RTensor results from DP heads using RTensor.merge()."""
+        return RTensor.data_parallel_merge(results)
 
     def export_stats(self):
         """Export training statistics from all workers.
@@ -532,7 +457,7 @@ class TrainController:
     # ==================== SFT RPC WRAPPERS ====================
     def train_lm(
         self,
-        input_: DistributedBatch,
+        input_: dict[str, Any],
         *args,
         **kwargs,
     ) -> dict[str, float]:
@@ -540,8 +465,8 @@ class TrainController:
 
         Parameters
         ----------
-        input_ : DistributedBatch
-            The distributed input data for language model training
+        input_ : dict[str, Any]
+            Input data with RTensors for language model training
         *args
             Additional positional arguments passed to the engine
         **kwargs
@@ -556,7 +481,7 @@ class TrainController:
 
     def evaluate_lm(
         self,
-        input_: DistributedBatch,
+        input_: dict[str, Any],
         *args,
         **kwargs,
     ) -> torch.Tensor | None:
@@ -564,8 +489,8 @@ class TrainController:
 
         Parameters
         ----------
-        input_ : DistributedBatch
-            The distributed input data for language model evaluation
+        input_ : dict[str, Any]
+            Input data with RTensors for language model evaluation
         *args
             Additional positional arguments passed to the engine
         **kwargs
@@ -599,7 +524,7 @@ class TrainController:
         workflow: str,
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
-    ) -> DistributedBatch:
+    ) -> dict[str, Any]:
         return self.rollout.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,
@@ -613,7 +538,7 @@ class TrainController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
-    ) -> DistributedBatch:
+    ) -> dict[str, Any]:
         return self.rollout.rollout_batch(
             data=data,
             workflow=workflow,
@@ -665,14 +590,14 @@ class TrainController:
 
     def ppo_update(
         self,
-        input_: DistributedBatch,
+        input_: dict[str, Any],
     ) -> dict[str, float]:
         """Perform PPO update step with the given batch.
 
         Parameters
         ----------
-        input_ : DistributedBatch
-            The distributed input data containing trajectories for PPO update
+        input_ : dict[str, Any]
+            Input data with RTensors containing trajectories for PPO update
 
         Returns
         -------
@@ -735,12 +660,29 @@ class TrainController:
         else:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
-    # ==================== DISTRIBUTED BATCH RPC WRAPPERS ====================
-    def clear_batches(self, target: DistributedBatchMemory | list[str] | None):
-        """Clear specified shard data on workers."""
-        server_addrs = {
-            f"{worker.ip}:{worker.worker_ports[0]}" for worker in self.workers
-        }
-        if target is None:
+    async def _async_clear_batches(self, target: dict[str, RTensor]):
+        """Extract shard IDs and call /data/clear on each worker."""
+        shards_by_node = RTensor.collect_shards(target)
+
+        if not shards_by_node:
             return
-        DistributedBatchMemory.clear(target, server_addrs)
+
+        async def clear_node(node_addr, shard_ids):
+            async with aiohttp.ClientSession() as session:
+                async with session.delete(
+                    f"http://{node_addr}/data/clear", json={"shard_ids": shard_ids}
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        logger.info(
+                            f"Cleared {result.get('cleared_count', 0)} shards on {node_addr}"
+                        )
+
+        await asyncio.gather(
+            *[clear_node(addr, sids) for addr, sids in shards_by_node.items()],
+            return_exceptions=True,
+        )
+
+    def clear_batches(self, target: dict[str, RTensor]):
+        """Clear distributed batch shards from workers to free memory."""
+        self._run_async_task(self._async_clear_batches(target))
