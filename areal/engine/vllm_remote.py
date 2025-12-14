@@ -48,8 +48,10 @@ class VLLMBackend:
             "stop_token_ids": stop_token_ids,
             "return_tokens_as_token_ids": True,
             "logprobs": 0,
+            "use_beam_search": gconfig.use_beam_search,
             "stream": False,
         }
+
         if with_lora and len(gconfig.lora_name) > 0:
             payload["model"] = gconfig.lora_name
         return HttpRequest(endpoint="/v1/completions", payload=payload)
