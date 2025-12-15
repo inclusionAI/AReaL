@@ -176,7 +176,7 @@ class RTensor:
         return layout_rtensor
 
     @staticmethod
-    def rtensorize(obj: Any, layout: RTensor, node_addr: str) -> Any:
+    def remotize(obj: Any, layout: RTensor, node_addr: str) -> Any:
         if isinstance(obj, torch.Tensor):
             return RTensor.from_batched(
                 obj.detach().cpu(), layout=layout, node_addr=node_addr
@@ -184,19 +184,19 @@ class RTensor:
 
         if isinstance(obj, dict):
             return {
-                k: RTensor.rtensorize(obj=v, layout=layout, node_addr=node_addr)
+                k: RTensor.remotize(obj=v, layout=layout, node_addr=node_addr)
                 for k, v in obj.items()
             }
 
         if isinstance(obj, list):
             return [
-                RTensor.rtensorize(obj=item, layout=layout, node_addr=node_addr)
+                RTensor.remotize(obj=item, layout=layout, node_addr=node_addr)
                 for item in obj
             ]
 
         if isinstance(obj, tuple):
             return tuple(
-                RTensor.rtensorize(obj=item, layout=layout, node_addr=node_addr)
+                RTensor.remotize(obj=item, layout=layout, node_addr=node_addr)
                 for item in obj
             )
 
@@ -206,7 +206,7 @@ class RTensor:
     def localize(obj: Any) -> Any:
         """Convert RTensors to local tensors in nested structures.
 
-        Inverse of rtensorize() - fetches remote data and converts to local tensors.
+        Inverse of remotize() - fetches remote data and converts to local tensors.
         """
         if isinstance(obj, RTensor):
             return obj.to_local()
