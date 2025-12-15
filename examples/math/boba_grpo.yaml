@@ -31,7 +31,6 @@ gconfig:
   max_new_tokens: 8192
   greedy: false
   temperature: 1.0
-  use_beam_search: true
 
 actor:
   experiment_name: ${experiment_name}
