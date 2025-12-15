@@ -30,7 +30,7 @@ class RTensor:
     """Single tensor distributed as CPU shards across nodes."""
 
     shards: list[TensorShardInfo]
-    data: torch.Tensor | None
+    data: torch.Tensor
 
     def to_local(self) -> torch.Tensor:
         """Fetch all shards via HTTP, concatenate along dim 0."""
@@ -81,9 +81,7 @@ class RTensor:
         return [batch_tensor[a:b] for a, b in zip(offsets[:-1], offsets[1:])]
 
     def split(self) -> list[RTensor]:
-        tensors = [None for _ in self.shards]
-        if self.data is not None:
-            tensors = RTensor.split_tensor(self.data, self)
+        tensors = RTensor.split_tensor(self.data, self)
         return [RTensor(shards=[s], data=t) for s, t in zip(self.shards, tensors)]
 
     @classmethod
@@ -163,8 +161,7 @@ class RTensor:
             attn_mask = obj.get("attention_mask", None)
             if attn_mask is None:
                 raise RuntimeError("`attention_mask` is not found")
-            if node_addr is None:
-                raise RuntimeError("`node_addr` is None")
+            assert node_addr is not None
             layout_rtensor = RTensor(
                 shards=[
                     TensorShardInfo(
@@ -174,7 +171,7 @@ class RTensor:
                         seqlens=[int(am.sum()) for am in attn_mask],
                     )
                 ],
-                data=None,
+                data=torch.empty_like(attn_mask, device="meta"),
             )
         return layout_rtensor
 
