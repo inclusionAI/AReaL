@@ -471,6 +471,7 @@ Controls text generation behavior for rollout.
 | `stop`              | list of string \| None | `None`       | One or multiple stop words. Generation will stop if one of these words is sampled.                                                    |
 | `frequency_penalty` | float                  | `0.0`        | Penalizes tokens based on their frequency in generation so far. Must be between -2 and 2 where negative numbers encourage repetition. |
 | `lora_name`         | string                 | `""`         | Lora name to be used for this generation.                                                                                             |
+| `use_beam_search`   | boolean                | `False`      | Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored.         |
 
 (section-inference-engine)=
 
