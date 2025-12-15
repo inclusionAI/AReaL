@@ -39,9 +39,10 @@ class SGLangBackend:
         stop_token_ids = gconfig.stop_token_ids
         stop = gconfig.stop
 
-        assert gconfig.use_beam_search is False, (
-            "Beam search is not supported in SGLang backend."
-        )
+        if not gconfig.use_beam_search:
+            raise NotImplementedError(
+                "Currently Beam search is not supported in SGLang backend."
+            )
 
         sample_params = {
             "top_p": gconfig.top_p,
