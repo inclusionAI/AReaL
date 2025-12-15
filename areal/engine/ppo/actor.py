@@ -243,8 +243,6 @@ class PPOActor:
         data["kl_rewards"] = kl_rewards
         data["tot_rewards"] = rewards
         data["loss_mask"] = loss_mask
-        # For the old "logprobs" key to be properly cleared
-        data["_logprobs"] = data["logprobs"]
         # because we have rolled old_logp by -1
         data["logprobs"] = old_logp
 

@@ -215,7 +215,7 @@ def rpc_workers(tmp_path_factory):
 
 
 def create_mock_distributed_batch(size=4, seq_len=10):
-    """Create a mock DistributedBatch for testing."""
+    """Create a mock batch for testing."""
     data = {
         "input_ids": torch.randint(0, 100, (size, seq_len)),
         "attention_mask": torch.ones(size, seq_len, dtype=torch.bool),
@@ -544,7 +544,7 @@ class TestTrainControllerCustomFunctionCall:
     def test_custom_function_call_with_distributed_batch(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test custom_function_call with DistributedBatch argument."""
+        """Test custom_function_call with batch argument."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -569,7 +569,7 @@ class TestTrainControllerCustomFunctionCall:
     def test_custom_function_call_with_regular_args(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test custom_function_call with non-DistributedBatch arguments."""
+        """Test custom_function_call with non-batch arguments."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -935,7 +935,7 @@ class TestTrainControllerDispatchInputs:
     def test_dispatch_inputs_splits_distributed_batch(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test _dispatch_inputs correctly splits DistributedBatch."""
+        """Test _dispatch_inputs correctly splits batch."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -952,7 +952,7 @@ class TestTrainControllerDispatchInputs:
     def test_dispatch_inputs_replicates_non_batch_args(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test _dispatch_inputs replicates non-DistributedBatch arguments."""
+        """Test _dispatch_inputs replicates non-batch arguments."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,

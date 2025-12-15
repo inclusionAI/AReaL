@@ -219,7 +219,7 @@ def main_grpo():
     for _ in range(max_steps):
         # Collect trajectories using rollout workflow
         batch = rollout.prepare_batch(dataloader, workflow=workflow)
-        batch: DistributedBatch  # For distributed coordination across processes
+        batch: dict[str, RTensor]  # For distributed coordination across processes
 
         # Prepare training inputs
         batch = actor.compute_advantages(batch)
@@ -237,8 +237,8 @@ def main_grpo():
 
 **Disadvantages:**
 
-- Introduces multiple abstractions (`TrainController`, `Scheduler`, `DistributedBatch`)
-  that increase script complexity
+- Introduces multiple abstractions (`TrainController`, `Scheduler`) that increase script
+  complexity
 
 #### SPMD Pattern
 
