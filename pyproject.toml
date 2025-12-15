@@ -101,6 +101,9 @@ dependencies = [
     "timeout-decorator",
     "prettytable",
     "h5py",
+    "mathruler==0.1.0",
+    "pylatexenc==2.10",
+
 
     # Monitoring and logging
     "wandb",

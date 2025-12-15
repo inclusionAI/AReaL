@@ -3,6 +3,7 @@ import os
 import sys
 from dataclasses import asdict
 
+import pytest
 import yaml
 from sh import Command
 
@@ -10,13 +11,13 @@ from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.tests.utils import get_dataset_path, get_model_path
 
 
-def test_grpo(tmp_path: str):
+@pytest.mark.parametrize("backend", ["fsdp", "megatron"])
+def test_grpo(tmp_path: str, backend: str) -> None:
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, f"config_{backend}.yaml")
 
     # Wrap over the original config to use local models/datasets if possible
-    config, _ = load_expr_config(
-        ["--config", os.path.join(base_dir, "config.yaml")], GRPOConfig
-    )
+    config, _ = load_expr_config(["--config", config_path], GRPOConfig)
 
     # Use get_model_path to check local or download from HuggingFace
     local_model_path = config.actor.path.replace("/", "__")

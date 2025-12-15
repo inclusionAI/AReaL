@@ -33,6 +33,9 @@ class ModelRequest:
     image_data: list[str] | None = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
 
+    # vlm+vllm:
+    vision_msg_vllm: list | None = None
+
     def copy(self):
         return ModelRequest(
             rid=self.rid,
@@ -42,6 +45,9 @@ class ModelRequest:
             tokenizer=self.tokenizer,
             image_data=self.image_data.copy() if self.image_data is not None else None,
             processor=self.processor,
+            vision_msg_vllm=self.vision_msg_vllm.copy()
+            if self.vision_msg_vllm is not None
+            else None,
         )
 
 
