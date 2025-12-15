@@ -4,6 +4,7 @@ import sys
 import traceback
 import uuid
 import aiofiles
+import aiofiles.os
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
