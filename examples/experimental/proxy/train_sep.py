@@ -61,7 +61,11 @@ class ProxyWorkflow(RolloutWorkflow):
         for reward in rewards.values():
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        return completions
+        merged_completions = {}
+        for session_id, session_completions in completions.items():
+            merged_completions.update(session_completions)
+
+        return merged_completions
 
 
 def inject_index(

@@ -449,7 +449,7 @@ class ProxyServer:
 
     async def get_results(
         self, session_ids: list[str], discount: float = 1.0, style: str = "individual"
-    ) -> tuple[dict[str, float | None], dict[str, "InteractionWithTokenLogpReward"]]:
+    ) -> tuple[dict[str, float | None], dict[str, dict[str, "InteractionWithTokenLogpReward"]]]:
         session_caches = await asyncio.gather(
             *[self.get_session_cache_data(session_id) for session_id in session_ids]
         )
@@ -460,8 +460,8 @@ class ProxyServer:
             )
         )
         completions = {}
-        for result in session_caches:
-            completions.update(result.export_interactions(discount, style))
+        for session_id, result in zip(session_ids, session_caches):
+            completions[session_id] = result.export_interactions(discount, style)
         return rewards, completions
 
     async def get_interactions(

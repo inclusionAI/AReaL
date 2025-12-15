@@ -3,6 +3,7 @@ import os
 import sys
 import traceback
 import uuid
+import aiofiles
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -112,7 +113,53 @@ class ProxyWorkflow(RolloutWorkflow):
         for reward in rewards.values():
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        return completions
+        if self.dump_dir is not None:
+            for session_id, session_completions in completions.items():
+                if len(session_completions) == 0:
+                    continue
+                version = list(session_completions.values())[0].model_response.output_versions[0]
+
+                dump_path = os.path.join(self.dump_dir, str(version))
+                await aiofiles.os.makedirs(dump_path, exist_ok=True)
+                # Get the unique identifier for this prompt
+                qid = None
+                for key in ["query_id", "id", "qid"]:
+                    qid = data.get(key, None)
+                    if qid is not None:
+                        break
+                qid = str(qid)
+                qid = qid + f"_{session_id}" if qid is not None else session_id
+
+                info = f"\n=== Completion Session ID: {session_id} ===\n"
+                for i, completion in enumerate(session_completions.values()):
+                    info += f"Completion {i + 1}\n"
+                    info += f"=======Input Messages=======\n"
+                    for message in completion.messages:
+                        role = message.get("role", "unknown")
+                        content = message.get("content", "")
+                        info += f"role[{role}]: {content}\n"
+                        if "tool_calls" in message:
+                            info += f"\t[tool_calls]: {message['tool_calls']}\n"
+                    
+                    if completion.is_completion:
+                        info += f"=======Completion=======\n{completion.completion}\n"
+                    else:
+                        info += f"=======Response=======\n{completion.response}\n"
+                    info += f"=======Reward=======\n{completion.reward}\n"
+                    info += f"=======Input Tokens=======\n{completion.model_response.input_tokens}\n"
+                    info += f"=======Output Tokens=======\n{completion.model_response.output_tokens}\n"
+                    info += "=========================\n\n"
+
+
+                # Dump rollout to file
+                file_path = os.path.join(dump_path, f"{qid}.txt")
+                async with aiofiles.open(file_path, "a") as f:
+                    await f.write(info + "\n")
+
+        merged_completions = {}
+        for session_id, session_completions in completions.items():
+            merged_completions.update(session_completions)
+        return merged_completions
 
 
 @dataclass
