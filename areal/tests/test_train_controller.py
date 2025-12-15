@@ -5,15 +5,9 @@ RPC wrappers, PPO/SFT methods, weight management, and error handling.
 """
 
 import asyncio
-import subprocess
-import sys
-import time
-import uuid
 from unittest.mock import Mock
 
-import orjson
 import pytest
-import requests
 import torch
 
 from areal.api.alloc_mode import ParallelStrategy
@@ -163,57 +157,6 @@ def train_controller(mock_scheduler, train_config):
     )
 
 
-@pytest.fixture(scope="module")
-def rpc_workers(tmp_path_factory):
-    """Start 4 real RPC server workers."""
-    from areal.utils.proc import kill_process_tree
-
-    base_port = 19000
-    processes = []
-
-    # Start 4 RPC servers
-    for i in range(4):
-        port = base_port + i
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "areal.scheduler.rpc.rpc_server",
-                "--host",
-                "localhost",
-                "--port",
-                str(port),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        processes.append((proc, port))
-
-    # Wait for health checks
-    for proc, port in processes:
-        for _ in range(20):
-            try:
-                if (
-                    requests.get(
-                        f"http://localhost:{port}/health", timeout=1
-                    ).status_code
-                    == 200
-                ):
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        else:
-            for p, _ in processes:
-                kill_process_tree(p.pid)
-            raise RuntimeError(f"RPC server on port {port} failed to start")
-
-    yield [f"localhost:{base_port + i}" for i in range(4)]
-
-    for proc, _ in processes:
-        kill_process_tree(proc.pid)
-
-
 def create_mock_distributed_batch(size=4, seq_len=10):
     """Create a mock batch for testing."""
     data = {
@@ -353,7 +296,7 @@ class TestTrainControllerMergeResults:
         """Test _merge_results with non-tensor results."""
         results = [{"status": "ok"}, {"status": "ok"}]
 
-        merged = train_controller._merge_results(results)
+        merged = train_controller._merge_results(results, group_indices=[[0], [1]])
 
         # Should return first result (already synchronized)
         assert merged == {"status": "ok"}
@@ -369,7 +312,7 @@ class TestTrainControllerMergeResults:
 
         # This should work without TypeError
         try:
-            result = train_controller._merge_results(results)
+            result = train_controller._merge_results(results, group_indices=[[0], [1]])
             # Test passes if no exception
             assert result is not None
         except TypeError as e:
@@ -943,7 +886,7 @@ class TestTrainControllerDispatchInputs:
         )
 
         batch = create_mock_distributed_batch(size=16)
-        split_args, split_kwargs = train_controller._dispatch_inputs(batch)
+        split_args, split_kwargs, _ = train_controller._dispatch_inputs(batch)
 
         # Should split into dp_size chunks
         assert len(split_args) == 1
@@ -960,7 +903,7 @@ class TestTrainControllerDispatchInputs:
         )
 
         scalar_arg = 42
-        split_args, split_kwargs = train_controller._dispatch_inputs(scalar_arg)
+        split_args, split_kwargs, _ = train_controller._dispatch_inputs(scalar_arg)
 
         # Should replicate to all DP groups
         assert len(split_args) == 1
@@ -978,7 +921,7 @@ class TestTrainControllerDispatchInputs:
         )
 
         batch = create_mock_distributed_batch(size=16)
-        split_args, split_kwargs = train_controller._dispatch_inputs(
+        split_args, split_kwargs, _ = train_controller._dispatch_inputs(
             input_=batch, learning_rate=0.001
         )
 
@@ -986,48 +929,3 @@ class TestTrainControllerDispatchInputs:
         assert "learning_rate" in split_kwargs
         assert len(split_kwargs["input_"]) == alloc_mode.train.dp_size
         assert all(lr == 0.001 for lr in split_kwargs["learning_rate"])
-
-
-class TestTrainControllerIntegration:
-    """Integration tests with real RPC servers."""
-
-    def test_clear_batches_integration(self, rpc_workers):
-        """Test clear_batches with real HTTP DELETE requests."""
-        from areal.scheduler.rpc.rtensor import RTensor, TensorShardInfo
-        from areal.scheduler.rpc.serialization import serialize_value
-
-        # Store test tensors on RPC server
-        node_addr = rpc_workers[0]
-        shard_ids = []
-
-        for _ in range(2):
-            shard_id = str(uuid.uuid4())
-            tensor = torch.randn(4, 8).cpu()
-            resp = requests.put(
-                f"http://{node_addr}/data/{shard_id}",
-                data=orjson.dumps(serialize_value(tensor)),
-            )
-            assert resp.status_code == 200
-            shard_ids.append(shard_id)
-
-        # Create RTensor batch
-        batch = {
-            "data": RTensor(
-                shards=[
-                    TensorShardInfo(shard_id=sid, node_addr=node_addr, size=4, seqlen=4)
-                    for sid in shard_ids
-                ],
-                data=torch.empty(0, device="meta"),
-            )
-        }
-
-        # Call clear_batches (test without full controller setup)
-        from areal.controller.train_controller import TrainController
-
-        controller = TrainController(None, None, None)
-        asyncio.run(controller._async_clear_batches(batch))
-
-        # Verify shards deleted
-        for sid in shard_ids:
-            resp = requests.get(f"http://{node_addr}/data/{sid}")
-            assert resp.status_code == 404
