@@ -255,6 +255,16 @@ class TrainController(BaseTrainController):
         self.logger.info(f"finished notify_event global_step: {global_step}")
         return None
 
+    def update_ref_model(self, ref_model_path: str) -> None:
+        """Update ref model from the specified path.
+
+        Args:
+            ref_model_path: Path to the ref model weights.
+        """
+        self.logger.info(f"begin update_ref_model from {ref_model_path}")
+        self._execute_async_task_on_workers("update_ref_model", ref_model_path)
+        self.logger.info(f"finished update_ref_model from {ref_model_path}")
+
     def _custom_function_call(self, method: str, *args, **kwargs):
         dp_split_args, dp_split_kwargs = self._dispatch_inputs(*args, **kwargs)
         results = self._run_async_task(
@@ -278,7 +288,9 @@ class TrainController(BaseTrainController):
         # NOTE: group normalization should be done in workflow
         if rebalance:
             self.config: TrainEngineConfig
-            is_group = self.config.hybrid_engine.wrap_policy.adv_norm.mean_level == "group"
+            is_group = (
+                self.config.hybrid_engine.wrap_policy.adv_norm.mean_level == "group"
+            )
             inputs = input_.chunk_by_ffd(
                 self.group_size if is_group else 1, self.parallel_strategy.dp_size
             )

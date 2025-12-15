@@ -59,6 +59,7 @@ class AdvantageNormalizationConfig:
         default="batch", metadata={"choices": ["none", "batch", "group"]}
     )
 
+
 @dataclass
 class RemoteMegatronWrapPolicy:
     n_minibatches: int = 1
@@ -169,6 +170,14 @@ class RemoteMegatronEngineConfig:
 class TrainEngineConfig(BaseTrainEngineConfig):
     hybrid_engine: RemoteMegatronEngineConfig = field(
         default_factory=RemoteMegatronEngineConfig
+    )
+    enable_update_ref_model: bool = field(
+        default=False,
+        metadata={"help": "Enable periodic update of ref model from actor model"},
+    )
+    update_ref_model_interval: int = field(
+        default=1,
+        metadata={"help": "Interval for updating ref model (in training steps)"},
     )
 
 

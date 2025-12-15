@@ -52,9 +52,19 @@ class RLVRWorkflow(RolloutWorkflow):
         )
 
         n_samples = self.gconfig.n_samples
+        # Validate max_new_tokens
+        max_new_tokens = min(
+            self.gconfig.max_tokens - len(prompt_encodings["input_ids"]), self.gconfig.max_new_tokens
+        )
+        if max_new_tokens <= 0:
+            raise RuntimeError(
+                f"max_new_tokens ({max_new_tokens}) is non-positive! "
+                f"max_tokens={self.gconfig.max_tokens}, prompt_len={len(prompt_encodings["input_ids"])}, "
+                f"max_new_tokens={self.gconfig.max_new_tokens}."
+            )
         new_gconfig = self.gconfig.new(
             n_samples=1,
-            max_new_tokens=self.gconfig.max_new_tokens,
+            max_new_tokens=max_new_tokens,
             max_tokens=self.gconfig.max_tokens,
             min_new_tokens=self.gconfig.min_new_tokens,
             greedy=self.gconfig.greedy,

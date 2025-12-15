@@ -100,6 +100,7 @@ class SharedData:
     session_cache: dict[str, SessionData] = field(default_factory=dict)
 
 
+
 def build_app(
     client: ArealOpenAI | None = None,
     session_cache: dict[str, SessionData] | None = None,

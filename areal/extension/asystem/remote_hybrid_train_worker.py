@@ -446,6 +446,47 @@ class RemoteHybridTrainWorker(TrainEngine):
 
         return None
 
+    def update_ref_model(self, ref_model_path: str) -> None:
+        """Update ref model from the specified path or from actor model directly.
+
+        Args:
+            ref_model_path: Path to the ref model weights. If None, update from actor model directly (colocate mode).
+        """
+        try:
+            logger.info(
+                f"update_ref_model begin send request to megatron server, "
+                f"target_url: http://{self.megatron_addr}/update_ref_model, "
+                f"ref_model_path: {ref_model_path}"
+            )
+            target_url = f"http://{self.megatron_addr}/update_ref_model"
+            headers = {"Content-Type": "application/json"}
+            payload = {"ref_model_path": ref_model_path}
+            response = requests.post(
+                target_url, data=json.dumps(payload), headers=headers, timeout=3600
+            )
+            if response.status_code == 200:
+                logger.info("update_ref_model success")
+            else:
+                raise EngineError(
+                    "TrainEngineError",
+                    "UpdateRefModelError",
+                    f"Status code: {response.status_code}, Response: {response.text}",
+                )
+        except requests.exceptions.Timeout:
+            raise EngineError(
+                "TrainEngineError",
+                "UpdateRefModelError",
+                "Update ref model request timeout",
+            )
+        except requests.exceptions.RequestException as e:
+            raise EngineError("TrainEngineError", "UpdateRefModelError", e)
+        except Exception as e:
+            raise EngineError(
+                "TrainEngineError",
+                "UpdateRefModelError",
+                f"Unexpected error: {e}",
+            )
+
     def train_batch_helper(
         self,
         input_: SequenceSample,  # key: str, value: tensor

@@ -291,14 +291,14 @@ actor:
       env_vars:
         # if not set CUDA_LAUNCH_BLOCKING = 1, megatron engine will hang in train phase
         CUDA_LAUNCH_BLOCKING: 1
-        # TODO remove this env, after release engine release_v1.2.0
-        ENGINE_PACKAGE_PATH: /storage/openpsi/codes/chucai.dzq/Asystem-HybridEngine
         # if use ling max v2, need to specify USE_MAX_V2 = 1
         USE_MAX_V2: 1
       image: /storage/openpsi/images/hybrid-engine-13680179-20251015181317.sif
 ref:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
+  enable_update_ref_model: true
+  update_ref_model_interval: 8
   hybrid_engine:
     group_size: ${gconfig.n_samples}
     train_bs_n_seqs: ${train_dataset.batch_size}
@@ -483,8 +483,6 @@ ref:
       env_vars:
         # if not set CUDA_LAUNCH_BLOCKING = 1, megatron engine will hang in train phase
         CUDA_LAUNCH_BLOCKING: 1
-        # TODO remove this env, after release engine release_v1.2.0
-        ENGINE_PACKAGE_PATH: /storage/openpsi/codes/chucai.dzq/Asystem-HybridEngine
         # if use ling max v2, need to specify USE_MAX_V2 = 1
         USE_MAX_V2: 1
       image: /storage/openpsi/images/hybrid-engine-13680179-20251015181317.sif

@@ -18,7 +18,7 @@ from areal.api.cli_args import (
     load_expr_config,
 )
 from areal.api.engine_api import WeightUpdateMeta
-from areal.api.io_struct import AllocationMode, FinetuneSpec
+from areal.api.io_struct import AllocationMode, FinetuneSpec, SaveLoadMeta
 from areal.extension.asystem.api.cli_args import GRPOConfig
 from areal.extension.asystem.ascheduler import AsystemScheduler
 from areal.extension.asystem.controller import RolloutController, TrainController
@@ -34,6 +34,30 @@ from areal.utils.data import cycle_dataloader
 from areal.utils.stats_logger import StatsLogger
 
 logger = logging.getLogger("Trainer")
+
+
+def clear_ref_resource(last_ref_model_path: str):
+    if last_ref_model_path is not None and os.path.exists(last_ref_model_path):
+        def cleanup_ref_model_path(path):
+            try:
+                if os.path.exists(path):
+                    shutil.rmtree(path)
+                    logger.info(
+                        f"Async cleanup completed for ref model path: {path}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Async cleanup failed for old ref model path {path}: {str(e)}"
+                )
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        executor.submit(
+            cleanup_ref_model_path, last_ref_model_path
+        )
+        executor.shutdown(wait=False)
+        logger.info(
+            f"Started async cleanup for old ref model path: {last_ref_model_path}"
+        )
 
 
 def clear_dir(path):
@@ -167,6 +191,8 @@ def main(args):
 
         epoch_num = config.total_train_epochs
         steps_per_epoch = len(dataloader)
+        ref_model_path = None
+        last_ref_model_path = None
         ############################## recover #########################################
         recover_meta_info_path = config.recover.recover_meta_info_path
         enable_recover = True
@@ -199,6 +225,16 @@ def main(args):
         if can_recover:
             dataloader.load_state_dict(recover_meta_info.dataloader_state)
             config.actor.hybrid_engine.recover_dir = recover_meta_info.checkpoint_path
+            if (
+                config.ref.enable_update_ref_model
+                and hasattr(recover_meta_info, "ref_model_path")
+                and recover_meta_info.ref_model_path
+            ):
+                ref_model_path = recover_meta_info.ref_model_path
+                config.ref.hybrid_engine.recover_dir = ref_model_path
+                logger.info(
+                    f"Recover ref model from path: {ref_model_path}"
+                )
 
         periodic_recover = periodic_checkpoint.Recover(config.recover)
         ##################################################################################
@@ -336,6 +372,7 @@ def main(args):
             path=f"{config.storage_prefix}/checkpoints/{config.experiment_name}/{config.trial_name}",
             alloc_mode=None,
         )
+
         for epoch in range(recover_epoch, epoch_num):
             data_generator = cycle_dataloader(dataloader)
             start_step = recover_step if can_recover and epoch == recover_epoch else 0
@@ -376,6 +413,42 @@ def main(args):
                                 wait_future_ordered([upload_future, update_future])
                             logger.info(
                                 f"{weight_update_config.type} update weight succeeded, step: {step}, epoch: {epoch}"
+                            )
+
+                    # Update ref model if enabled
+                    if (
+                        ref is not None
+                        and config.actor.hybrid_engine.wrap_policy.kl_ctl > 0
+                        and config.ref.enable_update_ref_model
+                        and (
+                        global_step
+                        * config.actor.hybrid_engine.wrap_policy.n_minibatches
+                        % config.ref.update_ref_model_interval
+                        == 0
+                    )
+                    ):
+                        with stats_tracker.record_timing("update_ref_model"):
+                            logger.info(
+                                f"start to update ref model, step: {step}, epoch: {epoch}, global_step: {global_step}"
+                            )
+                            last_ref_model_path = ref_model_path
+                            # Save actor weights to disk first
+                            ref_model_path = f"{config.storage_prefix}/checkpoints/ref_update/{config.experiment_name}/{config.trial_name}/{global_step}"
+                            actor_save_config = SaveLoadMeta(
+                                path=ref_model_path,
+                                weight_format="mcore",
+                                global_step=global_step,
+                                with_optim=True,
+                                base_model_path=None,
+                            )
+                            actor.save(actor_save_config)
+                            logger.info(
+                                f"saved actor weights to {ref_model_path} for ref model update"
+                            )
+
+                            ref.update_ref_model(ref_model_path)
+                            logger.info(
+                                f"update ref model succeeded, step: {step}, epoch: {epoch}, global_step: {global_step}"
                             )
 
                     with (
@@ -510,6 +583,7 @@ def main(args):
                                     dataloader.state_dict(),
                                     "latest_checkpoint",
                                     disable_save_hf=config.recover.latest_disable_save_hf,
+                                    ref_model_path=ref_model_path,
                                 )
                                 logger.info(
                                     f"[Trainer] latest_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
@@ -534,6 +608,7 @@ def main(args):
                                     dataloader.state_dict(),
                                     "periodic_checkpoint",
                                     disable_save_hf=config.recover.periodic_disable_save_hf,
+                                    ref_model_path="",
                                 )
                                 logger.info(
                                     f"[Trainer] periodic_checkpoint recover save success, epoch:{epoch}, epoch_step: {step}, global_step:{global_step}"
@@ -549,6 +624,12 @@ def main(args):
                             logger.info(
                                 f"notify_train_end_event succeeded, step: {step}, epoch: {epoch}"
                             )
+
+                        with (
+                            stats_tracker.record_timing("cleanup_last_ref_resources"),
+                        ):
+                            clear_ref_resource(last_ref_model_path)
+
                 metric = stats_tracker.export()
                 stats_logger.commit(epoch, step, global_step, metric)
                 global_step += 1

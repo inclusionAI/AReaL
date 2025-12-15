@@ -25,6 +25,7 @@ class RecoverInfo:
     rollout_buffer_state: dict = dataclasses.field(default_factory=dict)
     hf_path: str = ""
     checkpoint_path: str = ""
+    ref_model_path: str = ""
 
 
 class Recover:
@@ -78,6 +79,7 @@ class Recover:
         tokenizer: PreTrainedTokenizerFast | None = None,
         base_model_path: str | None = None,
         disable_save_hf: bool = True,
+        ref_model_path: str | None = None,
     ):
         # Determine checkpoint name based on global_step parity
         checkpoint_name = (
@@ -137,7 +139,13 @@ class Recover:
 
         # save meta info
         self.save_meta_info(
-            epoch, step, global_step, dataloader_state, rollout_buffer_state, name
+            epoch,
+            step,
+            global_step,
+            dataloader_state,
+            rollout_buffer_state,
+            name,
+            ref_model_path=ref_model_path,
         )
 
         # Create/update symlink
@@ -180,6 +188,7 @@ class Recover:
         dataloader_state: dict,
         rollout_buffer_state: dict,
         name: str = "latest_checkpoint",
+        ref_model_path: str | None = None,
     ):
         # Determine meta name based on global_step parity
         meta_name = (
@@ -201,6 +210,7 @@ class Recover:
             rollout_buffer_state=rollout_buffer_state,
             hf_path=hf_path,
             checkpoint_path=checkpoint_path,
+            ref_model_path=ref_model_path or "",
         )
         with open(os.path.join(path, "recover_info.pkl"), "wb") as f:
             pickle.dump(recover_info, f)
