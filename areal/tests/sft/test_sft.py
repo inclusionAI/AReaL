@@ -71,13 +71,12 @@ def run_sft(tmp_path: str, backend: str) -> None:
 
     with open(os.path.join(tmp_path, "losses.json")) as f:
         losses: list[float] = json.load(f)
-    print("Losses:", losses)
 
-    # with open(ref_losses_path) as f:
-    #     ref_losses: list[float] = json.load(f)
+    with open(ref_losses_path) as f:
+        ref_losses: list[float] = json.load(f)
 
     # Refer to https://docs.pytorch.org/docs/stable/testing.html#torch.testing.assert_close
-    # assert all(
-    #     loss == pytest.approx(ref_loss, rel=1.6e-2, abs=1e-5)
-    #     for loss, ref_loss in zip(losses, ref_losses)
-    # )
+    assert all(
+        loss == pytest.approx(ref_loss, rel=1.6e-2, abs=1e-5)
+        for loss, ref_loss in zip(losses, ref_losses)
+    )
