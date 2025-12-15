@@ -411,8 +411,8 @@ def test_multi_turn_math(tmp_path_factory):
     )
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
 
-    example_file = "examples/multi-turn-math/train.py"
-    config_name = "examples/multi-turn-math/config.yaml"
+    example_file = "examples/multi-turn-math/gsm8k_rl_mt.py"
+    config_name = "examples/multi-turn-math/gsm8k_grpo_mt.yaml"
     loop = asyncio.get_event_loop()
     success = loop.run_until_complete(
         run_example(
