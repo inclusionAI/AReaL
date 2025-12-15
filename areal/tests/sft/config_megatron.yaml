@@ -44,4 +44,3 @@ model:
     eps: 1e-5
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
-  

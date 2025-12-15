@@ -18,9 +18,7 @@ def test_sft(tmp_path: str, backend: str) -> None:
     ref_losses_path = os.path.join(base_dir, f"ref_losses_{backend}.json")
 
     # Wrap over the original config to use local models/datasets if possible
-    config, _ = load_expr_config(
-        ["--config", config_path], SFTConfig
-    )
+    config, _ = load_expr_config(["--config", config_path], SFTConfig)
 
     # Use get_model_path to check local or download from HuggingFace
     local_model_path = config.model.path.replace("/", "__")

@@ -1,9 +1,9 @@
 import json
 import os
 import sys
-import pytest
 from dataclasses import asdict
 
+import pytest
 import yaml
 from sh import Command
 
@@ -17,9 +17,7 @@ def test_grpo(tmp_path: str, backend: str) -> None:
     config_path = os.path.join(base_dir, f"config_{backend}.yaml")
 
     # Wrap over the original config to use local models/datasets if possible
-    config, _ = load_expr_config(
-        ["--config", config_path], GRPOConfig
-    )
+    config, _ = load_expr_config(["--config", config_path], GRPOConfig)
 
     # Use get_model_path to check local or download from HuggingFace
     local_model_path = config.actor.path.replace("/", "__")
