@@ -11,13 +11,8 @@ from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.tests.utils import get_dataset_path, get_model_path
 
 
-def test_fsdp_sft(tmp_path: str) -> None:
-    run_sft(tmp_path, backend="fsdp")
-
-def test_megatron_sft(tmp_path: str) -> None:
-    run_sft(tmp_path, backend="megatron")
-
-def run_sft(tmp_path: str, backend: str) -> None:
+@pytest.mark.parametrize("backend", ["fsdp", "megatron"])
+def test_sft(tmp_path: str, backend: str) -> None:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(base_dir, f"config_{backend}.yaml")
     ref_losses_path = os.path.join(base_dir, f"ref_losses_{backend}.json")
