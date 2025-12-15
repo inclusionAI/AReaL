@@ -619,6 +619,10 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             with self._input_cv:
                 pending_inputs = len(self._pending_inputs)
             cap_staleness = self.staleness_manager.get_pending_limit() - pending_inputs
+            if self.runner.max_queue_size < batch_size:
+                raise ValueError(
+                    f"Inference engine config's queue size is too small: {self.runner.max_queue_size} < batch size {batch_size}."
+                )
             cap_queue = self.runner.max_queue_size - (
                 self.runner.get_input_queue_size() + batch_size
             )

@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from threading import Lock
 from typing import Any
 
+import aiohttp
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
@@ -17,9 +18,9 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
-from areal.controller.batch import DistributedBatchMemory
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher
+from areal.scheduler.rpc.rtensor import RTensor
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
@@ -36,7 +37,7 @@ class _RemoteRolloutTaskInput:
     data: dict[str, Any]
     workflow: str
     workflow_kwargs: dict[str, Any]
-    should_accept_fn: str
+    should_accept_fn: str | None
 
 
 @dataclass
@@ -265,7 +266,7 @@ class RolloutController:
             # NOTE: No need to call `on_rollout_submitted` here.
             # This function will be passed to `BatchTaskDispather` where
             # `on_rollout_submitted` will be called upon dispatching
-            await self.scheduler.async_call_engine(
+            wait_task_id = await self.scheduler.async_call_engine(
                 worker.id,
                 "submit",
                 data=pending_task.data,
@@ -280,32 +281,27 @@ class RolloutController:
             traj: dict[str, Any] | None = None
 
             try:
-                # Wait for a generation to return
-                # NOTE: the returned result may not be the one that has
-                # been submitted before this callback
-                result = []
+                result = None
                 tik = time.time()
                 while (
-                    len(result) == 0 and time.time() - tik < self.config.request_timeout
+                    result is None and time.time() - tik < self.config.request_timeout
                 ):
                     result = await self.scheduler.async_call_engine(
                         worker.id,
-                        "wait",
-                        count=1,
+                        "wait_for_task",
+                        task_id=wait_task_id,
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
                         http_timeout=self.config.request_timeout,
                     )
 
                 # TimeourError will be catched below
-                if len(result) == 0:
+                if result is None:
                     raise TimeoutError(
                         f"Rollout request timed out after {self.config.request_timeout}"
                     )
 
-                assert len(result) == 1
-                traj = result[0]
-
+                traj = result
                 should_accept_traj = traj is not None
                 if should_accept_traj:
                     manager.on_rollout_accepted()
@@ -369,6 +365,7 @@ class RolloutController:
         # Log and trace
         if self.config.enable_rollout_tracing:
             logger.info("Rollout results are ready!")
+
         return [r.trajectory if r is not None else None for r in results]
 
     @trace_perf("rollout_controller.rollout_batch", category="scheduler")
@@ -393,11 +390,7 @@ class RolloutController:
             )
         results = self.wait(count=len(data))
         # Concatenate into batch tensor format
-        batch = concat_padded_tensors([r for r in results if r is not None])
-
-        # NOTE: DistributedBatchMemory.from_dict does nothing for now
-        # Just for sync with internal code
-        return DistributedBatchMemory.from_dict(batch)
+        return concat_padded_tensors([r for r in results if r is not None])
 
     @trace_perf("rollout_controller.prepare_batch", category="scheduler")
     def prepare_batch(
@@ -406,7 +399,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
-    ):
+    ) -> dict[str, Any]:
         """Prepare a batch with controlled staleness.
 
         Continuously submits from dataloader and waits for results, ensuring at least
@@ -441,11 +434,7 @@ class RolloutController:
 
         # Extract trajectories and concatenate
         trajectories = [r.trajectory if r is not None else None for r in results]
-        batch = concat_padded_tensors([t for t in trajectories if t is not None])
-
-        # NOTE: DistributedBatchMemory.from_dict does nothing for now
-        # Just for sync with internal code
-        return DistributedBatchMemory.from_dict(batch)
+        return concat_padded_tensors([t for t in trajectories if t is not None])
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.
@@ -542,3 +531,26 @@ class RolloutController:
     def runner(self):
         """For backward compatibility. The runner is now owned by the dispatcher."""
         return self.dispatcher.runner
+
+    async def clear_batches(self, *targets: dict[str, RTensor]):
+        """Extract shard IDs and call /data/clear on each worker."""
+        shards_by_node = RTensor.collect_shards(targets)
+
+        if not shards_by_node:
+            return
+
+        async def clear_node(node_addr, shard_ids):
+            async with aiohttp.ClientSession() as session:
+                async with session.delete(
+                    f"http://{node_addr}/data/clear", json={"shard_ids": shard_ids}
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        logger.info(
+                            f"Cleared {result.get('cleared_count', 0)} shards on {node_addr}"
+                        )
+
+        await asyncio.gather(
+            *[clear_node(addr, sids) for addr, sids in shards_by_node.items()],
+            return_exceptions=True,
+        )

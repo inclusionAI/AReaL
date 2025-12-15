@@ -1,14 +1,26 @@
 import argparse
+import logging as stdlib_logging
 import os
+import socket
 import traceback
+from collections.abc import Callable
 from concurrent.futures import Future
+from queue import Queue
+from threading import Lock, Thread
+from typing import Any
 
-from flask import Flask, jsonify, request
+import orjson
+from flask import Flask, Response, jsonify, request
 
 from areal.api.cli_args import BaseExperimentConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.platforms import current_platform
-from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
+from areal.scheduler.rpc import rtensor
+from areal.scheduler.rpc.rtensor import RTensor
+from areal.scheduler.rpc.serialization import (
+    deserialize_value,
+    serialize_value,
+)
 from areal.utils import logging, name_resolve, seeding
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -21,8 +33,66 @@ logger = logging.getLogger("SyncRPCServer")
 # Global engine instance - must be TrainEngine or InferenceEngine
 _engine: TrainEngine | InferenceEngine | None = None
 
+
+# Engine thread for executing all engine-related endpoints serially
+# This ensures NCCL compatibility by running engine operations in a single thread,
+# while allowing /data/ endpoints to be processed concurrently
+_engine_thread: Thread | None = None
+_engine_work_queue: Queue[tuple[Callable, tuple, dict, Future]] | None = None
+_engine_thread_lock = Lock()
+
+# Server address (set at startup)
+_server_host: str = "0.0.0.0"
+_server_port: int = 8000
+
 # Create Flask app
 app = Flask(__name__)
+
+
+def _init_engine_thread():
+    global _engine_thread, _engine_work_queue
+
+    with _engine_thread_lock:
+        if _engine_thread is not None and _engine_thread.is_alive():
+            return  # Already initialized
+
+        _engine_work_queue = Queue()
+
+        def engine_worker():
+            logger.info("Engine thread started")
+            while True:
+                try:
+                    work_item = _engine_work_queue.get()
+                    if work_item is None:  # Shutdown signal
+                        logger.info("Engine thread shutting down")
+                        break
+
+                    func, args, kwargs, future = work_item
+                    try:
+                        result = func(*args, **kwargs)
+                        future.set_result(result)
+                    except Exception as e:
+                        future.set_exception(e)
+                    finally:
+                        _engine_work_queue.task_done()
+                except Exception as e:
+                    logger.error(f"Error in engine thread: {e}")
+                    if work_item and len(work_item) > 3:
+                        work_item[3].set_exception(e)
+
+        _engine_thread = Thread(target=engine_worker, daemon=True, name="EngineWorker")
+        _engine_thread.start()
+        logger.info("Engine thread initialized")
+
+
+def _submit_to_engine_thread(func: Callable, *args, **kwargs) -> Any:
+    global _engine_work_queue
+
+    _init_engine_thread()
+
+    future = Future()
+    _engine_work_queue.put((func, args, kwargs, future))
+    return future.result()  # Block until result is available
 
 
 @app.route("/health", methods=["GET"])
@@ -34,7 +104,10 @@ def health_check():
 
 @app.route("/configure", methods=["POST"])
 def configure():
-    """Configure worker with experiment config."""
+    """Configure worker with experiment config.
+
+    This endpoint is routed to the engine thread for serial execution.
+    """
     try:
         data = request.get_json()
         if data is None:
@@ -55,16 +128,17 @@ def configure():
         config = deserialize_value(config)
         config: BaseExperimentConfig
 
-        name_resolve.reconfigure(config.cluster.name_resolve)
-        seeding.set_random_seed(config.seed, key=f"{role}{rank}")
-
-        return jsonify(
-            {
+        def execute_configure():
+            name_resolve.reconfigure(config.cluster.name_resolve)
+            seeding.set_random_seed(config.seed, key=f"{role}{rank}")
+            return {
                 "status": "success",
                 "message": "Worker configured successful.",
                 "result": None,
             }
-        )
+
+        result = _submit_to_engine_thread(execute_configure)
+        return jsonify(result)
     except Exception as e:
         logger.error(f"Unexpected error in configure: {e}\n{traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
@@ -72,7 +146,10 @@ def configure():
 
 @app.route("/set_env", methods=["POST"])
 def set_env():
-    """Set environment variables for the worker process."""
+    """Set environment variables for the worker process.
+
+    This endpoint is routed to the engine thread for serial execution.
+    """
     try:
         data = request.get_json()
         if data is None:
@@ -84,7 +161,7 @@ def set_env():
         if not isinstance(env_payload, dict):
             return jsonify({"error": "'env' must be a dictionary"}), 400
 
-        for key, value in env_payload.items():
+        for key in env_payload.keys():
             if not isinstance(key, str):
                 return (
                     jsonify(
@@ -96,10 +173,15 @@ def set_env():
                     ),
                     400,
                 )
-            os.environ[key] = str(value)
-            logger.info(f"Set {key}={value}")
 
-        return jsonify({"status": "success"})
+        def execute_set_env():
+            for key, value in env_payload.items():
+                os.environ[key] = str(value)
+                logger.info(f"Set {key}={value}")
+            return {"status": "success"}
+
+        result = _submit_to_engine_thread(execute_set_env)
+        return jsonify(result)
 
     except Exception as e:
         logger.error(f"Unexpected error in set_env: {e}\n{traceback.format_exc()}")
@@ -111,6 +193,8 @@ def create_engine():
     """
     Create and initialize a TrainEngine or InferenceEngine instance on this worker.
 
+    This endpoint is routed to the engine thread for serial execution.
+
     Expected JSON payload:
     {
         "engine": "areal.engine.ppo.actor.FSDPPPOActor",  # Import path
@@ -119,14 +203,11 @@ def create_engine():
             "config": ...,  # Engine config
         }
     }
-
-    Distributed training environment variables (RANK, WORLD_SIZE, MASTER_ADDR,
-    MASTER_PORT, LOCAL_RANK, etc.) should be configured via the `/set_env`
-    endpoint before invoking this endpoint.
     """
     global _engine
 
     try:
+        # Parse request in main thread (has Flask request context)
         data = request.get_json()
         if data is None:
             return jsonify({"error": "Invalid JSON in request body"}), 400
@@ -139,7 +220,7 @@ def create_engine():
         if not engine_path:
             return jsonify({"error": "Missing 'engine' field in request"}), 400
 
-        # Dynamic import
+        # Dynamic import (can be done in main thread)
         try:
             engine_class = import_from_string(engine_path)
 
@@ -163,10 +244,21 @@ def create_engine():
             logger.error(f"Invalid engine type: {e}")
             return jsonify({"error": str(e)}), 400
 
-        # Instantiate engine
+        # Instantiate engine in engine thread (may involve NCCL initialization)
+        def create_engine_in_engine_thread():
+            """Create engine in engine thread."""
+            try:
+                engine = engine_class(*init_args, **init_kwargs)
+                logger.info(f"Engine '{engine_path}' instantiated successfully")
+                return engine
+            except Exception as e:
+                logger.error(
+                    f"Failed to instantiate engine: {e}\n{traceback.format_exc()}"
+                )
+                raise
+
         try:
-            _engine = engine_class(*init_args, **init_kwargs)
-            logger.info(f"Engine '{engine_path}' instantiated successfully")
+            _engine = _submit_to_engine_thread(create_engine_in_engine_thread)
             return jsonify(
                 {
                     "status": "success",
@@ -175,7 +267,6 @@ def create_engine():
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to instantiate engine: {e}\n{traceback.format_exc()}")
             return jsonify({"error": f"Failed to instantiate engine: {str(e)}"}), 500
 
     except Exception as e:
@@ -189,6 +280,9 @@ def create_engine():
 def call_engine_method():
     """
     Call a method on the engine instance.
+
+    This endpoint is routed to the engine thread to ensure all engine operations
+    run serially in the same thread, preventing NCCL conflicts.
 
     Expected JSON payload:
     {
@@ -211,78 +305,190 @@ def call_engine_method():
             return jsonify({"error": "Invalid JSON in request body"}), 400
 
         method_name = data.get("method")
-        args = data.get("args", [])
-        kwargs = data.get("kwargs", {})
+        raw_args = data.get("args", [])
+        raw_kwargs = data.get("kwargs", {})
 
         if not method_name:
             return jsonify({"error": "Missing 'method' field in request"}), 400
 
-        # Deserialize args and kwargs (convert SerializedTensor dicts to tensors)
-        args = deserialize_value(args)
-        kwargs = deserialize_value(kwargs)
+        # Deserialize data
+        raw_args = deserialize_value(raw_args)
+        raw_kwargs = deserialize_value(raw_kwargs)
 
+        # Fetch remote tensors if any
+        args = RTensor.localize(raw_args)
+        kwargs = RTensor.localize(raw_kwargs)
+
+        # FIXME: remove should_broadcast param
+        should_broadcast = kwargs.pop("should_broadcast", True)
+
+        def execute_in_engine_thread():
+            try:
+                if should_broadcast and isinstance(_engine, TrainEngine):
+                    logger.debug(
+                        f"Broadcasting data for TrainEngine method: {method_name}"
+                    )
+
+                    args_bcast = tensor_container_to(
+                        args, current_platform.current_device()
+                    )
+                    args_bcast = broadcast_tensor_container(
+                        args_bcast,
+                        src_rank=_engine.current_data_parallel_head(),
+                        group=_engine.context_and_model_parallel_group,
+                    )
+                    kwargs_bcast = tensor_container_to(
+                        kwargs, current_platform.current_device()
+                    )
+                    kwargs_bcast = broadcast_tensor_container(
+                        kwargs_bcast,
+                        src_rank=_engine.current_data_parallel_head(),
+                        group=_engine.context_and_model_parallel_group,
+                    )
+                    logger.debug("Broadcasting data done.")
+                else:
+                    args_bcast = args
+                    kwargs_bcast = kwargs
+
+                logger.debug(f"Calling engine method: {method_name}")
+                method = getattr(_engine, method_name)
+                result = method(*args_bcast, **kwargs_bcast)
+
+                # Handle update weights future
+                if isinstance(result, Future):
+                    logger.debug("Waiting for update weights future")
+                    result = result.result()
+                    logger.debug("Update weights future done")
+
+                return result
+            except AttributeError as e:
+                logger.error(f"Method '{method_name}' not found on engine: {e}")
+                raise ValueError(f"Engine does not have method '{method_name}'")
+            except Exception as e:
+                logger.error(
+                    f"Engine method '{method_name}' failed: {e}\n{traceback.format_exc()}"
+                )
+                raise
+
+        # Submit to engine thread
         try:
-            should_bcast = kwargs.pop("_should_bcast", True)
-            if should_bcast and isinstance(_engine, TrainEngine):
-                logger.info(f"Broadcasting data for TrainEngine method: {method_name}")
-
-                args = tensor_container_to(args, current_platform.current_device())
-                args = broadcast_tensor_container(
-                    args,
-                    src_rank=_engine.current_data_parallel_head(),
-                    group=_engine.context_and_model_parallel_group,
-                )
-                kwargs = tensor_container_to(kwargs, current_platform.current_device())
-                kwargs = broadcast_tensor_container(
-                    kwargs,
-                    src_rank=_engine.current_data_parallel_head(),
-                    group=_engine.context_and_model_parallel_group,
-                )
-                logger.info("Broadcasting data done.")
+            result = _submit_to_engine_thread(execute_in_engine_thread)
         except Exception as e:
-            logger.error(
-                f"Broadcasting data for method '{method_name}' failed: {e}\n{traceback.format_exc()}"
-            )
+            error_msg = str(e)
+            if "Engine does not have method" in error_msg:
+                return (
+                    jsonify({"error": error_msg}),
+                    400,
+                )
             return (
-                jsonify({"error": f"Data broadcast '{method_name}' failed: {str(e)}"}),
+                jsonify(
+                    {"error": f"Engine method '{method_name}' failed: {error_msg}"}
+                ),
                 500,
             )
 
-        # Call method directly
-        logger.info(f"Calling engine method: {method_name}")
-        try:
-            # Get the method - will raise AttributeError if it doesn't exist
-            method = getattr(_engine, method_name)
-            result = method(*args, **kwargs)
-
-            # HACK: handle update weights future
-            if isinstance(result, Future):
-                logger.info("Waiting for update weights future")
-                result = result.result()
-                logger.info("Update weights future done")
-
-            # Serialize result (convert tensors to SerializedTensor dicts)
-            serialized_result = serialize_value(result)
-            return jsonify({"status": "success", "result": serialized_result})
-
-        except AttributeError as e:
-            logger.error(f"Method '{method_name}' not found on engine: {e}")
-            return (
-                jsonify({"error": f"Engine does not have method '{method_name}'"}),
-                400,
+        # Convert all tensors to RTensors and store the tensor locally
+        layout = RTensor.extract_layout(
+            result,
+            layouts=dict(args=raw_args, kwargs=raw_kwargs),
+            node_addr=f"{_server_host}:{_server_port}",
+        )
+        if layout is not None:
+            result = RTensor.rtensorize(
+                result,
+                layout,
+                node_addr=f"{_server_host}:{_server_port}",
             )
-        except Exception as e:
-            logger.error(
-                f"Engine method '{method_name}' failed: {e}\n{traceback.format_exc()}"
-            )
-            return (
-                jsonify({"error": f"Engine method '{method_name}' failed: {str(e)}"}),
-                500,
-            )
+        serialized_result = serialize_value(result)
+        return jsonify({"status": "success", "result": serialized_result})
 
     except Exception as e:
         logger.error(f"Unexpected error in call: {e}\n{traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
+# ==================== Batch Data Storage Endpoints ====================
+@app.route("/data/<shard_id>", methods=["PUT"])
+def store_batch_data(shard_id: str):
+    """Store batch data shard."""
+
+    try:
+        data_bytes = request.get_data()
+
+        # Deserialize to get tensor (already on CPU)
+        serialized_data = orjson.loads(data_bytes)
+        data = deserialize_value(serialized_data)
+
+        rtensor.store(shard_id, data)
+
+        logger.debug(f"Stored batch shard {shard_id} (size={len(data_bytes)} bytes)")
+        return jsonify({"status": "ok", "shard_id": shard_id})
+
+    except Exception as e:
+        logger.error(f"Error storing batch shard {shard_id}: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/data/<shard_id>", methods=["GET"])
+def retrieve_batch_data(shard_id: str):
+    """Retrieve batch data shard."""
+
+    logger.debug(f"Received data get request for shard {shard_id}")
+    try:
+        try:
+            data = rtensor.fetch(shard_id)
+        except KeyError:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Shard {shard_id} not found",
+                    }
+                ),
+                404,
+            )
+
+        serialized_data = serialize_value(data)
+        data_bytes = orjson.dumps(serialized_data)
+
+        logger.debug(f"Retrieved batch shard {shard_id} (size={len(data_bytes)} bytes)")
+        return Response(data_bytes, mimetype="application/octet-stream")
+
+    except Exception as e:
+        logger.error(f"Error retrieving batch shard {shard_id}: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/data/clear", methods=["DELETE"])
+def clear_batch_data():
+    """Clear specified batch data shards.
+
+    Expected JSON payload:
+    {
+        "shard_ids": ["id1", "id2", ...]
+    }
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        shard_ids = data.get("shard_ids", [])
+        if not isinstance(shard_ids, list):
+            return (
+                jsonify({"status": "error", "message": "'shard_ids' must be a list"}),
+                400,
+            )
+
+        cleared_count = sum(rtensor.remove(sid) for sid in shard_ids)
+        stats = dict(cleared_count=cleared_count, **rtensor.storage_stats())
+        logger.info(f"Cleared {cleared_count} batch shards. Stats: {stats}")
+        stats.update({"status": "ok"})
+        return jsonify(stats)
+
+    except Exception as e:
+        logger.error(f"Error clearing batch data: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==================== Cleanup ====================
 
 
 def cleanup_engine():
@@ -295,6 +501,24 @@ def cleanup_engine():
         except Exception as e:
             logger.error(f"Error destroying engine: {e}")
         _engine = None
+
+
+def cleanup_engine_thread():
+    """Clean up engine thread on shutdown."""
+    global _engine_thread, _engine_work_queue
+
+    with _engine_thread_lock:
+        if _engine_work_queue is not None:
+            # Send shutdown signal
+            _engine_work_queue.put(None)
+            _engine_work_queue = None
+
+        if _engine_thread is not None:
+            _engine_thread.join(timeout=5.0)
+            if _engine_thread.is_alive():
+                logger.warning("Engine thread did not shut down gracefully")
+            _engine_thread = None
+            logger.info("Engine thread cleaned up")
 
 
 def main():
@@ -317,21 +541,24 @@ def main():
     args, _ = parser.parse_known_args()
 
     # Configure Werkzeug logging
-    import logging as stdlib_logging
-
     werkzeug_logger = stdlib_logging.getLogger("werkzeug")
     werkzeug_logger.setLevel(getattr(stdlib_logging, args.werkzeug_log_level))
+
+    # Set global server address variables
+    global _server_host, _server_port
+    _server_host = args.host
+    if _server_host == "0.0.0.0":
+        _server_host = socket.gethostbyname(socket.gethostname())
+    _server_port = args.port
 
     logger.info(f"Starting sync RPC server on {args.host}:{args.port}")
     logger.info(f"Werkzeug log level: {args.werkzeug_log_level}")
 
-    # Run Flask app with single-threaded synchronous mode
-    # threaded=False ensures NCCL compatibility
     try:
         app.run(
             host=args.host,
             port=args.port,
-            threaded=False,  # Single-threaded synchronous execution
+            threaded=True,  # Multi-threaded for concurrent /data/ request handling
             processes=1,  # Single process
             debug=False,
             use_reloader=False,
@@ -339,6 +566,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("Shutting down sync RPC server")
     finally:
+        cleanup_engine_thread()
         cleanup_engine()
 
 

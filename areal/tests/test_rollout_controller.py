@@ -14,7 +14,6 @@ from areal.api.cli_args import (
 from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Worker
 from areal.controller import RolloutController
-from areal.controller.batch import DistributedBatchMemory
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.scheduler.local import LocalScheduler
 from areal.tests.utils import get_model_path
@@ -488,6 +487,45 @@ class TestRolloutControllerSubmitAndWait:
 
 
 class TestRolloutControllerBatchOperations:
+    def test_rollout_batch_returns_dict_not_rtensor(self):
+        """Verify RolloutController returns regular dicts, NOT RTensors.
+
+        Unlike TrainController which uses RTensors for distributed batch storage,
+        RolloutController uses task-based round-robin and returns regular Python dicts.
+        """
+        from areal.scheduler.rpc.rtensor import RTensor
+
+        config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        batch_data = [{"id": i} for i in range(3)]
+        batch = controller.rollout_batch(
+            batch_data,
+            workflow="areal.tests.utils.TestWorkflow",
+            workflow_kwargs={},
+        )
+
+        # Verify batch is a dict, not RTensor
+        assert isinstance(batch, dict), "RolloutController should return dict"
+
+        # Verify no RTensors in the result
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                assert not isinstance(value, RTensor), f"Found RTensor at key {key}"
+            elif isinstance(value, dict):
+                for k, v in value.items():
+                    assert not isinstance(v, RTensor), f"Found RTensor at {key}.{k}"
+
+        controller.destroy()
+
     def test_rollout_batch_submits_all_data(self):
         config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
         scheduler = MockScheduler()
@@ -507,8 +545,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        assert isinstance(batch, DistributedBatchMemory)
-        assert len(batch) == 4
+        # Check batch size (first dimension of input_ids tensor)
+        assert batch["input_ids"].shape[0] == 4
 
         controller.destroy()
 
@@ -531,7 +569,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        assert len(batch) == 10
+        # Check batch size (first dimension of input_ids tensor)
+        assert batch["input_ids"].shape[0] == 10
 
         controller.destroy()
 
@@ -991,7 +1030,6 @@ def test_rollout_controller_integration(tmp_path, model_path):
                 tokenizer=tokenizer,
             ),
         )
-        assert isinstance(result, DistributedBatchMemory)
         assert len(result) == bs
     finally:
         rollout.destroy()

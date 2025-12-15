@@ -1,16 +1,3 @@
-"""Tensor and dataclass serialization utilities for RPC communication.
-
-This module provides utilities to serialize and deserialize PyTorch tensors
-and dataclass instances for transmission over HTTP/JSON. Tensors are encoded
-as base64 strings and dataclasses preserve their type information with metadata
-stored in Pydantic models.
-
-Assumptions:
-- All tensors are on CPU
-- Gradient tracking (requires_grad) is not preserved
-- Dataclasses are reconstructed with their original types
-"""
-
 import base64
 import importlib
 import importlib.util
@@ -36,22 +23,10 @@ logger = logging.getLogger("SyncRPCServer")
 
 
 class SerializedTensor(BaseModel):
-    """Pydantic model for serialized tensor with metadata.
-
-    Attributes
-    ----------
-    type : str
-        Type marker, always "tensor"
-    data : str
-        Base64-encoded tensor data
-    shape : List[int]
-        Tensor shape
-    dtype : str
-        String representation of dtype (e.g., "torch.float32")
-    """
+    """Pydantic model for serialized tensor with metadata (inline data)."""
 
     type: Literal["tensor"] = Field(default="tensor")
-    data: str
+    data: str | None = None
     shape: list[int]
     dtype: str
 
@@ -71,6 +46,13 @@ class SerializedTensor(BaseModel):
         SerializedTensor
             Serialized tensor with metadata
         """
+        if tensor.is_meta:
+            return cls(
+                data=None,
+                shape=list(tensor.shape),
+                dtype=str(tensor.dtype),
+            )
+
         # Move to CPU for serialization (detach to avoid gradient tracking)
         cpu_tensor = tensor.detach().cpu()
 
@@ -102,12 +84,15 @@ class SerializedTensor(BaseModel):
         torch.Tensor
             Reconstructed CPU tensor
         """
-        # Decode base64 to bytes
-        buffer = base64.b64decode(self.data.encode("utf-8"))
-
         # Parse dtype string (e.g., "torch.float32" -> torch.float32)
         dtype_str = self.dtype.replace("torch.", "")
         dtype = getattr(torch, dtype_str)
+
+        if self.data is None:
+            return torch.empty(self.shape, dtype=dtype, device="meta")
+
+        # Decode base64 to bytes
+        buffer = base64.b64decode(self.data.encode("utf-8"))
 
         np_array = np.frombuffer(buffer, dtype=self._torch_dtype_to_numpy(dtype))
         # Copy the array to make it writable before converting to tensor
@@ -162,7 +147,7 @@ class SerializedNDArray(BaseModel):
         Type marker, always "ndarray"
     data : str
         Base64-encoded contiguous bytes of the array
-    shape : List[int]
+    shape : list[int]
         Array shape
     dtype : str
         NumPy dtype string representation (e.g., "<f4")
@@ -392,9 +377,6 @@ def serialize_value(value: Any) -> Any:
     Any
         Serialized value (JSON-compatible with SerializedTensor and SerializedDataclass dicts)
     """
-    # Handle None
-    if value is None:
-        return None
 
     # Handle torch.Tensor
     if isinstance(value, torch.Tensor):
@@ -443,43 +425,17 @@ def serialize_value(value: Any) -> Any:
 
 
 def deserialize_value(value: Any) -> Any:
-    """Recursively deserialize a value, converting SerializedTensor and SerializedDataclass dicts back.
-
-    This function transparently handles:
-    - SerializedTensor dict -> torch.Tensor (CPU, no gradient tracking)
-    - SerializedNDArray dict -> numpy.ndarray
-    - SerializedDataclass dict -> dataclass instance (reconstructed with original type)
-    - SerializedTokenizer dict -> Hugging Face tokenizer
-    - dict -> recursively deserialize values
-    - list -> recursively deserialize elements
-    - primitives -> unchanged
-
-    Parameters
-    ----------
-    value : Any
-        Value to deserialize (potentially containing SerializedTensor and SerializedDataclass dicts)
-
-    Returns
-    -------
-    Any
-        Deserialized value with torch.Tensor and dataclass objects restored
-    """
-    # Handle None
-    if value is None:
-        return None
-
-    # Handle dict - check if it's a SerializedDataclass or SerializedTensor
+    # Handle dict - check if it's a SerializedDataclass, SerializedTensor
     if isinstance(value, dict):
         # Check for SerializedDataclass marker (check before tensor)
         if value.get("type") == "dataclass":
             try:
                 serialized_dc = SerializedDataclass.model_validate(value)
                 dataclass_type, data = serialized_dc.to_dataclass()
-                # Recursively deserialize the fields
+
                 deserialized_data = {
                     key: deserialize_value(val) for key, val in data.items()
                 }
-                # Reconstruct the dataclass instance
                 return dataclass_type(**deserialized_data)
             except Exception as e:
                 # If parsing fails, treat as regular dict
