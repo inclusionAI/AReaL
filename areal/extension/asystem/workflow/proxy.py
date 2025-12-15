@@ -21,7 +21,6 @@ from areal.experimental.openai.proxy import (
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, stats_tracker
 from areal.utils.data import (
-    concat_list_of_dicts_along_seq,
     concat_padded_tensors,
 )
 from areal.utils.dynamic_import import import_from_string
@@ -31,7 +30,9 @@ logger = logging.getLogger(__name__)
 
 
 def sync_run_task(
-    data, proxy_addr, run_agent_return_reward: Callable[[Any], Awaitable[float | tuple[float, dict]]]
+    data,
+    proxy_addr,
+    run_agent_return_reward: Callable[[Any], Awaitable[float | tuple[float, dict]]],
 ):
     async def run_task(data, proxy_addr, run_agent_return_reward: Callable):
         async with ProxySession(base_url=proxy_addr) as session:
@@ -49,6 +50,7 @@ def sync_run_task(
                     reward = res
             except Exception as e:
                 import traceback
+
                 traceback.print_exc()
                 logger.error(f"Error in sync_run_task: {e}")
                 raise e
@@ -156,7 +158,9 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                 ".".join([run_agent_return_reward_path, "run_agent_return_reward"]),
             )
         else:
-            raise ValueError(f"run_agent_return_reward_path must be a dict or str, but got {type(run_agent_return_reward_path)}")
+            raise ValueError(
+                f"run_agent_return_reward_path must be a dict or str, but got {type(run_agent_return_reward_path)}"
+            )
         self.dump_dir = dump_dir
         self.export_style = export_style
 
@@ -180,7 +184,9 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                 self.run_agent_return_reward.get("default", None),
             )
             if run_agent_return_reward is None:
-                raise ValueError(f"No run_agent_return_reward found for task_type {task_type}")
+                raise ValueError(
+                    f"No run_agent_return_reward found for task_type {task_type}"
+                )
         else:
             run_agent_return_reward = self.run_agent_return_reward
 
@@ -213,7 +219,7 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                 session_ids=[session_id], style=self.export_style, discount=0.9
             )
             completions[session_id] = list(completion_dict.values())
-            
+
             print(
                 f"session_id: {session_id}, completions num: {len(completions[session_id])}"
             )
@@ -224,11 +230,13 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                     continue
                 version = completion_list[0].model_response.output_version
 
-                dump_path = os.path.join(os.environ.get("LOG_DIR", ""), self.dump_dir, str(version))
+                dump_path = os.path.join(
+                    os.environ.get("LOG_DIR", ""), self.dump_dir, str(version)
+                )
                 await aiofiles.os.makedirs(dump_path, exist_ok=True)
                 # Get the unique identifier for this prompt
                 qid = None
-                for key in ["query_id", "id", "qid"]:
+                for key in ["query_id", "id", "qid", "task_id"]:
                     qid = data.get(key, None)
                     if qid is not None:
                         break
@@ -238,14 +246,14 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                 info = f"\n=== Completion Session ID: {session_id} ===\n"
                 for i, completion in enumerate(completion_list):
                     info += f"Completion {i + 1}\n"
-                    info += f"=======Input Messages=======\n"
+                    info += "=======Input Messages=======\n"
                     for message in completion.messages:
                         role = message.get("role", "unknown")
                         content = message.get("content", "")
                         info += f"role[{role}]: {content}\n"
                         if "tool_calls" in message:
                             info += f"\t[tool_calls]: {message['tool_calls']}\n"
-                    
+
                     if completion.is_completion:
                         info += f"=======Completion=======\n{completion.completion}\n"
                     else:
@@ -255,20 +263,17 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
                     info += f"=======Output Tokens=======\n{completion.model_response.output_tokens}\n"
                     info += "=========================\n\n"
 
-
                 # Dump rollout to file
                 file_path = os.path.join(dump_path, f"{qid}.txt")
                 async with aiofiles.open(file_path, "a") as f:
                     await f.write(info + "\n")
-        
+
         trajs = []
         for session_id, completion_list in completions.items():
             assert all(
                 isinstance(v, InteractionWithTokenLogpReward) for v in completion_list
             ), completion_list
 
-            trajs.extend(
-                [v.to_tensor_dict() for v in completion_list]
-            )
+            trajs.extend([v.to_tensor_dict() for v in completion_list])
         results = concat_padded_tensors(trajs)
         return results
