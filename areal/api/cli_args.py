@@ -175,7 +175,7 @@ class GenerationHyperparameters:
             "help": "Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored."
         },
     )
-# NOTE: to add new parameters, please correctly handle them in the `to_openai_args_dict` method.
+    # NOTE: to add new parameters, please correctly handle them in the `to_openai_args_dict` method.
 
     def new(self, **kwargs):
         args = asdict(self)
