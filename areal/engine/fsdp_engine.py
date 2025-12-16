@@ -946,7 +946,7 @@ class FSDPEngine(TrainEngine):
         buffer_size = 0
         named_tensors: list[tuple[str, torch.Tensor]] = []
 
-        if meta.use_lora:
+        if self.config.use_lora:
             # For LoRA, only iterate over trainable LoRA parameters
             param_iterator = (
                 (name, param)
