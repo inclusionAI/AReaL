@@ -99,8 +99,8 @@ def concat_prompt_token_ids_with_parent(
     message_list: list[dict],
     parent: InteractionWithTokenLogpReward | None,
     tokenizer: "PreTrainedTokenizerFast",
-    start: str,
-    end: str,
+    tools: Iterable[ChatCompletionToolParam] | None = None,
+    extra_body: Body = {}, 
 ) -> list[int]:
     """Concatenate prompt token IDs with parent interaction's tokens."""
     parent_tokens = []
@@ -111,22 +111,14 @@ def concat_prompt_token_ids_with_parent(
             parent.model_response.input_tokens + parent.model_response.output_tokens
         )
     # By default, follows Qwen3 chat template.
-    message_strs = []
-    for msg in message_list:
-        message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
-        warn = msg["role"] not in ["user", "system"] or any(
-            k not in ["content", "role"] for k in msg.keys()
-        )
-        if warn:
-            logger.warning(
-                "When using 'concat' chat template, only 'user' or 'system' role "
-                "messages with 'content' field are properly handled. Other roles "
-                "or extra fields may lead to unexpected tokenization results. "
-                "Please ensure user-side messages are only of 'user' or 'system' "
-                "role with 'content' field."
-            )
-    message_strs.append(f"{start}assistant\n")
-    prompt_token_ids = parent_tokens + tokenizer.encode("".join(message_strs))
+    child_tokens = tokenizer.apply_chat_template(
+        message_list,
+        tools=tools,
+        add_generation_prompt=True,
+        tokenize=True,
+        **extra_body.get("chat_template_kwargs", {}),
+    )
+    prompt_token_ids = parent_tokens + child_tokens
     return prompt_token_ids
 
 
@@ -230,8 +222,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 messages_list,
                 interaction.parent if interaction is not None else None,
                 self.tokenizer,
-                self.messages_delimiter_start,
-                self.messages_delimiter_end,
+                tools=tools,
+                extra_body=extra_body,
             )
         else:
             raise ValueError(
@@ -521,8 +513,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 messages_list,
                 interaction.parent if interaction is not None else None,
                 self.tokenizer,
-                self.messages_delimiter_start,
-                self.messages_delimiter_end,
+                tools=tools,
+                extra_body=extra_body,
             )
         else:
             raise ValueError(

@@ -127,8 +127,8 @@ class ProxyWorkflow(RolloutWorkflow):
                 for key in ["query_id", "id", "qid"]:
                     qid = data.get(key, None)
                     if qid is not None:
+                        qid = str(qid)
                         break
-                qid = str(qid)
                 qid = qid + f"_{session_id}" if qid is not None else session_id
 
                 info = f"\n=== Completion Session ID: {session_id} ===\n"
