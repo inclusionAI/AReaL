@@ -1,6 +1,7 @@
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from fastapi import Request
@@ -14,6 +15,11 @@ from tenacity import (
     stop_never,
     wait_exponential,
 )
+
+if TYPE_CHECKING:
+    from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
+
+    from areal.api.engine_api import InferenceEngine
 
 from areal.utils import logging
 

@@ -79,6 +79,12 @@ class ModelResponse:
     def output_len(self) -> int:
         return len(self.output_tokens)
 
+    @property
+    def output_tokens_without_stop(self) -> list[int]:
+        if self.stop_reason not in ["length", "abort"] and self.output_tokens:
+            return self.output_tokens[:-1]
+        return self.output_tokens
+
 
 @dataclass
 class FinetuneSpec:

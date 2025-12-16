@@ -95,6 +95,15 @@ def _ensure_message_dict_list(
     return normalized
 
 
+def get_extra_tokens_after_im_end(tokenizer: "PreTrainedTokenizerFast") -> list[int]:
+    if not hasattr(get_extra_tokens_after_im_end, '_cache'):
+        im_end_token_id = tokenizer.eos_token_id
+        simple_chat_tokens = tokenizer.apply_chat_template([{"role": "user", "content": ""}], tokenize=True, add_generation_prompt=False)
+        im_end_index = len(simple_chat_tokens) - 1 - simple_chat_tokens[::-1].index(im_end_token_id)
+        get_extra_tokens_after_im_end._cache = simple_chat_tokens[im_end_index + 1 :]
+    return get_extra_tokens_after_im_end._cache
+
+
 def concat_prompt_token_ids_with_parent(
     message_list: list[dict],
     parent: InteractionWithTokenLogpReward | None,
@@ -107,8 +116,9 @@ def concat_prompt_token_ids_with_parent(
     if parent is not None:
         if parent.model_response is None:
             raise ValueError("Parent interaction has no model_response.")
+        # TODO: (yulangz) how to handle here when stop is set?
         parent_tokens = (
-            parent.model_response.input_tokens + parent.model_response.output_tokens
+            parent.model_response.input_tokens + parent.model_response.output_tokens # with stop tokens
         )
     # By default, follows Qwen3 chat template.
     child_tokens = tokenizer.apply_chat_template(
@@ -118,7 +128,7 @@ def concat_prompt_token_ids_with_parent(
         tokenize=True,
         **extra_body.get("chat_template_kwargs", {}),
     )
-    prompt_token_ids = parent_tokens + child_tokens
+    prompt_token_ids = parent_tokens + get_extra_tokens_after_im_end(tokenizer) + child_tokens
     return prompt_token_ids
 
 
@@ -308,7 +318,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Call inference engine
         response = await self.engine.agenerate(model_request)
-        output_text = self.tokenizer.decode(response.output_tokens)
+        output_text = self.tokenizer.decode(response.output_tokens_without_stop)
 
         # Parse tool calls.
         tool_calls = None
@@ -593,7 +603,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         # Call inference engine
         engine_resp = await self.engine.agenerate(model_request)
-        output_text = self.tokenizer.decode(engine_resp.output_tokens)
+        output_text = self.tokenizer.decode(engine_resp.output_tokens_without_stop)
 
         # Parse tool calls.
         tool_calls = None
