@@ -1002,7 +1002,8 @@ def test_rollout_controller_integration(tmp_path, model_path):
                 tokenizer=tokenizer,
             ),
         )
-        assert len(result) == bs
+        assert isinstance(result, dict)
+        assert len(result["attention_mask"].shards) == bs
     finally:
         rollout.destroy()
 
