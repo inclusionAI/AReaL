@@ -14,7 +14,7 @@ cluster:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
 
-allocation_mode: sglang:d4p1t1+d4p1t1
+allocation_mode: sglang:d4p1t1+megatron:d4p1t1
 
 rollout:
   experiment_name: ${experiment_name}
@@ -44,8 +44,8 @@ actor:
     max_tokens_per_mb: 10240
   optimizer:
     type: adam
-    lr: 1.70e-5
-    weight_decay: 0.017
+    lr: 3e-6
+    weight_decay: 0.003
     beta1: 0.9
     beta2: 0.999
     eps: 1e-8

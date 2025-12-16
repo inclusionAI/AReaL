@@ -424,12 +424,11 @@ def test_multi_turn_math(tmp_path_factory):
             "actor.mb_spec.max_tokens_per_mb=1024",
             "train_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
-            "n_trajs=1",
-            "max_turns=2",
         )
     )
     assert success, "Multi-turn Math example failed"
