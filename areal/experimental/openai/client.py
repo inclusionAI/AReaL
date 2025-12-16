@@ -497,6 +497,9 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         )
         cache[resp_id] = interaction
 
+        print(f"[wht debug] messages_list: {messages_list}")
+        print(f"[wht debug] tools id: {tools}")
+
         # Apply chat template
         tools = list(tools) if not is_omitted(tools) else None
         if self.chat_template_type == "hf":
@@ -520,6 +523,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             raise ValueError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
             )
+        
+        print(f"[wht debug] prompt_token_ids: {prompt_token_ids}")
 
         # Map sampling params
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
