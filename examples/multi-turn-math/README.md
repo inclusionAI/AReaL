@@ -13,6 +13,7 @@ python3 -m areal.launcher.ray examples/multi-turn-math/gsm8k_rl_mt.py \
 ```
 
 only the following config are added compared to the original `gsm8k_grpo.yaml` config:
+
 ```yaml
 export_style: concat
 agent_run_args:

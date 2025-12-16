@@ -14,7 +14,6 @@ from areal.api.cli_args import (
 from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Worker
 from areal.controller import RolloutController
-from areal.controller.batch import DistributedBatchMemory
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.scheduler.local import LocalScheduler
 from areal.tests.utils import get_model_path
@@ -41,7 +40,8 @@ class MockScheduler:
         self.workers = []
         self.call_count = 0
         self.engine_calls = []
-        self._pending_results = {}  # worker_id -> list of results
+        self._pending_results = {}  # worker_id -> dict[task_id -> result]
+        self._task_counter = 0
 
     def create_workers(self, job, *args, **kwargs):
         """Create workers based on Job specification."""
@@ -59,7 +59,7 @@ class MockScheduler:
         ]
         # Initialize pending results for each worker
         for wid in worker_ids:
-            self._pending_results[wid] = []
+            self._pending_results[wid] = {}
         return worker_ids
 
     def get_workers(self, role, timeout=None):
@@ -73,10 +73,13 @@ class MockScheduler:
         self.call_count += 1
         if method == "agenerate":
             return Mock()
-        # Handle submit method - add a result to pending results
+        # Handle submit method - return a task_id and store the result
         elif method == "submit":
             if worker_id not in self._pending_results:
-                self._pending_results[worker_id] = []
+                self._pending_results[worker_id] = {}
+            # Generate a unique task_id
+            task_id = self._task_counter
+            self._task_counter += 1
             # Simulate a successful rollout result
             result = {
                 "input_ids": torch.randint(0, 100, (1, 10)),
@@ -86,17 +89,29 @@ class MockScheduler:
                 ).unsqueeze(0),
                 "rewards": torch.randn(1),
             }
-            self._pending_results[worker_id].append(result)
+            self._pending_results[worker_id][task_id] = result
+            return task_id
+        # Handle wait_for_task method
+        elif method == "wait_for_task":
+            task_id = kwargs.get("task_id")
+            if (
+                worker_id in self._pending_results
+                and task_id in self._pending_results[worker_id]
+            ):
+                result = self._pending_results[worker_id].pop(task_id)
+                return result
+            return None
         elif method == "wait":
             # Return a result from pending results if available
             count = kwargs["count"]
             if worker_id in self._pending_results and self._pending_results[worker_id]:
                 if len(self._pending_results[worker_id]) < count:
                     return []
-                results, self._pending_results[worker_id] = (
-                    self._pending_results[worker_id][:count],
-                    self._pending_results[worker_id][count:],
-                )
+                # Get first count results
+                task_ids = list(self._pending_results[worker_id].keys())[:count]
+                results = [
+                    self._pending_results[worker_id].pop(tid) for tid in task_ids
+                ]
                 return results
             return []
         return None
@@ -112,10 +127,13 @@ class MockScheduler:
         ]:
             return self._async_call_engine_internal(worker_id, method, *args, **kwargs)
 
-        # Handle submit method - add a result to pending results
+        # Handle submit method - return a task_id and store the result
         if method == "submit":
             if worker_id not in self._pending_results:
-                self._pending_results[worker_id] = []
+                self._pending_results[worker_id] = {}
+            # Generate a unique task_id
+            task_id = self._task_counter
+            self._task_counter += 1
             # Simulate a successful rollout result
             result = {
                 "input_ids": torch.randint(0, 100, (1, 10)),
@@ -125,7 +143,8 @@ class MockScheduler:
                 ).unsqueeze(0),
                 "rewards": torch.randn(1),
             }
-            self._pending_results[worker_id].append(result)
+            self._pending_results[worker_id][task_id] = result
+            return task_id
 
         return None
 
@@ -136,6 +155,7 @@ class MockScheduler:
     def delete_workers(self, role):
         self.workers.clear()
         self._pending_results.clear()
+        self._task_counter = 0
 
 
 class MockInferenceEngine:
@@ -437,34 +457,18 @@ class TestRolloutControllerSubmitAndWait:
 
         controller.destroy()
 
-    def test_wait_handles_rejected_rollouts(self):
-        config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=20)
+
+class TestRolloutControllerBatchOperations:
+    def test_rollout_batch_returns_dict_not_rtensor(self):
+        """Verify RolloutController returns regular dicts, NOT RTensors.
+
+        Unlike TrainController which uses RTensors for distributed batch storage,
+        RolloutController uses task-based round-robin and returns regular Python dicts.
+        """
+        from areal.scheduler.rpc.rtensor import RTensor
+
+        config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
         scheduler = MockScheduler()
-
-        # Override call_engine to simulate mixed results (some accepted, some rejected)
-        original_call_engine = scheduler.call_engine
-        result_counter = [0]  # Use list to allow modification in nested function
-
-        def custom_call_engine(worker_id, method, *args, **kwargs):
-            if method == "submit":
-                result_counter[0] += 1
-                if worker_id not in scheduler._pending_results:
-                    scheduler._pending_results[worker_id] = []
-                # Every other submission is rejected (None)
-                if result_counter[0] % 2 == 0:
-                    scheduler._pending_results[worker_id].append(None)
-                else:
-                    result = {
-                        "input_ids": torch.randint(0, 100, (1, 10)),
-                        "attention_mask": torch.ones(1, 10, dtype=torch.bool),
-                        "loss_mask": torch.ones(1, 10, dtype=torch.bool),
-                        "rewards": torch.randn(1),
-                    }
-                    scheduler._pending_results[worker_id].append(result)
-            return original_call_engine(worker_id, method, *args, **kwargs)
-
-        scheduler.call_engine = custom_call_engine
-
         controller = RolloutController(
             inf_engine=MockInferenceEngine,
             config=config,
@@ -474,20 +478,26 @@ class TestRolloutControllerSubmitAndWait:
         alloc_mode = AllocationMode.from_str("sglang:d1")
         controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
-        for i in range(6):
-            controller.submit(
-                {"id": i},
-                workflow="areal.tests.utils.TestWorkflow",
-                workflow_kwargs={},
-            )
+        batch_data = [{"id": i} for i in range(3)]
+        batch = controller.rollout_batch(
+            batch_data,
+            workflow="areal.tests.utils.TestWorkflow",
+            workflow_kwargs={},
+        )
 
-        batch = controller.wait(count=3, timeout=2.0)
-        assert len(batch) == 3
+        # Verify batch is a dict, not RTensor
+        assert isinstance(batch, dict), "RolloutController should return dict"
+
+        # Verify no RTensors in the result
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                assert not isinstance(value, RTensor), f"Found RTensor at key {key}"
+            elif isinstance(value, dict):
+                for k, v in value.items():
+                    assert not isinstance(v, RTensor), f"Found RTensor at {key}.{k}"
 
         controller.destroy()
 
-
-class TestRolloutControllerBatchOperations:
     def test_rollout_batch_submits_all_data(self):
         config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
         scheduler = MockScheduler()
@@ -507,8 +517,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        assert isinstance(batch, DistributedBatchMemory)
-        assert len(batch) == 4
+        # Check batch size (first dimension of input_ids tensor)
+        assert batch["input_ids"].shape[0] == 4
 
         controller.destroy()
 
@@ -531,7 +541,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        assert len(batch) == 10
+        # Check batch size (first dimension of input_ids tensor)
+        assert batch["input_ids"].shape[0] == 10
 
         controller.destroy()
 
@@ -991,8 +1002,8 @@ def test_rollout_controller_integration(tmp_path, model_path):
                 tokenizer=tokenizer,
             ),
         )
-        assert isinstance(result, DistributedBatchMemory)
-        assert len(result) == bs
+        assert isinstance(result, dict)
+        assert len(result["attention_mask"].shards) == bs
     finally:
         rollout.destroy()
 

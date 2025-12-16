@@ -695,7 +695,7 @@ class LocalScheduler(Scheduler):
         url = f"http://{worker_info.worker.ip}:{port}/create_engine"
 
         try:
-            logger.info(f"Creating engine '{engine}' on worker '{worker_id}'")
+            logger.debug(f"Creating engine '{engine}' on worker '{worker_id}'")
 
             timeout = aiohttp.ClientTimeout(total=300.0)
             async with aiohttp.ClientSession(
@@ -710,7 +710,7 @@ class LocalScheduler(Scheduler):
                 ) as response:
                     if response.status == 200:
                         result = await response.json()
-                        logger.info(
+                        logger.debug(
                             f"Engine created successfully on worker '{worker_id}'"
                         )
                         return result.get("result")
@@ -843,7 +843,7 @@ class LocalScheduler(Scheduler):
                 )
                 if not should_retry:
                     if attempt > 1:
-                        logger.info(
+                        logger.debug(
                             f"Method '{method}' succeeded on worker '{worker_id}' "
                             f"after {attempt} attempts"
                         )
@@ -943,7 +943,7 @@ class LocalScheduler(Scheduler):
                 )
 
             try:
-                logger.info(
+                logger.debug(
                     f"Async calling method '{method}' on worker '{worker_id}' (attempt {attempt})"
                 )
 
@@ -965,7 +965,7 @@ class LocalScheduler(Scheduler):
                             result_data = (await response.json()).get("result")
                             deserialized_result = deserialize_value(result_data)
                             if attempt > 1:
-                                logger.info(
+                                logger.debug(
                                     f"Method '{method}' succeeded on worker '{worker_id}' "
                                     f"after {attempt} attempts"
                                 )

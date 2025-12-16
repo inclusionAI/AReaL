@@ -30,7 +30,8 @@ class MultiTurnMathAgent:
                     **kwargs,
                 )
                 message = response.choices[0].message
-                messages.append(message.model_dump())
+                messages.append(message.model_dump(exclude_none=True))
+                # NOTE: we need to exclude none here because message.tool_calls can only be iterable or omitted
                 reward = simplified_gsm8k_reward_fn(
                     completions=message.content, answer=answer
                 )

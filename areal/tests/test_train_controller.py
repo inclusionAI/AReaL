@@ -20,7 +20,6 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Worker
-from areal.controller.batch import DistributedBatchMemory
 from areal.controller.train_controller import TrainController
 
 
@@ -92,8 +91,8 @@ class MockScheduler:
             return {"lm_loss": 0.4, "perplexity": 1.5}
 
         elif method == "evaluate_lm":
-            # Return tensor with shape [batch_size, seq_len] to match expected format
-            return torch.tensor([[0.35, 0.35, 0.35, 0.35]])
+            # Return scalar loss (real implementation would return float or dict)
+            return {"eval_loss": 0.35}
 
         await asyncio.sleep(0.001)
         return None
@@ -159,13 +158,13 @@ def train_controller(mock_scheduler, train_config):
 
 
 def create_mock_distributed_batch(size=4, seq_len=10):
-    """Create a mock DistributedBatch for testing."""
+    """Create a mock batch for testing."""
     data = {
         "input_ids": torch.randint(0, 100, (size, seq_len)),
         "attention_mask": torch.ones(size, seq_len, dtype=torch.bool),
         "loss_mask": torch.ones(size, seq_len, dtype=torch.bool),
     }
-    return DistributedBatchMemory.from_dict(data)
+    return data
 
 
 # ==================== TEST CLASSES ====================
@@ -290,81 +289,14 @@ class TestTrainControllerDestroy:
         assert len(train_controller.workers) == 0
 
 
-class TestTrainControllerBatchOperations:
-    """Tests for batch splitting and alignment operations."""
-
-    def test_align_batches_with_dp_rebalance(
-        self, train_controller, alloc_mode, ft_spec
-    ):
-        """Test _align_batches_with_dp with rebalance=True."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=16)
-        chunks = train_controller._align_batches_with_dp(batch, rebalance=True)
-
-        # Should split into dp_size chunks
-        assert len(chunks) == alloc_mode.train.dp_size
-
-        # Each chunk should be a DistributedBatch
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)
-
-    def test_align_batches_with_dp_no_rebalance(
-        self, train_controller, alloc_mode, ft_spec
-    ):
-        """Test _align_batches_with_dp with rebalance=False."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=16)
-        chunks = train_controller._align_batches_with_dp(batch, rebalance=False)
-
-        # Should split into dp_size chunks
-        assert len(chunks) == alloc_mode.train.dp_size
-
-        # Each chunk should be a DistributedBatch
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)
-
-
 class TestTrainControllerMergeResults:
     """Tests for result merging from workers."""
-
-    def test_merge_results_with_tensor_dict(self, train_controller):
-        """Test _merge_results with dictionary of tensors."""
-        results = [
-            {"loss": torch.tensor([0.5, 0.6])},
-            {"loss": torch.tensor([0.3, 0.4])},
-        ]
-
-        merged = train_controller._merge_results(results, "some_method")
-
-        # Should concatenate into DistributedBatch
-        assert isinstance(merged, DistributedBatchMemory)
-        assert "loss" in merged.get_data()
-
-    def test_merge_results_with_empty_dict(self, train_controller):
-        """Test _merge_results with empty dictionaries."""
-        results = [{}, {}]
-
-        merged = train_controller._merge_results(results, "some_method")
-
-        # Should return empty DistributedBatch
-        assert isinstance(merged, DistributedBatchMemory)
-        assert len(merged.get_data()) == 0
 
     def test_merge_results_with_non_tensor(self, train_controller):
         """Test _merge_results with non-tensor results."""
         results = [{"status": "ok"}, {"status": "ok"}]
 
-        merged = train_controller._merge_results(results, "some_method")
+        merged = train_controller._merge_results(results, group_indices=[[0], [1]])
 
         # Should return first result (already synchronized)
         assert merged == {"status": "ok"}
@@ -380,7 +312,7 @@ class TestTrainControllerMergeResults:
 
         # This should work without TypeError
         try:
-            result = train_controller._merge_results(results, "some_method")
+            result = train_controller._merge_results(results, group_indices=[[0], [1]])
             # Test passes if no exception
             assert result is not None
         except TypeError as e:
@@ -555,7 +487,7 @@ class TestTrainControllerCustomFunctionCall:
     def test_custom_function_call_with_distributed_batch(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test custom_function_call with DistributedBatch argument."""
+        """Test custom_function_call with batch argument."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -580,7 +512,7 @@ class TestTrainControllerCustomFunctionCall:
     def test_custom_function_call_with_regular_args(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test custom_function_call with non-DistributedBatch arguments."""
+        """Test custom_function_call with non-batch arguments."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -737,7 +669,7 @@ class TestTrainControllerRolloutIntegration:
         )
 
         mock_rollout = Mock()
-        mock_rollout.prepare_batch.return_value = DistributedBatchMemory.from_dict({})
+        mock_rollout.prepare_batch.return_value = {}
         meta = WeightUpdateMeta(type="disk", path="/tmp/test")
         train_controller.connect_engine(mock_rollout, meta)
 
@@ -766,7 +698,7 @@ class TestTrainControllerRolloutIntegration:
         )
 
         mock_rollout = Mock()
-        mock_rollout.rollout_batch.return_value = DistributedBatchMemory.from_dict({})
+        mock_rollout.rollout_batch.return_value = {}
         meta = WeightUpdateMeta(type="disk", path="/tmp/test")
         train_controller.connect_engine(mock_rollout, meta)
 
@@ -946,7 +878,7 @@ class TestTrainControllerDispatchInputs:
     def test_dispatch_inputs_splits_distributed_batch(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test _dispatch_inputs correctly splits DistributedBatch."""
+        """Test _dispatch_inputs correctly splits batch."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -954,7 +886,7 @@ class TestTrainControllerDispatchInputs:
         )
 
         batch = create_mock_distributed_batch(size=16)
-        split_args, split_kwargs = train_controller._dispatch_inputs(batch)
+        split_args, split_kwargs, _ = train_controller._dispatch_inputs(batch)
 
         # Should split into dp_size chunks
         assert len(split_args) == 1
@@ -963,7 +895,7 @@ class TestTrainControllerDispatchInputs:
     def test_dispatch_inputs_replicates_non_batch_args(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test _dispatch_inputs replicates non-DistributedBatch arguments."""
+        """Test _dispatch_inputs replicates non-batch arguments."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -971,7 +903,7 @@ class TestTrainControllerDispatchInputs:
         )
 
         scalar_arg = 42
-        split_args, split_kwargs = train_controller._dispatch_inputs(scalar_arg)
+        split_args, split_kwargs, _ = train_controller._dispatch_inputs(scalar_arg)
 
         # Should replicate to all DP groups
         assert len(split_args) == 1
@@ -989,7 +921,7 @@ class TestTrainControllerDispatchInputs:
         )
 
         batch = create_mock_distributed_batch(size=16)
-        split_args, split_kwargs = train_controller._dispatch_inputs(
+        split_args, split_kwargs, _ = train_controller._dispatch_inputs(
             input_=batch, learning_rate=0.001
         )
 
@@ -997,103 +929,3 @@ class TestTrainControllerDispatchInputs:
         assert "learning_rate" in split_kwargs
         assert len(split_kwargs["input_"]) == alloc_mode.train.dp_size
         assert all(lr == 0.001 for lr in split_kwargs["learning_rate"])
-
-
-class TestTrainControllerMergeResultsExtended:
-    """Extended tests for result merging."""
-
-    def test_merge_results_with_attention_mask(self, train_controller):
-        """Test _merge_results correctly handles batches with attention_mask."""
-        results = [
-            {
-                "input_ids": torch.randint(0, 100, (2, 5)),
-                "attention_mask": torch.ones(2, 5, dtype=torch.bool),
-            },
-            {
-                "input_ids": torch.randint(0, 100, (2, 7)),
-                "attention_mask": torch.ones(2, 7, dtype=torch.bool),
-            },
-        ]
-
-        merged = train_controller._merge_results(results, "some_method")
-
-        assert isinstance(merged, DistributedBatchMemory)
-        # Should have concatenated batches
-        assert len(merged) == 4
-
-    def test_merge_results_with_scalar_dict(self, train_controller):
-        """Test _merge_results with dictionary of scalars."""
-        results = [
-            {"loss": 0.5, "accuracy": 0.9},
-            {"loss": 0.5, "accuracy": 0.9},
-        ]
-
-        merged = train_controller._merge_results(results, "some_method")
-
-        # Non-tensor dicts should return first result
-        assert merged == {"loss": 0.5, "accuracy": 0.9}
-
-    def test_merge_results_pads_tensors_correctly(self, train_controller):
-        """Test _merge_results pads tensors to max sequence length."""
-        # Create tensors with different sequence lengths
-        results = [
-            torch.randn(2, 5),  # batch=2, seq=5
-            torch.randn(2, 10),  # batch=2, seq=10
-        ]
-
-        merged = train_controller._merge_results(results, "some_method")
-
-        # Should be concatenated with padding
-        assert merged.shape == (4, 10)
-
-
-class TestTrainControllerAlignBatches:
-    """Tests for batch alignment across DP groups."""
-
-    def test_align_batches_empty_batch(self, train_controller, alloc_mode, ft_spec):
-        """Test _align_batches_with_dp handles empty batch."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        empty_batch = DistributedBatchMemory.from_dict({})
-        chunks = train_controller._align_batches_with_dp(empty_batch, rebalance=True)
-
-        # Should replicate empty batch to all DP groups
-        assert len(chunks) == alloc_mode.train.dp_size
-        for chunk in chunks:
-            assert len(chunk.get_data()) == 0
-
-    def test_align_batches_with_rebalance(self, train_controller, alloc_mode, ft_spec):
-        """Test _align_batches_with_dp with rebalance=True uses FFD."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=16)
-        chunks = train_controller._align_batches_with_dp(batch, rebalance=True)
-
-        assert len(chunks) == alloc_mode.train.dp_size
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)
-
-    def test_align_batches_without_rebalance(
-        self, train_controller, alloc_mode, ft_spec
-    ):
-        """Test _align_batches_with_dp with rebalance=False uses simple chunking."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=16)
-        chunks = train_controller._align_batches_with_dp(batch, rebalance=False)
-
-        assert len(chunks) == alloc_mode.train.dp_size
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)

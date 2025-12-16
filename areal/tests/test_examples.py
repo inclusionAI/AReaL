@@ -411,8 +411,8 @@ def test_multi_turn_math(tmp_path_factory):
     )
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
 
-    example_file = "examples/multi-turn-math/train.py"
-    config_name = "examples/multi-turn-math/config.yaml"
+    example_file = "examples/multi-turn-math/gsm8k_rl_mt.py"
+    config_name = "examples/multi-turn-math/gsm8k_grpo_mt.yaml"
     loop = asyncio.get_event_loop()
     success = loop.run_until_complete(
         run_example(
@@ -424,12 +424,11 @@ def test_multi_turn_math(tmp_path_factory):
             "actor.mb_spec.max_tokens_per_mb=1024",
             "train_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
+            f"valid_dataset.path={dataset_path}",
             "cluster.n_gpus_per_node=2",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
-            "n_trajs=1",
-            "max_turns=2",
         )
     )
     assert success, "Multi-turn Math example failed"
