@@ -77,11 +77,6 @@ def main(args):
     else:
         raise ValueError(f"Unsupported gen_backend: '{allocation_mode.gen_backend}'")
 
-    # import debugpy, os
-    # debugpy.listen(("0.0.0.0", 2500))
-    # debugpy.wait_for_client()
-    # debugpy.breakpoint()
-
     rollout = RolloutController(
         engine_class, config=config.rollout, scheduler=scheduler
     )
