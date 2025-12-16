@@ -30,7 +30,7 @@ class MultiTurnMathAgent:
                     **kwargs,
                 )
                 message = response.choices[0].message
-                messages.append(message.model_dump())
+                messages.append(message.to_dict())
                 reward = simplified_gsm8k_reward_fn(
                     completions=message.content, answer=answer
                 )

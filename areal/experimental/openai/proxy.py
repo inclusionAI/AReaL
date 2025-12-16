@@ -20,8 +20,10 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from transformers import PreTrainedTokenizerFast
 
-from openai.types.chat import ChatCompletion, CompletionCreateParams
-from openai.types.responses import Response, ResponseCreateParams
+from openai.types.chat import ChatCompletion
+from openai.types.chat.completion_create_params import CompletionCreateParams
+from openai.types.responses import Response
+from openai.types.responses.response_create_params import ResponseCreateParams
 
 from areal.api.engine_api import InferenceEngine
 from areal.experimental.openai.cache import InteractionCache
