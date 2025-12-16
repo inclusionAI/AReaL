@@ -223,6 +223,7 @@ class MegatronEngine(TrainEngine):
                 tf_config=self.tf_config,
                 mcore_config=self.mcore_config,
                 bridge=self.bridge,
+                is_critic=self.config.is_critic,
             )
 
         self.model = _MegatronModelList(models)
@@ -612,6 +613,7 @@ class MegatronEngine(TrainEngine):
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+        assert output_seqlens is not None
 
         # Step 2: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_).to(self.device)
@@ -1096,6 +1098,7 @@ class MegatronEngine(TrainEngine):
             base_model_path=base_model_path,
             max_shard_size_byte=int(3e9),
             max_workers=None,
+            is_critic=self.config.is_critic,
         )
 
         if dist.get_rank() == 0:
@@ -1103,6 +1106,8 @@ class MegatronEngine(TrainEngine):
                 tokenizer.save_pretrained(path)
             if processor is not None:
                 processor.save_pretrained(path)
+
+        current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
 
     def _load_model_from_hf(self, path: str) -> None:
@@ -1112,6 +1117,7 @@ class MegatronEngine(TrainEngine):
             models=self.model,
             weights_path=path,
             max_workers=None,
+            is_critic=self.config.is_critic,
         )
 
     def _prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
@@ -1183,16 +1189,20 @@ class MegatronEngine(TrainEngine):
         total_loss_weight: torch.Tensor,
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
-        labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
-        logprobs, entropy = gather_logprobs_entropy(
-            output,
-            labels,
-            temperature=self.config.temperature,
-            tp_group=mpu.get_tensor_model_parallel_group()
-            if mpu.get_tensor_model_parallel_world_size() > 1
-            else None,
-        )
-        loss = loss_fn(logprobs, entropy, inputs)
+        if not self.config.is_critic:
+            labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+            logprobs, entropy = gather_logprobs_entropy(
+                output,
+                labels,
+                temperature=self.config.temperature,
+                tp_group=mpu.get_tensor_model_parallel_group()
+                if mpu.get_tensor_model_parallel_world_size() > 1
+                else None,
+            )
+            loss = loss_fn(logprobs, entropy, inputs)
+        else:
+            values = output.squeeze(-1)
+            loss = loss_fn(values, inputs)
 
         loss_scale = loss_weight_fn(inputs) / total_loss_weight * loss_multiplier
         return loss * loss_scale
@@ -1202,13 +1212,17 @@ class MegatronEngine(TrainEngine):
         output: torch.Tensor,
         inputs: dict[str, Any],
     ) -> torch.Tensor:
-        labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
-        logprobs = gather_logprobs(
-            output,
-            labels,
-            temperature=self.config.temperature,
-            tp_group=mpu.get_tensor_model_parallel_group()
-            if mpu.get_tensor_model_parallel_world_size() > 1
-            else None,
-        )
-        return logprobs
+        if not self.config.is_critic:
+            labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+            logprobs = gather_logprobs(
+                output,
+                labels,
+                temperature=self.config.temperature,
+                tp_group=mpu.get_tensor_model_parallel_group()
+                if mpu.get_tensor_model_parallel_world_size() > 1
+                else None,
+            )
+            return logprobs
+        else:
+            values = output.squeeze(-1)
+            return values

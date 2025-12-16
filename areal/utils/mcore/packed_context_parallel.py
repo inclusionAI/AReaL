@@ -123,10 +123,7 @@ def postprocess_packed_seqs_context_parallel(
 def packed_context_parallel_forward(
     model: torch.nn.Module,
     input_: dict[str, Any],
-    is_critic: bool = False,
 ):
-    # TODO: implement critic models
-    assert not is_critic
     input_ids = input_["input_ids"]
     cu_seqlens = input_["cu_seqlens"]
     position_ids = input_["position_ids"]

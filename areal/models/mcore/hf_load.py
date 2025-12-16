@@ -11,6 +11,7 @@ from mbridge.core.bridge import Bridge
 from megatron.core import parallel_state as mpu
 from safetensors import safe_open
 
+from areal.models.mcore.registry import unwrap_to_gpt_model
 from areal.utils import logging
 
 logger = logging.getLogger("HF WeightsLoader")
@@ -215,6 +216,7 @@ def load_weights_from_hf_with_mbridge_fast(
     models: list[torch.nn.Module],
     weights_path: str,
     max_workers: int | None = None,
+    is_critic: bool = False,
 ) -> None:
     weights_path = bridge._get_actual_hf_path(weights_path)
     index_file = os.path.join(weights_path, "model.safetensors.index.json")
@@ -266,6 +268,9 @@ def load_weights_from_hf_with_mbridge_fast(
 
         local_to_file_map = defaultdict(list)
         for local_name, hf_names in local_to_hf_map.items():
+            # Skip output_layer for critic models - it will be loaded separately
+            if is_critic and "output_layer" in local_name:
+                continue
             for name in hf_names:
                 filename = index[name]
                 if filename not in local_to_file_map[local_name]:
@@ -298,3 +303,19 @@ def load_weights_from_hf_with_mbridge_fast(
         # Consume all results to make result all tasks complete
         for _ in results:
             pass
+
+    # Load value_head weights for critic models.
+    if is_critic and mpu.is_pipeline_last_stage():
+        value_head_path = os.path.join(weights_path, "value_head.pt")
+        if os.path.exists(value_head_path):
+            value_head_state = torch.load(value_head_path, weights_only=True)
+            for model in models:
+                _model = unwrap_to_gpt_model(model)
+                if hasattr(_model, "output_layer"):
+                    _model.output_layer.load_state_dict(value_head_state)
+            logger.info(f"Loaded ValueHead weights from {value_head_path}")
+        else:
+            logger.info(
+                f"ValueHead checkpoint not found at {value_head_path}, "
+                "using random initialization (normal for first training)."
+            )
