@@ -55,6 +55,12 @@ class LLMResponse:
     def output_versions(self) -> list[int]:
         return [self.output_version] * self.output_len
 
+    @property
+    def output_tokens_without_stop(self) -> list[int]:
+        if self.stop_reason not in ["length", "abort"] and self.output_tokens:
+            return self.output_tokens[:-1]
+        return self.output_tokens
+
 
 @dataclass
 class ModelRequest:
