@@ -177,7 +177,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         current_time = int(datetime.datetime.now().timestamp())
 
-        output_text = self.tokenizer.decode(response.output_tokens)
+        # In sglang, if finish since eos_tokens or stop tokens, it will be outputted in output_ids when use generate interface, we should remove it while decoding.
+        output_text = self.tokenizer.decode(response.output_tokens_without_stop)
 
         # Parse tool calls.
         tool_calls = None
@@ -435,7 +436,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         # Call inference engine
         engine_resp = await self.engine.agenerate(model_request)
-        output_text = self.tokenizer.decode(engine_resp.output_tokens)
+        finish_with_stop_tokens = engine_resp.stop_reason not in ["length", "abort"]
+        output_text = self.tokenizer.decode(engine_resp.output_tokens[:-1] if finish_with_stop_tokens else engine_resp.output_tokens)
 
         # Parse tool calls.
         tool_calls = None

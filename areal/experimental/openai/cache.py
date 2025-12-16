@@ -94,7 +94,7 @@ class CompletionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         for interaction_id, interaction in self.items():
             parent_tokens = (
                 interaction.model_response.input_tokens
-                + interaction.model_response.output_tokens
+                + interaction.model_response.output_tokens_without_stop
             )
             child_tokens = interaction.model_response.input_tokens
             meta[interaction_id] = {

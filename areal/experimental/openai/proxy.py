@@ -204,6 +204,7 @@ def build_app(
             "max_tokens",
             "metadata",
             "stop",
+            "stop_token_ids",
             "store",
             "temperature",
             "tool_choice",
