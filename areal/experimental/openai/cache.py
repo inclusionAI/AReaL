@@ -110,7 +110,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             a: list[dict], b: list[dict]
         ) -> tuple[bool, dict[str, Any] | None, dict[str, Any] | None]:
             if len(a) > len(b):
-                return False
+                return False, None, None
             last_a_message = a[-1]
             last_b_message = b[len(a) - 1]
 
