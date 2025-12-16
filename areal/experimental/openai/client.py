@@ -136,6 +136,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
         tool_call_parser: str | None = None,
+        engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
@@ -145,6 +146,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
         self._cache = cache
+        self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
         self.messages_delimiter_start = messages_delimiter_start
         self.messages_delimiter_end = messages_delimiter_end
@@ -242,12 +244,23 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             # NOTE (2025-12-09): the usage of max_tokens has been changed.
             max_completion_tokens = max_tokens
 
-        max_new_tokens = None
+        max_total_tokens_final = None
         if not is_omitted(max_total_tokens):
-            max_new_tokens = max_total_tokens - len(prompt_token_ids)
+            max_total_tokens_final = max_total_tokens
+        if self.engine_max_tokens is not None:
+            if max_total_tokens_final is None:
+                max_total_tokens_final = self.engine_max_tokens
+            else:
+                max_total_tokens_final = min(
+                    max_total_tokens_final, self.engine_max_tokens
+                )
+
+        max_new_tokens = None
+        if max_total_tokens_final is not None:
+            max_new_tokens = max_total_tokens_final - len(prompt_token_ids)
             if max_new_tokens <= 0:
-                raise RuntimeError(
-                    "max_total_tokens must be greater than the number of prompt tokens"
+                raise ValueError(
+                    f"len of prompt tokens {len(prompt_token_ids)} exceeds max_total_tokens {max_total_tokens_final}"
                 )
         if not is_omitted(max_completion_tokens):
             if max_new_tokens is None:
@@ -359,6 +372,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
         tool_call_parser: str | None = None,
+        engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
@@ -368,6 +382,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
         self._cache = cache
+        self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
         self.messages_delimiter_start = messages_delimiter_start
         self.messages_delimiter_end = messages_delimiter_end
@@ -530,8 +545,17 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
         top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
         max_new_tokens = None
+        if self.engine_max_tokens is not None:
+            max_new_tokens = self.engine_max_tokens - len(prompt_token_ids)
+            if max_new_tokens <= 0:
+                raise ValueError(
+                    f"len of prompt tokens {len(prompt_token_ids)} exceeds engine_max_tokens {self.engine_max_tokens}"
+                )
         if not is_omitted(max_output_tokens):
-            max_new_tokens = max_output_tokens
+            if max_new_tokens is None:
+                max_new_tokens = max_output_tokens
+            else:
+                max_new_tokens = min(max_new_tokens, max_output_tokens)
         if max_new_tokens is None:
             max_new_tokens = 512  # Default value
             logger.warning("max_output_tokens not specified, defaulting to 512.")
@@ -685,6 +709,7 @@ class ArealOpenAI(AsyncOpenAI):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         tool_call_parser: str | None = None,
+        engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
         messages_delimiter_end: str = "<|im_end|>",
@@ -705,6 +730,7 @@ class ArealOpenAI(AsyncOpenAI):
             tokenizer,
             self._cache,
             tool_call_parser=self.tool_call_parser,
+            engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,
             messages_delimiter_end=messages_delimiter_end,
@@ -717,6 +743,7 @@ class ArealOpenAI(AsyncOpenAI):
             tokenizer,
             self._cache,
             tool_call_parser=self.tool_call_parser,
+            engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,
             messages_delimiter_end=messages_delimiter_end,
