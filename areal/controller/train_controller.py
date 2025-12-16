@@ -684,7 +684,6 @@ class TrainController:
                         )
 
         await asyncio.gather(
-            self.rollout.clear_batches(*targets),
             *[clear_node(addr, sids) for addr, sids in shards_by_node.items()],
             return_exceptions=True,
         )

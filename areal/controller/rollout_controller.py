@@ -9,7 +9,6 @@ from dataclasses import asdict, dataclass
 from threading import Lock
 from typing import Any
 
-import aiohttp
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
@@ -20,7 +19,6 @@ from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher
-from areal.scheduler.rpc.rtensor import RTensor
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
@@ -531,26 +529,3 @@ class RolloutController:
     def runner(self):
         """For backward compatibility. The runner is now owned by the dispatcher."""
         return self.dispatcher.runner
-
-    async def clear_batches(self, *targets: dict[str, RTensor]):
-        """Extract shard IDs and call /data/clear on each worker."""
-        shards_by_node = RTensor.collect_shards(targets)
-
-        if not shards_by_node:
-            return
-
-        async def clear_node(node_addr, shard_ids):
-            async with aiohttp.ClientSession() as session:
-                async with session.delete(
-                    f"http://{node_addr}/data/clear", json={"shard_ids": shard_ids}
-                ) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        logger.info(
-                            f"Cleared {result.get('cleared_count', 0)} shards on {node_addr}"
-                        )
-
-        await asyncio.gather(
-            *[clear_node(addr, sids) for addr, sids in shards_by_node.items()],
-            return_exceptions=True,
-        )
