@@ -131,7 +131,6 @@ class MegatronEngine(TrainEngine):
         self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
         backend = current_platform.communication_backend
         if not dist.is_initialized():
-            # TODO: Handle the condition when WORLD_SIZE and RANK is not set in launcher
             # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
             # otherwise initializing the NCCL weight update group will be wrong!
             dist.init_process_group(
@@ -211,7 +210,6 @@ class MegatronEngine(TrainEngine):
         self.hf_config, self.tf_config = make_hf_and_mcore_config(
             self.config.path, dtype=self.dtype, bridge=self.bridge
         )
-        # TODO: configure for VPP
         self.tf_config = configure_pipeline_layer_splits(
             self.parallel_strategy, self.hf_config, self.tf_config
         )
@@ -244,7 +242,6 @@ class MegatronEngine(TrainEngine):
             for model in self.model:
                 disable_dropout_in_model(model)
 
-        # TODO: Check verl implementation
         primary_model = self.model[0]
         model_config = get_model_config(primary_model)
         # NOTE: It is recommended to set this option to True for RL training on MoE models for stability.
@@ -1167,7 +1164,6 @@ class MegatronEngine(TrainEngine):
             f"aligned to: {mb_list.align_to_lengths}, padded to: {mb_list.padded_to_lengths}, "
             f"padding lengths: {mb_list.padding_lengths}."
         )
-        # FIXME: the resulting max_seqlen is a tensor rather than an integer
         # Modern model implementations takes a dict as the input.
         # This eliminates a bug of Qwen2.5-VL for transformers<=4.53.1
         for i, mb in enumerate(mb_list.mbs):
