@@ -345,6 +345,7 @@ class ProxyServer:
         rollout: InferenceEngine | None = None,
         tokenizer: PreTrainedTokenizerFast | None = None,
         tool_call_parser: str = "qwen25",
+        reasoning_parser: str = "qwen3",
         chat_template_type: str = "hf",
         engine_max_tokens: int | None = None,
         session_cache: dict[str, SessionData] | None = None,
@@ -360,7 +361,7 @@ class ProxyServer:
                     "rollout and tokenizer are required if client is not provided"
                 )
             client = self._create_client(
-                rollout, tokenizer, tool_call_parser, chat_template_type, engine_max_tokens
+                rollout, tokenizer, tool_call_parser, reasoning_parser, chat_template_type, engine_max_tokens
             )
         self.client = client
         self.name = name
@@ -395,6 +396,7 @@ class ProxyServer:
         rollout: InferenceEngine,
         tokenizer: PreTrainedTokenizerFast,
         tool_call_parser: str,
+        reasoning_parser: str,
         chat_template_type: str,
         engine_max_tokens: int | None = None,
     ) -> ArealOpenAI:
@@ -402,6 +404,7 @@ class ProxyServer:
             engine=rollout,
             tokenizer=tokenizer,
             tool_call_parser=tool_call_parser,
+            reasoning_parser=reasoning_parser,
             engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
         )

@@ -136,6 +136,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
         tool_call_parser: str | None = None,
+        reasoning_parser: str | None = None,
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -145,6 +146,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.reasoning_parser = reasoning_parser
         self._cache = cache
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
@@ -316,6 +318,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                     output_text,
                     tools,
                     self.tool_call_parser,
+                    self.reasoning_parser,
                     response.stop_reason,
                 )
         except json.JSONDecodeError as e:
@@ -372,6 +375,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
         tool_call_parser: str | None = None,
+        reasoning_parser: str | None = None,
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -381,6 +385,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.reasoning_parser = reasoning_parser
         self._cache = cache
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
@@ -598,6 +603,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                     output_text,
                     tools,
                     self.tool_call_parser,
+                    self.reasoning_parser,
                     engine_resp.stop_reason,
                     use_responses=True,
                 )
@@ -709,6 +715,7 @@ class ArealOpenAI(AsyncOpenAI):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         tool_call_parser: str | None = None,
+        reasoning_parser: str | None = None,
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
         messages_delimiter_start: str = "<|im_start|>",
@@ -719,6 +726,7 @@ class ArealOpenAI(AsyncOpenAI):
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.reasoning_parser = reasoning_parser
 
         # Use an ordered dict to maintain insertion order of completions/responses
         self._cache: InteractionCache = InteractionCache()
@@ -730,6 +738,7 @@ class ArealOpenAI(AsyncOpenAI):
             tokenizer,
             self._cache,
             tool_call_parser=self.tool_call_parser,
+            reasoning_parser=self.reasoning_parser,
             engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,
@@ -743,6 +752,7 @@ class ArealOpenAI(AsyncOpenAI):
             tokenizer,
             self._cache,
             tool_call_parser=self.tool_call_parser,
+            reasoning_parser=self.reasoning_parser,
             engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
             messages_delimiter_start=messages_delimiter_start,
