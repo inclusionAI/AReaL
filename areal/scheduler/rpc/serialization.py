@@ -1,8 +1,10 @@
 """Tensor and dataclass serialization utilities for RPC communication.
+
 This module provides utilities to serialize and deserialize PyTorch tensors
 and dataclass instances for transmission over HTTP/JSON. Tensors are encoded
 as base64 strings and dataclasses preserve their type information with metadata
 stored in Pydantic models.
+
 Assumptions:
 - All tensors are on CPU
 - Gradient tracking (requires_grad) is not preserved
@@ -35,13 +37,14 @@ logger = logging.getLogger("SyncRPCServer")
 
 class SerializedTensor(BaseModel):
     """Pydantic model for serialized tensor with metadata.
+
     Attributes
     ----------
     type : str
         Type marker, always "tensor"
     data : str
         Base64-encoded tensor data
-    shape : List[int]
+    shape : list[int]
         Tensor shape
     dtype : str
         String representation of dtype (e.g., "torch.float32")
@@ -451,6 +454,7 @@ def serialize_value(value: Any) -> Any:
 
 def deserialize_value(value: Any) -> Any:
     """Recursively deserialize a value, converting SerializedTensor and SerializedDataclass dicts back.
+
     This function transparently handles:
     - SerializedTensor dict -> torch.Tensor (CPU, no gradient tracking)
     - SerializedNDArray dict -> numpy.ndarray
@@ -459,10 +463,12 @@ def deserialize_value(value: Any) -> Any:
     - dict -> recursively deserialize values
     - list -> recursively deserialize elements
     - primitives -> unchanged
+
     Parameters
     ----------
     value : Any
         Value to deserialize (potentially containing SerializedTensor and SerializedDataclass dicts)
+
     Returns
     -------
     Any
