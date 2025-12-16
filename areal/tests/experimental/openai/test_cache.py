@@ -7,13 +7,16 @@ from openai.types.responses.response_output_text import ResponseOutputText
 
 from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.tests.utils import get_model_path
 from areal.utils.hf_utils import load_hf_tokenizer
 
 
 @pytest.fixture(scope="module")
 def tokenizer():
     """Load the tokenizer once for all tests in this module."""
-    return load_hf_tokenizer("Qwen/Qwen2.5-1.5B-Instruct")
+    return load_hf_tokenizer(
+        get_model_path("/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B")
+    )
 
 
 @pytest.fixture

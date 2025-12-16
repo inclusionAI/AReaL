@@ -99,7 +99,7 @@ vllm:
   skip_tokenizer_init: false
   dtype: ${actor.dtype}
   max_model_len: 32768
-  gpu_memory_utilization: 0.9
+  gpu_memory_utilization: 0.8
 
 # datasets
 train_dataset:

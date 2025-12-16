@@ -12,9 +12,6 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.scheduler.local import LocalScheduler
 from areal.utils import stats_tracker
-from areal.utils.data import (
-    cycle_dataloader,
-)
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
@@ -127,7 +124,6 @@ def main(args):
         steps_per_epoch = len(train_dataloader)
         max_steps = total_epochs * steps_per_epoch
 
-        data_generator = cycle_dataloader(train_dataloader)
         for global_step in range(start_step, max_steps):
             epoch = global_step // steps_per_epoch
             step = global_step % steps_per_epoch
@@ -149,39 +145,32 @@ def main(args):
                         "generated",
                     ),
                 )
-                if config.rollout.max_head_offpolicyness > 0:
-                    batch = actor.prepare_batch(
-                        train_dataloader,
-                        workflow="areal.workflow.rlvr.RLVRWorkflow",
-                        workflow_kwargs=workflow_kwargs,
-                    )
-                else:
-                    batch = actor.rollout_batch(
-                        next(data_generator),
-                        workflow="areal.workflow.rlvr.RLVRWorkflow",
-                        workflow_kwargs=workflow_kwargs,
-                    )
+                rollout_batch = actor.prepare_batch(
+                    train_dataloader,
+                    workflow="areal.workflow.rlvr.RLVRWorkflow",
+                    workflow_kwargs=workflow_kwargs,
+                )
 
             if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
                 with stats_tracker.record_timing("recompute_logp"):
-                    logp = actor.compute_logp(batch)
-                    batch["prox_logp"] = logp
+                    prox_logp = actor.compute_logp(rollout_batch)
+                    rollout_batch["prox_logp"] = prox_logp
                     log_gpu_stats("recompute logp")
 
             if ref is not None:
                 with stats_tracker.record_timing("ref_logp"):
-                    batch["ref_logp"] = ref.compute_logp(batch)
+                    ref_logp = ref.compute_logp(rollout_batch)
+                    rollout_batch["ref_logp"] = ref_logp
                     log_gpu_stats("ref logp")
 
             with stats_tracker.record_timing("compute_advantage"):
-                batch = actor.compute_advantages(batch)
+                adv_batch = actor.compute_advantages(rollout_batch)
                 log_gpu_stats("compute advantages")
 
             with stats_tracker.record_timing("train_step"):
-                actor.ppo_update(batch)
+                actor.ppo_update(adv_batch)
                 actor.step_lr_scheduler()
                 log_gpu_stats("ppo update")
-
             # pause inference for updating weights, save, and evaluation
             rollout.pause()
 
@@ -204,6 +193,9 @@ def main(args):
                     train_dataloader,
                     tokenizer=tokenizer,
                 )
+
+            with stats_tracker.record_timing("clear_batches"):
+                actor.clear_batches(rollout_batch, adv_batch)
 
             # Upload statistics to the logger (e.g., wandb)
             stats_logger.commit(epoch, step, global_step, actor.export_stats())

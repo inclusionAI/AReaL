@@ -3,7 +3,6 @@ import sys
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import SFTConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo
-from areal.controller.batch import DistributedBatchMemory
 from areal.controller.train_controller import TrainController
 from areal.dataset import get_custom_dataset
 from areal.engine.sft.lm_engine import FSDPLMEngine
@@ -112,7 +111,7 @@ def main(args):
                 with (
                     stats_tracker.record_timing("train_step"),
                 ):
-                    engine.train_lm(DistributedBatchMemory.from_dict(data))
+                    engine.train_lm(data)
                     engine.step_lr_scheduler()
 
                 with stats_tracker.record_timing("save"):
@@ -133,11 +132,15 @@ def main(args):
 
                     def evaluate_fn():
                         for data in valid_dataloader:
-                            engine.evaluate_lm(DistributedBatchMemory.from_dict(data))
+                            engine.evaluate_lm(data)
 
                     evaluator.evaluate(evaluate_fn, epoch, step, global_step)
 
                 stats_logger.commit(epoch, step, global_step, engine.export_stats())
+
+                with stats_tracker.record_timing("clear_batches"):
+                    engine.clear_batches(data)
+
                 global_step += 1
 
     finally:
