@@ -490,6 +490,8 @@ async def test_multi_step_tool_calling_concat_style(openai_client):
     assert c_a.choices[0].message.tool_calls is not None
     assert c_a.choices[0].finish_reason == "tool_calls"
 
+    print(f"[wht debug] c_a : {c_a.choices[0]}")
+
     # Leaf A1
     msgs_a1 = msgs_a + [
         {
@@ -500,6 +502,8 @@ async def test_multi_step_tool_calling_concat_style(openai_client):
         {"role": "tool", "content": "100", "tool_call_id": "mock_id_a1"},
     ]
     c_a1 = await openai_client.chat.completions.create(messages=msgs_a1, tools=tools, tool_choice="auto", max_completion_tokens=8192)
+
+    print(f"[wht debug] c_a1 : {c_a1.choices[0]}")
 
     # Branch B: root -> b -> b1 (with tool call)
     msgs_b = base + [
@@ -512,6 +516,8 @@ async def test_multi_step_tool_calling_concat_style(openai_client):
     assert c_b.choices[0].message.tool_calls is not None
     assert c_b.choices[0].finish_reason == "tool_calls"
 
+    print(f"[wht debug] c_b : {c_b.choices[0]}")
+
     # Leaf B1
     msgs_b1 = msgs_b + [
         {
@@ -522,6 +528,8 @@ async def test_multi_step_tool_calling_concat_style(openai_client):
         {"role": "tool", "content": "40", "tool_call_id": "mock_id_b1"},
     ]
     c_b1 = await openai_client.chat.completions.create(messages=msgs_b1, tools=tools, tool_choice="auto", max_completion_tokens=8192)
+
+    print(f"[wht debug] c_b1 : {c_b1.choices[0]}")
 
     # Set rewards for leaf nodes
     openai_client.set_reward(c_a1.id, 2.0)
