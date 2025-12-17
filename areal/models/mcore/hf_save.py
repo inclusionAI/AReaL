@@ -254,8 +254,6 @@ def save_weights_to_hf_with_mbridge_fast(
     all_gather_outputs = {}
     quantization_config = getattr(bridge.hf_config, "quantization_config", None)
     for s in non_expert_specs:
-        if is_float8tensor(s.param):
-            s.param = s.param.dequantize(dtype=bridge.dtype)
         if s.tensor_model_parallel and mpu.get_tensor_model_parallel_world_size() > 1:
             _all_gather_specs.append(s)
     if _all_gather_specs:
@@ -375,10 +373,7 @@ def save_weights_to_hf_with_mbridge_fast(
         expert_sd = {}
         _all_gather_specs = []
         all_gather_outputs = {}
-        # Convert TE FP8 to bf16 before all_gather if needed
         for s in expert_specs:
-            if is_float8tensor(s.param):
-                s.param = s.param.dequantize(dtype=bridge.dtype)
             if etp_size > 1:
                 _all_gather_specs.append(s)
         if _all_gather_specs:
