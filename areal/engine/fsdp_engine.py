@@ -950,12 +950,12 @@ class FSDPEngine(TrainEngine):
             # For LoRA, only iterate over trainable LoRA parameters
             param_iterator = (
                 (name, param)
-                for name, param in self.model.named_parameters()
+                for name, param in self._get_model_name_parameters()
                 if param.requires_grad
             )
         else:
             # For full model, iterate over all parameters
-            param_iterator = self.get_model_name_parameters()
+            param_iterator = self._get_model_name_parameters()
 
         for name, param in param_iterator:
             tensor = self._get_full_tensor(param)
