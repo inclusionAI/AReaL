@@ -96,10 +96,18 @@ def _ensure_message_dict_list(
 
 
 def get_extra_tokens_after_im_end(tokenizer: "PreTrainedTokenizerFast") -> list[int]:
-    if not hasattr(get_extra_tokens_after_im_end, '_cache'):
+    if not hasattr(get_extra_tokens_after_im_end, "_cache"):
         im_end_token_id = tokenizer.eos_token_id
-        simple_chat_tokens = tokenizer.apply_chat_template([{"role": "user", "content": ""}], tokenize=True, add_generation_prompt=False)
-        im_end_index = len(simple_chat_tokens) - 1 - simple_chat_tokens[::-1].index(im_end_token_id)
+        simple_chat_tokens = tokenizer.apply_chat_template(
+            [{"role": "user", "content": ""}],
+            tokenize=True,
+            add_generation_prompt=False,
+        )
+        im_end_index = (
+            len(simple_chat_tokens)
+            - 1
+            - simple_chat_tokens[::-1].index(im_end_token_id)
+        )
         get_extra_tokens_after_im_end._cache = simple_chat_tokens[im_end_index + 1 :]
     return get_extra_tokens_after_im_end._cache
 
@@ -109,7 +117,7 @@ def concat_prompt_token_ids_with_parent(
     parent: InteractionWithTokenLogpReward | None,
     tokenizer: "PreTrainedTokenizerFast",
     tools: Iterable[ChatCompletionToolParam] | None = None,
-    extra_body: Body = {}, 
+    extra_body: Body = {},
 ) -> list[int]:
     """Concatenate prompt token IDs with parent interaction's tokens."""
     parent_tokens = []
@@ -118,7 +126,8 @@ def concat_prompt_token_ids_with_parent(
             raise ValueError("Parent interaction has no model_response.")
         # TODO: (yulangz) how to handle here when stop is set?
         parent_tokens = (
-            parent.model_response.input_tokens + parent.model_response.output_tokens # with stop tokens
+            parent.model_response.input_tokens
+            + parent.model_response.output_tokens  # with stop tokens
         )
     # By default, follows Qwen3 chat template.
     child_tokens = tokenizer.apply_chat_template(
@@ -128,7 +137,9 @@ def concat_prompt_token_ids_with_parent(
         tokenize=True,
         **extra_body.get("chat_template_kwargs", {}),
     )
-    prompt_token_ids = parent_tokens + get_extra_tokens_after_im_end(tokenizer) + child_tokens
+    prompt_token_ids = (
+        parent_tokens + get_extra_tokens_after_im_end(tokenizer) + child_tokens
+    )
     return prompt_token_ids
 
 
@@ -553,7 +564,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             raise ValueError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
             )
-        
+
         print(f"[wht debug] prompt_token_ids: {prompt_token_ids}")
 
         # Map sampling params

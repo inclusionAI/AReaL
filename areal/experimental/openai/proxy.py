@@ -361,7 +361,12 @@ class ProxyServer:
                     "rollout and tokenizer are required if client is not provided"
                 )
             client = self._create_client(
-                rollout, tokenizer, tool_call_parser, reasoning_parser, chat_template_type, engine_max_tokens
+                rollout,
+                tokenizer,
+                tool_call_parser,
+                reasoning_parser,
+                chat_template_type,
+                engine_max_tokens,
             )
         self.client = client
         self.name = name
@@ -457,7 +462,9 @@ class ProxyServer:
 
     async def get_results(
         self, session_ids: list[str], discount: float = 1.0, style: str = "individual"
-    ) -> tuple[dict[str, float | None], dict[str, dict[str, "InteractionWithTokenLogpReward"]]]:
+    ) -> tuple[
+        dict[str, float | None], dict[str, dict[str, "InteractionWithTokenLogpReward"]]
+    ]:
         session_caches = await asyncio.gather(
             *[self.get_session_cache_data(session_id) for session_id in session_ids]
         )

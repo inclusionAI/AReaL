@@ -101,9 +101,9 @@ class InteractionWithTokenLogpReward:
     def remaining_messages(self) -> list[dict]:
         if self.parent is None:
             return self.messages
-        assert self.parent.output_message_list is not None, (
-            "Parent output message is not set."
-        )
+        assert (
+            self.parent.output_message_list is not None
+        ), "Parent output message is not set."
         parent_len = len(self.parent.messages + self.parent.output_message_list)
         return self.messages[parent_len:]
 

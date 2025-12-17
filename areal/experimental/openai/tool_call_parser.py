@@ -84,8 +84,13 @@ def process_tool_calls(
                     )
                     for call_info in call_info_list
                 ]
-    
-            full_content_text = reasoning_parser_p.detector.think_start_token + reasoning_text + reasoning_parser_p.detector.think_end_token + content_text
+
+            full_content_text = (
+                reasoning_parser_p.detector.think_start_token
+                + reasoning_text
+                + reasoning_parser_p.detector.think_end_token
+                + content_text
+            )
             return tool_calls, full_content_text, finish_reason
         except Exception as e:
             logger.error(f"Tool call parsing error: {e}")

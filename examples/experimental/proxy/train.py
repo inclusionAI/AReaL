@@ -118,7 +118,9 @@ class ProxyWorkflow(RolloutWorkflow):
             for session_id, session_completions in completions.items():
                 if len(session_completions) == 0:
                     continue
-                version = list(session_completions.values())[0].model_response.output_versions[0]
+                version = list(session_completions.values())[
+                    0
+                ].model_response.output_versions[0]
 
                 dump_path = os.path.join(self.dump_dir, str(version))
                 await aiofiles.os.makedirs(dump_path, exist_ok=True)
@@ -141,7 +143,7 @@ class ProxyWorkflow(RolloutWorkflow):
                         info += f"role[{role}]: {content}\n"
                         if "tool_calls" in message:
                             info += f"\t[tool_calls]: {message['tool_calls']}\n"
-                    
+
                     if completion.is_completion:
                         info += f"=======Completion=======\n{completion.completion}\n"
                     else:
@@ -150,7 +152,6 @@ class ProxyWorkflow(RolloutWorkflow):
                     info += f"=======Input Tokens=======\n{completion.model_response.input_tokens}\n"
                     info += f"=======Output Tokens=======\n{completion.model_response.output_tokens}\n"
                     info += "=========================\n\n"
-
 
                 # Dump rollout to file
                 file_path = os.path.join(dump_path, f"{qid}.txt")

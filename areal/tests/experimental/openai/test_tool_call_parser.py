@@ -3,6 +3,7 @@ from areal.experimental.openai.tool_call_parser import process_tool_calls
 
 # Tools constructed as Iterable[ChatCompletionToolParam]
 from openai.types.chat import ChatCompletionToolParam
+
 tools: list[ChatCompletionToolParam] = [
     {
         "type": "function",
@@ -57,12 +58,12 @@ def test_process_tool_calls_qwen25_chat_completions():
     when use_responses=False.
     """
     text = (
-        "<think>\nOkay, so the user is asking whether the director of \"Scary Movie\" and the director of \"The Preacher's Wife\" are from the same country. Let me think about how to approach this.\n\n"
-        "First, I need to confirm the countries of these directors. I remember that \"Scary Movie\" is directed by Joe Anderson, and \"The Preacher's Wife\" is directed by David Fincher. Wait, but actually, \"The Preacher's Wife\" is directed by Christopher Nolan and David Fincher? No, I think I mixed up. Let me check my memory. \n\n"
+        '<think>\nOkay, so the user is asking whether the director of "Scary Movie" and the director of "The Preacher\'s Wife" are from the same country. Let me think about how to approach this.\n\n'
+        'First, I need to confirm the countries of these directors. I remember that "Scary Movie" is directed by Joe Anderson, and "The Preacher\'s Wife" is directed by David Fincher. Wait, but actually, "The Preacher\'s Wife" is directed by Christopher Nolan and David Fincher? No, I think I mixed up. Let me check my memory. \n\n'
         "Wait, no. The Preacher's Wife is a movie directed by Christopher Nolan. And David Fincher directed The Preacher. So the directors are different. Then the user is asking if they are both from the same country. The answer would be no, because the two directors are from different countries. \n\n"
-        "But maybe I should verify this to be sure. Since I can use the web search function, I should use the \"access\" tool to get the URLs of the directors' websites to confirm. So first, I'll search for \"director of Scary Movie country\" and \"director of The Preacher's Wife country\" to get precise data. Then, analyze the results to see if they have the same country affiliations.\n</think>\n\n"
-        "<tool_call>\n{\"name\": \"search\", \"arguments\": {\"query\": \"director of Scary Movie country\"}}\n</tool_call>\n\n"
-        "<tool_call>\n{\"name\": \"search\", \"arguments\": {\"query\": \"director of The Preacher's Wife country\"}}\n</tool_call><|im_end|>"
+        'But maybe I should verify this to be sure. Since I can use the web search function, I should use the "access" tool to get the URLs of the directors\' websites to confirm. So first, I\'ll search for "director of Scary Movie country" and "director of The Preacher\'s Wife country" to get precise data. Then, analyze the results to see if they have the same country affiliations.\n</think>\n\n'
+        '<tool_call>\n{"name": "search", "arguments": {"query": "director of Scary Movie country"}}\n</tool_call>\n\n'
+        '<tool_call>\n{"name": "search", "arguments": {"query": "director of The Preacher\'s Wife country"}}\n</tool_call><|im_end|>'
     )
 
     tool_call_parser = "qwen25"
@@ -91,11 +92,16 @@ def test_process_tool_calls_qwen25_chat_completions():
     assert tool_calls[0].type == "function"
     assert tool_calls[0].function.name == "search"
     assert tool_calls[1].function.name == "search"
-    assert tool_calls[0].function.arguments == '{"query": "director of Scary Movie country"}'
-    assert tool_calls[1].function.arguments == '{"query": "director of The Preacher\'s Wife country"}'
+    assert (
+        tool_calls[0].function.arguments
+        == '{"query": "director of Scary Movie country"}'
+    )
+    assert (
+        tool_calls[1].function.arguments
+        == '{"query": "director of The Preacher\'s Wife country"}'
+    )
     # Ensure the returned text no longer contains raw <tool_call> blocks
     assert "<tool_call>" not in new_text
-
 
 
 def test_process_tool_calls_qwen25_chat_completions_with_tool_call_in_thinking():
@@ -105,12 +111,12 @@ def test_process_tool_calls_qwen25_chat_completions_with_tool_call_in_thinking()
     when use_responses=False.
     """
     text = (
-        "<think>\nOkay, so the user is asking whether the director of \"Scary Movie\" and the director of \"The Preacher's Wife\" are from the same country. Let me think about how to approach this.\n\n"
-        "First, I need to confirm the countries of these directors. I remember that \"Scary Movie\" is directed by Joe Anderson, and \"The Preacher's Wife\" is directed by David Fincher. Wait, but actually, \"The Preacher's Wife\" is directed by Christopher Nolan and David Fincher? No, I think I mixed up. Let me check my memory. \n\n"
-        "Wait, no. The Preacher's Wife is a movie directed by Christopher Nolan. And David Fincher directed The Preacher. <tool_call>\n{\"name\": \"search\", \"arguments\": {\"query\": \"aaaa\"}}\n</tool_call>\n\n So the directors are different. Then the user is asking if they are both from the same country. The answer would be no, because the two directors are from different countries. \n\n"
-        "But maybe I should verify this to be sure. Since I can use the web search function, I should use the \"access\" tool to get the URLs of the directors' websites to confirm. So first, I'll search for \"director of Scary Movie country\" and \"director of The Preacher's Wife country\" to get precise data. Then, analyze the results to see if they have the same country affiliations.\n</think>\n\n"
-        "<tool_call>\n{\"name\": \"search\", \"arguments\": {\"query\": \"director of Scary Movie country\"}}\n</tool_call>\n\n"
-        "<tool_call>\n{\"name\": \"search\", \"arguments\": {\"query\": \"director of The Preacher's Wife country\"}}\n</tool_call><|im_end|>"
+        '<think>\nOkay, so the user is asking whether the director of "Scary Movie" and the director of "The Preacher\'s Wife" are from the same country. Let me think about how to approach this.\n\n'
+        'First, I need to confirm the countries of these directors. I remember that "Scary Movie" is directed by Joe Anderson, and "The Preacher\'s Wife" is directed by David Fincher. Wait, but actually, "The Preacher\'s Wife" is directed by Christopher Nolan and David Fincher? No, I think I mixed up. Let me check my memory. \n\n'
+        'Wait, no. The Preacher\'s Wife is a movie directed by Christopher Nolan. And David Fincher directed The Preacher. <tool_call>\n{"name": "search", "arguments": {"query": "aaaa"}}\n</tool_call>\n\n So the directors are different. Then the user is asking if they are both from the same country. The answer would be no, because the two directors are from different countries. \n\n'
+        'But maybe I should verify this to be sure. Since I can use the web search function, I should use the "access" tool to get the URLs of the directors\' websites to confirm. So first, I\'ll search for "director of Scary Movie country" and "director of The Preacher\'s Wife country" to get precise data. Then, analyze the results to see if they have the same country affiliations.\n</think>\n\n'
+        '<tool_call>\n{"name": "search", "arguments": {"query": "director of Scary Movie country"}}\n</tool_call>\n\n'
+        '<tool_call>\n{"name": "search", "arguments": {"query": "director of The Preacher\'s Wife country"}}\n</tool_call><|im_end|>'
     )
 
     tool_call_parser = "qwen25"
@@ -139,7 +145,13 @@ def test_process_tool_calls_qwen25_chat_completions_with_tool_call_in_thinking()
     assert tool_calls[0].type == "function"
     assert tool_calls[0].function.name == "search"
     assert tool_calls[1].function.name == "search"
-    assert tool_calls[0].function.arguments == '{"query": "director of Scary Movie country"}'
-    assert tool_calls[1].function.arguments == '{"query": "director of The Preacher\'s Wife country"}'
+    assert (
+        tool_calls[0].function.arguments
+        == '{"query": "director of Scary Movie country"}'
+    )
+    assert (
+        tool_calls[1].function.arguments
+        == '{"query": "director of The Preacher\'s Wife country"}'
+    )
     # Ensure the returned text no longer contains raw <tool_call> blocks
     assert "<tool_call>" in new_text
