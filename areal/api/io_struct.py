@@ -60,7 +60,7 @@ class ModelResponse:
     output_tokens: list[int] = field(default_factory=list)
     output_logprobs: list[float] = field(default_factory=list)
     output_versions: list[int] = field(default_factory=list)
-    stop_reason: Literal["length", "stop", "interrupt"] = "stop"
+    stop_reason: Literal["length", "stop", "tool_calls", "abort"] = "stop"
     # tokenizer is used for encode-decode in the inference engine
     tokenizer: PreTrainedTokenizerFast | None = None
 
