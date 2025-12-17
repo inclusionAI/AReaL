@@ -141,8 +141,10 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     "Parent interaction output_message_list and messages must be set to find parent relationship."
                 )
             parent_data = parent.messages + parent.output_message_list
+            print(f"[wht debug] parent_data: {parent_data}, value.messages: {value.messages}")
             if _is_prefix(parent_data, value.messages):
                 value.parent = parent
+                print(f"[wht debug] parent is prefix of value")
                 break
             elif _is_prefix(parent.messages, value.messages):
                 is_similar, diff_a, diff_b = _is_similar_on_last_message(
