@@ -429,7 +429,7 @@ class RayScheduler(Scheduler):
                     wi.actor.configure.remote(self.exp_config, wi.role, rank)
                 except Exception as e:
                     logger.error(
-                        f"Confgiure failed on worker {wi.worker.id}: {e}", exc_info=True
+                        f"Configure failed on worker {wi.worker.id}: {e}", exc_info=True
                     )
                     self._cleanup_workers(worker_info_list)
                     raise WorkerCreationError(
