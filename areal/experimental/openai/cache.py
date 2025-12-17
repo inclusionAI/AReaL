@@ -145,6 +145,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 value.parent = parent
                 break
             elif _is_prefix(parent.messages, value.messages):
+                print(f"[wht debug] {parent_data=}\n{parent.messages=}\n{value.messages=}")  # DEBUG
                 is_similar, diff_a, diff_b = _is_similar_on_last_message(
                     parent_data, value.messages
                 )
