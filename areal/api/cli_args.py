@@ -4,7 +4,7 @@ import os
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import uvloop
 import yaml
@@ -150,6 +150,14 @@ class GenerationHyperparameters:
         default_factory=list,
         metadata={"help": "Stop generation when encountering these token IDs."},
     )
+    ignore_eos: bool = field(
+        default=False,
+        metadata={"help": "Do not stop generation when EOS is encountered."},
+    )
+    skip_special_tokens: bool = field(
+        default=True,
+        metadata={"help": "Skip special tokens when decoding/displaying outputs."},
+    )
     stop: list[str] | None = field(
         default=None,
         metadata={
@@ -212,22 +220,24 @@ class GenerationHyperparameters:
             exclude_args=exclude_args, api_format="openai-agents"
         )
 
+    _OPENAI_UNSUPPORTED_ARGS: ClassVar[set[str]] = {
+        "min_new_tokens",  # Not supported by OpenAI
+        "greedy",  # Not directly supported by OpenAI
+        "top_k",  # Not supported by OpenAI
+        "stop_token_ids",  # Not supported by OpenAI
+        "ignore_eos",  # Not supported by OpenAI
+        "skip_special_tokens",  # Not supported by OpenAI
+        "lora_name",  # Not supported by OpenAI
+        "use_beam_search",  # Not supported by OpenAI
+        "max_tokens",  # deprecated by "completions", not used in "responses", should be `max_new_tokens` in "openai-agents"
+    }
+
     def to_openai_args_dict(
         self, exclude_args: list[str] | None = None, api_format: str = "completions"
     ) -> dict[str, Any]:
         """Convert the generation hyperparameters to a dictionary of arguments for OpenAI client."""
         final_exclude_args = set(exclude_args) if exclude_args is not None else set()
-        final_exclude_args.update(
-            {
-                "min_new_tokens",  # Not supported by OpenAI
-                "greedy",  # Not directly supported by OpenAI
-                "top_k",  # Not supported by OpenAI
-                "stop_token_ids",  # Not supported by OpenAI
-                "lora_name",  # Not supported by OpenAI
-                "use_beam_search",  # Not supported by OpenAI
-                "max_tokens",  # deprecated by "completions", not used in "responses", should be `max_new_tokens` in "openai-agents"
-            }
-        )
+        final_exclude_args.update(self._OPENAI_UNSUPPORTED_ARGS)
         # TODO: move the excluded args into extra body, so they can be passed through the client request
 
         mapping = {"n_samples": "n"}

@@ -45,6 +45,8 @@ class VLLMBackend:
             "max_tokens": gconfig.max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
+            "ignore_eos": gconfig.ignore_eos,
+            "skip_special_tokens": gconfig.skip_special_tokens,
             "return_tokens_as_token_ids": True,
             "logprobs": 0,
             "use_beam_search": gconfig.use_beam_search,
