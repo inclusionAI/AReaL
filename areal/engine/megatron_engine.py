@@ -1081,6 +1081,14 @@ class MegatronEngine(TrainEngine):
     ) -> int:
         param, param_size = self._collect_param(name, param)
 
+        if is_float8tensor(param):
+            # FP8 is stored as uint8, so element_size is 1 byte
+            param_size = param.numel() * 1
+            # Convert TE FP8 to bf16 before convert_to_hf (which will convert to PyTorch FP8)
+            param = param.dequantize(dtype=self.dtype)
+        else:
+            param_size = param.numel() * param.element_size()
+
         if not self.is_pipeline_parallel_head():
             return buffer_size
 
