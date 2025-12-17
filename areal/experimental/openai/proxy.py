@@ -222,14 +222,20 @@ def build_app(
             raise HTTPException(
                 status_code=400, detail=f"Session {session_id} not found"
             )
-        if interaction_id is None:
-            # take the last interaction id
-            interaction_id = state.session_cache[
-                session_id
-            ].completions.last_interaction_id
 
         completions = state.session_cache[session_id].completions
-        if interaction_id not in completions:
+        if interaction_id is None:
+            # take the last interaction id
+            if len(completions) == 0:
+                logger.error(f"No interactions in session {session_id}")
+                raise HTTPException(
+                    status_code=400, detail="No interactions in session"
+                )
+            interaction_id = completions.last_interaction_id
+        elif interaction_id not in completions:
+            logger.error(
+                f"Interaction {interaction_id} not found in session {session_id}"
+            )
             raise HTTPException(
                 status_code=400, detail=f"Interaction {interaction_id} not found"
             )

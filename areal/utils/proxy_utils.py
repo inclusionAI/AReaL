@@ -142,7 +142,13 @@ async def _set_reward(
     url: str = RL_SET_REWARD_PATHNAME,
 ):
     payload = AReaLSetRewardRequest(interaction_id=interaction_id, reward=reward)
-    await post_json_with_retry(http_session, url=url, payload=payload)
+    try:
+        await post_json_with_retry(http_session, url=url, payload=payload)
+    except aiohttp.ClientResponseError as e:
+        if e.status == 400:
+            logger.error(f"[error code {e.status}] Error setting reward: {e.message}")
+        else:
+            raise e
 
 
 async def set_interaction_reward(
@@ -196,7 +202,16 @@ async def run_and_submit_rewards(
             )
 
     async with aiohttp.ClientSession(base_url) as session:
-        rewards = await func(data)
+        info = None
+        results = await func(data)
+        if isinstance(results, tuple):
+            if len(results) != 2:
+                raise ValueError(
+                    f"Results must be a tuple of (rewards, info), got {len(results)}"
+                )
+            rewards, info = results
+        else:
+            rewards = results
 
         if isinstance(rewards, dict):
             for interaction_id, reward in rewards.items():
@@ -212,3 +227,4 @@ async def run_and_submit_rewards(
                 reward=_get_float_reward(rewards),
                 url=pathname,
             )
+        return info
