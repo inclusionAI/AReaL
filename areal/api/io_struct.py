@@ -123,6 +123,7 @@ class WeightUpdateMeta:
     lora_name: str = ""
     lora_int_id: int = 0
     base_model_name: str = ""
+    peft_config: dict = field(default_factory=dict)
 
     clear_checkpoint_after_load: bool = True
 
@@ -177,6 +178,10 @@ class WeightUpdateMeta:
         allocation_mode: AllocationMode,
         nccl_group_name: str = "update_weight_group",
         weight_chunked_mem_mb: int = 1024,
+        use_lora: bool = False,
+        lora_name: str = "",
+        lora_int_id: int = 0,
+        base_model_name: str = "",
     ):
         return cls(
             type=current_platform.communication_backend,
@@ -185,6 +190,10 @@ class WeightUpdateMeta:
             nccl_master_port=find_free_ports(1)[0],
             nccl_group_name=nccl_group_name,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
+            use_lora=use_lora,
+            lora_name=lora_name,
+            lora_int_id=lora_int_id,
+            base_model_name=base_model_name,
         )
 
 

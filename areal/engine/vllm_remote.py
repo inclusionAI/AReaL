@@ -137,19 +137,40 @@ class VLLMBackend:
     ) -> WeightUpdateRequests:
         """Build vLLM distributed weight update requests."""
         # vLLM uses two-step process: set metadata, then update
+        # vLLM uses two-step process: set metadata, then update
+        base_payload = {
+            "names": [pspec.name for pspec in param_specs],
+            "dtypes": [pspec.dtype for pspec in param_specs],
+            "shapes": [pspec.shape for pspec in param_specs],
+            "group_name": meta.nccl_group_name,
+        }
+
+        if meta.use_lora:
+            lora_payload = {
+                "lora_name": meta.lora_name,
+                "lora_int_id": meta.lora_int_id,
+                "lora_target_modules": meta.peft_config["target_modules"],
+                "lora_rank": meta.peft_config["r"],
+                "lora_alpha": meta.peft_config["lora_alpha"],
+                "lora_bias": meta.peft_config["bias"],
+                "base_model_name": meta.base_model_name,
+            }
+            payload = {**base_payload, **lora_payload}
+            meta_endpoint = "/areal_set_update_weight_meta_lora"
+            update_endpoint = "/areal_update_weights_lora_xccl"
+        else:
+            payload = base_payload
+            meta_endpoint = "/areal_set_update_weight_meta"
+            update_endpoint = "/areal_update_weights_xccl"
+
         return WeightUpdateRequests(
             requests=[
                 HttpRequest(
-                    endpoint="/areal_set_update_weight_meta",
-                    payload={
-                        "names": [pspec.name for pspec in param_specs],
-                        "dtypes": [pspec.dtype for pspec in param_specs],
-                        "shapes": [pspec.shape for pspec in param_specs],
-                        "group_name": meta.nccl_group_name,
-                    },
+                    endpoint=meta_endpoint,
+                    payload=payload,
                 ),
                 HttpRequest(
-                    endpoint="/areal_update_weights_xccl",
+                    endpoint=update_endpoint,
                     payload={},
                 ),
             ]
