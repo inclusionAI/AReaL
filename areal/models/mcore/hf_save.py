@@ -251,10 +251,7 @@ def save_weights_to_hf_with_mbridge_fast(
     _all_gather_specs = []
     all_gather_outputs = {}
     quantization_config = getattr(bridge.hf_config, "quantization_config", None)
-    # Convert TE FP8 to bf16 before all_gather if needed
     for s in non_expert_specs:
-        if is_float8tensor(s.param):
-            s.param = s.param.dequantize(dtype=bridge.dtype)
         if s.tensor_model_parallel and mpu.get_tensor_model_parallel_world_size() > 1:
             _all_gather_specs.append(s)
     if _all_gather_specs:
@@ -275,11 +272,17 @@ def save_weights_to_hf_with_mbridge_fast(
                 infer_params = all_gather_outputs[s.global_name].chunk(
                     mpu.get_tensor_model_parallel_world_size(), dim=0
                 )
+            infer_params = [
+                p.dequantize(dtype=bridge.dtype) if is_float8tensor(p) else p
+                for p in infer_params
+            ]
             infer_params = bridge._weight_merge_across_tp(
                 s.global_name, infer_params, param
             )
         else:
             infer_params = param
+            if is_float8tensor(infer_params):
+                infer_params = infer_params.dequantize(dtype=bridge.dtype)
         converted_names, converted_params = bridge._weight_to_hf_format(
             s.global_name, infer_params
         )
@@ -367,10 +370,7 @@ def save_weights_to_hf_with_mbridge_fast(
         expert_sd = {}
         _all_gather_specs = []
         all_gather_outputs = {}
-        # Convert TE FP8 to bf16 before all_gather if needed
         for s in expert_specs:
-            if is_float8tensor(s.param):
-                s.param = s.param.dequantize(dtype=bridge.dtype)
             if etp_size > 1:
                 _all_gather_specs.append(s)
         if _all_gather_specs:
@@ -386,6 +386,11 @@ def save_weights_to_hf_with_mbridge_fast(
                 params = all_gather_outputs[s.global_name].chunk(etp_size, dim=0)
             else:
                 params = [param]
+
+            params = [
+                p.dequantize(dtype=bridge.dtype) if is_float8tensor(p) else p
+                for p in params
+            ]
             merge_params = bridge._weight_merge_across_tp(s.global_name, params, param)
             converted_names, converted_params = bridge._weight_to_hf_format(
                 s.global_name, merge_params
