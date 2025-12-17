@@ -1,8 +1,7 @@
-import pytest
-from areal.experimental.openai.tool_call_parser import process_tool_calls
-
 # Tools constructed as Iterable[ChatCompletionToolParam]
 from openai.types.chat import ChatCompletionToolParam
+
+from areal.experimental.openai.tool_call_parser import process_tool_calls
 
 tools: list[ChatCompletionToolParam] = [
     {

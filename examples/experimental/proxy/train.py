@@ -3,11 +3,12 @@ import os
 import sys
 import traceback
 import uuid
-import aiofiles
-import aiofiles.os
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
+
+import aiofiles
+import aiofiles.os
 
 from areal.api.cli_args import GenerationHyperparameters, PPOConfig, load_expr_config
 from areal.api.engine_api import InferenceEngine
@@ -136,7 +137,7 @@ class ProxyWorkflow(RolloutWorkflow):
                 info = f"\n=== Completion Session ID: {session_id} ===\n"
                 for i, completion in enumerate(session_completions.values()):
                     info += f"Completion {i + 1}\n"
-                    info += f"=======Input Messages=======\n"
+                    info += "=======Input Messages=======\n"
                     for message in completion.messages:
                         role = message.get("role", "unknown")
                         content = message.get("content", "")
