@@ -1,5 +1,6 @@
 import gc
 
+import torch
 import torch.distributed as dist
 
 from areal.platforms import current_platform
@@ -40,3 +41,15 @@ def clear_memory():
     current_platform.synchronize()
     gc.collect()
     current_platform.empty_cache()
+
+
+def ray_resource_type():
+    if torch.cuda.is_available():
+        return "GPU"
+
+    from areal.platforms import is_npu_available
+
+    if is_npu_available:
+        return "NPU"
+
+    return "CPU"
