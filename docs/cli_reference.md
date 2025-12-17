@@ -457,21 +457,23 @@ Core configuration for model training, including optimization and backend settin
 
 Controls text generation behavior for rollout.
 
-| Parameter           | Type                   | Default      | Description                                                                                                                           |
-| ------------------- | ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `n_samples`         | integer                | `1`          | Number of sequences to generate per prompt.                                                                                           |
-| `max_new_tokens`    | integer                | `16384`      | Maximum number of tokens to generate.                                                                                                 |
-| `min_new_tokens`    | integer                | `0`          | Minimum number of tokens to generate.                                                                                                 |
-| `max_tokens`        | integer                | `65536`      | Maximum number of tokens including prompt and generated tokens.                                                                       |
-| `greedy`            | boolean                | `False`      | Whether to use greedy decoding (max probability).                                                                                     |
-| `top_p`             | float                  | `1.0`        | Nucleus sampling probability threshold (0.0, 1.0\].                                                                                   |
-| `top_k`             | integer                | `100000000`  | Number of highest probability tokens to consider.                                                                                     |
-| `temperature`       | float                  | `1.0`        | Sampling temperature. Higher values increase diversity.                                                                               |
-| `stop_token_ids`    | list of integer        | **Required** | Stop generation when encountering these token IDs.                                                                                    |
-| `stop`              | list of string \| None | `None`       | One or multiple stop words. Generation will stop if one of these words is sampled.                                                    |
-| `frequency_penalty` | float                  | `0.0`        | Penalizes tokens based on their frequency in generation so far. Must be between -2 and 2 where negative numbers encourage repetition. |
-| `lora_name`         | string                 | `""`         | Lora name to be used for this generation.                                                                                             |
-| `use_beam_search`   | boolean                | `False`      | Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored.         |
+| Parameter             | Type                   | Default      | Description                                                                                                                           |
+| --------------------- | ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `n_samples`           | integer                | `1`          | Number of sequences to generate per prompt.                                                                                           |
+| `max_new_tokens`      | integer                | `16384`      | Maximum number of tokens to generate.                                                                                                 |
+| `min_new_tokens`      | integer                | `0`          | Minimum number of tokens to generate.                                                                                                 |
+| `max_tokens`          | integer                | `65536`      | Maximum number of tokens including prompt and generated tokens.                                                                       |
+| `greedy`              | boolean                | `False`      | Whether to use greedy decoding (max probability).                                                                                     |
+| `top_p`               | float                  | `1.0`        | Nucleus sampling probability threshold (0.0, 1.0\].                                                                                   |
+| `top_k`               | integer                | `100000000`  | Number of highest probability tokens to consider.                                                                                     |
+| `temperature`         | float                  | `1.0`        | Sampling temperature. Higher values increase diversity.                                                                               |
+| `stop_token_ids`      | list of integer        | **Required** | Stop generation when encountering these token IDs.                                                                                    |
+| `ignore_eos`          | boolean                | `False`      | Do not stop generation when EOS is encountered.                                                                                       |
+| `skip_special_tokens` | boolean                | `True`       | Skip special tokens when decoding/displaying outputs.                                                                                 |
+| `stop`                | list of string \| None | `None`       | One or multiple stop words. Generation will stop if one of these words is sampled.                                                    |
+| `frequency_penalty`   | float                  | `0.0`        | Penalizes tokens based on their frequency in generation so far. Must be between -2 and 2 where negative numbers encourage repetition. |
+| `lora_name`           | string                 | `""`         | Lora name to be used for this generation.                                                                                             |
+| `use_beam_search`     | boolean                | `False`      | Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored.         |
 
 (section-inference-engine)=
 
