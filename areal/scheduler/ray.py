@@ -490,7 +490,7 @@ class RayScheduler(Scheduler):
             try:
                 remove_placement_group(wi.placement_group)
             except Exception:
-                logger.warning(f"Could not remove placement group {placement_group}")
+                logger.warning(f"Could not remove placement group {wi.placement_group}")
             if wi.placement_group in self._placement_groups:
                 self._placement_groups.remove(wi.placement_group)
 
