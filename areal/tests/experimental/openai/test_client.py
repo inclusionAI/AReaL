@@ -465,7 +465,7 @@ async def test_prompt_len_exceed(openai_client):
         await openai_client.chat.completions.create(
             messages=msgs_a,
         )
-    
+
     # msgs_a should not be in the cache due to failure
     leaf_completions = openai_client.export_interactions(style="concat")
     all_completions = openai_client.export_interactions(style="individual")

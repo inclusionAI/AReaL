@@ -232,10 +232,14 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 # Cache the completion with its input messages
                 cache = areal_cache if areal_cache is not None else self._cache
                 if completion_id in cache:
-                    raise ValueError(f"Completion {completion_id} already exists in cache")
+                    raise ValueError(
+                        f"Completion {completion_id} already exists in cache"
+                    )
 
                 interaction = InteractionWithTokenLogpReward(
-                    messages=deepcopy(messages_list),  # Store a copy of the input messages
+                    messages=deepcopy(
+                        messages_list
+                    ),  # Store a copy of the input messages
                     chat_template_type=self.chat_template_type,
                 )
                 cache[completion_id] = interaction
@@ -251,7 +255,11 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                     **extra_body.get("chat_template_kwargs", {}),
                 )
             elif self.chat_template_type == "concat":
-                messages_list = interaction.remaining_messages if interaction is not None else messages_list
+                messages_list = (
+                    interaction.remaining_messages
+                    if interaction is not None
+                    else messages_list
+                )
                 prompt_token_ids = concat_prompt_token_ids_with_parent(
                     messages_list,
                     interaction.parent if interaction is not None else None,
@@ -382,7 +390,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 usage=CompletionUsage(
                     completion_tokens=len(response.output_tokens),
                     prompt_tokens=len(response.input_tokens),
-                    total_tokens=len(response.input_tokens) + len(response.output_tokens),
+                    total_tokens=len(response.input_tokens)
+                    + len(response.output_tokens),
                 ),
             )
 
@@ -631,13 +640,15 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             tool_calls = None
             try:
                 if not is_omitted(tool_choice) and tool_choice != "none" and tools:
-                    tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
-                        output_text,
-                        tools,
-                        self.tool_call_parser,
-                        self.reasoning_parser,
-                        engine_resp.stop_reason,
-                        use_responses=True,
+                    tool_calls, output_text, engine_resp.stop_reason = (
+                        process_tool_calls(
+                            output_text,
+                            tools,
+                            self.tool_call_parser,
+                            self.reasoning_parser,
+                            engine_resp.stop_reason,
+                            use_responses=True,
+                        )
                     )
             except json.JSONDecodeError as e:
                 logger.warning(
@@ -675,7 +686,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 output_tokens_details=OutputTokensDetails(
                     reasoning_tokens=reasoning_token_count
                 ),
-                total_tokens=len(engine_resp.input_tokens) + len(engine_resp.output_tokens),
+                total_tokens=len(engine_resp.input_tokens)
+                + len(engine_resp.output_tokens),
             )
 
             response = Response(
