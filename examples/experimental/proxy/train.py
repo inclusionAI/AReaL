@@ -109,7 +109,7 @@ class ProxyWorkflow(RolloutWorkflow):
         )
 
         session_ids = [f"{task_id}-{i}" for i in range(self.group_size)]
-        rewards, completions = await self.proxy_server.get_results(
+        rewards, completions = await self.proxy_server.get_session_wise_results(
             session_ids, style=self.export_style
         )
         for reward in rewards.values():
