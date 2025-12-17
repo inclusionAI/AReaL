@@ -804,17 +804,18 @@ Configuration for Megatron's DistributedDataParallel.
 
 Refer to Megatron-LM documentation for details.
 
-| Parameter                   | Type            | Default | Description |
-| --------------------------- | --------------- | ------- | ----------- |
-| `grad_reduce_in_fp32`       | boolean         | `True`  | -           |
-| `overlap_grad_reduce`       | boolean         | `False` | -           |
-| `overlap_param_gather`      | boolean         | `False` | -           |
-| `align_param_gather`        | boolean         | `False` | -           |
-| `use_distributed_optimizer` | boolean         | `True`  | -           |
-| `check_for_nan_in_grad`     | boolean         | `False` | -           |
-| `bucket_size`               | integer \| None | `None`  | -           |
-| `average_in_collective`     | boolean         | `False` | -           |
-| `fp8_param_gather`          | boolean         | `False` | -           |
+| Parameter                         | Type            | Default      | Description                                                                                            |
+| --------------------------------- | --------------- | ------------ | ------------------------------------------------------------------------------------------------------ |
+| `grad_reduce_in_fp32`             | boolean         | `True`       | -                                                                                                      |
+| `overlap_grad_reduce`             | boolean         | `False`      | -                                                                                                      |
+| `overlap_param_gather`            | boolean         | `False`      | -                                                                                                      |
+| `align_param_gather`              | boolean         | `False`      | -                                                                                                      |
+| `use_distributed_optimizer`       | boolean         | `True`       | -                                                                                                      |
+| `check_for_nan_in_grad`           | boolean         | `False`      | -                                                                                                      |
+| `bucket_size`                     | integer \| None | `None`       | -                                                                                                      |
+| `average_in_collective`           | boolean         | `False`      | -                                                                                                      |
+| `fp8_param_gather`                | boolean         | `False`      | -                                                                                                      |
+| `data_parallel_sharding_strategy` | string          | `"no_shard"` | Sharding strategy for FSDP. Valid values are 'no_shard', 'optim', 'optim_grads', 'optim_grads_params'. |
 
 (section-megatron-engine)=
 

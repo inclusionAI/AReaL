@@ -338,6 +338,12 @@ class DistributedDataParallelConfig:
     bucket_size: int | None = None
     average_in_collective: bool = False
     fp8_param_gather: bool = False
+    data_parallel_sharding_strategy: str = field(
+        default="no_shard",
+        metadata={
+            "help": "Sharding strategy for FSDP. Valid values are 'no_shard', 'optim', 'optim_grads', 'optim_grads_params'."
+        },
+    )
 
 
 @dataclass
