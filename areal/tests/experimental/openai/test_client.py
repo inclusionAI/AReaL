@@ -101,7 +101,8 @@ async def test_single_turn_rollout(openai_client):
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "Hello!"},
-        ], max_context_tokens=2048
+        ],
+        max_context_tokens=2048,
     )
     openai_client.set_reward(c.id, reward=0.5)
     completions = openai_client.export_interactions(style="individual")
@@ -117,7 +118,9 @@ async def test_multi_round_conversation(openai_client):
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "What is the capital of France?"},
     ]
-    c1 = await openai_client.chat.completions.create(messages=messages, max_context_tokens=2048)
+    c1 = await openai_client.chat.completions.create(
+        messages=messages, max_context_tokens=2048
+    )
 
     # Round 2 - extends the conversation
     assistant_message_1 = c1.choices[0].message
@@ -125,7 +128,9 @@ async def test_multi_round_conversation(openai_client):
         assistant_message_1,
         {"role": "user", "content": "What about Germany?"},
     ]
-    c2 = await openai_client.chat.completions.create(messages=messages, max_context_tokens=2048)
+    c2 = await openai_client.chat.completions.create(
+        messages=messages, max_context_tokens=2048
+    )
 
     # Round 3 - further extends the conversation
     assistant_message_2 = c2.choices[0].message
@@ -133,7 +138,9 @@ async def test_multi_round_conversation(openai_client):
         assistant_message_2,
         {"role": "user", "content": "And Italy?"},
     ]
-    c3 = await openai_client.chat.completions.create(messages=messages, max_context_tokens=2048)
+    c3 = await openai_client.chat.completions.create(
+        messages=messages, max_context_tokens=2048
+    )
 
     # Set rewards - only the final completion gets explicit reward
     openai_client.set_reward(c3.id, reward=2.0)

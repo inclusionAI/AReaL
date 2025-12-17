@@ -275,7 +275,7 @@ async def test_multi_round_tool_calling(openai_client):
             },
             {"role": "user", "content": "Thank you!"},
         ],
-        max_completion_tokens=8192
+        max_completion_tokens=8192,
     )
 
     # Set rewards
@@ -417,7 +417,9 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
             "content": "That's quite expensive! What would be the cost per square foot instead?  Please think step-by-step.",
         },
     ]
-    c3 = await openai_client.chat.completions.create(messages=messages, max_completion_tokens=8192)
+    c3 = await openai_client.chat.completions.create(
+        messages=messages, max_completion_tokens=8192
+    )
 
     # Verify conversation history
     stored_messages_c2 = openai_client.get_completions(c2.id).messages
@@ -499,7 +501,9 @@ async def test_multi_step_tool_calling_concat_style(openai_client):
         },
         {"role": "tool", "content": "100", "tool_call_id": "mock_id_a1"},
     ]
-    c_a1 = await openai_client.chat.completions.create(messages=msgs_a1, tools=tools, tool_choice="auto", max_completion_tokens=8192)
+    c_a1 = await openai_client.chat.completions.create(
+        messages=msgs_a1, tools=tools, tool_choice="auto", max_completion_tokens=8192
+    )
 
     # Branch B: root -> b -> b1 (with tool call)
     msgs_b = base + [
@@ -521,7 +525,9 @@ async def test_multi_step_tool_calling_concat_style(openai_client):
         },
         {"role": "tool", "content": "40", "tool_call_id": "mock_id_b1"},
     ]
-    c_b1 = await openai_client.chat.completions.create(messages=msgs_b1, tools=tools, tool_choice="auto", max_completion_tokens=8192)
+    c_b1 = await openai_client.chat.completions.create(
+        messages=msgs_b1, tools=tools, tool_choice="auto", max_completion_tokens=8192
+    )
 
     # Set rewards for leaf nodes
     openai_client.set_reward(c_a1.id, 2.0)
@@ -554,7 +560,6 @@ async def test_multi_step_tool_calling_concat_style(openai_client):
     assert wrapped_completion(c_b1).reward == 3.0
     assert wrapped_completion(c_a).reward is None
     assert wrapped_completion(c_b).reward is None
-
 
     # Loss mask for c_a1
     c_a_input_len = wrapped_completion(c_a).model_response.input_len
