@@ -1,6 +1,7 @@
 import threading
 from collections import OrderedDict
 from typing import Any
+import pydantic
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
@@ -99,12 +100,26 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             raise ValueError(
                 "Interaction messages must be set to find parent relationship."
             )
+        
+        def _is_same(a: Any, b: Any) -> bool:
+            if isinstance(a, list) and isinstance(b, list):
+                return len(a) == len(b) and all(_is_same(x, y) for x, y in zip(a, b))
+            elif isinstance(a, dict) and isinstance(b, dict):
+                if set(a.keys()) != set(b.keys()):
+                    return False
+                return all(_is_same(a[k], b[k]) for k in a.keys())
+            else:
+                if isinstance(a, pydantic.BaseModel):
+                    a = a.model_dump(exclude_none=True)
+                if isinstance(b, pydantic.BaseModel):
+                    b = b.model_dump(exclude_none=True)
+                return a == b
 
         def _is_prefix(a: list[dict], b: list[dict]) -> bool:
             # True if a is a prefix of b
             if len(a) > len(b):
                 return False
-            return b[: len(a)] == a
+            return _is_same(a, b[: len(a)])
 
         def _is_similar_on_last_message(
             a: list[dict], b: list[dict]
