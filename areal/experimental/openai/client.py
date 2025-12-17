@@ -81,7 +81,7 @@ def _ensure_message_dict_list(
         raise TypeError(
             f"{name} must be provided as a list, got {type(value).__name__}"
         )
-    
+
     def _normalize(item: Any):
         if isinstance(item, list):
             return [_normalize(sub_item) for sub_item in item]

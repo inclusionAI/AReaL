@@ -459,7 +459,7 @@ class ProxyServer:
             # Wait for session to be completed using event (non-blocking, efficient)
             await self.session_cache[session_id].completed_event.wait()
         return self.session_cache[session_id]
-    
+
     async def get_session_wise_results(
         self, session_ids: list[str], discount: float = 1.0, style: str = "individual"
     ) -> tuple[
@@ -478,7 +478,7 @@ class ProxyServer:
         for session_id, result in zip(session_ids, session_caches):
             completions[session_id] = result.export_interactions(discount, style)
         return rewards, completions
-    
+
     async def get_results(
         self, session_ids: list[str], discount: float = 1.0, style: str = "individual"
     ) -> tuple[dict[str, float | None], dict[str, "InteractionWithTokenLogpReward"]]:

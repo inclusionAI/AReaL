@@ -1,7 +1,6 @@
 import threading
 from collections import OrderedDict
 from typing import Any
-import pydantic
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
