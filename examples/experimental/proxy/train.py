@@ -166,7 +166,11 @@ def main(args):
 
         def _get_server_and_workflow(rollout: InferenceEngine, is_eval: bool = False):
             name = "train" if not is_eval else "eval"
-            temperature = 0.6 if is_eval else 1.0
+            gconfig = (
+                config.gconfig.new(temperature=0.6, n_samples=1)
+                if is_eval
+                else config.gconfig
+            )
             rollout_stat_scope = "rollout" if not is_eval else "eval-rollout"
             dump_dir = "generated" if not is_eval else "generated-eval"
 
@@ -180,7 +184,7 @@ def main(args):
             server.start(wait_until_ready=True)
             workflow = ProxyWorkflow(
                 proxy_server=server,
-                gconfig=config.gconfig.new(temperature=temperature),
+                gconfig=gconfig,
                 base_url=f"{server.public_addr}/v1",
                 max_concurrent_processes=num_processes // world_size,
                 agent_module_path=config.agent_module_path,
