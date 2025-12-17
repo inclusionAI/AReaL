@@ -59,13 +59,24 @@ def _pytorch_fp8_to_te_fp8(
     if hasattr(target_te_tensor, "_rowwise_data") and hasattr(
         target_te_tensor, "_rowwise_scale_inv"
     ):
+        assert pytorch_fp8_tensor.shape == target_te_tensor._rowwise_data.shape
         # rowwise_data is stored in uint8 format
-        target_te_tensor._rowwise_data.copy_(pytorch_fp8_tensor.view(torch.uint8))
+        target_te_tensor._rowwise_data.copy_(
+            pytorch_fp8_tensor.view(torch.uint8), non_blocking=True
+        )
+        target_te_tensor._columnwise_data.copy_(
+            pytorch_fp8_tensor.t().contiguous().view(torch.uint8), non_blocking=True
+        )
         scale_inv_shape = scale_inv.shape
         assert len(scale_inv_shape) == 2
         target_te_tensor._rowwise_scale_inv[
             : scale_inv_shape[0], : scale_inv_shape[1]
-        ].copy_(scale_inv)
+        ].copy_(scale_inv, non_blocking=True)
+        target_te_tensor._columnwise_scale_inv[
+            : scale_inv_shape[1], : scale_inv_shape[0]
+        ].copy_(scale_inv.t().contiguous(), non_blocking=True)
+        # target_te_tensor._create_columnwise()
+
     else:
         # Fallback for non-blockwise tensors
         target_te_tensor._data.copy_(pytorch_fp8_tensor.view(torch.uint8))
@@ -176,7 +187,7 @@ def _weight_to_mcore_tp(
                     v_scale_inv = v_scale_inv[slices]
                     # Then merge along dim=1
                     scale_inv = torch.cat(
-                        [q_scale_inv, k_scale_inv, v_scale_inv], dim=1
+                        [q_scale_inv, k_scale_inv, v_scale_inv], dim=0
                     )
                 else:
                     # Per-tensor quantization: take max
@@ -286,6 +297,7 @@ def _load_weight_with_bridge_worker(
     filenames: list[str],
     local_to_hf_map: dict[str, list[str]],
     weights_path: str,
+    torch_fp8_to_te_fp8: bool = False,
 ):
     all_slices = {}
     for filename in filenames:
@@ -295,7 +307,11 @@ def _load_weight_with_bridge_worker(
                 all_slices[name] = f.get_slice(name)
 
     quantization_config = getattr(bridge.hf_config, "quantization_config", None)
-    enable_fp8_param = bridge.tf_config.fp8 is not None and bridge.tf_config.fp8_param
+    enable_fp8_param = (
+        bridge.config.fp8 is not None
+        and bridge.config.fp8_param
+        and torch_fp8_to_te_fp8
+    )
 
     for local_name in local_names:
         hf_names = local_to_hf_map[local_name]
