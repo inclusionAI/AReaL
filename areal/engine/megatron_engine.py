@@ -16,6 +16,7 @@ from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import finalize_model_grads
+from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -556,10 +557,17 @@ class MegatronEngine(TrainEngine):
         param = all_gather_param(name, param)
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
+        if is_float8tensor(param):
+            # FP8 is stored as uint8, so element_size is 1 byte
+            param_size = param.numel() * 1
+            # Convert TE FP8 to bf16 before convert_to_hf (which will convert to PyTorch FP8)
+            param = param.dequantize(dtype=self.dtype)
+        else:
+            param_size = param.numel() * param.element_size()
+
         if not self.is_pipeline_parallel_head():
             return buffer_size
 
-        param_size = param.numel() * param.element_size()
         if buffer_size + param_size > weight_chunked_mem_size:
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             buffer_size = 0
@@ -660,7 +668,14 @@ class MegatronEngine(TrainEngine):
         param = all_gather_param(name, param)
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
-        param_size = param.numel() * param.element_size()
+        if is_float8tensor(param):
+            # FP8 is stored as uint8, so element_size is 1 byte
+            param_size = param.numel() * 1
+            # Convert TE FP8 to bf16 (will be converted to PyTorch FP8 later in convert_to_hf)
+            param = param.dequantize(dtype=self.dtype)
+        else:
+            param_size = param.numel() * param.element_size()
+
         if (
             buffer_size + param_size
         ) * mpu.get_expert_model_parallel_world_size() > weight_chunked_mem_size:
