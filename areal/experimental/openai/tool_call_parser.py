@@ -13,6 +13,29 @@ from areal.utils import logging
 logger = logging.getLogger("Tool Call Parser")
 
 
+def _detect_think_and_return_ori_think(text: str, think_start_token: str, think_end_token: str) -> tuple[str, str]:
+        """
+        return think text(with <think> and </think>) and normal text
+        """
+        in_reasoning = think_start_token in text
+
+        if not in_reasoning:
+            return "", text
+
+        # The text is considered to be in a reasoning block.
+        processed_text = text.replace(think_start_token, "")
+
+        if think_end_token not in processed_text:
+            # Assume reasoning was truncated before `</think>` token
+            return think_start_token + processed_text, ""
+
+        # Extract reasoning content
+        splits = processed_text.split(think_end_token, maxsplit=1)
+        reasoning_text = splits[0]
+        normal_text = splits[1]
+
+        return think_start_token + reasoning_text + think_end_token, normal_text
+
 # Modified from sglang
 def process_tool_calls(
     text: str,
@@ -53,7 +76,7 @@ def process_tool_calls(
     parser_p = FunctionCallParser(tools, tool_call_parser)
     reasoning_parser_p = ReasoningParser(reasoning_parser)
 
-    reasoning_text, content_text = reasoning_parser_p.parse_non_stream(text)
+    reasoning_text, content_text = _detect_think_and_return_ori_think(text, reasoning_parser_p.detector.think_start_token, reasoning_parser_p.detector.think_end_token)
 
     if parser_p.has_tool_call(content_text):
         if finish_reason == "stop":
@@ -85,13 +108,7 @@ def process_tool_calls(
                     for call_info in call_info_list
                 ]
 
-            full_content_text = (
-                reasoning_parser_p.detector.think_start_token
-                + reasoning_text
-                + reasoning_parser_p.detector.think_end_token
-                + content_text
-            )
-            return tool_calls, full_content_text, finish_reason
+            return tool_calls, reasoning_text + content_text, finish_reason
         except Exception as e:
             logger.error(f"Tool call parsing error: {e}")
             traceback.print_exc()
