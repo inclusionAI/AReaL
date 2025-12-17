@@ -204,194 +204,200 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
-        if not isinstance(messages, Iterable):
-            raise TypeError(
-                "messages must be provided as an iterable of dictionaries or BaseModel instances."
-            )
-        if not is_omitted(n) and n != 1:
-            raise NotImplementedError("n != 1 is not supported yet")
-        n = 1
-
-        messages_list_raw = list(messages)
-        if not messages_list_raw:
-            raise ValueError("messages cannot be empty")
-        messages_list = _ensure_message_dict_list(
-            "messages",
-            messages_list_raw,
-        )
-        if extra_body is None:
-            extra_body = {}
-
-        # Convert response to OpenAI format
-        completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
-        current_time = int(datetime.datetime.now().timestamp())
-        # Add interaction to cache, resolve parent relationship according to input messages
         cache, interaction = None, None
-        if is_omitted(store) or store:
-            # Cache the completion with its input messages
-            cache = areal_cache if areal_cache is not None else self._cache
-            if completion_id in cache:
-                raise ValueError(f"Completion {completion_id} already exists in cache")
-
-            interaction = InteractionWithTokenLogpReward(
-                messages=deepcopy(messages_list),  # Store a copy of the input messages
-                chat_template_type=self.chat_template_type,
-            )
-            cache[completion_id] = interaction
-
-        # Convert messages to prompt format
-        tools = tools if not is_omitted(tools) else None
-        if self.chat_template_type == "hf":
-            prompt_token_ids = self.tokenizer.apply_chat_template(
-                messages_list,
-                tools=tools,
-                add_generation_prompt=True,
-                tokenize=True,
-                **extra_body.get("chat_template_kwargs", {}),
-            )
-        elif self.chat_template_type == "concat":
-            messages_list = interaction.remaining_messages
-            prompt_token_ids = concat_prompt_token_ids_with_parent(
-                messages_list,
-                interaction.parent if interaction is not None else None,
-                self.tokenizer,
-                tools=tools,
-                extra_body=extra_body,
-            )
-        else:
-            raise ValueError(
-                f"Unsupported chat_template_type {self.chat_template_type}"
-            )
-
-        temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
-        if not is_omitted(max_tokens):
-            # NOTE: support deprecated `max_tokens` usage.
-            if not is_omitted(max_completion_tokens):
-                raise ValueError(
-                    "max_tokens and max_completion_tokens cannot be set at the same time. "
-                    "max_tokens has been deprecated. Please use max_completion_tokens instead. "
-                    "To set the total max tokens, please use max_total_tokens instead."
-                )
-            # NOTE (2025-12-09): the usage of max_tokens has been changed.
-            max_completion_tokens = max_tokens
-
-        max_total_tokens_final = None
-        if not is_omitted(max_total_tokens):
-            max_total_tokens_final = max_total_tokens
-        if self.engine_max_tokens is not None:
-            if max_total_tokens_final is None:
-                max_total_tokens_final = self.engine_max_tokens
-            else:
-                max_total_tokens_final = min(
-                    max_total_tokens_final, self.engine_max_tokens
-                )
-
-        max_new_tokens = None
-        if max_total_tokens_final is not None:
-            max_new_tokens = max_total_tokens_final - len(prompt_token_ids)
-            if max_new_tokens <= 0:
-                raise ValueError(
-                    f"len of prompt tokens {len(prompt_token_ids)} exceeds max_total_tokens {max_total_tokens_final}"
-                )
-        if not is_omitted(max_completion_tokens):
-            if max_new_tokens is None:
-                max_new_tokens = max_completion_tokens
-            else:
-                max_new_tokens = min(max_new_tokens, max_completion_tokens)
-        if max_new_tokens is None:
-            max_new_tokens = 512  # Default value
-            logger.warning(
-                "Neither max_tokens nor max_completion_tokens is set; "
-                "defaulting max_new_tokens to 512."
-            )
-
-        top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
-        stop_tokens = None if is_omitted(stop) else stop
-        if stop_tokens is not None and not isinstance(stop_tokens, list):
-            stop_tokens = [stop_tokens]
-
-        if is_omitted(frequency_penalty):
-            frequency_penalty = 0.0
-
-        # Create generation config
-        gconfig = GenerationHyperparameters(
-            n_samples=n,
-            temperature=temp,
-            max_new_tokens=max_new_tokens,
-            top_p=top_p_val,
-            stop=stop_tokens,
-            greedy=temp == 0,
-            frequency_penalty=frequency_penalty,
-            stop_token_ids=list(
-                set([self.tokenizer.eos_token_id, self.tokenizer.pad_token_id])
-            ),
-        )
-
-        model_request = ModelRequest(
-            input_ids=prompt_token_ids,
-            gconfig=gconfig,
-            rid=str(uuid.uuid4()),
-            metadata=metadata if not is_omitted(metadata) else {},
-            tokenizer=self.tokenizer,
-        )
-
-        # Call inference engine
-        response = await self.engine.agenerate(model_request)
-        output_text = self.tokenizer.decode(response.output_tokens_without_stop)
-
-        # Parse tool calls.
-        tool_calls = None
+        completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         try:
-            if tool_choice != "none" and tools:
-                tool_calls, output_text, response.stop_reason = process_tool_calls(
-                    output_text,
-                    tools,
-                    self.tool_call_parser,
-                    self.reasoning_parser,
-                    response.stop_reason,
+            if not isinstance(messages, Iterable):
+                raise TypeError(
+                    "messages must be provided as an iterable of dictionaries or BaseModel instances."
                 )
-        except json.JSONDecodeError as e:
-            logger.warning(
-                f"Failed to parse tool calls from output text: {e}, output_text:\n"
-                f"{output_text}"
+            if not is_omitted(n) and n != 1:
+                raise NotImplementedError("n != 1 is not supported yet")
+            n = 1
+
+            messages_list_raw = list(messages)
+            if not messages_list_raw:
+                raise ValueError("messages cannot be empty")
+            messages_list = _ensure_message_dict_list(
+                "messages",
+                messages_list_raw,
+            )
+            if extra_body is None:
+                extra_body = {}
+
+            # Convert response to OpenAI format
+            current_time = int(datetime.datetime.now().timestamp())
+            # Add interaction to cache, resolve parent relationship according to input messages
+            if is_omitted(store) or store:
+                # Cache the completion with its input messages
+                cache = areal_cache if areal_cache is not None else self._cache
+                if completion_id in cache:
+                    raise ValueError(f"Completion {completion_id} already exists in cache")
+
+                interaction = InteractionWithTokenLogpReward(
+                    messages=deepcopy(messages_list),  # Store a copy of the input messages
+                    chat_template_type=self.chat_template_type,
+                )
+                cache[completion_id] = interaction
+
+            # Convert messages to prompt format
+            tools = tools if not is_omitted(tools) else None
+            if self.chat_template_type == "hf":
+                prompt_token_ids = self.tokenizer.apply_chat_template(
+                    messages_list,
+                    tools=tools,
+                    add_generation_prompt=True,
+                    tokenize=True,
+                    **extra_body.get("chat_template_kwargs", {}),
+                )
+            elif self.chat_template_type == "concat":
+                messages_list = interaction.remaining_messages if interaction is not None else messages_list
+                prompt_token_ids = concat_prompt_token_ids_with_parent(
+                    messages_list,
+                    interaction.parent if interaction is not None else None,
+                    self.tokenizer,
+                    tools=tools,
+                    extra_body=extra_body,
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported chat_template_type {self.chat_template_type}"
+                )
+
+            temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
+            if not is_omitted(max_tokens):
+                # NOTE: support deprecated `max_tokens` usage.
+                if not is_omitted(max_completion_tokens):
+                    raise ValueError(
+                        "max_tokens and max_completion_tokens cannot be set at the same time. "
+                        "max_tokens has been deprecated. Please use max_completion_tokens instead. "
+                        "To set the total max tokens, please use max_total_tokens instead."
+                    )
+                # NOTE (2025-12-09): the usage of max_tokens has been changed.
+                max_completion_tokens = max_tokens
+
+            max_total_tokens_final = None
+            if not is_omitted(max_total_tokens):
+                max_total_tokens_final = max_total_tokens
+            if self.engine_max_tokens is not None:
+                if max_total_tokens_final is None:
+                    max_total_tokens_final = self.engine_max_tokens
+                else:
+                    max_total_tokens_final = min(
+                        max_total_tokens_final, self.engine_max_tokens
+                    )
+
+            max_new_tokens = None
+            if max_total_tokens_final is not None:
+                max_new_tokens = max_total_tokens_final - len(prompt_token_ids)
+                if max_new_tokens <= 0:
+                    raise ValueError(
+                        f"len of prompt tokens {len(prompt_token_ids)} exceeds max_total_tokens {max_total_tokens_final}"
+                    )
+            if not is_omitted(max_completion_tokens):
+                if max_new_tokens is None:
+                    max_new_tokens = max_completion_tokens
+                else:
+                    max_new_tokens = min(max_new_tokens, max_completion_tokens)
+            if max_new_tokens is None:
+                max_new_tokens = 512  # Default value
+                logger.warning(
+                    "Neither max_tokens nor max_completion_tokens is set; "
+                    "defaulting max_new_tokens to 512."
+                )
+
+            top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
+            stop_tokens = None if is_omitted(stop) else stop
+            if stop_tokens is not None and not isinstance(stop_tokens, list):
+                stop_tokens = [stop_tokens]
+
+            if is_omitted(frequency_penalty):
+                frequency_penalty = 0.0
+
+            # Create generation config
+            gconfig = GenerationHyperparameters(
+                n_samples=n,
+                temperature=temp,
+                max_new_tokens=max_new_tokens,
+                top_p=top_p_val,
+                stop=stop_tokens,
+                greedy=temp == 0,
+                frequency_penalty=frequency_penalty,
+                stop_token_ids=list(
+                    set([self.tokenizer.eos_token_id, self.tokenizer.pad_token_id])
+                ),
             )
 
-        # Create proper ChatCompletion object with all required fields
-        output_message = ChatCompletionMessage(
-            content=output_text,
-            role="assistant",
-            # For all empty tool calls, set tool_calls=None
-            tool_calls=tool_calls or None,
-        )
-        chat_completion = ChatCompletion(
-            id=completion_id,
-            choices=[
-                Choice(
-                    finish_reason=response.stop_reason,
-                    index=0,
-                    logprobs=None,  # For simplicity
-                    message=output_message,
-                )
-            ],
-            created=current_time,
-            model="None",
-            object="chat.completion",
-            service_tier=None,
-            system_fingerprint=None,
-            usage=CompletionUsage(
-                completion_tokens=len(response.output_tokens),
-                prompt_tokens=len(response.input_tokens),
-                total_tokens=len(response.input_tokens) + len(response.output_tokens),
-            ),
-        )
+            model_request = ModelRequest(
+                input_ids=prompt_token_ids,
+                gconfig=gconfig,
+                rid=str(uuid.uuid4()),
+                metadata=metadata if not is_omitted(metadata) else {},
+                tokenizer=self.tokenizer,
+            )
 
-        if cache is not None:
-            cache[completion_id].completion = chat_completion
-            cache[completion_id].model_response = response
-            cache[completion_id].output_message_list = [
-                output_message.model_dump(exclude_none=True)
-            ]
-        return chat_completion
+            # Call inference engine
+            response = await self.engine.agenerate(model_request)
+            output_text = self.tokenizer.decode(response.output_tokens_without_stop)
+
+            # Parse tool calls.
+            tool_calls = None
+            try:
+                if tool_choice != "none" and tools:
+                    tool_calls, output_text, response.stop_reason = process_tool_calls(
+                        output_text,
+                        tools,
+                        self.tool_call_parser,
+                        self.reasoning_parser,
+                        response.stop_reason,
+                    )
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    f"Failed to parse tool calls from output text: {e}, output_text:\n"
+                    f"{output_text}"
+                )
+
+            # Create proper ChatCompletion object with all required fields
+            output_message = ChatCompletionMessage(
+                content=output_text,
+                role="assistant",
+                # For all empty tool calls, set tool_calls=None
+                tool_calls=tool_calls or None,
+            )
+            chat_completion = ChatCompletion(
+                id=completion_id,
+                choices=[
+                    Choice(
+                        finish_reason=response.stop_reason,
+                        index=0,
+                        logprobs=None,  # For simplicity
+                        message=output_message,
+                    )
+                ],
+                created=current_time,
+                model="None",
+                object="chat.completion",
+                service_tier=None,
+                system_fingerprint=None,
+                usage=CompletionUsage(
+                    completion_tokens=len(response.output_tokens),
+                    prompt_tokens=len(response.input_tokens),
+                    total_tokens=len(response.input_tokens) + len(response.output_tokens),
+                ),
+            )
+
+            if cache is not None:
+                cache[completion_id].completion = chat_completion
+                cache[completion_id].model_response = response
+                cache[completion_id].output_message_list = [
+                    output_message.model_dump(exclude_none=True)
+                ]
+            return chat_completion
+        except Exception as e:
+            if interaction is not None and cache is not None and completion_id in cache:
+                # Remove the interaction from cache on failure
+                del cache[completion_id]
+            raise e
 
 
 class AsyncResponsesWithReward(BaseAsyncResponses):
@@ -443,272 +449,279 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         resp_id = f"resp-{uuid.uuid4().hex[:29]}"
         msg_id = f"msg-{uuid.uuid4().hex[:29]}"
         current_time = float(int(datetime.datetime.now().timestamp()))
-        # Add interaction to cache, resolve parent relationship according to input messages
-
-        # Cache the completion with its input messages
-        cache = areal_cache if areal_cache is not None else self._cache
-        if resp_id in cache:
-            raise ValueError(f"Response {resp_id} already exists in cache")
-        if extra_body is None:
-            extra_body = {}
-
-        # Build a simple messages list compatible with tokenizer chat template
-        messages_list: list[dict] = []
-        if not is_omitted(instructions):
-            messages_list = [
-                {"role": "system", "content": instructions},
-            ]
-        if not is_omitted(include) and len(include) > 0:
-            raise NotImplementedError("include is not supported yet")
-
-        if is_omitted(input):
-            raise ValueError("input is required for Responses.create")
-
-        def _convert_tool_output_format(
-            item: dict,
-        ) -> ChatCompletionToolMessageParam | dict:
-            """Convert custom tool output format to standard chat template format.
-
-            Converts openai.types.responses.response_input_item_param.FunctionCallOutput
-            to openai.types.chat.ChatCompletionToolMessageParam.
-
-            Args:
-                item: Input dict, could be FunctionCallOutput from openai-agents SDK
-                      with format: {'call_id': str, 'output': str, 'type': 'function_call_output'}
-
-            Returns:
-                ChatCompletionToolMessageParam (TypedDict) with format:
-                {'role': 'tool', 'content': str, 'tool_call_id': str}
-                or the original dict if conversion is not needed.
-            """
-            if (
-                isinstance(item, dict)
-                and "output" in item
-                and item.get("type") == "function_call_output"
-            ):
-                converted = {
-                    "role": "tool",
-                    "content": item["output"],
-                }
-                # Add tool_call_id if present
-                if "call_id" in item:
-                    converted["tool_call_id"] = item["call_id"]
-                return converted
-            return item
-
-        def _build_messages_list(item: ResponseInputItemParam) -> list[dict]:
-            messages_list = []
-            if "content" in item:
-                if isinstance(item["content"], str):
-                    messages_list.append(
-                        {"role": item["role"], "content": item["content"]},
-                    )
-                elif isinstance(item["content"], Iterable):
-                    for content in item["content"]:
-                        if (
-                            isinstance(content, dict)
-                            and content.get("type") == "output_text"
-                            and "text" in content
-                        ):
-                            messages_list.append(
-                                {"role": item["role"], "content": content["text"]},
-                            )
-                        else:
-                            raise ValueError("Unsupported content format")
-                else:
-                    raise ValueError("Unsupported input item format")
-            else:
-                # Convert tool output format if needed
-                converted = _convert_tool_output_format(item)
-                messages_list.append(deepcopy(converted))
-            return messages_list
-
-        if isinstance(input, str):
-            input = [{"role": "user", "content": input}]
-        if isinstance(input, list):
-            normalized_input = _ensure_message_dict_list(
-                "input",
-                input,
-            )
-            for item in normalized_input:
-                messages_list += _build_messages_list(item)
-        else:
-            raise ValueError(
-                "Unsupported Responses input format: "
-                "expected str or list of message items with input_text."
-            )
-        interaction = InteractionWithTokenLogpReward(
-            messages=deepcopy(messages_list),  # Store a copy of the input messages
-            chat_template_type=self.chat_template_type,
-            input_data=(
-                deepcopy(input) if not is_omitted(input) else ""
-            ),  # Store a copy of the input data
-        )
-        cache[resp_id] = interaction
-
-        # Apply chat template
-        tools = list(tools) if not is_omitted(tools) else None
-        if self.chat_template_type == "hf":
-            prompt_token_ids = self.tokenizer.apply_chat_template(
-                messages_list,
-                tools=tools,
-                add_generation_prompt=True,
-                tokenize=True,
-                **extra_body.get("chat_template_kwargs", {}),
-            )
-        elif self.chat_template_type == "concat":
-            messages_list = interaction.remaining_messages
-            prompt_token_ids = concat_prompt_token_ids_with_parent(
-                messages_list,
-                interaction.parent if interaction is not None else None,
-                self.tokenizer,
-                tools=tools,
-                extra_body=extra_body,
-            )
-        else:
-            raise ValueError(
-                f"Unsupported chat_template_type {self.chat_template_type}"
-            )
-
-        # Map sampling params
-        temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
-        top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
-        max_new_tokens = None
-        if self.engine_max_tokens is not None:
-            max_new_tokens = self.engine_max_tokens - len(prompt_token_ids)
-            if max_new_tokens <= 0:
-                raise ValueError(
-                    f"len of prompt tokens {len(prompt_token_ids)} exceeds engine_max_tokens {self.engine_max_tokens}"
-                )
-        if not is_omitted(max_output_tokens):
-            if max_new_tokens is None:
-                max_new_tokens = max_output_tokens
-            else:
-                max_new_tokens = min(max_new_tokens, max_output_tokens)
-        if max_new_tokens is None:
-            max_new_tokens = 512  # Default value
-            logger.warning("max_output_tokens not specified, defaulting to 512.")
-
-        stop = kwargs.get("stop", None)
-        if is_omitted(frequency_penalty):
-            frequency_penalty = 0.0
-
-        # Create generation config and request
-        gconfig = GenerationHyperparameters(
-            n_samples=1,
-            temperature=temp,
-            max_new_tokens=max_new_tokens,
-            top_p=top_p_val,
-            stop=stop,
-            greedy=temp == 0,
-            frequency_penalty=frequency_penalty,
-            stop_token_ids=list(
-                set([self.tokenizer.eos_token_id, self.tokenizer.pad_token_id])
-            ),
-        )
-
-        model_request = ModelRequest(
-            input_ids=prompt_token_ids,
-            gconfig=gconfig,
-            rid=str(uuid.uuid4()),
-            metadata=metadata if not is_omitted(metadata) else {},
-            tokenizer=self.tokenizer,
-        )
-
-        # Call inference engine
-        engine_resp = await self.engine.agenerate(model_request)
-        output_text = self.tokenizer.decode(engine_resp.output_tokens_without_stop)
-
-        # Parse tool calls.
-        tool_calls = None
+        interaction, cache = None, None
         try:
-            if not is_omitted(tool_choice) and tool_choice != "none" and tools:
-                tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
-                    output_text,
-                    tools,
-                    self.tool_call_parser,
-                    self.reasoning_parser,
-                    engine_resp.stop_reason,
-                    use_responses=True,
+            # Add interaction to cache, resolve parent relationship according to input messages
+
+            # Cache the completion with its input messages
+            cache = areal_cache if areal_cache is not None else self._cache
+            if resp_id in cache:
+                raise ValueError(f"Response {resp_id} already exists in cache")
+            if extra_body is None:
+                extra_body = {}
+
+            # Build a simple messages list compatible with tokenizer chat template
+            messages_list: list[dict] = []
+            if not is_omitted(instructions):
+                messages_list = [
+                    {"role": "system", "content": instructions},
+                ]
+            if not is_omitted(include) and len(include) > 0:
+                raise NotImplementedError("include is not supported yet")
+
+            if is_omitted(input):
+                raise ValueError("input is required for Responses.create")
+
+            def _convert_tool_output_format(
+                item: dict,
+            ) -> ChatCompletionToolMessageParam | dict:
+                """Convert custom tool output format to standard chat template format.
+
+                Converts openai.types.responses.response_input_item_param.FunctionCallOutput
+                to openai.types.chat.ChatCompletionToolMessageParam.
+
+                Args:
+                    item: Input dict, could be FunctionCallOutput from openai-agents SDK
+                        with format: {'call_id': str, 'output': str, 'type': 'function_call_output'}
+
+                Returns:
+                    ChatCompletionToolMessageParam (TypedDict) with format:
+                    {'role': 'tool', 'content': str, 'tool_call_id': str}
+                    or the original dict if conversion is not needed.
+                """
+                if (
+                    isinstance(item, dict)
+                    and "output" in item
+                    and item.get("type") == "function_call_output"
+                ):
+                    converted = {
+                        "role": "tool",
+                        "content": item["output"],
+                    }
+                    # Add tool_call_id if present
+                    if "call_id" in item:
+                        converted["tool_call_id"] = item["call_id"]
+                    return converted
+                return item
+
+            def _build_messages_list(item: ResponseInputItemParam) -> list[dict]:
+                messages_list = []
+                if "content" in item:
+                    if isinstance(item["content"], str):
+                        messages_list.append(
+                            {"role": item["role"], "content": item["content"]},
+                        )
+                    elif isinstance(item["content"], Iterable):
+                        for content in item["content"]:
+                            if (
+                                isinstance(content, dict)
+                                and content.get("type") == "output_text"
+                                and "text" in content
+                            ):
+                                messages_list.append(
+                                    {"role": item["role"], "content": content["text"]},
+                                )
+                            else:
+                                raise ValueError("Unsupported content format")
+                    else:
+                        raise ValueError("Unsupported input item format")
+                else:
+                    # Convert tool output format if needed
+                    converted = _convert_tool_output_format(item)
+                    messages_list.append(deepcopy(converted))
+                return messages_list
+
+            if isinstance(input, str):
+                input = [{"role": "user", "content": input}]
+            if isinstance(input, list):
+                normalized_input = _ensure_message_dict_list(
+                    "input",
+                    input,
                 )
-        except json.JSONDecodeError as e:
-            logger.warning(
-                f"Failed to parse tool calls from output text: {e}, output_text:\n"
-                f"{output_text}"
+                for item in normalized_input:
+                    messages_list += _build_messages_list(item)
+            else:
+                raise ValueError(
+                    "Unsupported Responses input format: "
+                    "expected str or list of message items with input_text."
+                )
+            interaction = InteractionWithTokenLogpReward(
+                messages=deepcopy(messages_list),  # Store a copy of the input messages
+                chat_template_type=self.chat_template_type,
+                input_data=(
+                    deepcopy(input) if not is_omitted(input) else ""
+                ),  # Store a copy of the input data
+            )
+            cache[resp_id] = interaction
+
+            # Apply chat template
+            tools = list(tools) if not is_omitted(tools) else None
+            if self.chat_template_type == "hf":
+                prompt_token_ids = self.tokenizer.apply_chat_template(
+                    messages_list,
+                    tools=tools,
+                    add_generation_prompt=True,
+                    tokenize=True,
+                    **extra_body.get("chat_template_kwargs", {}),
+                )
+            elif self.chat_template_type == "concat":
+                messages_list = interaction.remaining_messages
+                prompt_token_ids = concat_prompt_token_ids_with_parent(
+                    messages_list,
+                    interaction.parent if interaction is not None else None,
+                    self.tokenizer,
+                    tools=tools,
+                    extra_body=extra_body,
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported chat_template_type {self.chat_template_type}"
+                )
+
+            # Map sampling params
+            temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
+            top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
+            max_new_tokens = None
+            if self.engine_max_tokens is not None:
+                max_new_tokens = self.engine_max_tokens - len(prompt_token_ids)
+                if max_new_tokens <= 0:
+                    raise ValueError(
+                        f"len of prompt tokens {len(prompt_token_ids)} exceeds engine_max_tokens {self.engine_max_tokens}"
+                    )
+            if not is_omitted(max_output_tokens):
+                if max_new_tokens is None:
+                    max_new_tokens = max_output_tokens
+                else:
+                    max_new_tokens = min(max_new_tokens, max_output_tokens)
+            if max_new_tokens is None:
+                max_new_tokens = 512  # Default value
+                logger.warning("max_output_tokens not specified, defaulting to 512.")
+
+            stop = kwargs.get("stop", None)
+            if is_omitted(frequency_penalty):
+                frequency_penalty = 0.0
+
+            # Create generation config and request
+            gconfig = GenerationHyperparameters(
+                n_samples=1,
+                temperature=temp,
+                max_new_tokens=max_new_tokens,
+                top_p=top_p_val,
+                stop=stop,
+                greedy=temp == 0,
+                frequency_penalty=frequency_penalty,
+                stop_token_ids=list(
+                    set([self.tokenizer.eos_token_id, self.tokenizer.pad_token_id])
+                ),
             )
 
-        # Extract reasoning tokens from output
-        reasoning_token_count = self._count_reasoning_tokens(output_text)
+            model_request = ModelRequest(
+                input_ids=prompt_token_ids,
+                gconfig=gconfig,
+                rid=str(uuid.uuid4()),
+                metadata=metadata if not is_omitted(metadata) else {},
+                tokenizer=self.tokenizer,
+            )
 
-        # Build Responses API objects
-        output_message = ResponseOutputMessage(
-            id=msg_id,
-            role="assistant",
-            status="completed",
-            type="message",
-            content=[
-                ResponseOutputText(
-                    annotations=[],
-                    text=output_text,
-                    type="output_text",
+            # Call inference engine
+            engine_resp = await self.engine.agenerate(model_request)
+            output_text = self.tokenizer.decode(engine_resp.output_tokens_without_stop)
+
+            # Parse tool calls.
+            tool_calls = None
+            try:
+                if not is_omitted(tool_choice) and tool_choice != "none" and tools:
+                    tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
+                        output_text,
+                        tools,
+                        self.tool_call_parser,
+                        self.reasoning_parser,
+                        engine_resp.stop_reason,
+                        use_responses=True,
+                    )
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    f"Failed to parse tool calls from output text: {e}, output_text:\n"
+                    f"{output_text}"
                 )
-            ],
-        )
 
-        if tool_calls:
-            resp_output = tool_calls
-        else:
-            resp_output = [output_message]
+            # Extract reasoning tokens from output
+            reasoning_token_count = self._count_reasoning_tokens(output_text)
 
-        usage = ResponseUsage(
-            input_tokens=len(engine_resp.input_tokens),
-            input_tokens_details=InputTokensDetails(cached_tokens=0),
-            output_tokens=len(engine_resp.output_tokens),
-            output_tokens_details=OutputTokensDetails(
-                reasoning_tokens=reasoning_token_count
-            ),
-            total_tokens=len(engine_resp.input_tokens) + len(engine_resp.output_tokens),
-        )
+            # Build Responses API objects
+            output_message = ResponseOutputMessage(
+                id=msg_id,
+                role="assistant",
+                status="completed",
+                type="message",
+                content=[
+                    ResponseOutputText(
+                        annotations=[],
+                        text=output_text,
+                        type="output_text",
+                    )
+                ],
+            )
 
-        response = Response(
-            id=resp_id,
-            created_at=current_time,
-            error=None,
-            incomplete_details=None,
-            instructions=None if is_omitted(instructions) else instructions,
-            metadata=None if is_omitted(metadata) else metadata,
-            model="None",
-            object="response",
-            output=resp_output,
-            parallel_tool_calls=False,
-            temperature=temp,
-            tool_choice=tool_choice if not is_omitted(tool_choice) else "none",
-            tools=tools,
-            top_p=top_p_val,
-            background=None,
-            conversation=None,
-            max_output_tokens=max_new_tokens,
-            max_tool_calls=None,
-            previous_response_id=None,
-            prompt=None,
-            prompt_cache_key=None,
-            reasoning=None,
-            safety_identifier=None,
-            service_tier=None,
-            status="completed",
-            text=None,
-            top_logprobs=None,
-            truncation=None,
-            usage=usage,
-            user=None,
-        )
+            if tool_calls:
+                resp_output = tool_calls
+            else:
+                resp_output = [output_message]
 
-        cache[resp_id].response = deepcopy(response)
-        cache[resp_id].model_response = engine_resp
-        cache[resp_id].output_message_list = [
-            o.model_dump(exclude_none=True) for o in resp_output
-        ]
-        return response
+            usage = ResponseUsage(
+                input_tokens=len(engine_resp.input_tokens),
+                input_tokens_details=InputTokensDetails(cached_tokens=0),
+                output_tokens=len(engine_resp.output_tokens),
+                output_tokens_details=OutputTokensDetails(
+                    reasoning_tokens=reasoning_token_count
+                ),
+                total_tokens=len(engine_resp.input_tokens) + len(engine_resp.output_tokens),
+            )
+
+            response = Response(
+                id=resp_id,
+                created_at=current_time,
+                error=None,
+                incomplete_details=None,
+                instructions=None if is_omitted(instructions) else instructions,
+                metadata=None if is_omitted(metadata) else metadata,
+                model="None",
+                object="response",
+                output=resp_output,
+                parallel_tool_calls=False,
+                temperature=temp,
+                tool_choice=tool_choice if not is_omitted(tool_choice) else "none",
+                tools=tools,
+                top_p=top_p_val,
+                background=None,
+                conversation=None,
+                max_output_tokens=max_new_tokens,
+                max_tool_calls=None,
+                previous_response_id=None,
+                prompt=None,
+                prompt_cache_key=None,
+                reasoning=None,
+                safety_identifier=None,
+                service_tier=None,
+                status="completed",
+                text=None,
+                top_logprobs=None,
+                truncation=None,
+                usage=usage,
+                user=None,
+            )
+
+            cache[resp_id].response = deepcopy(response)
+            cache[resp_id].model_response = engine_resp
+            cache[resp_id].output_message_list = [
+                o.model_dump(exclude_none=True) for o in resp_output
+            ]
+            return response
+        except Exception as e:
+            if interaction is not None and cache is not None and resp_id in cache:
+                # Remove the interaction from cache on failure
+                del cache[resp_id]
+            raise e
 
     def _count_reasoning_tokens(
         self,

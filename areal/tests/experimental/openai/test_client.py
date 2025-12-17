@@ -91,6 +91,7 @@ def openai_client(sglang_server, tokenizer):
         tokenizer=tokenizer,
         tool_call_parser="qwen25",
         chat_template_type="hf",
+        engine_max_tokens=16384,
     )
     engine.destroy()
 
@@ -439,3 +440,34 @@ async def test_type_checking(openai_client):
         await openai_client.chat.completions.create(
             messages=tuple(msgs_a),
         )
+
+
+@pytest.mark.asyncio
+async def test_prompt_len_exceed(openai_client):
+    openai_client: ArealOpenAI
+    openai_client.chat_template_type = "concat"
+    openai_client.chat.completions.chat_template_type = "concat"
+    # Base conversation
+    base = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Start the session."},
+    ]
+    # Root
+    c_root = await openai_client.chat.completions.create(
+        messages=base,
+    )
+    # Directly use message, should not raise error
+    msgs_a = base + [
+        c_root.choices[0].message,
+        {"role": "user", "content": "Question A " * 16384},
+    ]
+    with pytest.raises(ValueError):
+        await openai_client.chat.completions.create(
+            messages=msgs_a,
+        )
+    
+    # msgs_a should not be in the cache due to failure
+    leaf_completions = openai_client.export_interactions(style="concat")
+    all_completions = openai_client.export_interactions(style="individual")
+    assert set(leaf_completions.keys()) == {c_root.id}
+    assert set(all_completions.keys()) == {c_root.id}
