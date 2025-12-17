@@ -100,26 +100,12 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             raise ValueError(
                 "Interaction messages must be set to find parent relationship."
             )
-        
-        def _is_same(a: Any, b: Any) -> bool:
-            if isinstance(a, list) and isinstance(b, list):
-                return len(a) == len(b) and all(_is_same(x, y) for x, y in zip(a, b))
-            elif isinstance(a, dict) and isinstance(b, dict):
-                if set(a.keys()) != set(b.keys()):
-                    return False
-                return all(_is_same(a[k], b[k]) for k in a.keys())
-            else:
-                if isinstance(a, pydantic.BaseModel):
-                    a = a.model_dump(exclude_none=True)
-                if isinstance(b, pydantic.BaseModel):
-                    b = b.model_dump(exclude_none=True)
-                return a == b
 
         def _is_prefix(a: list[dict], b: list[dict]) -> bool:
             # True if a is a prefix of b
             if len(a) > len(b):
                 return False
-            return _is_same(a, b[: len(a)])
+            return a == b[: len(a)]
 
         def _is_similar_on_last_message(
             a: list[dict], b: list[dict]
@@ -156,10 +142,8 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     "Parent interaction output_message_list and messages must be set to find parent relationship."
                 )
             parent_data = parent.messages + parent.output_message_list
-            print(f"[wht debug] parent_data: {parent_data}, value.messages: {value.messages}")
             if _is_prefix(parent_data, value.messages):
                 value.parent = parent
-                print(f"[wht debug] parent is prefix of value")
                 break
             elif _is_prefix(parent.messages, value.messages):
                 is_similar, diff_a, diff_b = _is_similar_on_last_message(

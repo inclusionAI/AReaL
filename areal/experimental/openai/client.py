@@ -81,18 +81,18 @@ def _ensure_message_dict_list(
         raise TypeError(
             f"{name} must be provided as a list, got {type(value).__name__}"
         )
-    normalized: list[dict[str, Any]] = []
-    for index, item in enumerate(value):
-        if isinstance(item, dict):
-            _item = {k: v for k, v in item.items() if v is not None}
-            normalized.append(_item)
+    
+    def _normalize(item: Any):
+        if isinstance(item, list):
+            return [_normalize(sub_item) for sub_item in item]
+        elif isinstance(item, dict):
+            return {k: _normalize(v) for k, v in item.items() if v is not None}
         elif isinstance(item, BaseModel):
-            normalized.append(item.model_dump(exclude_none=True))
+            return item.model_dump(exclude_none=True)
         else:
-            raise TypeError(
-                f"{name}[{index}] must be a dict or a BaseModel; got {type(item).__name__}"
-            )
-    return normalized
+            return item
+
+    return _normalize(value)
 
 
 def get_extra_tokens_after_im_end(tokenizer: "PreTrainedTokenizerFast") -> list[int]:
