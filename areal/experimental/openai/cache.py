@@ -65,9 +65,9 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             updated in-place.
         """
         # Assign rewards to interactions in cache based on their creation order
-        if not self._apply_reward_discount_called:
+        if self._apply_reward_discount_called:
             raise RuntimeError(
-                "apply_reward_discount must be called before exporting interactions."
+                "apply_reward_discount should only be called once."
             )
         self._apply_reward_discount_called = True
         reversed_interactions = list(reversed(self.values()))
