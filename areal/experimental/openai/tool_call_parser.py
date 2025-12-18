@@ -58,7 +58,9 @@ def process_tool_calls(
     from sglang.srt.function_call.function_call_parser import FunctionCallParser
     from sglang.srt.parser.reasoning_parser import ReasoningParser
 
+    print(f"[wht debug] input tools: {tools}")
     if use_responses:
+        print(f"[wht debug] Using ResponseFunctionToolCall format.")
         tools = [
             SglTool(
                 type=tool["type"],
@@ -71,10 +73,12 @@ def process_tool_calls(
             for tool in tools
         ]
     else:
+        print(f"[wht debug] Using ChatCompletionMessageFunctionToolCall format.")
         tools = [
             SglTool(type=tool["type"], function=SglFunction(**tool["function"]))
             for tool in tools
         ]
+    print(f"[wht debug] Converted tools: {tools}")
 
     parser_p = FunctionCallParser(tools, tool_call_parser)
     reasoning_parser_p = ReasoningParser(reasoning_parser)
