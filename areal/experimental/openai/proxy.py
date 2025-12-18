@@ -460,7 +460,7 @@ class ProxyServer:
             await self.session_cache[session_id].completed_event.wait()
         return self.session_cache[session_id]
 
-    async def get_session_wise_results(
+    async def get_sessionwise_results(
         self, session_ids: list[str], discount: float = 1.0, style: str = "individual"
     ) -> tuple[
         dict[str, float | None], dict[str, dict[str, "InteractionWithTokenLogpReward"]]
@@ -482,7 +482,7 @@ class ProxyServer:
     async def get_results(
         self, session_ids: list[str], discount: float = 1.0, style: str = "individual"
     ) -> tuple[dict[str, float | None], dict[str, "InteractionWithTokenLogpReward"]]:
-        rewards, completions_by_session = await self.get_session_wise_results(
+        rewards, completions_by_session = await self.get_sessionwise_results(
             session_ids, discount, style
         )
         completions = {}

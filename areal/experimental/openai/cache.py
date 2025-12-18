@@ -65,9 +65,10 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             updated in-place.
         """
         # Assign rewards to interactions in cache based on their creation order
-        assert not self._apply_reward_discount_called, (
-            "apply_reward_discount should only be called once."
-        )
+        if not self._apply_reward_discount_called:
+            raise RuntimeError(
+                "apply_reward_discount must be called before exporting interactions."
+            )
         self._apply_reward_discount_called = True
         reversed_interactions = list(reversed(self.values()))
 
@@ -104,7 +105,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             # True if a is a prefix of b
             if len(a) > len(b):
                 return False
-            return a == b[: len(a)]
+            return b[: len(a)] == a
 
         def _is_similar_on_last_message(
             a: list[dict], b: list[dict]

@@ -137,7 +137,6 @@ def concat_prompt_token_ids_with_parent(
             parent.model_response.input_tokens
             + parent.model_response.output_tokens  # with stop tokens
         )
-    # By default, follows Qwen3 chat template.
     child_tokens = tokenizer.apply_chat_template(
         message_list,
         tools=tools,
@@ -168,8 +167,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         reasoning_parser: str | None = None,
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
-        messages_delimiter_start: str = "<|im_start|>",
-        messages_delimiter_end: str = "<|im_end|>",
     ):
         super().__init__(client)
         self.engine = engine
@@ -179,8 +176,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self._cache = cache
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
-        self.messages_delimiter_start = messages_delimiter_start
-        self.messages_delimiter_end = messages_delimiter_end
 
     async def create(
         self,
@@ -422,8 +417,6 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         reasoning_parser: str | None = None,
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
-        messages_delimiter_start: str = "<|im_start|>",
-        messages_delimiter_end: str = "<|im_end|>",
     ):
         super().__init__(client)
         self.engine = engine
@@ -433,8 +426,6 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         self._cache = cache
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
-        self.messages_delimiter_start = messages_delimiter_start
-        self.messages_delimiter_end = messages_delimiter_end
 
     async def create(
         self,
@@ -767,8 +758,6 @@ class ArealOpenAI(AsyncOpenAI):
         reasoning_parser: str | None = None,
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
-        messages_delimiter_start: str = "<|im_start|>",
-        messages_delimiter_end: str = "<|im_end|>",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -790,8 +779,6 @@ class ArealOpenAI(AsyncOpenAI):
             reasoning_parser=self.reasoning_parser,
             engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
-            messages_delimiter_start=messages_delimiter_start,
-            messages_delimiter_end=messages_delimiter_end,
         )
 
         # Override chat.completions with our extended implementation
@@ -804,8 +791,6 @@ class ArealOpenAI(AsyncOpenAI):
             reasoning_parser=self.reasoning_parser,
             engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
-            messages_delimiter_start=messages_delimiter_start,
-            messages_delimiter_end=messages_delimiter_end,
         )
 
     def get_interaction(self, id: str) -> InteractionWithTokenLogpReward | None:
