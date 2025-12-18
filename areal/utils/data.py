@@ -336,7 +336,7 @@ def pad_and_stack_tensors_along_first_dim(tensor_list: list[torch.Tensor]):
 
 
 def tensor_container_to(
-    d: dict[str, Any] | torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor],
+    d: dict[str, Any] | torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...],
     *args,
     **kwargs,
 ):

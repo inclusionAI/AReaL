@@ -7,6 +7,7 @@ from typing import Any
 
 import ray
 import ray.exceptions
+import torch
 from ray.runtime_env import RuntimeEnv
 from ray.util.placement_group import (
     PlacementGroup,
@@ -26,11 +27,22 @@ from areal.scheduler.exceptions import (
 )
 from areal.scheduler.rpc.ray_rpc_server import RayRPCServer
 from areal.utils import logging
-from areal.utils.device import ray_resource_type
 from areal.utils.launcher import get_env_vars
 from areal.utils.ray import get_placement_group_master_ip_and_port
 
 logger = logging.getLogger("RayScheduler")
+
+
+def ray_resource_type():
+    if torch.cuda.is_available():
+        return "GPU"
+
+    from areal.platforms import is_npu_available
+
+    if is_npu_available:
+        return "NPU"
+
+    return "CPU"
 
 
 @dataclass
@@ -47,26 +59,12 @@ class RayWorkerInfo:
 class RayScheduler(Scheduler):
     def __init__(
         self,
-        gpu_devices: list[int] | None = None,
-        log_dir: str | None = None,
         startup_timeout: float = 30.0,
-        health_check_interval: float = 1.0,
         *,
-        fileroot: str | None = None,
-        experiment_name: str | None = None,
-        trial_name: str | None = None,
         exp_config: BaseExperimentConfig | None = None,
     ):
-        # we do not set up logging dir as it is done by Ray
-        if log_dir is not None:
-            logger.warning(
-                f"log_dir {log_dir} will not be used for Ray. Check /tmp/ray/session_*/logs for Ray logs"
-            )
         self.exp_config = exp_config
-        self.gpu_devices = gpu_devices
-
         self.startup_timeout = startup_timeout
-        self.health_check_interval = health_check_interval
 
         self._workers: dict[str, list[RayWorkerInfo]] = defaultdict(list)
         self._placement_groups: list[PlacementGroup] = []
@@ -238,7 +236,8 @@ class RayScheduler(Scheduler):
             options = self._actor_resource_spec(spec.cpu, spec.gpu, spec.mem)
 
             env = get_env_vars(
-                "", ",".join([f"{k}={v}" for k, v in spec.env_vars.items()])
+                self.exp_config,
+                ",".join([f"{k}={v}" for k, v in spec.env_vars.items()]),
             )
 
             if spec.env_vars:
@@ -327,7 +326,8 @@ class RayScheduler(Scheduler):
             options = self._actor_resource_spec(spec.cpu, spec.gpu, spec.mem)
 
             env = get_env_vars(
-                "", ",".join([f"{k}={v}" for k, v in spec.env_vars.items()])
+                self.exp_config,
+                ",".join([f"{k}={v}" for k, v in spec.env_vars.items()]),
             )
 
             if spec.env_vars:
@@ -508,8 +508,7 @@ class RayScheduler(Scheduler):
         if not env:
             return
 
-        ref = wi.actor.set_env.remote(env)
-        await asyncio.to_thread(ray.get, ref)
+        await wi.actor.set_env.remote(env)
         wi.env_vars.update(env)
 
     async def create_engine(self, worker_id: str, engine: str, *args, **kwargs) -> Any:
@@ -521,8 +520,7 @@ class RayScheduler(Scheduler):
             raise WorkerCreationError(
                 worker_id, f"Engine must be a string import path, got {type(engine)}"
             )
-        ref = wi.actor.create_engine.remote(engine, *args, **kwargs)
-        await asyncio.to_thread(ray.get, ref)
+        await wi.actor.create_engine.remote(engine, *args, **kwargs)
 
     def call_engine(
         self,
@@ -594,7 +592,7 @@ class RayScheduler(Scheduler):
         for attempt in range(1, max_retries + 1):
             try:
                 ref = wi.actor.call.remote(method, *args, **kwargs)
-                result = await asyncio.to_thread(ray.get, ref, timeout=http_timeout)
+                result = await ref
                 if attempt > 1:
                     logger.info(
                         f"Method '{method}' on '{worker_id}' "

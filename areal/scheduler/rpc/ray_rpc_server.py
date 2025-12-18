@@ -53,6 +53,7 @@ class RayRPCServer:
     def create_engine(self, engine_path: str, *init_args, **init_kwargs) -> None:
         try:
             engine_class = import_from_string(engine_path)
+            self.logger.debug(f"Initializing engine {engine_class}")
             if not issubclass(engine_class, (TrainEngine, InferenceEngine)):
                 raise TypeError(
                     f"Engine class must be a TrainEngine or InferenceEngine, but got {engine_class}"
@@ -69,14 +70,15 @@ class RayRPCServer:
             raise
 
     def call(self, method: str, *args, **kwargs) -> Any:
+        self.logger.debug(f"Calling {method} with arguments {args=} {kwargs=}")
         if self._engine is None:
             raise RuntimeError("Engine not initialized. Call create_engine() first")
 
-        should_bcast = kwargs.pop("_should_bcast", True)
+        should_broadcast = kwargs.pop("should_broadcast", True)
 
         # keep broadcast behavior the same as RPCServer
         try:
-            if should_bcast and isinstance(self._engine, TrainEngine):
+            if should_broadcast and isinstance(self._engine, TrainEngine):
                 device = self._get_device()
 
                 args = tensor_container_to(args, device)
@@ -105,6 +107,7 @@ class RayRPCServer:
                 result = result.result()
             # put back to cpu to mimic RPCServer encode/decode
             result = tensor_container_to(result, "cpu")
+            self.logger.debug(f"Successfully completed RayRPCServer call {result}")
             return result
         except Exception as e:
             self.logger.error(
