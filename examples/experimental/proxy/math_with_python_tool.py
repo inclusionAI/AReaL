@@ -1,5 +1,4 @@
 import asyncio
-import subprocess
 
 from agents import (
     Agent,
@@ -10,11 +9,9 @@ from agents import (
     function_tool,
 )
 from agents import Runner as OpenAIRunner
-from pydantic import BaseModel
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.utils.proxy_utils import run_and_submit_rewards
-
 
 
 @function_tool
@@ -22,15 +19,18 @@ def add(a: float, b: float) -> float:
     """Add two numbers."""
     return a + b
 
+
 @function_tool
 def subtract(a: float, b: float) -> float:
     """Subtract two numbers."""
     return a - b
 
+
 @function_tool
 def multiply(a: float, b: float) -> float:
     """Multiply two numbers."""
     return a * b
+
 
 @function_tool
 def divide(a: float, b: float) -> float:
@@ -39,18 +39,19 @@ def divide(a: float, b: float) -> float:
         raise ValueError("Division by zero is not allowed.")
     return a / b
 
+
 @function_tool
 def power(a: float, b: float) -> float:
     """Raise a to the power of b."""
-    return a ** b
+    return a**b
+
 
 @function_tool
 def sqrt(a: float) -> float:
     """Calculate the square root of a number."""
     if a < 0:
         raise ValueError("Cannot compute square root of a negative number.")
-    return a ** 0.5
-
+    return a**0.5
 
 
 ######### run agent
@@ -58,7 +59,7 @@ async def run_agent(messages: list[dict], run_config: RunConfig) -> RunResult:
     # Create Python programming assistant Agent
     agent = Agent(
         name="RLVR Math with Calculator",
-        instructions="Answer the user's math questions using the available calculator functions.",
+        instructions="Answer the user's math questions using the available calculator tools. Don't give the answer directly, you must use tools to do the mathematical calculation.",
         tools=[
             add,
             subtract,
