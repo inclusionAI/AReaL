@@ -266,6 +266,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             if completion_id in cache:
                 raise ValueError(f"Completion {completion_id} already exists in cache")
 
+            print(f"[wht debug] messages_list: {messages_list}")
             interaction = InteractionWithTokenLogpReward(
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
                 chat_template_type=self.chat_template_type,
