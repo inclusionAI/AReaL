@@ -103,7 +103,7 @@ async def test_single_turn_rollout(openai_client):
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "Hello!"},
         ],
-        max_context_tokens=2048,
+        max_completion_tokens=2048,
     )
     openai_client.set_reward(c.id, reward=0.5)
     completions = openai_client.export_interactions(style="individual")
@@ -120,7 +120,7 @@ async def test_multi_round_conversation(openai_client):
         {"role": "user", "content": "What is the capital of France?"},
     ]
     c1 = await openai_client.chat.completions.create(
-        messages=messages, max_context_tokens=2048
+        messages=messages, max_completion_tokens=2048
     )
 
     # Round 2 - extends the conversation
@@ -130,7 +130,7 @@ async def test_multi_round_conversation(openai_client):
         {"role": "user", "content": "What about Germany?"},
     ]
     c2 = await openai_client.chat.completions.create(
-        messages=messages, max_context_tokens=2048
+        messages=messages, max_completion_tokens=2048
     )
 
     # Round 3 - further extends the conversation
@@ -140,7 +140,7 @@ async def test_multi_round_conversation(openai_client):
         {"role": "user", "content": "And Italy?"},
     ]
     c3 = await openai_client.chat.completions.create(
-        messages=messages, max_context_tokens=2048
+        messages=messages, max_completion_tokens=2048
     )
 
     # Set rewards - only the final completion gets explicit reward
@@ -261,7 +261,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
 
     # Root
     c_root = await openai_client.chat.completions.create(
-        messages=base, max_context_tokens=2048
+        messages=base, max_completion_tokens=2048
     )
 
     # Branch A1: root -> a -> a1
@@ -270,14 +270,14 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         {"role": "user", "content": "Question A"},
     ]
     c_a = await openai_client.chat.completions.create(
-        messages=msgs_a, max_context_tokens=2048
+        messages=msgs_a, max_completion_tokens=2048
     )
     msgs_a1 = msgs_a + [
         c_a.choices[0].message,
         {"role": "user", "content": "Follow-up A1"},
     ]
     c_a1 = await openai_client.chat.completions.create(
-        messages=msgs_a1, max_context_tokens=2048
+        messages=msgs_a1, max_completion_tokens=2048
     )
 
     # Branch A2: root -> a -> a2
@@ -286,7 +286,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         {"role": "user", "content": "Follow-up A2"},
     ]
     c_a2 = await openai_client.chat.completions.create(
-        messages=msgs_a2, max_context_tokens=2048
+        messages=msgs_a2, max_completion_tokens=2048
     )
 
     # Branch B: root -> b -> b1
@@ -302,7 +302,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         {"role": "user", "content": "Follow-up B1"},
     ]
     c_b1 = await openai_client.chat.completions.create(
-        messages=msgs_b1, max_context_tokens=2048
+        messages=msgs_b1, max_completion_tokens=2048
     )
 
     # Set rewards to leaf nodes only, which should be c_a1, c_a2, c_b1
