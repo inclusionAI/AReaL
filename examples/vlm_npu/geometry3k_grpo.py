@@ -24,8 +24,8 @@ def acc_reward(predict_str: str, ground_truth: str) -> float:
 
 
 def geometry3k_reward_fn(
-    prompt: str, completions: str, prompt_ids: list, completion_ids: list, answer: str, **kwargs
-) -> float:
+    prompt, completions, prompt_ids, completion_ids, answer, **kwargs
+):
     format_reward_val = format_reward(completions)
     acc_reward_val = acc_reward(completions, answer)
     format_score = 0.1
