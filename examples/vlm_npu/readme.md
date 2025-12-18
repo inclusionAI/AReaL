@@ -15,7 +15,7 @@ The following hardware configuration has been extensively tested:
 
 ### Key Contributions
 -	Trained Qwen2.5VL-3B-instruct model upto 70 epochs with (4 cards+ 4 cards) train-infer configuration. Took around 19hr to finish full training.
--	Trained model is tested with more than one benchmark using VLMEcalKit.
+- Trained model is tested with more than one benchmark using VLMEvalKit.
 
 
 ### System configuration: 
