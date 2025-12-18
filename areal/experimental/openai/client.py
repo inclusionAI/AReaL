@@ -83,6 +83,7 @@ def _ensure_message_dict_list(
         )
 
     def _normalize(item: Any):
+        print(f"[wht debug] normalizing item: {item}")
         if isinstance(item, Mapping):
             return {k: _normalize(v) for k, v in item.items() if v is not None}
         elif isinstance(item, Iterable):
