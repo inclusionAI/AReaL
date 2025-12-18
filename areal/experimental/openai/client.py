@@ -2,7 +2,7 @@ import datetime
 import json
 import os
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -83,10 +83,10 @@ def _ensure_message_dict_list(
         )
 
     def _normalize(item: Any):
-        if isinstance(item, list):
-            return [_normalize(sub_item) for sub_item in item]
-        elif isinstance(item, dict):
+        if isinstance(item, Mapping):
             return {k: _normalize(v) for k, v in item.items() if v is not None}
+        elif isinstance(item, Iterable):
+            return [_normalize(sub_item) for sub_item in item]
         elif isinstance(item, BaseModel):
             return item.model_dump(exclude_none=True)
         else:
@@ -274,12 +274,16 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             cache[completion_id] = interaction
 
         # Convert messages to prompt format
-        tools = list(tools) if not is_omitted(tools) else None
-        print(f"[wht debug] tools before apply chat template: {tools}")
+        tools_list = None
+        if not is_omitted(tools):
+            if not isinstance(tools, Iterable):
+                raise TypeError("tools must be an iterable of ChatCompletionToolParam")
+            tools_list = list(tools)
+        print(f"[wht debug] tools before apply chat template: {tools_list}")
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,
-                tools=tools,
+                tools=tools_list,
                 add_generation_prompt=True,
                 tokenize=True,
                 **extra_body.get("chat_template_kwargs", {}),
@@ -294,14 +298,14 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 messages_list,
                 interaction.parent if interaction is not None else None,
                 self.tokenizer,
-                tools=tools,
+                tools=tools_list,
                 extra_body=extra_body,
             )
         else:
             raise RuntimeError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
             )
-        print(f"[wht debug] tools after apply chat template: {tools}")
+        print(f"[wht debug] tools after apply chat template: {tools_list}")
 
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
         if not is_omitted(max_tokens):
@@ -397,12 +401,12 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Parse tool calls.
         tool_calls = None
-        print(f"[wht debug] before process_tool_calls, tool_choice: {tool_choice}, tools: {tools}")
+        print(f"[wht debug] before process_tool_calls, tool_choice: {tool_choice}, tools: {tools_list}")
         try:
-            if tool_choice != "none" and tools:
+            if tool_choice != "none" and tools_list:
                 tool_calls, output_text, response.stop_reason = process_tool_calls(
                     output_text,
-                    tools,
+                    tools_list,
                     self.tool_call_parser,
                     self.reasoning_parser,
                     response.stop_reason,
@@ -603,11 +607,15 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         cache[resp_id] = interaction
 
         # Apply chat template
-        tools = list(tools) if not is_omitted(tools) else None
+        tools_list = None
+        if not is_omitted(tools):
+            if not isinstance(tools, Iterable):
+                raise TypeError("tools must be an iterable of ChatCompletionToolParam")
+            tools_list = list(tools)
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,
-                tools=tools,
+                tools=tools_list,
                 add_generation_prompt=True,
                 tokenize=True,
                 **extra_body.get("chat_template_kwargs", {}),
@@ -617,7 +625,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 interaction.remaining_messages,
                 interaction.parent if interaction is not None else None,
                 self.tokenizer,
-                tools=tools,
+                tools=tools_list,
                 extra_body=extra_body,
             )
         else:
@@ -680,10 +688,10 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         # Parse tool calls.
         tool_calls = None
         try:
-            if not is_omitted(tool_choice) and tool_choice != "none" and tools:
+            if not is_omitted(tool_choice) and tool_choice != "none" and tools_list:
                 tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
                     output_text,
-                    tools,
+                    tools_list,
                     self.tool_call_parser,
                     self.reasoning_parser,
                     engine_resp.stop_reason,
@@ -741,7 +749,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             parallel_tool_calls=False,
             temperature=temp,
             tool_choice=tool_choice if not is_omitted(tool_choice) else "none",
-            tools=tools,
+            tools=tools_list,
             top_p=top_p_val,
             background=None,
             conversation=None,
