@@ -50,8 +50,7 @@ dependencies = [
     "transformers==4.57.1",
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
-    "sglang==0.5.5.post1",
-    "vllm==0.11.0",
+    "torch_memory_saver",
     "peft",
     "qwen_agent",
     "openai-agents",
@@ -79,6 +78,7 @@ dependencies = [
     "pybase64",
     "msgspec",
     "latex2sympy2",
+    "math-verify==0.8.0",
     "dotenv",
     "json5",
     "psutil",
@@ -103,7 +103,6 @@ dependencies = [
     "h5py",
     "mathruler==0.1.0",
     "pylatexenc==2.10",
-
 
     # Monitoring and logging
     "wandb",
@@ -135,6 +134,8 @@ dependencies = [
 [project.optional-dependencies]
 cuda = [
     "flash-attn==2.8.3",
+    "sglang==0.5.5.post1",
+    "vllm==0.11.0",
 ]
 
 dev = [
