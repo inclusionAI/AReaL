@@ -25,12 +25,6 @@ from areal.utils.stats_logger import StatsLogger
 logger = logging.getLogger("GSM8K GRPO Proxy Example")
 
 
-def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    from areal.reward.math_parser import process_results
-
-    return int(process_results(completions, answer)[0])
-
-
 def run_fn(func: Callable, extra_envs: dict, *args, **kwargs) -> float:
     for key, value in extra_envs.items():
         os.environ[key] = value
