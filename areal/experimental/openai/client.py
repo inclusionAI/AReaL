@@ -86,7 +86,7 @@ def _ensure_message_dict_list(
         print(f"[wht debug] normalizing item: {item}")
         if isinstance(item, Mapping):
             return {k: _normalize(v) for k, v in item.items() if v is not None}
-        elif isinstance(item, Iterable):
+        elif isinstance(item, Iterable) and not isinstance(item, str) and not isinstance(item, bytes) and not isinstance(item, bytearray):
             return [_normalize(sub_item) for sub_item in item]
         elif isinstance(item, BaseModel):
             return item.model_dump(exclude_none=True)
