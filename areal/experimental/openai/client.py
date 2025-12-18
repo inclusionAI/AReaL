@@ -274,6 +274,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Convert messages to prompt format
         tools = tools if not is_omitted(tools) else None
+        print(f"[wht debug] tools before apply chat template: {tools}")
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,
@@ -299,6 +300,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             raise RuntimeError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
             )
+        print(f"[wht debug] tools after apply chat template: {tools}")
 
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
         if not is_omitted(max_tokens):
@@ -394,11 +396,12 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Parse tool calls.
         tool_calls = None
+        print(f"[wht debug] before process_tool_calls, tool_choice: {tool_choice}, tools: {tools}")
         try:
             if tool_choice != "none" and tools:
                 tool_calls, output_text, response.stop_reason = process_tool_calls(
                     output_text,
-                    list(tools),
+                    tools,
                     self.tool_call_parser,
                     self.reasoning_parser,
                     response.stop_reason,
