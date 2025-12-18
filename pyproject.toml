@@ -50,7 +50,7 @@ dependencies = [
     "transformers==4.57.1",
     "megatron-core==0.13.1",
     "mbridge==0.13.0",
-    "torch_memory_saver",
+    "torch_memory_saver==0.0.9",
     "peft",
     "qwen_agent",
     "openai-agents",
@@ -132,9 +132,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cuda = [
+fa = [
     "flash-attn==2.8.3",
+]
+
+sglang = [
     "sglang==0.5.5.post1",
+]
+
+vllm = [
     "vllm==0.11.0",
 ]
 
@@ -160,7 +166,9 @@ docs = [
 ]
 
 all = [
-    "areal[cuda]",
+    "areal[fa]",
+    "areal[vllm]",
+    "areal[sglang]",
     "areal[dev]",
     "areal[docs]",
 ]
