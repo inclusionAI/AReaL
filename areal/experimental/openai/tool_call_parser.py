@@ -79,17 +79,22 @@ def process_tool_calls(
     parser_p = FunctionCallParser(tools, tool_call_parser)
     reasoning_parser_p = ReasoningParser(reasoning_parser)
 
+    print(f"[wht debug] tool_call_parser: {tool_call_parser}, reasoning_parser: {reasoning_parser}")
+    print(f"[wht debug] raw text to parse: {text}, tools: {tools}")
     reasoning_text, content_text = _detect_think_and_return_ori_think(
         text,
         reasoning_parser_p.detector.think_start_token,
         reasoning_parser_p.detector.think_end_token,
     )
+    print(f"[wht debug] reasoning_text: {reasoning_text}, content_text: {content_text}")
 
     if parser_p.has_tool_call(content_text):
+        print(f"[wht debug] Detected tool call in content_text.")
         if finish_reason == "stop":
             finish_reason = "tool_calls"
         try:
             content_text, call_info_list = parser_p.parse_non_stream(content_text)
+            print(f"[wht debug] Parsed content_text: {content_text}, call_info_list: {call_info_list}")
 
             if use_responses:
                 tool_calls = [

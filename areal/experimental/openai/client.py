@@ -390,6 +390,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         response = await self.engine.agenerate(model_request)
         output_text = self.tokenizer.decode(response.output_tokens_without_stop)
 
+        print(f"[wht debug] raw output_text: {output_text}")
+
         # Parse tool calls.
         tool_calls = None
         try:
@@ -406,6 +408,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 f"Failed to parse tool calls from output text: {e}, output_text:\n"
                 f"{output_text}"
             )
+
+        print(f"[wht debug] output_text: {output_text}, tool_calls: {tool_calls}")
 
         # Create proper ChatCompletion object with all required fields
         output_message = ChatCompletionMessage(
