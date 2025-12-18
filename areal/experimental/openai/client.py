@@ -398,7 +398,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             if tool_choice != "none" and tools:
                 tool_calls, output_text, response.stop_reason = process_tool_calls(
                     output_text,
-                    tools,
+                    list(tools),
                     self.tool_call_parser,
                     self.reasoning_parser,
                     response.stop_reason,
