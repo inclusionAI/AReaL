@@ -18,7 +18,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python3 -m pip install --upgrade pip
-          pip install ruff==0.14.1 clang-format==19.1.7
+          pip install ruff==0.14.9 clang-format==19.1.7
 
       - name: Check Python formatting and linting with ruff
         run: |
