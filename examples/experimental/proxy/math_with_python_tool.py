@@ -7,14 +7,11 @@ from agents import (
     RunResult,
     SQLiteSession,
     function_tool,
-    set_default_openai_api
 )
 from agents import Runner as OpenAIRunner
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.utils.proxy_utils import run_and_submit_rewards
-
-set_default_openai_api("chat_completions")
 
 @function_tool
 def add(a: float, b: float) -> float:

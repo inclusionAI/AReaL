@@ -58,9 +58,7 @@ def process_tool_calls(
     from sglang.srt.function_call.function_call_parser import FunctionCallParser
     from sglang.srt.parser.reasoning_parser import ReasoningParser
 
-    print(f"[wht debug] input tools: {tools}")
     if use_responses:
-        print(f"[wht debug] Using ResponseFunctionToolCall format.")
         tools = [
             SglTool(
                 type=tool["type"],
@@ -73,32 +71,25 @@ def process_tool_calls(
             for tool in tools
         ]
     else:
-        print(f"[wht debug] Using ChatCompletionMessageFunctionToolCall format.")
         tools = [
             SglTool(type=tool["type"], function=SglFunction(**tool["function"]))
             for tool in tools
         ]
-    print(f"[wht debug] Converted tools: {tools}")
 
     parser_p = FunctionCallParser(tools, tool_call_parser)
     reasoning_parser_p = ReasoningParser(reasoning_parser)
 
-    print(f"[wht debug] tool_call_parser: {tool_call_parser}, reasoning_parser: {reasoning_parser}")
-    print(f"[wht debug] raw text to parse: {text}, tools: {tools}")
     reasoning_text, content_text = _detect_think_and_return_ori_think(
         text,
         reasoning_parser_p.detector.think_start_token,
         reasoning_parser_p.detector.think_end_token,
     )
-    print(f"[wht debug] reasoning_text: {reasoning_text}, content_text: {content_text}")
 
     if parser_p.has_tool_call(content_text):
-        print(f"[wht debug] Detected tool call in content_text.")
         if finish_reason == "stop":
             finish_reason = "tool_calls"
         try:
             content_text, call_info_list = parser_p.parse_non_stream(content_text)
-            print(f"[wht debug] Parsed content_text: {content_text}, call_info_list: {call_info_list}")
 
             if use_responses:
                 tool_calls = [

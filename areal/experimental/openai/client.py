@@ -83,7 +83,6 @@ def _ensure_message_dict_list(
         )
 
     def _normalize(item: Any):
-        print(f"[wht debug] normalizing item: {item}")
         if isinstance(item, Mapping):
             return {k: _normalize(v) for k, v in item.items() if v is not None}
         elif isinstance(item, Iterable) and not isinstance(item, str) and not isinstance(item, bytes) and not isinstance(item, bytearray):
@@ -266,8 +265,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             cache = areal_cache if areal_cache is not None else self._cache
             if completion_id in cache:
                 raise ValueError(f"Completion {completion_id} already exists in cache")
-
-            print(f"[wht debug] messages_list: {messages_list}")
             interaction = InteractionWithTokenLogpReward(
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
                 chat_template_type=self.chat_template_type,
@@ -280,7 +277,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             if not isinstance(tools, Iterable):
                 raise TypeError("tools must be an iterable of ChatCompletionToolParam")
             tools_list = list(tools)
-        print(f"[wht debug] tools before apply chat template: {tools_list}")
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,
@@ -306,7 +302,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             raise RuntimeError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
             )
-        print(f"[wht debug] tools after apply chat template: {tools_list}")
 
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
         if not is_omitted(max_tokens):
@@ -398,11 +393,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         response = await self.engine.agenerate(model_request)
         output_text = self.tokenizer.decode(response.output_tokens_without_stop)
 
-        print(f"[wht debug] raw output_text: {output_text}")
-
         # Parse tool calls.
         tool_calls = None
-        print(f"[wht debug] before process_tool_calls, tool_choice: {tool_choice}, tools: {tools_list}")
         try:
             if tool_choice != "none" and tools_list:
                 tool_calls, output_text, response.stop_reason = process_tool_calls(
@@ -417,8 +409,6 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 f"Failed to parse tool calls from output text: {e}, output_text:\n"
                 f"{output_text}"
             )
-
-        print(f"[wht debug] output_text: {output_text}, tool_calls: {tool_calls}")
 
         # Create proper ChatCompletion object with all required fields
         output_message = ChatCompletionMessage(
