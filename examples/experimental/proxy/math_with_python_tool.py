@@ -13,6 +13,7 @@ from agents import Runner as OpenAIRunner
 from areal.api.cli_args import GenerationHyperparameters
 from areal.utils.proxy_utils import run_and_submit_rewards
 
+
 @function_tool
 def add(a: float, b: float) -> float:
     """Add two numbers."""
