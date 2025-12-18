@@ -138,7 +138,12 @@ def get_gsm8k_dataset(split, rank, world_size):
 
 def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
     # "answer" is passed in through "**data"
-    from areal.reward.math_parser import process_results
+    from areal.reward import get_math_verify_worker
 
-    return int(process_results(completions, answer)[0])
+    worker = get_math_verify_worker()
+
+    try:
+        return worker.verify(str(completions), str(answer))
+    except Exception:
+        return 0.0
 ```

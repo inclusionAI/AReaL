@@ -12,6 +12,7 @@ from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
+from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils import seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
@@ -23,12 +24,6 @@ from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-
-def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    from areal.reward.math_parser import process_results
-
-    return int(process_results(completions, answer)[0])
 
 
 def main(args):
