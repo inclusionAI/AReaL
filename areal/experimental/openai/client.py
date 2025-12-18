@@ -103,21 +103,37 @@ def _ensure_message_dict_list(
     return normalized
 
 
-def get_extra_tokens_after_im_end(tokenizer: "PreTrainedTokenizerFast") -> list[int]:
-    if not hasattr(get_extra_tokens_after_im_end, "_cache"):
-        im_end_token_id = tokenizer.eos_token_id
-        simple_chat_tokens = tokenizer.apply_chat_template(
-            [{"role": "user", "content": ""}],
-            tokenize=True,
-            add_generation_prompt=False,
-        )
-        im_end_index = (
-            len(simple_chat_tokens)
-            - 1
-            - simple_chat_tokens[::-1].index(im_end_token_id)
-        )
-        get_extra_tokens_after_im_end._cache = simple_chat_tokens[im_end_index + 1 :]
-    return get_extra_tokens_after_im_end._cache
+# def get_extra_tokens_after_im_end(tokenizer: "PreTrainedTokenizerFast") -> list[int]:
+#     if not hasattr(get_extra_tokens_after_im_end, "_cache"):
+#         im_end_token_id = tokenizer.eos_token_id
+#         simple_chat_tokens = tokenizer.apply_chat_template(
+#             [{"role": "user", "content": ""}],
+#             tokenize=True,
+#             add_generation_prompt=False,
+#         )
+#         im_end_index = (
+#             len(simple_chat_tokens)
+#             - 1
+#             - simple_chat_tokens[::-1].index(im_end_token_id)
+#         )
+#         get_extra_tokens_after_im_end._cache = simple_chat_tokens[im_end_index + 1 :]
+#     return get_extra_tokens_after_im_end._cache
+
+
+def _find_kth(lst: list, target, k: int) -> int:
+    def target_indices():
+        for i, char in enumerate(lst):
+            if char == target:
+                yield i
+
+    gen = target_indices()
+    try:
+        result = -1
+        for _ in range(k):
+            result = next(gen)
+        return result
+    except StopIteration:
+        return -1
 
 
 def concat_prompt_token_ids_with_parent(
@@ -128,7 +144,8 @@ def concat_prompt_token_ids_with_parent(
     extra_body: Body = {},
 ) -> list[int]:
     """Concatenate prompt token IDs with parent interaction's tokens."""
-    parent_tokens = []
+    parent_tokens: list[int] = []
+    all_message_list: list[dict] = []
     if parent is not None:
         if parent.model_response is None:
             raise ValueError("Parent interaction has no model_response.")
@@ -137,16 +154,37 @@ def concat_prompt_token_ids_with_parent(
             parent.model_response.input_tokens
             + parent.model_response.output_tokens  # with stop tokens
         )
-    child_tokens = tokenizer.apply_chat_template(
-        message_list,
+        all_message_list += parent.messages if parent.messages is not None else []
+        all_message_list += (
+            parent.output_message_list if parent.output_message_list is not None else []
+        )
+
+    all_message_list += message_list
+
+    all_tokens = tokenizer.apply_chat_template(
+        all_message_list,
         tools=tools,
         add_generation_prompt=True,
         tokenize=True,
         **extra_body.get("chat_template_kwargs", {}),
     )
-    prompt_token_ids = (
-        parent_tokens + get_extra_tokens_after_im_end(tokenizer) + child_tokens
-    )
+    eos_token_id = tokenizer.eos_token_id
+    parent_eos_num = parent_tokens.count(eos_token_id)
+    if parent_eos_num > 0:
+        child_tokens_truncate_idx = _find_kth(all_tokens, eos_token_id, parent_eos_num)
+        if child_tokens_truncate_idx == -1 or child_tokens_truncate_idx + 1 >= len(
+            all_tokens
+        ):
+            raise RuntimeError(
+                f"Failed to align child tokens with parent tokens in concat prompt."
+                f"Find child_truncate_idx at {child_tokens_truncate_idx}, "
+                f"parent_eos_num: {parent_eos_num}, "
+                f"all_tokens eos count: {all_tokens.count(eos_token_id)}"
+            )
+    else:
+        child_tokens_truncate_idx = -1
+
+    prompt_token_ids = parent_tokens + all_tokens[child_tokens_truncate_idx + 1 :]
     return prompt_token_ids
 
 
@@ -567,9 +605,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 **extra_body.get("chat_template_kwargs", {}),
             )
         elif self.chat_template_type == "concat":
-            messages_list = interaction.remaining_messages
             prompt_token_ids = concat_prompt_token_ids_with_parent(
-                messages_list,
+                interaction.remaining_messages,
                 interaction.parent if interaction is not None else None,
                 self.tokenizer,
                 tools=tools,
