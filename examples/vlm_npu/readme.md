@@ -24,7 +24,7 @@ The following hardware configuration has been extensively tested:
 -	Areal==0.4.1
 -	CANN==8.1RC1 ; 910c npus (65 gigs X 16)
 
-# Results:
+### Results:
 We trained Qwen2.5-VL-3B for 70 epochs on Geometry3K and evaluated the checkpoints using VLMEvalKit on out of distribution tasks such as MathVision, MathVista, and LogicVista. The training was performed on both NPU and GPU and results are as follows:
 
 | Method     | LogicVista | MathVision_mini | MathVista_mini | Avg.  |
