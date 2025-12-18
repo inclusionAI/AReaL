@@ -273,7 +273,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             cache[completion_id] = interaction
 
         # Convert messages to prompt format
-        tools = tools if not is_omitted(tools) else None
+        tools = list(tools) if not is_omitted(tools) else None
         print(f"[wht debug] tools before apply chat template: {tools}")
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
