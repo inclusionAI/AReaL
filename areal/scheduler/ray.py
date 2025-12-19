@@ -67,6 +67,7 @@ class RayScheduler(Scheduler):
         self.startup_timeout = startup_timeout
 
         self._workers: dict[str, list[RayWorkerInfo]] = defaultdict(list)
+        self._worker_info_by_id: dict[str, RayWorkerInfo] = {}
         self._placement_groups: list[PlacementGroup] = []
 
     def _prepare_worker_specs(
@@ -421,6 +422,9 @@ class RayScheduler(Scheduler):
 
         self._workers[role].extend(worker_info_list)
 
+        for wi in worker_info_list:
+            self._worker_info_by_id[wi.worker.id] = wi
+
         self._ping_workers(role, self.startup_timeout)
 
         if self.exp_config is not None:
@@ -477,9 +481,11 @@ class RayScheduler(Scheduler):
         logger.info(f"Successfully deleted workers for role '{role}'")
 
     def _cleanup_workers(self, workers: list[RayWorkerInfo]):
+        # Kill actors first
         for wi in workers:
             actor = wi.actor
             try:
+                # Asynchronously destroy actor
                 actor.destroy.remote()
             except Exception:
                 logger.warning(
@@ -487,19 +493,18 @@ class RayScheduler(Scheduler):
                 )
                 ray.kill(actor, no_restart=True)
 
+        # Collect unique placement groups and remove them
+        unique_pgs = {wi.placement_group for wi in workers}
+        for pg in unique_pgs:
             try:
-                remove_placement_group(wi.placement_group)
+                remove_placement_group(pg)
             except Exception:
-                logger.warning(f"Could not remove placement group {wi.placement_group}")
-            if wi.placement_group in self._placement_groups:
-                self._placement_groups.remove(wi.placement_group)
+                logger.warning(f"Could not remove placement group {pg}")
+            if pg in self._placement_groups:
+                self._placement_groups.remove(pg)
 
     def _get_worker_info_by_id(self, worker_id: str) -> RayWorkerInfo | None:
-        for worker_info_list in self._workers.values():
-            for wi in worker_info_list:
-                if wi.worker.id == worker_id:
-                    return wi
-        return None
+        return self._worker_info_by_id.get(worker_id, None)
 
     async def set_worker_env(self, worker_id: str, env: dict[str, str]) -> None:
         wi = self._get_worker_info_by_id(worker_id)
@@ -625,6 +630,8 @@ class RayScheduler(Scheduler):
         )
 
     def __del__(self):
+        # delete in case delete_workers is not called from controllers
+        # explicit shutdown is by directly calling delete_workers
         try:
             self.delete_workers()
         except Exception:
