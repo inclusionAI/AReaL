@@ -371,7 +371,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
         stop_tokens = None if is_omitted(stop) else stop
-        
+
         # Since the concat logic cannot properly handle stop tokens yet, so we remove stop here.
         if stop_tokens is not None and self.chat_template_type == "concat":
             logger.warning(
