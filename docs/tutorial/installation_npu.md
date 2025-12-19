@@ -122,10 +122,10 @@ script will automatically detect the resources and allocate workers to the clust
 
 ## Next Steps
 
-Check the [quickstart section](quickstart.md) to launch your first AReaL job. The only
-things you need to change for NPU: For NPU usage, update the following:
+Check the [quickstart section](quickstart.md) to launch your first AReaL job. To run on an NPU,
+make the following changes:
 
-- **Training script:** keep `examples/math/gsm8k_rl.py`
+- **Training script:** use `examples/math/gsm8k_rl.py`
 - **Configuration file:** change to `examples/math/gsm8k_grpo_npu.yaml`
 
 Follow the instructions there. If you want to run multi-node training with Ray, make
