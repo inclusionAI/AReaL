@@ -5,6 +5,7 @@ from datasets import load_dataset
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.experimental.trainer import PPOTrainer
+from areal.reward import get_math_verify_worker
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
@@ -45,14 +46,20 @@ def get_boba_math_dataset(path, tokenizer):
 
 def boba_reward_fn(
     prompts, completions, prompt_ids, completion_ids, solutions, **kwargs
-):
-    from areal.reward.math_parser import process_results
-
-    label = 0
-    for sol in solutions:
-        x = process_results(completions, sol)
-        label = label or x[0]
-    return label
+) -> float:
+    try:
+        worker = get_math_verify_worker()
+        for sol in solutions:
+            try:
+                score = worker.verify(str(completions), str(sol))
+                if score == 1.0:
+                    return 1.0
+            except Exception:
+                pass
+        return 0.0
+    except Exception:
+        # Return 0 if completion parsing fails or any other error occurs
+        return 0.0
 
 
 def main(args):

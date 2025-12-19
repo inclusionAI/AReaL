@@ -4,6 +4,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 from areal.api.cli_args import GenerationHyperparameters
+from areal.reward import get_math_verify_worker
 from areal.utils import logging
 from areal.utils.proxy_utils import run_and_submit_rewards
 
@@ -11,9 +12,11 @@ logger = logging.getLogger("BasicOpenAIAgent")
 
 
 def simplified_gsm8k_reward_fn(completions: str, answer: str):
-    from areal.reward.math_parser import process_results
-
-    return int(process_results(completions, answer)[0])
+    try:
+        worker = get_math_verify_worker()
+        return worker.verify(str(completions), str(answer))
+    except Exception:
+        return 0.0
 
 
 class BasicOpenAIAgent:

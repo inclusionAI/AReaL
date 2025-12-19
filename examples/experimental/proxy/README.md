@@ -27,10 +27,16 @@ agent_module_path to `gsm8k_multi_turn_agent`, `gsm8k_openai_agent`,
 
 ```python
 async def run_agent_return_reward(data: Any) -> float:
+    from areal.reward import get_math_verify_worker
+
+    worker = get_math_verify_worker()
 
     def gsm8k_reward_fn(result, answer):
-        from areal.reward.math_parser import process_results
-        return float(process_results(result, answer)[0])
+        try:
+            worker = get_math_verify_worker()
+            return worker.verify(str(result), str(answer))
+        except Exception:
+            return 0.0
 
     result = await run_agent(data)
     reward = gsm8k_reward_fn(result.final_output, data["answer"])
