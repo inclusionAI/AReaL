@@ -471,3 +471,83 @@ async def test_prompt_len_exceed(openai_client):
     all_completions = openai_client.export_interactions(style="individual")
     assert set(leaf_completions.keys()) == {c_root.id}
     assert set(all_completions.keys()) == {c_root.id}
+
+
+@pytest.mark.asyncio
+async def test_multi_round_conversation_end_with_length(openai_client):
+    """Create a conversation tree using create() and verify parents and rewards.
+
+    Rewards are explicitly set (no propagation). Export should return only leaves.
+    """
+    openai_client: ArealOpenAI
+    openai_client.chat_template_type = "concat"
+    openai_client.chat.completions.chat_template_type = "concat"
+    # Base conversation
+    base = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Start the session."},
+    ]
+
+    # Root
+    c_root = await openai_client.chat.completions.create(
+        messages=base, max_completion_tokens=8
+    )
+
+    # Branch A1: root -> a -> a1
+    msgs_a = base + [
+        c_root.choices[0].message,
+        {"role": "user", "content": "Question A"},
+    ]
+    c_a = await openai_client.chat.completions.create(
+        messages=msgs_a, max_completion_tokens=8
+    )
+    msgs_a1 = msgs_a + [
+        c_a.choices[0].message,
+        {"role": "user", "content": "Follow-up A1"},
+    ]
+    c_a1 = await openai_client.chat.completions.create(
+        messages=msgs_a1, max_completion_tokens=8
+    )
+
+    # Set rewards to leaf nodes only, which should be c_a1
+    openai_client.set_reward(c_a1.id, 2)
+
+    # Export completions of leaf nodes, check whether all leaves are present
+    leaf_completions = openai_client.export_interactions(style="concat")
+    all_completions = openai_client.export_interactions(style="individual")
+    assert set(leaf_completions.keys()) == {c_a1.id}
+    assert set(all_completions.keys()) == {
+        c_root.id,
+        c_a.id,
+        c_a1.id,
+    }
+
+    def wrapped_completion(chat_completion):
+        return all_completions[chat_completion.id]
+
+    # Check tree structure
+    assert wrapped_completion(c_a1).parent is wrapped_completion(c_a)
+    assert wrapped_completion(c_a).parent is wrapped_completion(c_root)
+
+    # Reward is not propagated to tree nodes, check reward values
+    assert wrapped_completion(c_a1).reward == 2
+
+    # Check loss masks produced by completions
+    # Ensure number of 1s in the loss masks is actually the number of tokens output by the model
+    c_a1_loss_mask = wrapped_completion(c_a1).to_tensor_dict()["loss_mask"].squeeze(0)
+    c_root_input_len = wrapped_completion(c_root).model_response.input_len
+    c_root_output_len = wrapped_completion(c_root).model_response.output_len
+    c_a_input_len = wrapped_completion(c_a).model_response.input_len
+    c_a_output_len = wrapped_completion(c_a).model_response.output_len
+    c_a1_input_len = wrapped_completion(c_a1).model_response.input_len
+    c_a1_output_len = wrapped_completion(c_a1).model_response.output_len
+
+    # c_a1 loss mask
+    assert c_a1_loss_mask.squeeze(0).tolist() == (
+        [0] * c_root_input_len
+        + [1] * c_root_output_len
+        + [0] * (c_a_input_len - (c_root_input_len + c_root_output_len))
+        + [1] * c_a_output_len
+        + [0] * (c_a1_input_len - (c_a_input_len + c_a_output_len))
+        + [1] * c_a1_output_len
+    )

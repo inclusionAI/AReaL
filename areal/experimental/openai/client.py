@@ -83,7 +83,10 @@ def _ensure_message_dict_list(
         )
 
     def _normalize(item: Any):
-        if isinstance(item, Mapping):
+        # we should convert BaseModel first, because BaseModel is also Iterable
+        if isinstance(item, BaseModel):
+            return item.model_dump(exclude_none=True)
+        elif isinstance(item, Mapping):
             return {k: _normalize(v) for k, v in item.items() if v is not None}
         elif (
             isinstance(item, Iterable)
@@ -92,8 +95,6 @@ def _ensure_message_dict_list(
             and not isinstance(item, bytearray)
         ):
             return [_normalize(sub_item) for sub_item in item]
-        elif isinstance(item, BaseModel):
-            return item.model_dump(exclude_none=True)
         else:
             return item
 
@@ -106,23 +107,6 @@ def _ensure_message_dict_list(
                 f"{name}[{index}] must be a dict or a BaseModel; got {type(item).__name__}"
             )
     return normalized
-
-
-# def get_extra_tokens_after_im_end(tokenizer: "PreTrainedTokenizerFast") -> list[int]:
-#     if not hasattr(get_extra_tokens_after_im_end, "_cache"):
-#         im_end_token_id = tokenizer.eos_token_id
-#         simple_chat_tokens = tokenizer.apply_chat_template(
-#             [{"role": "user", "content": ""}],
-#             tokenize=True,
-#             add_generation_prompt=False,
-#         )
-#         im_end_index = (
-#             len(simple_chat_tokens)
-#             - 1
-#             - simple_chat_tokens[::-1].index(im_end_token_id)
-#         )
-#         get_extra_tokens_after_im_end._cache = simple_chat_tokens[im_end_index + 1 :]
-#     return get_extra_tokens_after_im_end._cache
 
 
 def _find_kth(lst: list, target, k: int) -> int:
@@ -148,9 +132,18 @@ def concat_prompt_token_ids_with_parent(
     tools: Iterable[ChatCompletionToolParam] | None = None,
     extra_body: Body = {},
 ) -> list[int]:
-    """Concatenate prompt token IDs with parent interaction's tokens."""
+    """
+    Concatenate prompt token IDs with parent interaction's tokens.
+    """
     parent_tokens: list[int] = []
     all_message_list: list[dict] = []
+    eos_token_id = tokenizer.eos_token_id
+
+    # To ensure compatibility across different models, we adopted the following padding scheme:
+    # Apply the chat template to the full-text message_list of the new input, then count the number of eos tokens 
+    # in the parent tokens. Locate the final index where the same number of eos tokens appears in the child_all_tokens, 
+    # all tokens after this index correspond to the newly input tokens for the current round.
+
     if parent is not None:
         if parent.model_response is None:
             raise ValueError("Parent interaction has no model_response.")
@@ -164,6 +157,19 @@ def concat_prompt_token_ids_with_parent(
             parent.output_message_list if parent.output_message_list is not None else []
         )
 
+        # If the parent terminates due to output exceeding length limits or being aborted, it will not have an EOS token. 
+        # We will add an extra EOS token to align with the chat template. During training, this added EOS will be treated 
+        # as part of the child message's prompt rather than the parent message's output, and therefore will be masked out 
+        # by the loss_mask.
+        # TODO: should we mask this extra eos token in loss_mask during training?
+        if parent.model_response.stop_reason in ["length", "abort"]:
+            parent_tokens += [eos_token_id]
+        else:
+            if len(parent_tokens) > 0 and parent_tokens[-1] != eos_token_id:
+                raise RuntimeError(
+                    f"Parent tokens do not end with eos_token_id when stop_reason is {parent.model_response.stop_reason}."
+                )
+
     all_message_list += message_list
 
     all_tokens = tokenizer.apply_chat_template(
@@ -173,7 +179,6 @@ def concat_prompt_token_ids_with_parent(
         tokenize=True,
         **extra_body.get("chat_template_kwargs", {}),
     )
-    eos_token_id = tokenizer.eos_token_id
     parent_eos_num = parent_tokens.count(eos_token_id)
     if parent_eos_num > 0:
         child_tokens_truncate_idx = _find_kth(all_tokens, eos_token_id, parent_eos_num)

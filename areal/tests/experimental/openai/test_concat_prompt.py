@@ -30,19 +30,20 @@ def tokenizer():
 
 
 def create_fake_model_response(
-    tokenizer, input_tokens: list[int], response_content: str
+    tokenizer, input_tokens: list[int], response_content: str, stop_reason: str = "stop"
 ) -> ModelResponse:
     """Create a fake ModelResponse with the given input tokens and response content."""
     # Tokenize the response content and add the eos token
     output_tokens = tokenizer.encode(response_content, add_special_tokens=False)
-    # Add eos_token_id to simulate stop token
-    output_tokens.append(tokenizer.eos_token_id)
+    if stop_reason != "length":
+        # Add eos_token_id to simulate stop token
+        output_tokens.append(tokenizer.eos_token_id)
     return ModelResponse(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         output_logprobs=[0.0] * len(output_tokens),
         output_versions=[0] * len(output_tokens),
-        stop_reason="stop",
+        stop_reason=stop_reason,
         tokenizer=tokenizer,
     )
 
@@ -54,6 +55,7 @@ def create_interaction_with_response(
     output_message_list: list[dict] | None = None,
     tools: list[ChatCompletionToolParam] | None = None,
     response_content: str = FAKE_RESPONSE_CONTENT,
+    stop_reason: str = "stop",
 ) -> InteractionWithTokenLogpReward:
     """Create an InteractionWithTokenLogpReward with a fake model response."""
     # Calculate input tokens using chat template
@@ -63,7 +65,7 @@ def create_interaction_with_response(
 
     # Create fake model response
     model_response = create_fake_model_response(
-        tokenizer, input_tokens, response_content
+        tokenizer, input_tokens, response_content, stop_reason=stop_reason
     )
 
     return InteractionWithTokenLogpReward(
@@ -217,6 +219,103 @@ class TestConcatPromptTokenIds:
             ],
             tools=tools,
             response_content=content + "\n\n" + tool_call_response,
+        )
+
+        # Round 2: Add tool result
+        messages_round2 = messages_round1 + [
+            {
+                "role": "assistant",
+                "content": content,
+                "tool_calls": [
+                    {
+                        "id": "call_001",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": json.dumps({"location": "Paris"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_001",
+                "content": "The weather in Paris is sunny, 22°C",
+            },
+        ]
+
+        remaining_messages_round2 = [
+            {
+                "role": "tool",
+                "tool_call_id": "call_001",
+                "content": "The weather in Paris is sunny, 22°C",
+            },
+        ]
+
+        # Using concat mode with parent
+        concat_tokens = concat_prompt_token_ids_with_parent(
+            message_list=remaining_messages_round2,
+            parent=interaction_round1,
+            tokenizer=tokenizer,
+            tools=tools,
+        )
+
+        # Direct chat_template application to full conversation
+        direct_tokens = tokenizer.apply_chat_template(
+            messages_round2, tools=tools, add_generation_prompt=True, tokenize=True
+        )
+
+        assert concat_tokens == direct_tokens, (
+            f"Tokens mismatch for tool call with tool result.\n"
+            f"Direct tokens length: {len(direct_tokens)}\n"
+            f"Concat tokens length: {len(concat_tokens)}\n"
+            f"Direct tokens: {tokenizer.decode(direct_tokens)}\n"
+            f"Concat tokens: {tokenizer.decode(concat_tokens)}"
+        )
+
+    def test_tool_call_stop_by_length(self, tokenizer):
+        """Test user request -> LLM tool_call -> tool result.
+
+        Scenario:
+        1. User asks about weather
+        2. LLM responds with a tool_call
+        3. Tool returns result
+        """
+        tools = [WEATHER_TOOL]
+        stop_reason = "length"
+
+        # Round 1: User asks about weather, LLM responds with tool_call
+        messages_round1 = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What's the weather in Paris?"},
+        ]
+
+        content = "<think>\n123\n</think>"
+        tool_call_response = '<tool_call>\n{"name": "get_weather", "arguments": {"location": "Paris"}}\n</tool_call>'
+
+        interaction_round1 = create_interaction_with_response(
+            tokenizer,
+            messages_round1,
+            parent=None,
+            output_message_list=[
+                {
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": [
+                        {
+                            "id": "call_001",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": json.dumps({"location": "Paris"}),
+                            },
+                        }
+                    ],
+                }
+            ],
+            tools=tools,
+            response_content=content + "\n\n" + tool_call_response,
+            stop_reason=stop_reason,
         )
 
         # Round 2: Add tool result
