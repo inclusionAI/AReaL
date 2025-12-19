@@ -98,7 +98,7 @@ class TestUtilityFunctions:
             assert spec.gpu == 1
 
         # case where only 1 spec is passed but multiple workers
-        new_schedulings = scheduler._prepare_worker_specs("trian", 2, schedulings[0:])
+        new_schedulings = scheduler._prepare_worker_specs("train", 2, schedulings[0:])
         assert len(new_schedulings) == 2
         for spec in new_schedulings:
             assert spec.cpu == 1

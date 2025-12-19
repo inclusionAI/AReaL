@@ -249,9 +249,14 @@ class BaseRTensor(ABC):
     def ndim(self):
         return self.data.ndim
 
+    @classmethod
+    @abstractmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        pass
+
 
 @dataclass
-class TensorShardInfo:
+class TensorShardInfo(BaseTensorShardInfo):
     """Metadata for a single shard of an RTensor."""
 
     shard_id: str
