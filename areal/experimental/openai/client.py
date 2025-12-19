@@ -140,8 +140,8 @@ def concat_prompt_token_ids_with_parent(
     eos_token_id = tokenizer.eos_token_id
 
     # To ensure compatibility across different models, we adopted the following padding scheme:
-    # Apply the chat template to the full-text message_list of the new input, then count the number of eos tokens 
-    # in the parent tokens. Locate the final index where the same number of eos tokens appears in the child_all_tokens, 
+    # Apply the chat template to the full-text message_list of the new input, then count the number of eos tokens
+    # in the parent tokens. Locate the final index where the same number of eos tokens appears in the child_all_tokens,
     # all tokens after this index correspond to the newly input tokens for the current round.
 
     if parent is not None:
@@ -157,9 +157,9 @@ def concat_prompt_token_ids_with_parent(
             parent.output_message_list if parent.output_message_list is not None else []
         )
 
-        # If the parent terminates due to output exceeding length limits or being aborted, it will not have an EOS token. 
-        # We will add an extra EOS token to align with the chat template. During training, this added EOS will be treated 
-        # as part of the child message's prompt rather than the parent message's output, and therefore will be masked out 
+        # If the parent terminates due to output exceeding length limits or being aborted, it will not have an EOS token.
+        # We will add an extra EOS token to align with the chat template. During training, this added EOS will be treated
+        # as part of the child message's prompt rather than the parent message's output, and therefore will be masked out
         # by the loss_mask.
         # TODO: should we mask this extra eos token in loss_mask during training?
         if parent.model_response.stop_reason in ["length", "abort"]:
