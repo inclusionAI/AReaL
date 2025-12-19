@@ -51,7 +51,7 @@ class RayWorkerInfo:
     actor: ray.actor.ActorHandle
     role: str
     placement_group: PlacementGroup
-    bundle_index: int
+    bundle_index: int | None
     created_at: float
     env_vars: dict[str, str] = field(default_factory=dict)
 
