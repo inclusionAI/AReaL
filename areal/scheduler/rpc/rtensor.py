@@ -26,7 +26,7 @@ class BaseTensorShardInfo(ABC):
 class BaseRTensor(ABC):
     """Single tensor distributed as CPU shards across nodes."""
 
-    shards: list[TensorShardInfo]
+    shards: list[BaseTensorShardInfo]
     data: torch.Tensor
 
     @abstractmethod
