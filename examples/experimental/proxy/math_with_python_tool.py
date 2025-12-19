@@ -13,6 +13,7 @@ from agents import Runner as OpenAIRunner
 from pydantic import BaseModel
 
 from areal.api.cli_args import GenerationHyperparameters
+from areal.reward import get_math_verify_worker
 from areal.utils.proxy_utils import run_and_submit_rewards
 
 
@@ -133,9 +134,11 @@ async def run_agent(messages: list[dict], run_config: RunConfig) -> RunResult:
 
 ########## reward function
 def gsm8k_reward_fn(result, answer):
-    from areal.reward.math_parser import process_results
-
-    return float(process_results(result, answer)[0])
+    try:
+        worker = get_math_verify_worker()
+        return worker.verify(str(result), str(answer))
+    except Exception:
+        return 0.0
 
 
 async def run_agent_return_reward(data: dict) -> float:

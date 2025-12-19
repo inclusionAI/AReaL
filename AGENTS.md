@@ -183,8 +183,8 @@ Reference docs:
 - Create `areal/reward/<name>.py` and implement a callable following
   `areal/api/reward_api.py` (see `geometry3k_reward_fn` for reference).
 - Accept `(prompt, completions, prompt_ids, completion_ids, **data)` and return a
-  scalar; extract answers deterministically (`math_parser.math_equal`, regex, etc.) and
-  avoid blocking I/O.
+  scalar; extract answers deterministically (`MathVerifyWorker`, regex, etc.) and avoid
+  blocking I/O.
 - Add the identifier to `VALID_REWARD_FN` and branch selection logic in
   `areal/reward/__init__.py` so configs like `reward.path=...` resolve automatically.
 - When rewards rely on slow models or external services, keep the heavy code inside the

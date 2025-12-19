@@ -12,6 +12,7 @@ from areal.dataset import get_custom_dataset
 from areal.experimental.camel.openai_model import AReaLOpenAICompatibleModel
 from areal.experimental.openai import ArealOpenAI
 from areal.experimental.trainer import PPOTrainer
+from areal.reward import get_math_verify_worker
 from areal.utils import stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
@@ -34,9 +35,11 @@ class AgentRLConfig(GRPOConfig):
 
 
 def gsm8k_reward_fn(result, answer):
-    from areal.reward.math_parser import process_results
-
-    return int(process_results(result, answer)[0])
+    try:
+        worker = get_math_verify_worker()
+        return worker.verify(str(result), str(answer))
+    except Exception:
+        return 0.0
 
 
 class CamelMathAgent:

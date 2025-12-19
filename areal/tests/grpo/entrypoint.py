@@ -7,15 +7,11 @@ import torch.distributed as dist
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.experimental.trainer import PPOTrainer
-from areal.reward.math_parser import process_results
+from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils import stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
-
-
-def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    return int(process_results(completions, answer)[0])
 
 
 class MinimalPPOTrainer(PPOTrainer):

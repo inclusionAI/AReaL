@@ -4,7 +4,7 @@ import sys
 from areal.api.cli_args import load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.experimental.trainer import PPOTrainer
-from areal.reward.math_parser import process_results
+from areal.reward import get_math_verify_worker
 from areal.utils import logging
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
@@ -18,11 +18,11 @@ def math_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kw
     # tool_using = 0.01 if 'tool_using' in kwargs and kwargs['tool_using'] else 0
     # tool_success = 0.05 if 'tool_status' in kwargs and kwargs['tool_status'] else 0
 
-    retval, (extracted_answer, extracted_solution) = process_results(
-        completions, answer
-    )
-
-    return int(retval)
+    try:
+        worker = get_math_verify_worker()
+        return worker.verify(str(completions), str(answer))
+    except Exception:
+        return 0.0
 
 
 def main(args):
