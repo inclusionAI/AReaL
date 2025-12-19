@@ -52,12 +52,19 @@ class CamelMathAgent:
         self.async_reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
 
     async def run_agent(self, data, client: ArealOpenAI):
+
+        model_config_dict = {
+            'max_tokens': self.max_total_tokens
+        }
+        rollout_engine_request_timeout = client.engine.config.rollout_engine_request_timeout
+
         messages = data["messages"].copy()
         agent = ChatAgent(
             model=AReaLOpenAICompatibleModel(
-                openai_client=client, tokenizer=self.tokenizer, model_type="areal"
+                openai_client=client, tokenizer=self.tokenizer, model_type="areal",
+                model_config_dict=model_config_dict
             ),
-            token_limit=self.max_total_tokens,
+            step_timeout=rollout_engine_request_timeout
         )
         response = await agent.astep(messages[-1]["content"])
         content = response.msg.content
