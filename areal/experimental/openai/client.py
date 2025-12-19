@@ -371,6 +371,14 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
         stop_tokens = None if is_omitted(stop) else stop
+        
+        # Since the concat logic cannot properly handle stop tokens yet, so we remove stop here.
+        if stop_tokens is not None and self.chat_template_type == "concat":
+            logger.warning(
+                "stop tokens are not supported in concat mode yet; ignoring stop tokens."
+            )
+            stop_tokens = None
+
         if stop_tokens is not None and not isinstance(stop_tokens, list):
             stop_tokens = [stop_tokens]
 
@@ -657,6 +665,11 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             logger.warning("max_output_tokens not specified, defaulting to 512.")
 
         stop = kwargs.get("stop", None)
+        if stop is not None and self.chat_template_type == "concat":
+            logger.warning(
+                "stop tokens are not supported in concat mode yet; ignoring stop tokens."
+            )
+            stop = None
         if is_omitted(frequency_penalty):
             frequency_penalty = 0.0
 
