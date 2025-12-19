@@ -27,8 +27,8 @@ The following hardware configuration has been extensively tested:
 
 **Note**: This tutorial does not cover the installation of CANN, or shared storage
 mounting, as these depend on your specific node configuration and system version. Please
-complete these installations independently. You can check out more details from the vLLM
-Ascend community at
+complete these installations independently. You can check out more details from the
+vLLM-Ascend community at
 [this page](https://docs.vllm.ai/projects/ascend/en/latest/installation.html).
 
 ## Runtime Environment
@@ -132,3 +132,6 @@ NPU, make the following changes:
 
 Follow the instructions there. If you want to run multi-node training with Ray, make
 sure your Ray cluster is started as described above before launching the job.
+
+**Note**: Currently, only the `fsdp` training engine and the `vllm` rollout engine
+(through the vLLM-Ascend plugin) are supported on Ascend NPU.
