@@ -406,7 +406,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         # Parse tool calls.
         tool_calls = None
         try:
-            if tool_choice != "none" and tools_list:
+            if (is_omitted(tool_choice) or tool_choice != "none") and tools_list:
                 tool_calls, output_text, response.stop_reason = process_tool_calls(
                     output_text,
                     tools_list,
@@ -689,7 +689,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         # Parse tool calls.
         tool_calls = None
         try:
-            if not is_omitted(tool_choice) and tool_choice != "none" and tools_list:
+            if (is_omitted(tool_choice) or tool_choice != "none") and tools_list:
                 tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
                     output_text,
                     tools_list,
