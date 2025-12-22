@@ -60,7 +60,7 @@ class TrainController:
         self.workers_is_dp_head: list[bool] = []
         self.parallel_strategy: ParallelStrategy | None = None
 
-        self._worker_role: str
+        self._worker_role: str = "default"
 
         self.rollout: RolloutController = None
         self.weight_update_group_initialized = False

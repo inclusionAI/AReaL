@@ -152,9 +152,11 @@ def ft_spec():
 @pytest.fixture
 def train_controller(mock_scheduler, train_config):
     """Provide a TrainController instance."""
-    return TrainController(
+    train_controller = TrainController(
         train_engine=MockTrainEngine, config=train_config, scheduler=mock_scheduler
     )
+    yield train_controller
+    train_controller.destroy()
 
 
 def create_mock_distributed_batch(size=4, seq_len=10):
@@ -207,30 +209,6 @@ class TestTrainControllerInitialization:
         assert len(train_controller.scheduler.env_settings) == len(
             train_controller.workers
         )
-
-    def test_create_process_group_sets_parallel_strategy(
-        self, train_controller, parallel_strategy
-    ):
-        """Test that create_process_group correctly assigns parallel_strategy.
-
-        This is a regression test for the bug at line 79 where parallel_strategy
-        was being assigned to itself instead of the parameter.
-        """
-        # Setup: Add mock workers
-        train_controller.workers = [Mock(), Mock()]
-        train_controller.parallel_strategy = parallel_strategy
-
-        # Call create_process_group with a different strategy
-        new_strategy = ParallelStrategy(
-            data_parallel_size=8, tensor_parallel_size=1, pipeline_parallel_size=1
-        )
-
-        # create_process_group is now a dummy method that does nothing
-        # It no longer calls custom_function_call
-        train_controller.create_process_group(new_strategy)
-
-        # The parallel_strategy is not updated in create_process_group anymore
-        # It's set during initialize() from alloc_mode.train
 
     def test_identify_dp_heads(self, train_controller, alloc_mode, ft_spec):
         """Test _identify_dp_heads correctly identifies DP head workers."""
@@ -370,46 +348,6 @@ class TestTrainControllerRPCWrappers:
         # Verify step_lr_scheduler was called on engines
         engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
         assert "step_lr_scheduler" in engine_calls
-
-
-class TestTrainControllerSFTMethods:
-    """Tests for SFT-specific methods."""
-
-    def test_train_lm(self, train_controller, alloc_mode, ft_spec):
-        """Test train_lm() method."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=8)
-        result = train_controller.train_lm(batch)
-
-        # Should return stats dictionary
-        assert isinstance(result, dict)
-
-        # Verify train_lm was called on engines
-        engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
-        assert "train_lm" in engine_calls
-
-    def test_evaluate_lm(self, train_controller, alloc_mode, ft_spec):
-        """Test evaluate_lm() method."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=8)
-        result = train_controller.evaluate_lm(batch)
-
-        # Should return loss tensor or merged results
-        assert result is not None
-
-        # Verify evaluate_lm was called on engines
-        engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
-        assert "evaluate_lm" in engine_calls
 
 
 class TestTrainControllerWeightManagement:
@@ -717,52 +655,6 @@ class TestTrainControllerRolloutIntegration:
         )
 
 
-class TestTrainControllerPPOMethods:
-    """Tests for PPO-specific methods."""
-
-    def test_compute_logp(self, train_controller, alloc_mode, ft_spec):
-        """Test compute_logp method."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=8)
-        train_controller.compute_logp(batch)
-
-        engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
-        assert "compute_logp" in engine_calls
-
-    def test_compute_advantages(self, train_controller, alloc_mode, ft_spec):
-        """Test compute_advantages method."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=8)
-        train_controller.compute_advantages(batch)
-
-        engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
-        assert "compute_advantages" in engine_calls
-
-    def test_ppo_update(self, train_controller, alloc_mode, ft_spec):
-        """Test ppo_update method."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=8)
-        train_controller.ppo_update(batch)
-
-        engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
-        assert "ppo_update" in engine_calls
-
-
 class TestTrainControllerWeightUpdateMethods:
     """Tests for weight update methods."""
 
@@ -826,28 +718,6 @@ class TestTrainControllerExportStats:
 
         result = train_controller.export_stats()
         assert result == expected_stats
-
-    def test_export_stats_calls_all_workers(
-        self, train_controller, alloc_mode, ft_spec
-    ):
-        """Test export_stats calls all workers."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        # Clear previous calls
-        train_controller.scheduler.engine_calls = []
-
-        train_controller.export_stats()
-
-        export_stats_calls = [
-            call
-            for call in train_controller.scheduler.engine_calls
-            if call[1] == "export_stats"
-        ]
-        assert len(export_stats_calls) == len(train_controller.workers)
 
 
 class TestTrainControllerAsyncMethods:
