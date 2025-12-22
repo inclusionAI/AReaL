@@ -189,10 +189,7 @@ class BaseRTensor(ABC):
 
         # Check for raw tensors - not allowed
         if isinstance(first, torch.Tensor):
-            raise TypeError(
-                "Regular tensors not allowed in merge - only BaseRTensors. "
-                "Engine outputs should be automatically converted to BaseRTensors."
-            )
+            raise TypeError("Regular tensors not allowed in merge - only RTensors")
 
         if isinstance(first, cls):
             assert group_indices is not None
