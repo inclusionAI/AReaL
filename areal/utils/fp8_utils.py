@@ -21,6 +21,7 @@ def _quantize_param(
     name: str,
     weight: torch.Tensor,
     weight_block_size: tuple[int, int] | list[int] | None = None,
+    scale_dtype: torch.dtype = torch.bfloat16,
 ) -> list[tuple[str, torch.Tensor]]:
     """Quantize a single weight parameter to FP8 format.
 
@@ -62,6 +63,7 @@ def _quantize_param(
         scale = scale.view(1)
         scale_name = name.replace(".weight", ".weight_scale")
 
+    scale = scale.to(scale_dtype)
     return [(name, qweight), (scale_name, scale)]
 
 
@@ -70,6 +72,7 @@ def quantize_params(
     megatron_name: str,
     converted_named_params: list[tuple[str, torch.Tensor]],
     quantization_config: dict[str, int | str | list[str]] | None,
+    scale_dtype: torch.dtype = torch.bfloat16,
 ) -> list[tuple[str, torch.Tensor]]:
     """Apply FP8 quantization to converted HuggingFace parameters."""
     if quantization_config is None:
@@ -82,6 +85,14 @@ def quantize_params(
     # TODO: check
     # if weight_block_size is not None and isinstance(weight_block_size, list):
     #     weight_block_size = tuple(weight_block_size)
+
+    # handle both with and without "module.module." prefix
+    if not megatron_name.startswith("module.module."):
+        # Add prefix if missing for pattern matching
+        if megatron_name.startswith("decoder."):
+            megatron_name = "module.module." + megatron_name
+        elif megatron_name.startswith("mtp."):
+            megatron_name = "module.module." + megatron_name
 
     decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
     match = re.match(decoder_layers_pattern, megatron_name)
@@ -110,7 +121,9 @@ def quantize_params(
                 if converted_name.endswith("_scale"):
                     continue
                 quantize_named_params.extend(
-                    _quantize_param(converted_name, param, weight_block_size)
+                    _quantize_param(
+                        converted_name, param, weight_block_size, scale_dtype
+                    )
                 )
             return quantize_named_params
 
@@ -123,7 +136,9 @@ def quantize_params(
             quantize_named_params = []
             for converted_name, param in converted_named_params:
                 quantize_named_params.extend(
-                    _quantize_param(converted_name, param, weight_block_size)
+                    _quantize_param(
+                        converted_name, param, weight_block_size, scale_dtype
+                    )
                 )
             return quantize_named_params
 
@@ -143,7 +158,7 @@ def quantize_params(
         quantize_named_params = []
         for converted_name, param in converted_named_params:
             quantize_named_params.extend(
-                _quantize_param(converted_name, param, weight_block_size)
+                _quantize_param(converted_name, param, weight_block_size, scale_dtype)
             )
         return quantize_named_params
 
