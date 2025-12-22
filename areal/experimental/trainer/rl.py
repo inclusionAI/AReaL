@@ -426,6 +426,12 @@ class PPOTrainer:
             )
         if is_single_controller():
             actor = actor.as_controller(self.scheduler)
+            if self.allocation_mode.gen_backend == "sglang":
+                # Disable some environ for NCCL weight update.
+                # These environs are set by the launcher in the SPMD mode.
+                for spec in actor.config.scheduling_spec:
+                    spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
+                    spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
         actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
