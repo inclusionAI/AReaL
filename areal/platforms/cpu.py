@@ -20,7 +20,7 @@ class CpuPlatform(Platform):
 
     @classmethod
     def synchronize(cls) -> None:
-        raise NotImplementedError()
+        pass
 
     @classmethod
     def update_env_vars_for_visible_devices(

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-import torch
+import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
@@ -22,7 +22,8 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.controller.rollout_controller import RolloutController
 from areal.platforms import current_platform
 from areal.scheduler.rpc.rtensor import RTensor
-from areal.utils import logging, name_resolve, names
+from areal.utils import logging, name_resolve, names, stats_tracker
+from areal.utils.network import find_free_ports
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,25 @@ class TrainController:
         parallel_strategy : ParallelStrategy | None, optional
             Parallel strategy configuration (currently unused), by default None
         """
-        pass
+        port = find_free_ports(1)[0]
+        dist.init_process_group(
+            backend="gloo", init_method=f"tcp://localhost:{port}", rank=0, world_size=1
+        )
+
+    @property
+    def data_parallel_rank(self) -> int:
+        return 0
+
+    @property
+    def data_parallel_world_size(self) -> int:
+        return 1
+
+    def is_data_parallel_head(self) -> bool:
+        return True
+
+    @property
+    def cpu_group(self):
+        return None
 
     def initialize(
         self,
@@ -364,18 +383,11 @@ class TrainController:
         dict[str, Any]
             Training statistics dictionary
         """
-
-        async def _call_all():
-            tasks = [
-                self.scheduler.async_call_engine(worker.id, "export_stats")
-                for worker in self.workers
-            ]
-            return await asyncio.gather(*tasks)
-
-        results = self._run_async_task(_call_all())
         # Statistics have been aggregated and synchronized across workers
         # All results should be identical, so return the first one
-        return results[0]
+        stats = stats_tracker.export_all()
+        stats.update(self._custom_function_call("export_stats"))
+        return stats
 
     # ==================== ENGINE RPC WRAPPERS ====================
     # Note: Methods like train_batch, forward, etc. are not implemented here.
@@ -459,56 +471,6 @@ class TrainController:
         """
         self._custom_function_call("step_lr_scheduler")
 
-    # ==================== SFT RPC WRAPPERS ====================
-    def train_lm(
-        self,
-        input_: dict[str, Any],
-        *args,
-        **kwargs,
-    ) -> dict[str, float]:
-        """Train language model across workers.
-
-        Parameters
-        ----------
-        input_ : dict[str, Any]
-            Input data with RTensors for language model training
-        *args
-            Additional positional arguments passed to the engine
-        **kwargs
-            Additional keyword arguments passed to the engine
-
-        Returns
-        -------
-        dict[str, float]
-            Scalar statistics after training
-        """
-        return self._custom_function_call("train_lm", input_, *args, **kwargs)
-
-    def evaluate_lm(
-        self,
-        input_: dict[str, Any],
-        *args,
-        **kwargs,
-    ) -> torch.Tensor | None:
-        """Evaluate language model across workers.
-
-        Parameters
-        ----------
-        input_ : dict[str, Any]
-            Input data with RTensors for language model evaluation
-        *args
-            Additional positional arguments passed to the engine
-        **kwargs
-            Additional keyword arguments passed to the engine
-
-        Returns
-        -------
-        torch.Tensor or None
-            A scalar loss or None
-        """
-        return self._custom_function_call("evaluate_lm", input_, *args, **kwargs)
-
-    # =================== GRPO ========================================
     def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
         if self.rollout is not None and self.rollout != rollout:
             logger.warning(
@@ -529,7 +491,10 @@ class TrainController:
         workflow: str,
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
+        granularity: int | None = None,
     ) -> dict[str, Any]:
+        if granularity is not None:
+            logger.warning("For now, granularity takes no effect in train controller.")
         return self.rollout.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,
@@ -543,73 +508,16 @@ class TrainController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
+        granularity: int | None = None,
     ) -> dict[str, Any]:
+        if granularity is not None:
+            logger.warning("For now, granularity takes no effect in train controller.")
         return self.rollout.rollout_batch(
             data=data,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
         )
-
-    def compute_logp(
-        self,
-        *args,
-        **kwargs,
-    ):
-        """Compute log probabilities across workers.
-
-        Parameters
-        ----------
-        *args
-            Positional arguments passed to the engine
-        **kwargs
-            Keyword arguments passed to the engine
-
-        Returns
-        -------
-        Any
-            Log probabilities computed by the engine
-        """
-        return self._custom_function_call("compute_logp", *args, **kwargs)
-
-    def compute_advantages(
-        self,
-        *args,
-        **kwargs,
-    ):
-        """Compute advantages across workers.
-
-        Parameters
-        ----------
-        *args
-            Positional arguments passed to the engine
-        **kwargs
-            Keyword arguments passed to the engine
-
-        Returns
-        -------
-        Any
-            Advantages computed by the engine
-        """
-        return self._custom_function_call("compute_advantages", *args, **kwargs)
-
-    def ppo_update(
-        self,
-        input_: dict[str, Any],
-    ) -> dict[str, float]:
-        """Perform PPO update step with the given batch.
-
-        Parameters
-        ----------
-        input_ : dict[str, Any]
-            Input data with RTensors containing trajectories for PPO update
-
-        Returns
-        -------
-        Dict[str, float]
-            Scalar statistics after PPO update
-        """
-        return self._custom_function_call("ppo_update", input_)
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         raise NotImplementedError()

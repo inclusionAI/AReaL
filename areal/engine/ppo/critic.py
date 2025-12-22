@@ -5,6 +5,8 @@ import torch
 
 from areal.api.cli_args import MicroBatchSpec, PPOCriticConfig
 from areal.api.engine_api import TrainEngine
+from areal.api.scheduler_api import Scheduler
+from areal.controller.train_controller import TrainController
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import stats_tracker
@@ -59,6 +61,14 @@ class PPOCritic:
             stats_tracker.scalar(**train_stat)
 
 
+class PPOCriticController(TrainController):
+    def compute_values(self, *args, **kwargs):
+        return self._custom_function_call("compute_values", *args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs):
+        self._custom_function_call("ppo_update", *args, **kwargs)
+
+
 class FSDPPPOCritic(FSDPEngine):
     def __init__(self, config: PPOCriticConfig):
         super().__init__(config)
@@ -70,6 +80,11 @@ class FSDPPPOCritic(FSDPEngine):
 
     def ppo_update(self, *args, **kwargs) -> None:
         self.critic.ppo_update(*args, **kwargs)
+
+    def as_controller(self, scheduler: Scheduler) -> PPOCriticController:
+        return PPOCriticController(
+            train_engine=self.__class__, config=self.config, scheduler=scheduler
+        )
 
 
 class MegatronPPOCritic(MegatronEngine):
@@ -83,6 +98,11 @@ class MegatronPPOCritic(MegatronEngine):
 
     def ppo_update(self, *args, **kwargs) -> None:
         self.critic.ppo_update(*args, **kwargs)
+
+    def as_controller(self, scheduler: Scheduler) -> PPOCriticController:
+        return PPOCriticController(
+            train_engine=self.__class__, config=self.config, scheduler=scheduler
+        )
 
 
 def ppo_loss_fn(

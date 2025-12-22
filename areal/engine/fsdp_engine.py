@@ -136,7 +136,6 @@ class FSDPEngine(TrainEngine):
             trust_remote_code=True,
         )
         self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
-        self.world_size = int(os.environ["WORLD_SIZE"])
 
         # FSDP-specific initialization
         self.cpu_offload: CPUOffloadPolicy | None = None
@@ -151,6 +150,7 @@ class FSDPEngine(TrainEngine):
         self.sp_group: dist.ProcessGroup
         self.mp_group: dist.ProcessGroup
 
+        self.world_size: int
         self.rank: int
         self.dp_head: int
         self.dp_rank: int
@@ -195,17 +195,14 @@ class FSDPEngine(TrainEngine):
         self.mp_group = self.world_mesh["sp_tp"].get_group()
 
         self.rank = dist.get_rank()
+        self.world_size = dist.get_world_size()
 
         self.dp_head = dist.get_process_group_ranks(self.mp_group)[0]
         self.dp_rank = dist.get_rank(self.dp_group)
 
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
 
-    def initialize(
-        self,
-        addr: str | None,
-        ft_spec: FinetuneSpec,
-    ):
+    def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
         # Initialize distributed enviroments and load model.
         assert addr is None, "FSDPEngine does not support remote initialization."
         assert ft_spec is not None, "FSDPEngine requires FinetuneSpec to initialize."

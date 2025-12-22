@@ -20,7 +20,9 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     WeightUpdateRequests,
 )
+from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow
+from areal.controller import RolloutController
 from areal.core import RemoteInfEngine
 from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
@@ -392,3 +394,8 @@ class RemotevLLMEngine(InferenceEngine):
 
     def export_stats(self) -> dict[str, float]:
         return stats_tracker.export_all(reduce_group=None)
+
+    def as_controller(self, scheduler: Scheduler) -> RolloutController:
+        return RolloutController(
+            self.__class__, config=self.config, scheduler=scheduler
+        )

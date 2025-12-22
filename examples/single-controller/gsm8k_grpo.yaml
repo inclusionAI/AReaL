@@ -75,6 +75,7 @@ actor:
   adv_norm:
     mean_level: batch
     std_level: batch
+  weight_update_mode: disk
   max_new_tokens: ${gconfig.max_new_tokens}
   scheduling_spec:
     - task_type: worker

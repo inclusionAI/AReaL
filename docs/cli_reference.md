@@ -875,6 +875,7 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 
 | Parameter                     | Type   | Default                             | Description |
 | ----------------------------- | ------ | ----------------------------------- | ----------- |
+| `type`                        | string | `"local"`                           | -           |
 | `endpoint`                    | string | `"http://localhost:8081"`           | -           |
 | `deploy_mode`                 | string | `"separation"`                      | -           |
 | `functioncall_service_domain` | string | `"http://localhost:8080"`           | -           |

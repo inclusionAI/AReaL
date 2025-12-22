@@ -1384,6 +1384,7 @@ class ClusterSpecConfig:
 class SchedulerConfig:
     """Configuration for worker scheduling. Used in the single-controller mode. Experimental."""
 
+    type: str = field(default="local")
     endpoint: str = field(default="http://localhost:8081")
     deploy_mode: str = field(default="separation")
     functioncall_service_domain: str = field(default="http://localhost:8080")
