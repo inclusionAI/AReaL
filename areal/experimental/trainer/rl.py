@@ -578,9 +578,7 @@ class PPOTrainer:
         # Upload statistics to the logger (e.g., wandb)
         stats = self.actor.export_stats()
         stats.update(self.rollout.export_stats())
-        eval_rollout_stats = self.eval_rollout.export_stats()
-        print(eval_rollout_stats)
-        stats.update(eval_rollout_stats)
+        stats.update(self.eval_rollout.export_stats())
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
         dist.barrier(group=self.actor.cpu_group)
