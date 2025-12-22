@@ -684,6 +684,9 @@ class MegatronEngine(TrainEngine):
 
         self.is_offload = False
 
+    def clear_batches(self, *args):
+        """Placeholder method of single-controller API."""
+
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
     ) -> MegatronParallelStrategy:

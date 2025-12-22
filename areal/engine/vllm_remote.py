@@ -399,3 +399,6 @@ class RemotevLLMEngine(InferenceEngine):
         return RolloutController(
             self.__class__, config=self.config, scheduler=scheduler
         )
+
+    def clear_batches(self, *args):
+        """Placeholder method of single-controller API."""
