@@ -38,22 +38,19 @@ logger = logging.getLogger("Trainer")
 
 def clear_ref_resource(last_ref_model_path: str):
     if last_ref_model_path is not None and os.path.exists(last_ref_model_path):
+
         def cleanup_ref_model_path(path):
             try:
                 if os.path.exists(path):
                     shutil.rmtree(path)
-                    logger.info(
-                        f"Async cleanup completed for ref model path: {path}"
-                    )
+                    logger.info(f"Async cleanup completed for ref model path: {path}")
             except Exception as e:
                 logger.error(
                     f"Async cleanup failed for old ref model path {path}: {str(e)}"
                 )
 
         executor = ThreadPoolExecutor(max_workers=1)
-        executor.submit(
-            cleanup_ref_model_path, last_ref_model_path
-        )
+        executor.submit(cleanup_ref_model_path, last_ref_model_path)
         executor.shutdown(wait=False)
         logger.info(
             f"Started async cleanup for old ref model path: {last_ref_model_path}"
@@ -232,9 +229,7 @@ def main(args):
             ):
                 ref_model_path = recover_meta_info.ref_model_path
                 config.ref.hybrid_engine.recover_dir = ref_model_path
-                logger.info(
-                    f"Recover ref model from path: {ref_model_path}"
-                )
+                logger.info(f"Recover ref model from path: {ref_model_path}")
 
         periodic_recover = periodic_checkpoint.Recover(config.recover)
         ##################################################################################
@@ -421,11 +416,11 @@ def main(args):
                         and config.actor.hybrid_engine.wrap_policy.kl_ctl > 0
                         and config.ref.enable_update_ref_model
                         and (
-                        global_step
-                        * config.actor.hybrid_engine.wrap_policy.n_minibatches
-                        % config.ref.update_ref_model_interval
-                        == 0
-                    )
+                            global_step
+                            * config.actor.hybrid_engine.wrap_policy.n_minibatches
+                            % config.ref.update_ref_model_interval
+                            == 0
+                        )
                     ):
                         with stats_tracker.record_timing("update_ref_model"):
                             logger.info(
@@ -631,7 +626,9 @@ def main(args):
                             clear_ref_resource(last_ref_model_path)
 
                 metric = stats_tracker.export()
+                metric.update(rollout.export_stats())
                 stats_logger.commit(epoch, step, global_step, metric)
+
                 global_step += 1
         stats_logger.close()
     except Exception as e:

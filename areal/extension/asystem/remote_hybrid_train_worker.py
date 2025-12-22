@@ -9,6 +9,7 @@ from typing import Any
 import cloudpickle
 import requests
 import torch
+import torch.distributed as dist
 
 from realhf.api.core.data_api import (  # 需要引擎侧也要修改
     # RL_TASKS,
@@ -19,12 +20,15 @@ from realhf.api.core.data_api import (  # 需要引擎侧也要修改
 from realhf.impl.model.utils import ppo_functional
 from realhf.impl.model.utils.functional import masked_normalization
 
+from areal.api.alloc_mode import ParallelStrategy
 from areal.api.engine_api import (
+    InferenceEngine,
     SaveLoadMeta,
     TrainEngine,
     WeightUpdateMeta,
 )
 from areal.extension.asystem.api.cli_args import TrainEngineConfig
+from areal.extension.asystem.utils.dist import init_distributed_if_needed
 from areal.extension.asystem.utils.util import RL_TASKS
 from areal.utils import logging, stats_tracker
 from areal.utils.errors import EngineError, FrameworkError
@@ -87,6 +91,47 @@ class RemoteHybridTrainWorker(TrainEngine):
 
         self.enable_colocate_mode = None
         self.kl_ctl = self.config.wrap_policy.kl_ctl
+
+    def configure(self, config):
+        raise NotImplementedError()
+
+    def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
+        raise NotImplementedError()
+
+    def destroy_process_group(self):
+        raise NotImplementedError()
+
+    @property
+    def data_parallel_group(self) -> dist.ProcessGroup:
+        return getattr(self, "_data_parallel_group")
+
+    @property
+    def data_parallel_rank(self) -> int:
+        return getattr(self, "_data_parallel_rank")
+
+    @property
+    def data_parallel_world_size(self) -> int:
+        return getattr(self, "_data_parallel_world_size")
+
+    def current_data_parallel_head(self) -> int:
+        return getattr(self, "_dp_head")
+
+    def is_data_parallel_head(self) -> bool:
+        return self.global_rank == self.current_data_parallel_head()
+
+    @property
+    def context_and_model_parallel_group(self) -> dist.ProcessGroup:
+        return getattr(self, "_context_and_model_parallel_group")
+
+    @property
+    def parallelism_group(self) -> dist.ProcessGroup:
+        raise NotImplementedError()
+
+    def train(self, mode: bool = True):
+        raise NotImplementedError()
+
+    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
+        raise NotImplementedError()
 
     def initialize(self, cfg: RemoteMegatronInitConfig) -> dict:
         global_rank = cfg.global_rank
@@ -159,7 +204,17 @@ class RemoteHybridTrainWorker(TrainEngine):
             logger.info(
                 f"Rank{global_rank} payload sent successfully to {addr}{endpoint}, response: {resp}"
             )
-            return resp["result"]
+            megatron_rank_info = resp["result"]
+
+            # 根据 Megatron 返回的 rank 信息构建通信组
+            worker_master_port = 30499  # FIXME: hard coded port
+            self._build_communication_groups(
+                megatron_rank_info,
+                cfg.world_size,
+                {"master_ip": master_ip, "master_port": worker_master_port},
+            )
+
+            return megatron_rank_info
         except ValueError as ve:
             raise EngineError(
                 "TrainEngineError", "InitializeError", f"rank{global_rank}, error: {ve}"
@@ -179,6 +234,167 @@ class RemoteHybridTrainWorker(TrainEngine):
 
         logger.info(f"rank{global_rank} megatron server initialize success.")
         self.initialized = True
+
+    def _build_communication_groups(
+        self, megatron_rank_info: dict, world_size: int, init_config: dict
+    ):
+        """Build communication groups based on Megatron rank information"""
+        logger.info(f"Building comm groups with Megatron info: {megatron_rank_info}")
+
+        # Initialize distributed environment if needed
+        init_distributed_if_needed(init_config, world_size, self.global_rank)
+
+        # Extract and gather rank information
+        all_rank_info = self._extract_and_gather_rank_info(
+            megatron_rank_info, world_size
+        )
+
+        # Build communication groups
+        self._build_data_parallel_groups(all_rank_info)
+        self._build_context_and_model_parallel_groups(all_rank_info)
+
+        logger.info("Communication groups built successfully")
+
+    def _extract_and_gather_rank_info(self, megatron_rank_info: dict, world_size: int):
+        """Extract current rank info and gather from all processes"""
+        # Extract current rank info
+        current_info = {
+            "tp_rank": megatron_rank_info.get("tp_rank"),
+            "dp_rank": megatron_rank_info.get("dp_rank"),
+            "pp_rank": megatron_rank_info.get("pp_rank"),
+            "cp_rank": megatron_rank_info.get("cp_rank"),
+        }
+
+        logger.info(
+            f"Current rank info - TP:{current_info['tp_rank']} DP:{current_info['dp_rank']} "
+            f"PP:{current_info['pp_rank']} CP:{current_info['cp_rank']}"
+        )
+
+        # Pack and gather rank info from all processes
+        logger.info("Gathering rank info from all processes...")
+        local_tensor = torch.tensor(
+            [
+                current_info["tp_rank"],
+                current_info["dp_rank"],
+                current_info["pp_rank"],
+                current_info["cp_rank"],
+            ],
+            dtype=torch.int32,
+        )
+
+        gathered_tensors = [torch.zeros_like(local_tensor) for _ in range(world_size)]
+        logger.info(f"all gather rank info begin, local_tensor: {local_tensor}")
+        try:
+            dist.all_gather(gathered_tensors, local_tensor)
+        except Exception as e:
+            logger.error(f"all gather rank info failed: {e}")
+            raise
+
+        # Convert to structured format
+        all_rank_info = {}
+        for global_rank, tensor in enumerate(gathered_tensors):
+            tp_rank, dp_rank, pp_rank, cp_rank = tensor.cpu().numpy()
+            all_rank_info[global_rank] = {
+                "tp_rank": int(tp_rank),
+                "dp_rank": int(dp_rank),
+                "pp_rank": int(pp_rank),
+                "cp_rank": int(cp_rank),
+            }
+
+        logger.info(f"Gathered rank info from {len(all_rank_info)} processes")
+        return all_rank_info
+
+    def _build_data_parallel_groups(self, all_rank_info: dict):
+        """Build data parallel groups - processes with same TP, PP, CP ranks"""
+
+        # Group processes by (tp_rank, pp_rank, cp_rank)
+        groups_by_key = {}
+
+        for global_rank, info in all_rank_info.items():
+            key = (info["tp_rank"], info["pp_rank"], info["cp_rank"])
+            if key not in groups_by_key:
+                groups_by_key[key] = []
+            groups_by_key[key].append(global_rank)
+
+        # Sort groups for consistent ordering
+        sorted_groups = [sorted(ranks) for key, ranks in sorted(groups_by_key.items())]
+        logger.info(f"Data parallel groups: {sorted_groups}")
+
+        # Create groups and find current process's group
+        self._create_and_assign_group(
+            sorted_groups, group_type="data_parallel", attr_prefix="data_parallel"
+        )
+
+    def _build_context_and_model_parallel_groups(self, all_rank_info: dict):
+        """Build context parallel groups - processes with same DP rank"""
+
+        # Group processes by dp_rank
+        groups_by_dp = {}
+
+        for global_rank, info in all_rank_info.items():
+            dp_rank = info["dp_rank"]
+            if dp_rank not in groups_by_dp:
+                groups_by_dp[dp_rank] = []
+            groups_by_dp[dp_rank].append(global_rank)
+
+        # Sort groups for consistent ordering
+        sorted_groups = [
+            sorted(ranks) for dp_rank, ranks in sorted(groups_by_dp.items())
+        ]
+        logger.info(f"context_model_parallel_groups: {sorted_groups}")
+
+        # Create groups and find current process's group
+        self._create_and_assign_group(
+            sorted_groups,
+            group_type="context_and_model_parallel",
+            attr_prefix="context_and_model_parallel",
+        )
+
+        # Set dp_head: the head rank (first rank) in the current context_model_parallel_group
+        for group_ranks in sorted_groups:
+            if self.global_rank in group_ranks:
+                self._dp_head = group_ranks[0]  # First rank is the head
+                logger.info(
+                    f"dp_head set for rank {self.global_rank}: {self._dp_head} "
+                    f"(head of context_model_parallel group {group_ranks})"
+                )
+                break
+
+    def _create_and_assign_group(
+        self, sorted_groups: list, group_type: str, attr_prefix: str
+    ):
+        """Create PyTorch distributed groups and assign current process to appropriate group"""
+
+        current_group = None
+        current_rank_in_group = 0
+        current_group_size = 1
+
+        # Create all groups (all processes must participate)
+        for group_idx, group_ranks in enumerate(sorted_groups):
+            logger.info(f"Creating {group_type} group {group_idx}: {group_ranks}")
+
+            group = dist.new_group(ranks=group_ranks)
+
+            # Check if current process belongs to this group
+            if self.global_rank in group_ranks:
+                current_group = group
+                current_rank_in_group = group_ranks.index(self.global_rank)
+                current_group_size = len(group_ranks)
+                logger.info(
+                    f"Joined {group_type} group {group_idx}: rank={current_rank_in_group}"
+                )
+
+        # Set attributes with underscore prefix to avoid property conflicts
+        setattr(self, f"_{attr_prefix}_group", current_group)
+        setattr(self, f"_{attr_prefix}_rank", current_rank_in_group)
+        setattr(self, f"_{attr_prefix}_world_size", current_group_size)
+
+        if current_group is None:
+            logger.info(f"Not in any {group_type} group, using single process mode")
+        else:
+            logger.info(
+                f"{group_type} group assigned: current_rank_in_group={current_rank_in_group}, size={current_group_size}"
+            )
 
     def destroy(self):
         self.initialized = False
@@ -321,7 +537,6 @@ class RemoteHybridTrainWorker(TrainEngine):
         # 1. input_的key：input_ids, prompt_mask, logprobs, versions, seqlen, rewards, task_ids, seq_no_eos_mask
         # 构造 attr -> tensor
         batch_data = input_
-        torch.set_printoptions(threshold=float("inf"))
         logger.info(f"train_distributed_batch rewards: {batch_data['rewards']}")
         # 2. input_的数据转换：prompt_mask, packed_input_ids, seqlens.packed_input_ids, rewards, task_ids, seq_no_eos_mask, packed_logprobs
         # input_ids => packed_input_ids
@@ -761,11 +976,47 @@ class RemoteHybridTrainWorker(TrainEngine):
         torch.cuda.empty_cache()
 
         # Optionally perform normalization.
+        # todo: remove realhf dependency @chucai
         if self.config.wrap_policy.value_norm:
             self.rms.update(returns, mask=loss_mask)
 
+        if self.config.wrap_policy.adv_norm:
+            if self.config.wrap_policy.adv_norm.mean_level == "batch":
+                advantages = masked_normalization(
+                    advantages, loss_mask, all_reduce=False
+                )
+            elif self.config.wrap_policy.adv_norm.mean_level == "group":
+                logger.info(f"adv_shape: {advantages.shape}")
+                logger.info(f"prompt_mask_shape: {prompt_mask.shape}")
+                n_samples = len(cu_seqlens) - 1
+                assert n_samples % self.config.group_size == 0
+                adv_list = []
+                for i in range(0, n_samples, self.config.group_size):
+                    for j in range(1, self.config.group_size):
+                        assert (
+                            prompt_mask[cu_seqlens[i] : cu_seqlens[i + 1]].sum()
+                            == prompt_mask[
+                                cu_seqlens[i + j] : cu_seqlens[i + j + 1]
+                            ].sum()
+                        )
+                    adv_list.append(
+                        masked_normalization(
+                            advantages[
+                                short1cu_seqlens[i] : short1cu_seqlens[
+                                    i + self.config.group_size
+                                ]
+                            ],
+                            loss_mask[
+                                short1cu_seqlens[i] : short1cu_seqlens[
+                                    i + self.config.group_size
+                                ]
+                            ],
+                            all_reduce=False,
+                        )
+                    )
+
         if self.config.wrap_policy.adv_norm.mean_level == "batch":
-            advantages = masked_normalization(advantages, loss_mask)
+            advantages = masked_normalization(advantages, loss_mask, all_reduce=False)
         elif self.config.wrap_policy.adv_norm.mean_level == "group":
             n_samples = len(cu_seqlens) - 1
             assert n_samples % self.config.group_size == 0
@@ -774,9 +1025,7 @@ class RemoteHybridTrainWorker(TrainEngine):
                 for j in range(1, self.config.group_size):
                     assert (
                         prompt_mask[cu_seqlens[i] : cu_seqlens[i + 1]].sum()
-                        == prompt_mask[
-                            cu_seqlens[i + j] : cu_seqlens[i + j + 1]
-                        ].sum()
+                        == prompt_mask[cu_seqlens[i + j] : cu_seqlens[i + j + 1]].sum()
                     )
                 adv_list.append(
                     masked_normalization(
@@ -879,7 +1128,7 @@ class RemoteHybridTrainWorker(TrainEngine):
                 scalars["use_dual_clip"] = 0
             stats_tracker.scalar(**scalars)
 
-            global_stats = stats_tracker.export()
+            global_stats = stats_tracker.export(reduce_group=self.data_parallel_group)
             # for k in global_denominators:
             #     global_stats.pop(f"ppo_actor/{k}")
 

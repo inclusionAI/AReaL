@@ -3,6 +3,7 @@ import importlib
 import traceback
 from concurrent.futures import Future
 
+import torch.distributed as dist
 from flask import Flask, jsonify, request
 
 from areal.api.cli_args import BaseExperimentConfig
@@ -183,15 +184,23 @@ def call_engine_method():
         try:
             should_bcast = kwargs.pop("_should_bcast", True)
             if should_bcast and isinstance(_engine, TrainEngine):
-                logger.info(f"Broadcasting data for TrainEngine method: {method_name}")
+                assert dist.is_initialized()
+                device = (
+                    "cpu"
+                    if dist.get_backend() == "gloo"
+                    else current_platform.current_device()
+                )
+                logger.info(
+                    f"Broadcasting data for TrainEngine method: {method_name}, device: {device}"
+                )
 
-                args = tensor_container_to(args, current_platform.current_device())
+                args = tensor_container_to(args, device)
                 args = broadcast_tensor_container(
                     args,
                     src_rank=_engine.current_data_parallel_head(),
                     group=_engine.context_and_model_parallel_group,
                 )
-                kwargs = tensor_container_to(kwargs, current_platform.current_device())
+                kwargs = tensor_container_to(kwargs, device)
                 kwargs = broadcast_tensor_container(
                     kwargs,
                     src_rank=_engine.current_data_parallel_head(),
@@ -286,7 +295,6 @@ def call_engine_method():
         logger.error(f"Unexpected error in call: {e}\n{traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
-
 @app.route("/export_stats", methods=["POST"])
 def export_stats():
     """Export training statistics from stats_tracker."""
@@ -295,9 +303,7 @@ def export_stats():
         if _engine is None:
             return jsonify({"error": "Engine not initialized"}), 503
 
-        # TrainEngine: reduce stats across data_parallel_group
-        assert isinstance(_engine, TrainEngine)
-        result = stats_tracker.export(reduce_group=_engine.data_parallel_group)
+        result = _engine.export_stats()
         return jsonify({"status": "success", "result": result})
 
     except Exception as e:

@@ -43,11 +43,9 @@ def sync_run_task(
                     assert len(res) == 2
                     reward, stats = res
                     assert isinstance(stats, dict)
-                    stats_tracker.scalar(
-                        **stats,
-                    )
                 else:
                     reward = res
+                    stats = {}
             except Exception as e:
                 import traceback
 
@@ -57,7 +55,7 @@ def sync_run_task(
 
             await session.set_reward(reward)
 
-        return None, session_id, reward
+        return None, session_id, reward, stats
 
     return asyncio.run(
         run_task(
@@ -202,15 +200,15 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
         results = await asyncio.gather(
             *[asyncio.wrap_future(future) for future in futures]
         )
-        error_message, session_ids, rewards = zip(*results)
+        error_message, session_ids, rewards, all_stats = zip(*results)
         if any(error_message):
             for msg in error_message:
                 if msg is not None:
                     logger.error(f"Error in run_agent: {msg}")
             raise RuntimeError("One or more tasks failed in run_agent.")
 
-        for reward in rewards:
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+        for reward, stats in zip(rewards, all_stats):
+            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward, **stats)
 
         completions: dict[str, list[InteractionWithTokenLogpReward]] = {}
 

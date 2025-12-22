@@ -26,7 +26,7 @@ from areal.api.io_struct import (
 from areal.api.workflow_api import RolloutWorkflow
 from areal.extension.asystem.api.cli_args import RemoteHybridInferenceConfig
 from areal.extension.asystem.utils.util import wait_future_ordered
-from areal.utils import logging, seeding
+from areal.utils import logging, seeding, stats_tracker
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.errors import EngineError, FrameworkError
 from areal.utils.http import arequest_with_retry, get_default_connector
@@ -779,3 +779,6 @@ class RemoteHybridInferenceWorker(InferenceEngine):
             return self.wait(count, timeout=timeout)
         except TimeoutError:
             return "NO_RESULT"
+
+    def export_stats(self) -> dict[str, float]:
+        return stats_tracker.export_all(reduce_group=None)

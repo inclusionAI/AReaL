@@ -115,15 +115,8 @@ class TrainController(BaseTrainController):
         asyncio.run(self._async_create_engines(engine_path))
         asyncio.run(self._async_initialize(job, ft_spec, **kwargs))
 
-        seen_dp_ranks = set()
-        self.workers_is_dp_head = []
-        for index in range(len(self.workers)):
-            rank_info = self.rank_info[index]
-            dp_rank = rank_info["dp_rank"]
-            is_dp_head = dp_rank not in seen_dp_ranks
-            self.workers_is_dp_head.append(is_dp_head)
-            if is_dp_head:
-                seen_dp_ranks.add(dp_rank)
+        # Identify DP head workers
+        self._identify_dp_heads()
         self.logger.info("TrainController initialization complete")
 
     async def _async_initialize(self, job: Job, ft_spec: FinetuneSpec, **kwargs):
@@ -179,7 +172,7 @@ class TrainController(BaseTrainController):
     ) -> dict[str, float]:
         self.logger.info("start to train_batch")
         results = self._custom_function_call(
-            "train_batch", input_, rebalance=True, _should_bcast=False
+            "train_batch", input_, rebalance=True, _should_bcast=True
         )
         for worker_result in results:  # TODO: Get the last pp_rank data from each dp
             if len(worker_result) > 1:
@@ -195,7 +188,7 @@ class TrainController(BaseTrainController):
         logger.info("start to compute_logp")
         try:
             worker_results = self._custom_function_call(
-                "compute_logprobs", input_, rebalance=False, _should_bcast=False
+                "compute_logprobs", input_, rebalance=False, _should_bcast=True
             )
         except KeyboardInterrupt:
             raise
