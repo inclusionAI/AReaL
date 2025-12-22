@@ -52,6 +52,23 @@ _server_port: int = 8000
 app = Flask(__name__)
 
 
+def _inject_special_args(method: str, args, kwargs):
+    if method != "connect_engine":
+        return args, kwargs
+
+    engine_path = kwargs.pop("engine", None)
+    if engine_path is None:
+        raise ValueError("connect_engine requires 'engine' to be a class path string")
+
+    EngineCls = import_from_string(engine_path)
+
+    # MockInferenceEngine takes no args → safe
+    engine = EngineCls()
+
+    kwargs["engine"] = engine
+    return args, kwargs
+
+
 def _init_engine_thread():
     global _engine_thread, _engine_work_queue
 
@@ -306,6 +323,7 @@ def call_engine_method():
         method_name = data.get("method")
         raw_args = data.get("args", [])
         raw_kwargs = data.get("kwargs", {})
+        raw_args, raw_kwargs = _inject_special_args(method_name, raw_args, raw_kwargs)
 
         if not method_name:
             return jsonify({"error": "Missing 'method' field in request"}), 400

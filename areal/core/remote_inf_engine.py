@@ -630,13 +630,23 @@ class RemoteInfEngine(InferenceEngine):
         )
         return response
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+    def init_weights_update_group(
+        self, meta: WeightUpdateMeta, rank_ids: list[int] | None = None
+    ) -> Future[None]:
         """Initialize the weight update process group for distributed weight updates.
 
         Parameters
         ----------
         meta : WeightUpdateMeta
             Metadata containing information about the weight update
+        rank_ids : list[int] | None, optional
+            Explicit rank assignment for each remote inference worker, aligned with
+            ``self.addresses`` (same length, same order).
+
+            - If provided, worker at ``self.addresses[i]`` will initialize the
+            communication group using rank ``rank_ids[i]``.
+            - If None, ranks are assigned by address order: rank ``i`` for
+            ``self.addresses[i]``.
 
         Returns
         -------
@@ -652,6 +662,7 @@ class RemoteInfEngine(InferenceEngine):
             meta,
             self.addresses,
             self.config.request_timeout,
+            rank_ids,
         )
 
         def callback(fut):
@@ -662,7 +673,6 @@ class RemoteInfEngine(InferenceEngine):
             self.distributed_weight_update_initialized = True
 
         fut.add_done_callback(callback)
-
         return fut
 
     def update_weights_from_distributed(
@@ -745,7 +755,6 @@ class RemoteInfEngine(InferenceEngine):
                 shutil.rmtree(meta.path, ignore_errors=True)
 
         fut.add_done_callback(callback)
-
         return fut
 
     def submit(
@@ -1029,8 +1038,20 @@ def _init_weights_update_group_remote(
     meta: WeightUpdateMeta,
     addresses: list[str],
     request_timeout: float,
+    rank_ids: list[int] | None = None,
 ):
-    """Helper to initialize weight update group in a separate process."""
+    """Helper to initialize weight update group in a separate process.
+
+    If rank_ids is provided, it must have the same length as addresses and will be
+    used as the per-address rank passed to the backend request builder.
+    Otherwise, ranks default to enumerate(addresses).
+    """
+
+    if rank_ids is not None and len(rank_ids) != len(addresses):
+        raise ValueError(
+            f"rank_ids must have the same length as addresses "
+            f"(got {len(rank_ids)} vs {len(addresses)})"
+        )
 
     async def _fn():
         async with aiohttp.ClientSession(
@@ -1040,7 +1061,8 @@ def _init_weights_update_group_remote(
         ) as session:
             jobs = []
             for i, addr in enumerate(addresses):
-                http_req = backend.build_init_weights_group_request(addr, i, meta)
+                rank_id = rank_ids[i] if rank_ids is not None else i
+                http_req = backend.build_init_weights_group_request(addr, rank_id, meta)
                 jobs.append(
                     arequest_with_retry(
                         session=session,

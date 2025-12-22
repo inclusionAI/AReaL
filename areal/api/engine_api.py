@@ -583,7 +583,9 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+    def init_weights_update_group(
+        self, meta: WeightUpdateMeta, rank_ids: list[int] | None = None
+    ) -> Future[None]:
         """Initialize the weight update process group for distributed weight updates.
 
         This method should be called before performing any weight updates to ensure
@@ -594,6 +596,11 @@ class InferenceEngine(abc.ABC):
         meta : WeightUpdateMeta
             Metadata containing information about the weight update, such as the
             type of communication backend and allocation mode.
+
+        rank_ids : list[int] | None, optional
+            Rank_ids per server/worker in the weight-update group. If None, the
+            implementation should default to using the server index order
+            (e.g. enumerate(addresses)).
 
         Raises
         ------

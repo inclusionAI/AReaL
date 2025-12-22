@@ -502,7 +502,16 @@ class RolloutController:
         )
 
     async def init_weights_update_group(self, meta: WeightUpdateMeta) -> None:
-        await self._collective_rpc_async("init_weights_update_group", meta=meta)
+        tasks = [
+            self.scheduler.async_call_engine(
+                worker_id=worker.id,
+                method="init_weights_update_group",
+                meta=meta,
+                rank_ids=[i],
+            )
+            for i, worker in enumerate(self.workers)
+        ]
+        await asyncio.gather(*tasks)
 
     async def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
@@ -511,8 +520,26 @@ class RolloutController:
             "update_weights_from_distributed", meta=meta, param_specs=param_specs
         )
 
+    async def update_weights_from_distributed_param_specs(
+        self,
+        meta: WeightUpdateMeta,
+        param_specs: list[list[ParamSpec]],
+    ):
+        for param_spec in param_specs:
+            # Wait for the current update to finish before moving on
+            await self.update_weights_from_distributed(
+                meta=meta,
+                param_specs=param_spec,
+            )
+
     async def update_weights_from_disk(self, meta: WeightUpdateMeta):
         await self._collective_rpc_async("update_weights_from_disk", meta=meta)
+
+    async def pause_generation(self):
+        await self._collective_rpc_async("pause_generation")
+
+    async def continue_generation(self):
+        await self._collective_rpc_async("continue_generation")
 
     def set_version(self, version: int) -> None:
         with self._version_lock:
