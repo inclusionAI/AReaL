@@ -167,7 +167,7 @@ def concat_prompt_token_ids_with_parent(
         else:
             if len(parent_tokens) > 0 and parent_tokens[-1] != eos_token_id:
                 raise RuntimeError(
-                    f"Parent tokens do not end with eos_token_id when stop_reason is {parent.model_response.stop_reason}."
+                    f"Parent tokens do not end with eos_token_id when stop_reason is {parent.model_response.stop_reason}, parent_tokens[-1] is {parent_tokens[-1]}."
                 )
 
     all_message_list += message_list
