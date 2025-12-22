@@ -90,6 +90,7 @@ def openai_client(sglang_server, tokenizer):
         engine=engine,
         tokenizer=tokenizer,
         tool_call_parser="qwen25",
+        reasoning_parser="qwen3",
         chat_template_type="hf",
         engine_max_tokens=16384,
     )
