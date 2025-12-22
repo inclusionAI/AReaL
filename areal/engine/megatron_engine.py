@@ -382,6 +382,7 @@ class MegatronEngine(TrainEngine):
             use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
             params_dtype=self.dtype,
             clip_grad=self.optimizer_config.gradient_clipping,
+            fp8_recipe=self.mcore_config.fp8_recipe,
         )
         mcore_opt_config.overlap_param_gather_with_optimizer_step = (
             self.mcore_config.overlap_param_gather_with_optimizer_step
