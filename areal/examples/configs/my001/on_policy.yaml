@@ -122,9 +122,12 @@ actor: &actor_ref
       n_minibatches: 1
       kl_ctl: 0.0
       recompute_logp: false
-      adv_norm:
+      reward_norm:
         mean_level: group
         std_level: group
+      adv_norm:
+        mean_level: none
+        std_level: none
       discount: 1.0
       gae_lambda: 1.0
       eps_clip: 0.2

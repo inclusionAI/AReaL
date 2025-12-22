@@ -51,12 +51,12 @@ class RemoteHybridInferenceConfig(InferenceEngineConfig):
 
 
 @dataclass
-class AdvantageNormalizationConfig:
+class NormalizationConfig:
     mean_level: str = field(
-        default="batch", metadata={"choices": ["none", "batch", "group"]}
+        default="none", metadata={"choices": ["none", "batch", "group"]}
     )
     std_level: str = field(
-        default="batch", metadata={"choices": ["none", "batch", "group"]}
+        default="none", metadata={"choices": ["none", "batch", "group"]}
     )
 
 
@@ -64,9 +64,11 @@ class AdvantageNormalizationConfig:
 class RemoteMegatronWrapPolicy:
     n_minibatches: int = 1
     kl_ctl: float = 0.0
-    adv_norm: AdvantageNormalizationConfig = field(
-        default_factory=AdvantageNormalizationConfig,
-        metadata={"help": "Advantage normalization configuration"},
+    reward_norm: NormalizationConfig = NormalizationConfig(
+        mean_level="group", std_level="group"
+    )
+    adv_norm: NormalizationConfig = NormalizationConfig(
+        mean_level="none", std_level="none"
     )
     discount: float = 1.0
     gae_lambda: float = 1.0

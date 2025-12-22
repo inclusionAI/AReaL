@@ -660,14 +660,14 @@ class RemoteHybridTrainWorker(TrainEngine):
 
         new_reward_score = reward_score
 
-        if self.config.wrap_policy.adv_norm.mean_level == "group":
-            if self.config.wrap_policy.adv_norm.std_level != "group":
+        if self.config.wrap_policy.reward_norm.mean_level == "group":
+            if self.config.wrap_policy.reward_norm.std_level != "group":
                 logger.warning(
                     "When using group-level mean normalization, "
                     "std normalization should also be at group level. "
                     "Overriding std_level to 'group'."
                 )
-                self.config.wrap_policy.adv_norm.std_level = "group"
+                self.config.wrap_policy.reward_norm.std_level = "group"
             n_seqs = len(input_lens)
             reward_score_grpo = reward_score.clone().detach()
             new_reward_score = reward_score_grpo
@@ -688,14 +688,14 @@ class RemoteHybridTrainWorker(TrainEngine):
                 f"[RemoteHypridTrainWorker] process_training_data by group norm new_reward_score: {new_reward_score}"
             )
 
-        elif self.config.wrap_policy.adv_norm.mean_level == "batch":
-            if self.config.wrap_policy.adv_norm.std_level != "batch":
+        elif self.config.wrap_policy.reward_norm.mean_level == "batch":
+            if self.config.wrap_policy.reward_norm.std_level != "batch":
                 logger.warning(
                     "When using batch-level mean normalization, "
                     "std normalization should also be at batch level. "
                     "Overriding std_level to 'batch'."
                 )
-                self.config.wrap_policy.adv_norm.std_level = "batch"
+                self.config.wrap_policy.reward_norm.std_level = "batch"
 
             new_reward_score = reward_score.clone().detach()
 
@@ -708,6 +708,11 @@ class RemoteHybridTrainWorker(TrainEngine):
             logger.info(
                 f"[RemoteHypridTrainWorker] process_training_data by batch norm new_reward_score: {new_reward_score}"
             )
+        else:
+            assert self.config.wrap_policy.reward_norm.mean_level == "none", (
+                f"Unknown reward_norm.mean_level {self.config.wrap_policy.reward_norm.mean_level}"
+            )
+            new_reward_score = reward_score.clone().detach()
 
         # Compute rewards and GAEs.
         use_kl_in_loss = self.config.loss_configs.get("use_kl_in_loss", False)
@@ -758,40 +763,42 @@ class RemoteHybridTrainWorker(TrainEngine):
         # Optionally perform normalization.
         if self.config.wrap_policy.value_norm:
             self.rms.update(returns, mask=loss_mask)
-        if self.config.wrap_policy.adv_norm:
-            if self.config.wrap_policy.adv_norm.mean_level == "batch":
-                advantages = masked_normalization(advantages, loss_mask)
-            elif self.config.wrap_policy.adv_norm.mean_level == "group":
-                logger.info(f"adv_shape: {advantages.shape}")
-                logger.info(f"prompt_mask_shape: {prompt_mask.shape}")
-                n_samples = len(cu_seqlens) - 1
-                assert n_samples % self.config.group_size == 0
-                adv_list = []
-                for i in range(0, n_samples, self.config.group_size):
-                    for j in range(1, self.config.group_size):
-                        assert (
-                            prompt_mask[cu_seqlens[i] : cu_seqlens[i + 1]].sum()
-                            == prompt_mask[
-                                cu_seqlens[i + j] : cu_seqlens[i + j + 1]
-                            ].sum()
-                        )
-                    adv_list.append(
-                        masked_normalization(
-                            advantages[
-                                short1cu_seqlens[i] : short1cu_seqlens[
-                                    i + self.config.group_size
-                                ]
-                            ],
-                            loss_mask[
-                                short1cu_seqlens[i] : short1cu_seqlens[
-                                    i + self.config.group_size
-                                ]
-                            ],
-                            all_reduce=False,
-                        )
-                    )
 
-                advantages = torch.cat(adv_list, 0)
+        if self.config.wrap_policy.adv_norm.mean_level == "batch":
+            advantages = masked_normalization(advantages, loss_mask)
+        elif self.config.wrap_policy.adv_norm.mean_level == "group":
+            n_samples = len(cu_seqlens) - 1
+            assert n_samples % self.config.group_size == 0
+            adv_list = []
+            for i in range(0, n_samples, self.config.group_size):
+                for j in range(1, self.config.group_size):
+                    assert (
+                        prompt_mask[cu_seqlens[i] : cu_seqlens[i + 1]].sum()
+                        == prompt_mask[
+                            cu_seqlens[i + j] : cu_seqlens[i + j + 1]
+                        ].sum()
+                    )
+                adv_list.append(
+                    masked_normalization(
+                        advantages[
+                            short1cu_seqlens[i] : short1cu_seqlens[
+                                i + self.config.group_size
+                            ]
+                        ],
+                        loss_mask[
+                            short1cu_seqlens[i] : short1cu_seqlens[
+                                i + self.config.group_size
+                            ]
+                        ],
+                        all_reduce=False,
+                    )
+                )
+
+            advantages = torch.cat(adv_list, 0)
+        else:
+            assert self.config.wrap_policy.adv_norm.mean_level == "none", (
+                f"Unknown adv_norm.mean_level {self.config.wrap_policy.adv_norm.mean_level}"
+            )
 
         # Prepare data to be splitted into mini-batches.
         flat_data = dict(
