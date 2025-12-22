@@ -1,12 +1,12 @@
+import asyncio
+from unittest.mock import Mock, patch
+
 import ray
 from ray.util.state import summarize_actors
 
 from areal.api.cli_args import BaseExperimentConfig
-from areal.api.scheduler_api import (
-    Job,
-    SchedulingSpec,
-)
-from areal.scheduler.ray import RayScheduler, ray_resource_type
+from areal.api.scheduler_api import Job, SchedulingSpec, Worker
+from areal.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
 
 
 class TestRaySchedulerInitialization:
@@ -66,6 +66,50 @@ class TestWorkerCreationAndDeletion:
             actor_summary["cluster"]["summary"]["RayRPCServer"]["state_counts"]["DEAD"]
             == 2
         )
+
+
+class TestWorkerCallEngine:
+    def test_create_call_engine(self):
+        # to simulate an awaitable None
+        async def async_none(*args, **kwargs):
+            return None
+
+        config = BaseExperimentConfig()
+
+        scheduler = RayScheduler(startup_timeout=60.0, exp_config=config)
+        ray_actor_handle = Mock()
+        ray_actor_handle.create_engine.remote = async_none
+
+        worker = RayWorkerInfo(
+            worker=Worker(id="test/0", ip="0.0.0.0"),
+            actor=ray_actor_handle,
+            role="test",
+            placement_group=None,
+            bundle_index=0,
+            created_at=0,
+        )
+
+        scheduler._workers["test"] = [worker]
+        scheduler._worker_info_by_id[worker.worker.id] = worker
+
+        # create engine
+        result = asyncio.run(
+            scheduler.create_engine(
+                worker.worker.id, "test_engines.DummyEngine", name="TestEngine"
+            )
+        )
+        assert result is None
+
+        # sync
+        ray_actor_handle.call.remote = lambda x: None
+        with patch("areal.scheduler.ray.ray.get", return_value=None):
+            result = scheduler.call_engine(worker.worker.id, "test_fn")
+        assert result is None
+
+        # async
+        ray_actor_handle.call.remote = async_none
+        result = asyncio.run(scheduler.async_call_engine(worker.worker.id, "test_fn"))
+        assert result is None
 
 
 class TestUtilityFunctions:
