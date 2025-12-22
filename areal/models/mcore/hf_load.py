@@ -382,8 +382,7 @@ def _load_weight_with_bridge_worker(
                         dst_dtype=bridge.dtype,
                         quantization_config=quantization_config,
                     )
-                    if param.device.type == "cpu":
-                        dequantized_weight = dequantized_weight.cpu()
+                    dequantized_weight = dequantized_weight.cpu()
                     hf_weights_safe_slice.append(dequantized_weight)
                     hf_all_fp8 = False
             else:
