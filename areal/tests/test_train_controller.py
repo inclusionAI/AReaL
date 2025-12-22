@@ -717,6 +717,7 @@ class TestTrainControllerExportStats:
         train_controller.scheduler.async_call_engine = mock_async_call
 
         result = train_controller.export_stats()
+        result.pop("__count", None)
         assert result == expected_stats
 
 

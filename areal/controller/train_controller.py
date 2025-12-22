@@ -278,6 +278,8 @@ class TrainController:
         self.workers.clear()
         self.workers_is_dp_head.clear()
 
+        if dist.is_initialized():
+            dist.destroy_process_group()
         logger.info("TrainController destroyed")
 
     def _custom_function_call(self, method: str, *args, **kwargs):
