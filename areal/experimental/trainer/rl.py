@@ -179,7 +179,7 @@ class PPOTrainer:
     def train(
         self,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         eval_workflow_kwargs: dict[str, Any] | None = None,
         dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
