@@ -81,10 +81,11 @@ class FSDPPPOCritic(FSDPEngine):
     def ppo_update(self, *args, **kwargs) -> None:
         self.critic.ppo_update(*args, **kwargs)
 
-    def as_controller(self, scheduler: Scheduler) -> PPOCriticController:
-        return PPOCriticController(
-            train_engine=self.__class__, config=self.config, scheduler=scheduler
-        )
+    @classmethod
+    def as_controller(
+        cls, config: PPOCriticConfig, scheduler: Scheduler
+    ) -> PPOCriticController:
+        return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 class MegatronPPOCritic(MegatronEngine):
@@ -99,10 +100,11 @@ class MegatronPPOCritic(MegatronEngine):
     def ppo_update(self, *args, **kwargs) -> None:
         self.critic.ppo_update(*args, **kwargs)
 
-    def as_controller(self, scheduler: Scheduler) -> PPOCriticController:
-        return PPOCriticController(
-            train_engine=self.__class__, config=self.config, scheduler=scheduler
-        )
+    @classmethod
+    def as_controller(
+        cls, config: PPOCriticConfig, scheduler: Scheduler
+    ) -> PPOCriticController:
+        return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 def ppo_loss_fn(

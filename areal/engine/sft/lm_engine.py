@@ -57,10 +57,11 @@ class FSDPLMEngine(FSDPEngine):
     def evaluate_lm(self, data):
         return self.lm_engine.evaluate_lm(data)
 
-    def as_controller(self, scheduler: Scheduler) -> LMController:
-        return LMController(
-            train_engine=self.__class__, config=self.config, scheduler=scheduler
-        )
+    @classmethod
+    def as_controller(
+        cls, config: TrainEngineConfig, scheduler: Scheduler
+    ) -> LMController:
+        return LMController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 class MegatronLMEngine(MegatronEngine):
@@ -74,10 +75,11 @@ class MegatronLMEngine(MegatronEngine):
     def evaluate_lm(self, data):
         return self.lm_engine.evaluate_lm(data)
 
-    def as_controller(self, scheduler: Scheduler) -> LMController:
-        return LMController(
-            train_engine=self.__class__, config=self.config, scheduler=scheduler
-        )
+    @classmethod
+    def as_controller(
+        cls, config: TrainEngineConfig, scheduler: Scheduler
+    ) -> LMController:
+        return LMController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 def compute_packed_sft_loss(

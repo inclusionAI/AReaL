@@ -417,21 +417,23 @@ class PPOTrainer:
         self, actor_config: PPOActorConfig
     ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
         if self.allocation_mode.train_backend == "fsdp":
-            actor = FSDPPPOActor(config=actor_config)
+            actor_cls = FSDPPPOActor
         elif self.allocation_mode.train_backend == "megatron":
-            actor = MegatronPPOActor(config=actor_config)
+            actor_cls = MegatronPPOActor
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
         if is_single_controller():
-            actor = actor.as_controller(self.scheduler)
             if self.allocation_mode.gen_backend == "sglang":
                 # Disable some environ for NCCL weight update.
                 # These environs are set by the launcher in the SPMD mode.
-                for spec in actor.config.scheduling_spec:
+                for spec in actor_config.scheduling_spec:
                     spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
                     spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
+            actor = actor_cls.as_controller(actor_config, self.scheduler)
+        else:
+            actor = actor_cls(config=actor_config)
         actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
@@ -439,31 +441,39 @@ class PPOTrainer:
         self, critic_config: PPOCriticConfig
     ) -> FSDPPPOCritic | MegatronPPOCritic | PPOCriticController:
         if self.allocation_mode.train_backend == "fsdp":
-            critic = FSDPPPOCritic(config=critic_config)
+            critic_cls = FSDPPPOCritic
         elif self.allocation_mode.train_backend == "megatron":
-            critic = MegatronPPOCritic(config=critic_config)
+            critic_cls = MegatronPPOCritic
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
         if is_single_controller():
-            critic = critic.as_controller(self.scheduler)
+            critic = critic_cls.as_controller(critic_config, self.scheduler)
+        else:
+            critic = critic_cls(config=critic_config)
         critic.create_process_group(parallel_strategy=self.allocation_mode.train)
         return critic
 
     def _init_rollout(
         self, rollout_config: InferenceEngineConfig, is_eval: bool = False
     ) -> InferenceEngine | RolloutController:
-        # Initialize inference engine
+        # Create a working copy of config
+        config = deepcopy(rollout_config)
+        if is_eval:
+            # NOTE: eval does not have any offpolicyness control
+            config.max_head_offpolicyness = int(1e12)
+
+        # Determine engine class and server args based on backend
         if self.allocation_mode.gen_backend == "sglang":
-            engine = RemoteSGLangEngine(deepcopy(rollout_config))
+            engine_cls = RemoteSGLangEngine
             server_args = SGLangConfig.build_args(
                 sglang_config=self.config.sglang,
                 tp_size=self.allocation_mode.gen.tp_size,
                 base_gpu_id=0,
             )
         elif self.allocation_mode.gen_backend == "vllm":
-            engine = RemotevLLMEngine(deepcopy(rollout_config))
+            engine_cls = RemotevLLMEngine
             server_args = vLLMConfig.build_args(
                 vllm_config=self.config.vllm,
                 tp_size=self.allocation_mode.gen.tp_size,
@@ -474,17 +484,15 @@ class PPOTrainer:
                 f"Invalid backend: {self.allocation_mode.gen_backend}, expected sglang or vllm"
             )
 
-        if is_eval:
-            # NOTE: eval does not have any offpolicyness control
-            engine.config.max_head_offpolicyness = int(1e12)
-
         if not is_single_controller():
+            engine = engine_cls(config)
             engine.initialize(
                 train_data_parallel_size=self.allocation_mode.train.dp_size
             )
             return engine
 
-        engine = engine.as_controller(self.scheduler)
+        # Single-controller mode - no engine instantiation needed
+        controller = engine_cls.as_controller(config, self.scheduler)
         init_kwargs = dict(
             role="rollout",
             alloc_mode=self.allocation_mode,
@@ -494,8 +502,8 @@ class PPOTrainer:
             assert len(self.rollout.server_infos) > 0
             init_kwargs["server_infos"] = self.rollout.server_infos
             init_kwargs["role"] = "eval-rollout"
-        engine.initialize(**init_kwargs)
-        return engine
+        controller.initialize(**init_kwargs)
+        return controller
 
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
         # Save as HF models for evaluation

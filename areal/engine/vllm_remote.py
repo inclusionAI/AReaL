@@ -395,10 +395,11 @@ class RemotevLLMEngine(InferenceEngine):
     def export_stats(self) -> dict[str, float]:
         return stats_tracker.export_all(reduce_group=None)
 
-    def as_controller(self, scheduler: Scheduler) -> RolloutController:
-        return RolloutController(
-            self.__class__, config=self.config, scheduler=scheduler
-        )
+    @classmethod
+    def as_controller(
+        cls, config: InferenceEngineConfig, scheduler: Scheduler
+    ) -> RolloutController:
+        return RolloutController(cls, config=config, scheduler=scheduler)
 
     def clear_batches(self, *args):
         """Placeholder method of single-controller API."""

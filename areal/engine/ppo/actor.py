@@ -393,10 +393,11 @@ class FSDPPPOActor(FSDPEngine):
     def ppo_update(self, *args, **kwargs) -> None:
         self.actor.ppo_update(*args, **kwargs)
 
-    def as_controller(self, scheduler: Scheduler) -> PPOActorController:
-        return PPOActorController(
-            train_engine=self.__class__, config=self.config, scheduler=scheduler
-        )
+    @classmethod
+    def as_controller(
+        cls, config: PPOActorConfig, scheduler: Scheduler
+    ) -> PPOActorController:
+        return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 class MegatronPPOActor(MegatronEngine):
@@ -415,10 +416,11 @@ class MegatronPPOActor(MegatronEngine):
     def ppo_update(self, *args, **kwargs) -> None:
         self.actor.ppo_update(*args, **kwargs)
 
-    def as_controller(self, scheduler: Scheduler):
-        return PPOActorController(
-            train_engine=self.__class__, config=self.config, scheduler=scheduler
-        )
+    @classmethod
+    def as_controller(
+        cls, config: PPOActorConfig, scheduler: Scheduler
+    ) -> PPOActorController:
+        return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 def grpo_loss_fn(

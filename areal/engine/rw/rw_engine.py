@@ -73,10 +73,11 @@ class FSDPRWEngine(FSDPEngine):
     def evaluate_rw(self, data):
         return self.rw_engine.evaluate_rw(data)
 
-    def as_controller(self, scheduler: Scheduler) -> RWController:
-        return RWController(
-            train_engine=self.__class__, config=self.config, scheduler=scheduler
-        )
+    @classmethod
+    def as_controller(
+        cls, config: TrainEngineConfig, scheduler: Scheduler
+    ) -> RWController:
+        return RWController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 class MegatronRWEngine(MegatronEngine):
@@ -94,10 +95,11 @@ class MegatronRWEngine(MegatronEngine):
     def evaluate_rw(self, data):
         return self.rw_engine.evaluate_rw(data)
 
-    def as_controller(self, scheduler: Scheduler) -> RWController:
-        return RWController(
-            train_engine=self.__class__, config=self.config, scheduler=scheduler
-        )
+    @classmethod
+    def as_controller(
+        cls, config: TrainEngineConfig, scheduler: Scheduler
+    ) -> RWController:
+        return RWController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 def compute_rw_loss(scores: torch.Tensor, input_: dict[str, Any]) -> torch.Tensor:

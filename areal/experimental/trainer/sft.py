@@ -254,15 +254,17 @@ class SFTTrainer:
         self, actor_config: TrainEngineConfig
     ) -> FSDPLMEngine | MegatronLMEngine | LMController:
         if self.allocation_mode.train_backend == "fsdp":
-            actor = FSDPLMEngine(config=actor_config)
+            actor_cls = FSDPLMEngine
         elif self.allocation_mode.train_backend == "megatron":
-            actor = MegatronLMEngine(config=actor_config)
+            actor_cls = MegatronLMEngine
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
         if is_single_controller():
-            actor = actor.as_controller(self.scheduler)
+            actor = actor_cls.as_controller(actor_config, self.scheduler)
+        else:
+            actor = actor_cls(config=actor_config)
         actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
