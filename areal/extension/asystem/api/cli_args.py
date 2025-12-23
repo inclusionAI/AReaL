@@ -64,11 +64,15 @@ class NormalizationConfig:
 class RemoteMegatronWrapPolicy:
     n_minibatches: int = 1
     kl_ctl: float = 0.0
-    reward_norm: NormalizationConfig = NormalizationConfig(
-        mean_level="group", std_level="group"
+    reward_norm: NormalizationConfig = field(
+        default_factory=lambda: NormalizationConfig(
+            mean_level="group", std_level="group"
+        )
     )
-    adv_norm: NormalizationConfig = NormalizationConfig(
-        mean_level="none", std_level="none"
+    adv_norm: NormalizationConfig = field(
+        default_factory=lambda: NormalizationConfig(
+            mean_level="none", std_level="none"
+        )
     )
     discount: float = 1.0
     gae_lambda: float = 1.0

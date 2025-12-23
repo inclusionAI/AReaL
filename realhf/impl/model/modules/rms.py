@@ -63,16 +63,16 @@ class ExponentialRunningMeanStd(nn.Module):
 
         x_sum = x.sum()
         x_sum_sq = x.square().sum()
-        if dist.is_initialized():
-            dist.all_reduce(
-                factor, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
-            )
-            dist.all_reduce(
-                x_sum, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
-            )
-            dist.all_reduce(
-                x_sum_sq, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
-            )
+        # if dist.is_initialized():
+        #     dist.all_reduce(
+        #         factor, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
+        #     )
+        #     dist.all_reduce(
+        #         x_sum, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
+        #     )
+        #     dist.all_reduce(
+        #         x_sum_sq, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
+        #     )
         batch_mean = x_sum / factor
         batch_sq_mean = x_sum_sq / factor
 
@@ -150,16 +150,16 @@ class MovingAverageRunningMeanStd(nn.Module):
 
         x_sum = x.sum()
         x_sum_sq = x.square().sum()
-        if dist.is_initialized():
-            dist.all_reduce(
-                factor, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
-            )
-            dist.all_reduce(
-                x_sum, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
-            )
-            dist.all_reduce(
-                x_sum_sq, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
-            )
+        # if dist.is_initialized():
+        #     dist.all_reduce(
+        #         factor, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
+        #     )
+        #     dist.all_reduce(
+        #         x_sum, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
+        #     )
+        #     dist.all_reduce(
+        #         x_sum_sq, op=dist.ReduceOp.SUM, group=constants.data_parallel_group()
+        #     )
 
         self.__mean.data[:] = (
             self.__accum_denominator * self.__mean.data[:] + x_sum

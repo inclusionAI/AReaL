@@ -20,7 +20,9 @@ logger = logging.getLogger("RPCClient")
 class RPCClient:
     def __init__(self):
         self._addrs = {}
-        self._async_http_client = httpx.AsyncClient(timeout=7200.0)  # Async client
+        self._async_http_client = httpx.AsyncClient(
+            timeout=7200.0, limits=httpx.Limits(max_connections=16384)
+        )
 
     def register(self, worker_id, ip, port):
         self._addrs[worker_id] = (ip, port)

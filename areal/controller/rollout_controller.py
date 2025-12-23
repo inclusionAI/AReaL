@@ -692,27 +692,49 @@ class RolloutController:
         async def _call_all():
             tasks = [
                 self.scheduler.async_call_engine(
-                    worker=worker,
+                    worker_id=worker.id,
                     method="export_stats",
                 )
                 for worker in self.workers
             ]
             return await asyncio.gather(*tasks)
 
-        # Stats
+        # Fetch raw stats from all rollout workers
         all_raw_stats = asyncio.run(_call_all())
-        stats = {}
-        exported = set()
-        for raw_stats in all_raw_stats:
-            for k in raw_stats:
-                if k in exported:
+
+        # all_raw_stats is expected to be a list of dicts, one per worker:
+        #   [{metric_key: [values...] or scalar, ...}, ...]
+        #
+        # We aggregate per metric across workers and compute avg/min/max,
+        # exposing them as "{key}/avg", "{key}/min", "{key}/max".
+        aggregated: dict[str, float] = {}
+
+        # Collect the union of all metric keys.
+        all_keys: set[str] = set()
+        for worker_stats in all_raw_stats:
+            if isinstance(worker_stats, dict):
+                all_keys.update(worker_stats.keys())
+
+        for k in all_keys:
+            data: list[float] = []
+            for worker_stats in all_raw_stats:
+                if not isinstance(worker_stats, dict):
                     continue
-                data = sum([s[1].get(k, []) for s in all_raw_stats], [])
-                if len(data) == 0:
-                    continue
-                stats[k] = sum(data) / len(data)
-                exported.add(k)
-        return stats
+                v = worker_stats.get(k, [])
+                # Support both list-like and scalar values.
+                if isinstance(v, (list, tuple)):
+                    data.extend(float(x) for x in v)
+                elif v is not None:
+                    data.append(float(v))
+
+            if not data:
+                continue
+
+            aggregated[f"{k}/avg"] = sum(data) / len(data)
+            aggregated[f"{k}/min"] = min(data)
+            aggregated[f"{k}/max"] = max(data)
+
+        return aggregated
 
     def register_callback_to_all_worker(
         self, method: str, callback: Callable, **kwargs

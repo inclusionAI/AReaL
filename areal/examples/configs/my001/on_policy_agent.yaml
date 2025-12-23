@@ -35,7 +35,7 @@ stats_logger:
   fileroot: "${storage_prefix}/experiments"
   wandb:
     mode: "online"
-    wandb_base_url: "https://slurm.alipay.com"
+    wandb_base_url: "http://8.150.1.98:8080"
     wandb_api_key: "local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe"
   tensorboard:
     path: "/home/admin/logs/tfevent/asystem"
@@ -43,10 +43,11 @@ stats_logger:
 gconfig:
   n_samples: 8
   min_new_tokens: 0
+  max_new_tokens: 16384
   # NOTE!!
   # Due to the limitations of sglang, max_tokens must be less than the model's context_len (set in the model's config.json),
   # and cannot be equal to it. See https://github.com/sgl-project/sglang/blob/f98366604b23e331422bf3c62d4e7410ae4fab87/python/sglang/srt/managers/tokenizer_manager.py#L638C9-L638C11
-  max_tokens: 16383
+  max_tokens: 16384
   greedy: false
   temperature: 1.0
   top_k: 1000000
@@ -122,7 +123,7 @@ actor: &actor_ref
   hybrid_engine:
     group_size: ${gconfig.n_samples}
     train_bs_n_seqs: ${train_dataset.batch_size}
-    max_tokens_per_mb: 16384
+    max_tokens_per_mb: ${gconfig.max_tokens}
     wrap_policy:
       n_minibatches: 1
       kl_ctl: 0.0
