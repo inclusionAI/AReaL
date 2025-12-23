@@ -1,0 +1,396 @@
+experiment_name: mini-model-rebased
+trial_name: on-policy
+allocation_mode: "sglang[rollout]:d8t4p1+megatron[actor]:d8t1p4"
+seed: 42
+total_train_epochs: 10
+total_train_steps: 1145
+weight_update_type: "astate"
+enable_colocate_mode: true
+async_training: false
+
+tool_call_parser: "qwen25"
+reasoning_parser: "qwen3"
+agent_process_pool_size: 128
+agent_module_path: "run_one_asearcher"
+export_style: "concat_ling25" # only can be "concat", "concat_ling25", "individual"
+
+storage_prefix: "/storage/openpsi"
+
+tokenizer_path: "/storage/openpsi/users/wt133031/mini-256k/iter_0460847"
+train_dataset:
+  path: "/storage/dataset/nlp/areal/moe_lite_math_0527_merge_train_areal.jsonl"
+  shuffle: true
+  max_length: 1024
+  batch_size: 16
+  type: "rl"
+
+scheduler:
+  endpoint: "http://asystem-scheduler.asystem-my001-swift.svc:8081"
+  functioncall_service_domain: "http://110.75.237.19:8080"
+  reward_model_path: "/storage/jiulin.jl/Skywork-Reward-V2-Qwen3-8B"
+  reward_model_service_url: "http://reward-model-service.asystem-test.svc.sigma-my001.ml01.sgp-ml.local:30000/classify"
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: "${storage_prefix}/experiments"
+  wandb:
+    mode: "online"
+    wandb_base_url: "https://slurm.alipay.com"
+    wandb_api_key: "local-3bca3d5f00a980f3075b3e8ff2e16adc4ef43ffe"
+  tensorboard:
+    path: "/home/admin/logs/tfevent/asystem"
+
+gconfig:
+  n_samples: 8
+  min_new_tokens: 0
+  # NOTE!!
+  # Due to the limitations of sglang, max_new_tokens + max_prompt_len must be less than the model's context_len (set in the model's config.json),
+  # and cannot be equal to it. See https://github.com/sgl-project/sglang/blob/f98366604b23e331422bf3c62d4e7410ae4fab87/python/sglang/srt/managers/tokenizer_manager.py#L638C9-L638C11
+  max_tokens: 32767
+  greedy: false
+  temperature: 1.0
+  top_k: 1000000
+  top_p: 1.0
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  model_path: ${tokenizer_path}
+  storage_path: "${storage_prefix}/checkpoints"
+  seed: ${seed}
+  max_concurrent_rollouts: 64
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
+  engine_config:
+    disable_custom_all_reduce: true
+    enable_metrics: true
+    mem_fraction_static: 0.7
+    triton_attention_num_kv_splits: 16
+    tokenizer_mode: "auto"
+    load_format: "auto"
+    is_embedding: false
+    kv_cache_dtype: "auto"
+    max_prefill_tokens: 32768
+    schedule_policy: "fcfs"
+    schedule_conservativeness: 1.0
+    disable_cuda_graph: false
+    disable_radix_cache: true
+    disable_cuda_graph_padding: false
+    enable_nccl_nvls: false
+    disable_outlines_disk_cache: false
+    disable_overlap_schedule: false
+    disable_shared_experts_fusion: true
+    enable_mixed_chunk: false
+    enable_dp_attention: false
+    enable_ep_moe: false
+    enable_torch_compile: false
+    torch_compile_max_bs: 32
+    triton_attention_reduce_in_fp32: false
+    cuda_graph_bs: [ 1, 2, 4, 8, 16, 32, 64, 128, 256, 384, 512 ]
+    num_continuous_decode_steps: 1
+    enable_nan_detection: false
+    allow_auto_truncate: false
+    enable_p2p_check: false
+    enable_memory_saver: false
+    chunked_prefill_size: 32768
+    context_length: 262144
+    cpu_offload_gb: 0
+    dp_size: 1
+    dtype: "auto"
+    sampling_backend: "pytorch"
+    log_level: "info"
+    log_level_http:
+    log_requests: false
+    log_requests_level: 0
+    max_running_requests: 128
+    show_time_cost: false
+    attention_backend: "fa3"
+    json_model_override_args: '{"linear_backend": "seg_la", "model_type": "bailing_hybrid", "architectures": ["BailingMoeV2_5ForCausalLM"]}'
+  scheduling_specs:
+    - type: worker
+      image: /storage/openpsi/images/areal-from-gcp-20251124.sif
+      env_vars:
+        # if not set CUDA_LAUNCH_BLOCKING = 1, megatron engine will hang in train phase
+        WORKER_PYTHONPATH: "/storage/openpsi/codes/wht125/project/search/SearchAgent"
+        EXTRA_PYTHONPATH: "/storage/openpsi/codes/wht125/project/search/SearchAgent"
+        FORGE_KMS_KEY: "Rm9yZ2U6IEdyYXBoNExMTSBpcyBBbGwgWW91IE5lZWQ="
+        FORGE_SERPER_AK: "gAAAAABpGslIOjwRuydJzVoVuNTXNTutY28SqPFx7Yc0AoGKWIPOcVFF3WrW5bJXXGJemFHyd98XxsatcKiiFwpLjinX2X1UtceGamJ7kgIZrBsEyqPXVtNERrB1CxCmQ9vLcOsXBZPa"
+        FORGE_JINA_AK: "gAAAAABpGslI6iPLMogS0P4RhZmpuMwipBPvug1QjqEiu6NFWjOloysKyiPtUJ0fZP4g0ai38ZQr6ePy63M5GAzyOC0jwGNgykf3cukCTN8uNWhYAf8IXU7tYJu7R8UEgeW-B_jMXogTV-vPk5Pbx8Dld_mhjfwW_WDt-By8fn4NCGbqQerDxnA="
+    - type: engine
+      gpu: 1
+      # you can customize environment variables here
+      env_vars:
+        # if use ling max v2, need to specify USE_MAX_V2 = 1
+        USE_MAX_V2: 1
+      image: /storage/openpsi/images/hybrid-engine-inference-20251216125347.sif
+
+actor: &actor_ref
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  hybrid_engine:
+    group_size: ${gconfig.n_samples}
+    train_bs_n_seqs: ${train_dataset.batch_size}
+    max_tokens_per_mb: 32768
+    wrap_policy:
+      n_minibatches: 1
+      kl_ctl: 0.0
+      recompute_logp: false
+      discount: 1.0
+      gae_lambda: 1.0
+      eps_clip: 0.2
+      clip_ratio_low: 0.2
+      clip_ratio_high: 0.28
+      c_clip: null
+      value_eps_clip: 0.2
+      max_reward_clip: 5.0
+      disable_value: true
+      early_stop_kl: null
+      early_stop_imp_ratio: null
+      adaptive_kl_ctl: false
+      adaptive_kl_target: 6
+      adaptive_kl_horizon: 10000
+      enable_save: true
+      value_norm: true
+      value_norm_type: "exp"
+      value_norm_beta: 0.99995
+      value_norm_eps: 1e-5
+      group_size: 8
+      generation_size: null
+      mask_no_eos_with_zero: false
+      adv_norm:
+        mean_level: batch
+        std_level: batch
+      mask_too_long: false
+      use_dense_reward: false
+      reward_delta: true
+      token_normalize_scope: "global"
+      sample_reuse: 1
+      temperature: 1.0
+      reward_output_scaling: 0.5
+      reward_output_bias: -1.0
+    remote_megatron_config:
+      tokenizer_model: ${tokenizer_path}
+      load: /storage/openpsi/users/wt133031/mini-256k/moe-mini-v25-e256-fp8-enhance-256k-32kdata-1113
+      num_experts: 256
+      moe_router_topk: 8
+        # moe_router_load_balancing_type: seq_aux_loss
+        # moe_aux_loss_coeff: 0.003
+      #moe_z_loss_coeff: 0.00000350   # 7e-5 / num_layers
+      moe_shared_expert_intermediate_size: 512
+      num_layers: 20
+      layer_group_size: 5
+      linear_attn_num_query_groups: 16
+      linear_attn_norm_group_size: 4
+      lm_head_fp32: false
+      hidden_size: 2048
+      moe_ffn_hidden_size: 512
+      ffn_hidden_size: 5120
+      num_attention_heads: 16
+      num_query_groups: 16
+      kv_lora_rank: 512
+      qk_head_dim: 128
+      qk_pos_emb_head_dim: 64
+      v_head_dim: 128
+      seq_length: 32768
+      max_position_embeddings: 32768
+      rotary_percent: 0.5
+      position_embedding_type: rope
+      vocab_size: 157184
+        #参数名更换
+      first_k_dense_replace: 1
+      moe_layer_freq: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      distributed_type: megatron
+      use_linear_silu: false   # True for scratch, False for ckpt
+      tensorboard_expiration_seconds: 86400   # 24*60*60
+      bias_zero_mean_update: true # TODO 这个参数是什么意思？
+        # adaptive_layer_bias_update_strategy: sqrt #分层路由 # TODO 参数是什么意思
+        #开启FP8
+        #fp8_param_gather: true
+        #fp8_recipe: blockwise
+        #fp8_format: e4m3
+        #fp8: e4m3
+      disable_gloo_group: true   # 使用 hccl 通信代替 gloo
+        # num_layers_at_end_in_bf16: 1
+        # 开启MTP
+        #mtp_num_layers: 1
+        #mtp_loss_scaling_factor: 0.1
+        # router groups
+      moe_router_num_groups: 8
+      moe_router_group_topk: 4
+        # router_topk scaling
+      moe_router_topk_scaling_factor: 2.5
+        # 高精度bias
+      skip_casting_dtype_for_param_pattern: ^expert_bias$|.+\.expert_bias$|^local_tokens_per_expert$|.+\.local_tokens_per_expert$
+        # save_interval: 1987 #（说明：25B 保存一次 1986.8214285714）
+      use_norm_head: false   #（说明：关闭norm_head)
+      log_interval: 1    # 打印日志的间隔步数
+      eval_iters: 10
+      tensorboard_log_interval: 1
+      add_bias_linear: false
+      profile_npu: false
+        # TODO: choose the better parallelism config
+      expert_model_parallel_size: 8
+      tensor_model_parallel_size: 4
+      expert_tensor_parallel_size: 1
+      pipeline_model_parallel_size: 4
+      context_parallel_size: 2
+        #pipeline_model_parallel_layout: Ettttttttttt|ttttttttttmL
+        #decoder_first_pipeline_num_layers: 1
+        #decoder_last_pipeline_num_layers: 1
+      cp_comm_type: p2p
+      moe_token_dispatcher_type: alltoall
+      moe_enable_deepep: false
+      moe_per_layer_logging: true   # 打印每一层的balance_loss
+        # overlap config
+      overlap_p2p_comm: true
+      moe_shared_expert_overlap: true
+        # tp_comm_overlap: true
+        # overlap_param_gather: true # BUG: https://github.com/NVIDIA/Megatron-LM/issues/950
+      overlap_grad_reduce: true
+      moe_grouped_gemm: true
+        # noop_layers: 88,89  # 增加空层
+      optim_normhead_fwd_alltoall: true
+        # fusion
+      gradient_accumulation_fusion: true
+      cross_entropy_loss_fusion: true
+      masked_softmax_fusion: true
+      moe_permute_fusion: false
+      moe_router_dtype: fp32   #（说明：开启高精度路由）
+        # init chunk
+      use_init_chunk: true # TODO 参数是什么
+      chunk_alpha: 3.0
+        # # recompute
+      recompute_granularity: full
+      recompute_method: uniform
+      recompute_num_layers: 1
+        #moe_layer_recompute: true
+      use_flash_attn: true
+      group_query_attention: false
+      multi_latent_attention: true
+      apply_rope_fusion: true
+      use_mcore_models: true
+      sequence_parallel: true
+        # TODO: 设置bs
+      micro_batch_size: 1
+      global_batch_size: 512
+      use_distributed_optimizer: true
+      make_vocab_size_divisible_by: 128
+      lr: 1e-6
+      save: "/dnn_training_sys/users/wt133031/experiments/2025-11-16_11-24-44/ckpt"
+      save_interval: 1000
+      min_lr: 0.0
+      train_iters: 5000000
+        #lr_decay_style: constant
+        #lr_warmup_iters: 300
+        # lr_decay_iters: 10000000
+      moe_router_score_function: sigmoid
+      moe_router_enable_expert_bias: true
+      moe_router_bias_update_rate: 0
+      override_opt_param_scheduler: true
+      untie_embeddings_and_output_weights: true
+      attention_dropout: 0.0
+      init_method_std: 0.006
+      hidden_dropout: 0.0
+      normalization: RMSNorm
+      qk_layernorm: true
+      use_rotary_position_embeddings: true
+      swiglu: true
+      attention_softmax_in_fp32: true
+      weight_decay: 1.0e-2
+      clip_grad: 1.0
+      adam_beta1: 0.9
+      adam_beta2: 0.999
+      rotary_base: 10000   # (说明：4k序列长度是10000)
+      norm_epsilon: 1.0e-6
+        # norm_topk_prob待定，需要修改mindspeed router顺序后添加
+        # norm_topk_prob: true
+      bf16: true
+      router_warmup_step: 0
+      use_random_logits: false
+        # moe_input_jitter_eps: 1.0
+      #compute_loss_by_dataset: true
+      #block_lm: true
+      #task_mask: true
+      #bert_prob: 0
+      #static_sampler: true
+      #use_pack_lazy_loader: true
+      #unidirectional: true
+        #### 数据pack功能 BIGIN ###
+        #use_sample_lazy_loader: true
+        #bfd_pack: 'ALL'
+        #pregen_index_mapping_path: /input/kunlong.ckl/data/moe_v2_stage2_overall_10T_merge_loose_cap_submit_0707_dedup_pack/index
+        #### 数据pack功能 END ###
+        # log config
+      #timing_log_level: 1
+      #barrier_with_L1_time: false
+      #log_timers_to_tensorboard: true
+      #log_params_norm: false
+      #log_throughput: true
+      #log_loss_scale_to_tensorboard: false
+      #log_validation_ppl_to_tensorboard: true
+      #log_memory_to_tensorboard: true
+        # loss/grad_norm spike retry utils
+      #handle_mode: scale_loss
+      #scale_ratio: 0.9
+      #window_strategy: max
+      #max_continue_spike_num: 3
+        # gradient noise config, this function will increase npu memory about 500M
+      #grad_noise_args:
+      #ema_beta: 0.5
+      #ema_noise: 0
+      #ema_scale: 0
+      #count_interval: 10   # 梯度噪音统计间隔
+      model_type_name: gpt
+      exit_on_missing_checkpoint: true
+      distributed_timeout_minutes: 35
+      distributed_backend: nccl
+      transformer_xl: false
+      enable_one_logger: false
+      create_attention_mask_in_dataloader: false
+      ckpt_format: torch_dist
+      attention_backend: fused
+        # use for dcp ckpt convert
+      auto_detect_ckpt_format: true
+      ckpt_fully_parallel_save: true    # 改变模型切分时，优化器状态需要全打散
+      dist_ckpt_strictness: log_all
+      tokenizer_type: HuggingFaceTokenizer
+      check_for_nan_in_loss_and_grad: false
+      clip_grad_value: 100
+    loss_configs:
+      adaptive_kl_horizon: 10000
+      adaptive_kl_target: 6
+      eps_clip: 0.2
+      kl_ctl: 0.0
+      temperature: 1
+      token_normalize_scope: dp
+  scheduling_specs:
+    - type: worker
+      image: /storage/openpsi/images/areal-from-gcp-20251124.sif
+    - type: engine
+      gpu: 1
+      # you can customize environment variables here
+      env_vars:
+        # if not set CUDA_LAUNCH_BLOCKING = 1, megatron engine will hang in train phase
+        CUDA_LAUNCH_BLOCKING: 0
+        NVTE_FUSED_ATTN: 1
+        # if use ling max v2, need to specify USE_MAX_V2 = 1
+        USE_MAX_V2: 1
+        HYBRID_IGNORE_LOAD_CHECK: 1
+        EXTRA_PYTHONPATH: /storage/openpsi/codes/wht125/project/search/flash-linear-attention
+      image: /storage/openpsi/images/hybrid-engine-train-20251217125610.sif 
+
+ref:
+  <<: *actor_ref
+
+recover:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  recover_meta_info_path: "" #${storage_prefix}/experiments/recover/root/${experiment_name}/${trial_name}/metas/latest_checkpoint/recover_info.pkl
+  enable_recover: false
+  latest_disable_save_hf: true
+  periodic_disable_save_hf: false
+  latest_save_interval: 1
+  periodic_save_interval: 2
+  fileroot: "${storage_prefix}/experiments"
