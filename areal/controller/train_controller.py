@@ -4,7 +4,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import torch
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
