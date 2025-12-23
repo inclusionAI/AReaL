@@ -71,6 +71,7 @@ class RolloutController:
         # State
         self._version_lock = Lock()
         self._version = 0
+        self._task_cnt = 0
 
         self._task_id_generator = TaskIdGenerator()
 
@@ -365,6 +366,12 @@ class RolloutController:
 
     def get_capacity(self):
         return self.staleness_manager.get_capacity()
+
+    def _register_task(self) -> int:
+        with self._version_lock:
+            task_id = self._task_cnt
+            self._task_cnt += 1
+        return task_id
 
     def submit(
         self,
