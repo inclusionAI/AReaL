@@ -195,6 +195,12 @@ class MegatronEngine(TrainEngine):
         with self.device:
             self._load_model_from_hf(self.config.path)
 
+        for model in self.model:
+            for _, param in get_named_parameters(model, self.tf_config.num_moe_experts):
+                if hasattr(param, "get_high_precision_init_val"):
+                    delattr(param, "get_high_precision_init_val")
+                    delattr(param, "clear_high_precision_init_val")
+
         assert self.model, "Megatron models failed to initialize."
         modules = [m.module if isinstance(m, DDP) else m for m in self.model]
         total_params = sum(
