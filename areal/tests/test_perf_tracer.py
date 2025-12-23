@@ -413,7 +413,8 @@ def test_session_tracer_configuration(tmp_path):
     session_tracer = tracer.session_tracer
     assert session_tracer is not None
 
-    task_id = session_tracer.register_task()
+    task_id = 123
+    session_tracer.register_task()
     session_id = session_tracer.register_session(task_id)
     session_tracer.record_event(
         session_id,
@@ -512,7 +513,8 @@ async def test_trace_session_phase(tmp_path):
         assert tracer is not None
 
         # Register a task and session
-        task_id = tracer.register_task()
+        task_id = 234
+        tracer.register_task(task_id)
         session_id = tracer.register_session(task_id)
 
         perf_tracer.set_session_id(session_id)
@@ -590,7 +592,8 @@ async def test_trace_session_phase_with_exception(tmp_path):
         tracer = perf_tracer.get_session_tracer()
         assert tracer is not None
 
-        task_id = tracer.register_task()
+        task_id = 345
+        tracer.register_task(task_id)
         session_id = tracer.register_session(task_id)
 
         perf_tracer.set_session_id(session_id)
