@@ -13,11 +13,39 @@ from areal.utils import logging
 logger = logging.getLogger("Tool Call Parser")
 
 
+def _detect_think_and_return_ori_think(
+    text: str, think_start_token: str, think_end_token: str
+) -> tuple[str, str]:
+    """
+    return think text(with <think> and </think>) and normal text
+    """
+    # This code is copies from sglang https://github.com/sgl-project/sglang/blob/cb30d056e3bc1b2f70fa7c00e0844cfe15716d65/python/sglang/srt/parser/reasoning_parser.py#L18
+    in_reasoning = think_start_token in text
+
+    if not in_reasoning:
+        return "", text
+
+    # The text is considered to be in a reasoning block.
+    processed_text = text.replace(think_start_token, "")
+
+    if think_end_token not in processed_text:
+        # Assume reasoning was truncated before `</think>` token
+        return think_start_token + processed_text, ""
+
+    # Extract reasoning content
+    splits = processed_text.split(think_end_token, maxsplit=1)
+    reasoning_text = splits[0]
+    normal_text = splits[1]
+
+    return think_start_token + reasoning_text + think_end_token, normal_text
+
+
 # Modified from sglang
 def process_tool_calls(
     text: str,
     tools: list[Any],
-    tool_call_parser: str | None,
+    tool_call_parser: str,
+    reasoning_parser: str,
     finish_reason: str,
     use_responses: bool = False,
 ) -> tuple[
@@ -29,6 +57,7 @@ def process_tool_calls(
     from sglang.srt.entrypoints.openai.protocol import Function as SglFunction
     from sglang.srt.entrypoints.openai.protocol import Tool as SglTool
     from sglang.srt.function_call.function_call_parser import FunctionCallParser
+    from sglang.srt.parser.reasoning_parser import ReasoningParser
 
     if use_responses:
         tools = [
@@ -48,12 +77,20 @@ def process_tool_calls(
             for tool in tools
         ]
 
-    parser = FunctionCallParser(tools, tool_call_parser)
-    if parser.has_tool_call(text):
+    parser_p = FunctionCallParser(tools, tool_call_parser)
+    reasoning_parser_p = ReasoningParser(reasoning_parser)
+
+    reasoning_text, content_text = _detect_think_and_return_ori_think(
+        text,
+        reasoning_parser_p.detector.think_start_token,
+        reasoning_parser_p.detector.think_end_token,
+    )
+
+    if parser_p.has_tool_call(content_text):
         if finish_reason == "stop":
             finish_reason = "tool_calls"
         try:
-            text, call_info_list = parser.parse_non_stream(text)
+            content_text, call_info_list = parser_p.parse_non_stream(content_text)
 
             if use_responses:
                 tool_calls = [
@@ -78,7 +115,8 @@ def process_tool_calls(
                     )
                     for call_info in call_info_list
                 ]
-            return tool_calls, text, finish_reason
+
+            return tool_calls, reasoning_text + content_text, finish_reason
         except Exception as e:
             logger.error(f"Tool call parsing error: {e}")
             traceback.print_exc()

@@ -7,6 +7,9 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
 
+import aiofiles
+import aiofiles.os
+
 from areal.api.cli_args import GenerationHyperparameters, PPOConfig, load_expr_config
 from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
@@ -100,13 +103,60 @@ class ProxyWorkflow(RolloutWorkflow):
         )
 
         session_ids = [f"{task_id}-{i}" for i in range(self.group_size)]
-        rewards, completions = await self.proxy_server.get_results(
+        rewards, completions = await self.proxy_server.get_sessionwise_results(
             session_ids, style=self.export_style
         )
         for reward in rewards.values():
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        return completions
+        if self.dump_dir is not None:
+            for session_id, session_completions in completions.items():
+                if len(session_completions) == 0:
+                    continue
+                version = list(session_completions.values())[
+                    0
+                ].model_response.output_versions[0]
+
+                dump_path = os.path.join(self.dump_dir, str(version))
+                await aiofiles.os.makedirs(dump_path, exist_ok=True)
+                # Get the unique identifier for this prompt
+                qid = None
+                for key in ["query_id", "id", "qid"]:
+                    qid = data.get(key, None)
+                    if qid is not None:
+                        qid = str(qid)
+                        break
+                qid = qid + f"_{session_id}" if qid is not None else session_id
+
+                info = f"\n=== Completion Session ID: {session_id} ===\n"
+                for i, completion in enumerate(session_completions.values()):
+                    info += f"Completion {i + 1}\n"
+                    info += "=======Input Messages=======\n"
+                    for message in completion.messages:
+                        role = message.get("role", "unknown")
+                        content = message.get("content", "")
+                        info += f"role[{role}]: {content}\n"
+                        if "tool_calls" in message:
+                            info += f"\t[tool_calls]: {message['tool_calls']}\n"
+
+                    if completion.is_completion:
+                        info += f"=======Completion=======\n{completion.completion}\n"
+                    else:
+                        info += f"=======Response=======\n{completion.response}\n"
+                    info += f"=======Reward=======\n{completion.reward}\n"
+                    info += f"=======Input Tokens=======\n{completion.model_response.input_tokens}\n"
+                    info += f"=======Output Tokens=======\n{completion.model_response.output_tokens}\n"
+                    info += "=========================\n\n"
+
+                # Dump rollout to file
+                file_path = os.path.join(dump_path, f"{qid}.txt")
+                async with aiofiles.open(file_path, "a") as f:
+                    await f.write(info + "\n")
+
+        merged_completions = {}
+        for session_id, session_completions in completions.items():
+            merged_completions.update(session_completions)
+        return merged_completions
 
 
 @dataclass
@@ -114,6 +164,10 @@ class ProxyPPOConfig(PPOConfig):
     tool_call_parser: str = field(
         default="qwen25",
         metadata={"help": "Tool call parser that used by ProxyServer."},
+    )
+    reasoning_parser: str = field(
+        default="qwen3",
+        metadata={"help": "Reasoning parser that used by ProxyServer."},
     )
     export_style: str = field(
         default="concat",
@@ -172,7 +226,9 @@ def main(args):
                 rollout=rollout,
                 tokenizer=tokenizer,
                 tool_call_parser=config.tool_call_parser,
+                reasoning_parser=config.reasoning_parser,
                 chat_template_type=chat_template_type,
+                engine_max_tokens=config.gconfig.max_tokens,
                 name=f"{name} proxy server",
             )
             server.start(wait_until_ready=True)

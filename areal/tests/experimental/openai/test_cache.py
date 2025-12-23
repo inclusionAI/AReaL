@@ -140,7 +140,7 @@ def test_export_triggers_reward_discount_once(mock_interaction):
     cache.apply_reward_discount(turn_discount=0.9)
     # Second call should not trigger it again
     with pytest.raises(
-        AssertionError, match="apply_reward_discount should only be called once."
+        RuntimeError, match="apply_reward_discount should only be called once."
     ):
         cache.apply_reward_discount(turn_discount=0.9)
 

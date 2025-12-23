@@ -2,7 +2,7 @@ import datetime
 import json
 import os
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -81,13 +81,27 @@ def _ensure_message_dict_list(
         raise TypeError(
             f"{name} must be provided as a list, got {type(value).__name__}"
         )
+
+    def _normalize(item: Any):
+        # we should convert BaseModel first, because BaseModel is also Iterable
+        if isinstance(item, BaseModel):
+            return item.model_dump(exclude_none=True)
+        elif isinstance(item, Mapping):
+            return {k: _normalize(v) for k, v in item.items() if v is not None}
+        elif (
+            isinstance(item, Iterable)
+            and not isinstance(item, str)
+            and not isinstance(item, bytes)
+            and not isinstance(item, bytearray)
+        ):
+            return [_normalize(sub_item) for sub_item in item]
+        else:
+            return item
+
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(value):
-        if isinstance(item, dict):
-            _item = {k: v for k, v in item.items() if v is not None}
-            normalized.append(_item)
-        elif isinstance(item, BaseModel):
-            normalized.append(item.model_dump(exclude_none=True))
+        if isinstance(item, dict) or isinstance(item, BaseModel):
+            normalized.append(_normalize(item))
         else:
             raise TypeError(
                 f"{name}[{index}] must be a dict or a BaseModel; got {type(item).__name__}"
@@ -95,38 +109,92 @@ def _ensure_message_dict_list(
     return normalized
 
 
+def _find_kth(lst: list, target, k: int) -> int:
+    def target_indices():
+        for i, char in enumerate(lst):
+            if char == target:
+                yield i
+
+    gen = target_indices()
+    try:
+        result = -1
+        for _ in range(k):
+            result = next(gen)
+        return result
+    except StopIteration:
+        return -1
+
+
 def concat_prompt_token_ids_with_parent(
     message_list: list[dict],
     parent: InteractionWithTokenLogpReward | None,
     tokenizer: "PreTrainedTokenizerFast",
-    start: str,
-    end: str,
+    tools: Iterable[ChatCompletionToolParam] | None = None,
+    extra_body: Body = {},
 ) -> list[int]:
-    """Concatenate prompt token IDs with parent interaction's tokens."""
-    parent_tokens = []
+    """
+    Concatenate prompt token IDs with parent interaction's tokens.
+    """
+    parent_tokens: list[int] = []
+    all_message_list: list[dict] = []
+    eos_token_id = tokenizer.eos_token_id
+
+    # To ensure compatibility across different models, we adopted the following padding scheme:
+    # Apply the chat template to the full-text message_list of the new input, then count the number of eos tokens
+    # in the parent tokens. Locate the final index where the same number of eos tokens appears in the child_all_tokens,
+    # all tokens after this index correspond to the newly input tokens for the current round.
+
     if parent is not None:
         if parent.model_response is None:
             raise ValueError("Parent interaction has no model_response.")
+        # TODO: (yulangz) how to handle here when stop is set?
         parent_tokens = (
-            parent.model_response.input_tokens + parent.model_response.output_tokens
+            parent.model_response.input_tokens
+            + parent.model_response.output_tokens  # with stop tokens
         )
-    # By default, follows Qwen3 chat template.
-    message_strs = []
-    for msg in message_list:
-        message_strs.append(f"{start}{msg['role']}\n{msg['content']}{end}\n")
-        warn = msg["role"] not in ["user", "system"] or any(
-            k not in ["content", "role"] for k in msg.keys()
+        all_message_list += parent.messages if parent.messages is not None else []
+        all_message_list += (
+            parent.output_message_list if parent.output_message_list is not None else []
         )
-        if warn:
-            logger.warning(
-                "When using 'concat' chat template, only 'user' or 'system' role "
-                "messages with 'content' field are properly handled. Other roles "
-                "or extra fields may lead to unexpected tokenization results. "
-                "Please ensure user-side messages are only of 'user' or 'system' "
-                "role with 'content' field."
+
+        # If the parent terminates due to output exceeding length limits or being aborted, it will not have an EOS token.
+        # We will add an extra EOS token to align with the chat template. During training, this added EOS will be treated
+        # as part of the child message's prompt rather than the parent message's output, and therefore will be masked out
+        # by the loss_mask.
+        # TODO: should we mask this extra eos token in loss_mask during training?
+        if parent.model_response.stop_reason in ["length", "abort"]:
+            parent_tokens += [eos_token_id]
+        else:
+            if len(parent_tokens) > 0 and parent_tokens[-1] != eos_token_id:
+                raise RuntimeError(
+                    f"Parent tokens do not end with eos_token_id when stop_reason is {parent.model_response.stop_reason}, parent_tokens[-1] is {parent_tokens[-1]}."
+                )
+
+    all_message_list += message_list
+
+    all_tokens = tokenizer.apply_chat_template(
+        all_message_list,
+        tools=tools,
+        add_generation_prompt=True,
+        tokenize=True,
+        **extra_body.get("chat_template_kwargs", {}),
+    )
+    parent_eos_num = parent_tokens.count(eos_token_id)
+    if parent_eos_num > 0:
+        child_tokens_truncate_idx = _find_kth(all_tokens, eos_token_id, parent_eos_num)
+        if child_tokens_truncate_idx == -1 or child_tokens_truncate_idx + 1 >= len(
+            all_tokens
+        ):
+            raise RuntimeError(
+                f"Failed to align child tokens with parent tokens in concat prompt."
+                f"Find child_truncate_idx at {child_tokens_truncate_idx}, "
+                f"parent_eos_num: {parent_eos_num}, "
+                f"all_tokens eos count: {all_tokens.count(eos_token_id)}"
             )
-    message_strs.append(f"{start}assistant\n")
-    prompt_token_ids = parent_tokens + tokenizer.encode("".join(message_strs))
+    else:
+        child_tokens_truncate_idx = -1
+
+    prompt_token_ids = parent_tokens + all_tokens[child_tokens_truncate_idx + 1 :]
     return prompt_token_ids
 
 
@@ -143,19 +211,19 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
-        tool_call_parser: str | None = None,
+        tool_call_parser: str,
+        reasoning_parser: str,
+        engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
-        messages_delimiter_start: str = "<|im_start|>",
-        messages_delimiter_end: str = "<|im_end|>",
     ):
         super().__init__(client)
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.reasoning_parser = reasoning_parser
         self._cache = cache
+        self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
-        self.messages_delimiter_start = messages_delimiter_start
-        self.messages_delimiter_end = messages_delimiter_end
 
     async def create(
         self,
@@ -179,6 +247,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
     ) -> ChatCompletion:
         """Override create method to use AReaL engine and cache responses."""
         # Extract and validate supported parameters
+        cache, interaction = None, None
+        completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         if not isinstance(messages, Iterable):
             raise TypeError(
                 "messages must be provided as an iterable of dictionaries or BaseModel instances."
@@ -198,16 +268,13 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             extra_body = {}
 
         # Convert response to OpenAI format
-        completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         current_time = int(datetime.datetime.now().timestamp())
         # Add interaction to cache, resolve parent relationship according to input messages
-        cache, interaction = None, None
         if is_omitted(store) or store:
             # Cache the completion with its input messages
             cache = areal_cache if areal_cache is not None else self._cache
             if completion_id in cache:
                 raise ValueError(f"Completion {completion_id} already exists in cache")
-
             interaction = InteractionWithTokenLogpReward(
                 messages=deepcopy(messages_list),  # Store a copy of the input messages
                 chat_template_type=self.chat_template_type,
@@ -215,26 +282,34 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             cache[completion_id] = interaction
 
         # Convert messages to prompt format
-        tools = tools if not is_omitted(tools) else None
+        tools_list = None
+        if not is_omitted(tools):
+            if not isinstance(tools, Iterable):
+                raise TypeError("tools must be an iterable of ChatCompletionToolParam")
+            tools_list = list(tools)
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,
-                tools=tools,
+                tools=tools_list,
                 add_generation_prompt=True,
                 tokenize=True,
                 **extra_body.get("chat_template_kwargs", {}),
             )
         elif self.chat_template_type == "concat":
-            messages_list = interaction.remaining_messages
+            messages_list = (
+                interaction.remaining_messages
+                if interaction is not None
+                else messages_list
+            )
             prompt_token_ids = concat_prompt_token_ids_with_parent(
                 messages_list,
                 interaction.parent if interaction is not None else None,
                 self.tokenizer,
-                self.messages_delimiter_start,
-                self.messages_delimiter_end,
+                tools=tools_list,
+                extra_body=extra_body,
             )
         else:
-            raise ValueError(
+            raise RuntimeError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
             )
 
@@ -242,6 +317,13 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         if not is_omitted(max_tokens):
             # NOTE: support deprecated `max_tokens` usage.
             if not is_omitted(max_completion_tokens):
+                if (
+                    interaction is not None
+                    and cache is not None
+                    and completion_id in cache
+                ):
+                    # Remove the interaction from cache on failure
+                    del cache[completion_id]
                 raise ValueError(
                     "max_tokens and max_completion_tokens cannot be set at the same time. "
                     "max_tokens has been deprecated. Please use max_completion_tokens instead. "
@@ -250,12 +332,30 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             # NOTE (2025-12-09): the usage of max_tokens has been changed.
             max_completion_tokens = max_tokens
 
-        max_new_tokens = None
+        max_total_tokens_final = None
         if not is_omitted(max_total_tokens):
-            max_new_tokens = max_total_tokens - len(prompt_token_ids)
+            max_total_tokens_final = max_total_tokens
+        if self.engine_max_tokens is not None:
+            if max_total_tokens_final is None:
+                max_total_tokens_final = self.engine_max_tokens
+            else:
+                max_total_tokens_final = min(
+                    max_total_tokens_final, self.engine_max_tokens
+                )
+
+        max_new_tokens = None
+        if max_total_tokens_final is not None:
+            max_new_tokens = max_total_tokens_final - len(prompt_token_ids)
             if max_new_tokens <= 0:
-                raise RuntimeError(
-                    "max_total_tokens must be greater than the number of prompt tokens"
+                if (
+                    interaction is not None
+                    and cache is not None
+                    and completion_id in cache
+                ):
+                    # Remove the interaction from cache on failure
+                    del cache[completion_id]
+                raise ValueError(
+                    f"len of prompt tokens {len(prompt_token_ids)} exceeds max_total_tokens {max_total_tokens_final}"
                 )
         if not is_omitted(max_completion_tokens):
             if max_new_tokens is None:
@@ -271,6 +371,14 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
         stop_tokens = None if is_omitted(stop) else stop
+
+        # Since the concat logic cannot properly handle stop tokens yet, so we remove stop here.
+        if stop_tokens is not None and self.chat_template_type == "concat":
+            logger.warning(
+                "stop tokens are not supported in concat mode yet; ignoring stop tokens."
+            )
+            stop_tokens = None
+
         if stop_tokens is not None and not isinstance(stop_tokens, list):
             stop_tokens = [stop_tokens]
 
@@ -301,16 +409,17 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Call inference engine
         response = await self.engine.agenerate(model_request)
-        output_text = self.tokenizer.decode(response.output_tokens)
+        output_text = self.tokenizer.decode(response.output_tokens_without_stop)
 
         # Parse tool calls.
         tool_calls = None
         try:
-            if tool_choice != "none" and tools:
+            if (is_omitted(tool_choice) or tool_choice != "none") and tools_list:
                 tool_calls, output_text, response.stop_reason = process_tool_calls(
                     output_text,
-                    tools,
+                    tools_list,
                     self.tool_call_parser,
+                    self.reasoning_parser,
                     response.stop_reason,
                 )
         except json.JSONDecodeError as e:
@@ -366,19 +475,19 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
-        tool_call_parser: str | None = None,
+        tool_call_parser: str,
+        reasoning_parser: str,
+        engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
-        messages_delimiter_start: str = "<|im_start|>",
-        messages_delimiter_end: str = "<|im_end|>",
     ):
         super().__init__(client)
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.reasoning_parser = reasoning_parser
         self._cache = cache
+        self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
-        self.messages_delimiter_start = messages_delimiter_start
-        self.messages_delimiter_end = messages_delimiter_end
 
     async def create(
         self,
@@ -402,6 +511,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         resp_id = f"resp-{uuid.uuid4().hex[:29]}"
         msg_id = f"msg-{uuid.uuid4().hex[:29]}"
         current_time = float(int(datetime.datetime.now().timestamp()))
+        interaction, cache = None, None
         # Add interaction to cache, resolve parent relationship according to input messages
 
         # Cache the completion with its input messages
@@ -433,7 +543,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
             Args:
                 item: Input dict, could be FunctionCallOutput from openai-agents SDK
-                      with format: {'call_id': str, 'output': str, 'type': 'function_call_output'}
+                    with format: {'call_id': str, 'output': str, 'type': 'function_call_output'}
 
             Returns:
                 ChatCompletionToolMessageParam (TypedDict) with format:
@@ -506,26 +616,29 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         cache[resp_id] = interaction
 
         # Apply chat template
-        tools = list(tools) if not is_omitted(tools) else None
+        tools_list = None
+        if not is_omitted(tools):
+            if not isinstance(tools, Iterable):
+                raise TypeError("tools must be an iterable of ChatCompletionToolParam")
+            tools_list = list(tools)
         if self.chat_template_type == "hf":
             prompt_token_ids = self.tokenizer.apply_chat_template(
                 messages_list,
-                tools=tools,
+                tools=tools_list,
                 add_generation_prompt=True,
                 tokenize=True,
                 **extra_body.get("chat_template_kwargs", {}),
             )
         elif self.chat_template_type == "concat":
-            messages_list = interaction.remaining_messages
             prompt_token_ids = concat_prompt_token_ids_with_parent(
-                messages_list,
+                interaction.remaining_messages,
                 interaction.parent if interaction is not None else None,
                 self.tokenizer,
-                self.messages_delimiter_start,
-                self.messages_delimiter_end,
+                tools=tools_list,
+                extra_body=extra_body,
             )
         else:
-            raise ValueError(
+            raise RuntimeError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
             )
 
@@ -533,13 +646,30 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         temp = 1.0 if is_omitted(temperature) else (temperature or 0.0)
         top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
         max_new_tokens = None
+        if self.engine_max_tokens is not None:
+            max_new_tokens = self.engine_max_tokens - len(prompt_token_ids)
+            if max_new_tokens <= 0:
+                if interaction is not None and cache is not None and resp_id in cache:
+                    # Remove the interaction from cache on failure
+                    del cache[resp_id]
+                raise ValueError(
+                    f"len of prompt tokens {len(prompt_token_ids)} exceeds engine_max_tokens {self.engine_max_tokens}"
+                )
         if not is_omitted(max_output_tokens):
-            max_new_tokens = max_output_tokens
+            if max_new_tokens is None:
+                max_new_tokens = max_output_tokens
+            else:
+                max_new_tokens = min(max_new_tokens, max_output_tokens)
         if max_new_tokens is None:
             max_new_tokens = 512  # Default value
             logger.warning("max_output_tokens not specified, defaulting to 512.")
 
         stop = kwargs.get("stop", None)
+        if stop is not None and self.chat_template_type == "concat":
+            logger.warning(
+                "stop tokens are not supported in concat mode yet; ignoring stop tokens."
+            )
+            stop = None
         if is_omitted(frequency_penalty):
             frequency_penalty = 0.0
 
@@ -567,16 +697,17 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         # Call inference engine
         engine_resp = await self.engine.agenerate(model_request)
-        output_text = self.tokenizer.decode(engine_resp.output_tokens)
+        output_text = self.tokenizer.decode(engine_resp.output_tokens_without_stop)
 
         # Parse tool calls.
         tool_calls = None
         try:
-            if not is_omitted(tool_choice) and tool_choice != "none" and tools:
+            if (is_omitted(tool_choice) or tool_choice != "none") and tools_list:
                 tool_calls, output_text, engine_resp.stop_reason = process_tool_calls(
                     output_text,
-                    tools,
+                    tools_list,
                     self.tool_call_parser,
+                    self.reasoning_parser,
                     engine_resp.stop_reason,
                     use_responses=True,
                 )
@@ -632,7 +763,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
             parallel_tool_calls=False,
             temperature=temp,
             tool_choice=tool_choice if not is_omitted(tool_choice) else "none",
-            tools=tools,
+            tools=tools_list,
             top_p=top_p_val,
             background=None,
             conversation=None,
@@ -687,16 +818,17 @@ class ArealOpenAI(AsyncOpenAI):
         self,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        tool_call_parser: str | None = None,
+        tool_call_parser: str,
+        reasoning_parser: str,
+        engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
-        messages_delimiter_start: str = "<|im_start|>",
-        messages_delimiter_end: str = "<|im_end|>",
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.engine = engine
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser
+        self.reasoning_parser = reasoning_parser
 
         # Use an ordered dict to maintain insertion order of completions/responses
         self._cache: InteractionCache = InteractionCache()
@@ -708,9 +840,9 @@ class ArealOpenAI(AsyncOpenAI):
             tokenizer,
             self._cache,
             tool_call_parser=self.tool_call_parser,
+            reasoning_parser=self.reasoning_parser,
+            engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
-            messages_delimiter_start=messages_delimiter_start,
-            messages_delimiter_end=messages_delimiter_end,
         )
 
         # Override chat.completions with our extended implementation
@@ -720,9 +852,9 @@ class ArealOpenAI(AsyncOpenAI):
             tokenizer,
             self._cache,
             tool_call_parser=self.tool_call_parser,
+            reasoning_parser=self.reasoning_parser,
+            engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
-            messages_delimiter_start=messages_delimiter_start,
-            messages_delimiter_end=messages_delimiter_end,
         )
 
     def get_interaction(self, id: str) -> InteractionWithTokenLogpReward | None:

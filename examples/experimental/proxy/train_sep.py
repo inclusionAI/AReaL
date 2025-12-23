@@ -215,6 +215,10 @@ class ProxyPPOConfig(PPOConfig):
         default="qwen25",
         metadata={"help": "Tool call parser that used by ProxyServer."},
     )
+    reasoning_parser: str = field(
+        default="qwen3",
+        metadata={"help": "Reasoning parser that used by ProxyServer."},
+    )
     export_style: str = field(
         default="concat",
         metadata={
@@ -322,7 +326,9 @@ def main(args):
                 rollout=rollout,
                 tokenizer=tokenizer,
                 tool_call_parser=config.tool_call_parser,
+                reasoning_parser=config.reasoning_parser,
                 chat_template_type=chat_template_type,
+                engine_max_tokens=config.gconfig.max_tokens,
                 name=f"{name} proxy server",
             )
             server.start(wait_until_ready=True)

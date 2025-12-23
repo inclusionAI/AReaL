@@ -45,9 +45,11 @@ class ModelRequest:
             tokenizer=self.tokenizer,
             image_data=self.image_data.copy() if self.image_data is not None else None,
             processor=self.processor,
-            vision_msg_vllm=self.vision_msg_vllm.copy()
-            if self.vision_msg_vllm is not None
-            else None,
+            vision_msg_vllm=(
+                self.vision_msg_vllm.copy()
+                if self.vision_msg_vllm is not None
+                else None
+            ),
         )
 
 
@@ -58,7 +60,7 @@ class ModelResponse:
     output_tokens: list[int] = field(default_factory=list)
     output_logprobs: list[float] = field(default_factory=list)
     output_versions: list[int] = field(default_factory=list)
-    stop_reason: Literal["length", "stop", "interrupt"] = "stop"
+    stop_reason: Literal["length", "stop", "tool_calls", "abort"] = "stop"
     # tokenizer is used for encode-decode in the inference engine
     tokenizer: PreTrainedTokenizerFast | None = None
 
@@ -78,6 +80,12 @@ class ModelResponse:
     @property
     def output_len(self) -> int:
         return len(self.output_tokens)
+
+    @property
+    def output_tokens_without_stop(self) -> list[int]:
+        if self.stop_reason not in ["length", "abort"] and self.output_tokens:
+            return self.output_tokens[:-1]
+        return self.output_tokens
 
 
 @dataclass
