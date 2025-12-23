@@ -620,8 +620,9 @@ class TrainController:
         and blocks until both are done.
         """
         mocked_inference_path = (
-             f"{MockInferenceEngine.__module__}.{MockInferenceEngine.__name__}"
+            f"{MockInferenceEngine.__module__}.{MockInferenceEngine.__name__}"
         )
+
         tasks = [
             self.rollout.init_weights_update_group(meta),
             self._connect_rollout_engine(mocked_inference_path, meta),

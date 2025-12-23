@@ -269,8 +269,6 @@ class RemoteSGLangEngine(InferenceEngine):
         self, meta: WeightUpdateMeta, rank_ids: list[int] | None = None
     ) -> Future[None]:
         """Initialize the weight update process group."""
-        if rank_ids is None:
-            return self._engine.init_weights_update_group(meta)
         return self._engine.init_weights_update_group(meta, rank_ids=rank_ids)
 
     def update_weights_from_distributed(

@@ -14,6 +14,7 @@ from werkzeug.serving import make_server
 
 from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
+from areal.engine.mock.mock_inference_engine import MockInferenceEngine
 from areal.platforms import current_platform
 from areal.scheduler.rpc import rtensor
 from areal.scheduler.rpc.rtensor import RTensor
@@ -61,6 +62,12 @@ def _inject_special_args(method: str, args, kwargs):
         raise ValueError("connect_engine requires 'engine' to be a class path string")
 
     EngineCls = import_from_string(engine_path)
+
+    if not issubclass(EngineCls, MockInferenceEngine):
+        raise TypeError(
+            f"connect_engine for single controller should only support MockInferenceEngine. "
+            f"Got {EngineCls.__module__}.{EngineCls.__name__}"
+        )
 
     # MockInferenceEngine takes no args → safe
     engine = EngineCls()
