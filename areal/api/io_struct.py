@@ -288,11 +288,17 @@ class DeviceRuntimeInfo:
     mem_reserved: float
     mem_used: float
     mem_total: float
+    unit: str
 
     @classmethod
     def get_current(cls, unit: str = "GB"):
-        assert unit in ["GB", "MB", "KB"]
-        divisor = 1024**3 if unit == "GB" else 1024**2 if unit == "MB" else 1024
+        unit_divisors = {"GB": 1024**3, "MB": 1024**2, "KB": 1024}
+        if unit not in unit_divisors:
+            raise ValueError(
+                f"Unsupported unit '{unit}'. Must be one of {list(unit_divisors.keys())}."
+            )
+        divisor = unit_divisors[unit]
+
         mem_allocated = current_platform.memory_allocated()
         mem_reserved = current_platform.memory_reserved()
         mem_free, mem_total = current_platform.mem_get_info()
@@ -302,6 +308,7 @@ class DeviceRuntimeInfo:
             mem_reserved=mem_reserved / divisor,
             mem_used=mem_used / divisor,
             mem_total=mem_total / divisor,
+            unit=unit,
         )
 
     def log(self, head: str = "", rank: int = 0, precision: int = 2):
@@ -312,7 +319,7 @@ class DeviceRuntimeInfo:
         if (not dist.is_initialized()) or (rank is None) or (dist.get_rank() == rank):
             logger.info(
                 f"Memory-Usage {head}: "
-                f"memory allocated (GB): {mem_allocated}, "
-                f"memory reserved (GB): {mem_reserved}, "
-                f"device memory used/total (GB): {mem_used}/{mem_total}"
+                f"memory allocated ({self.unit}): {mem_allocated}, "
+                f"memory reserved ({self.unit}): {mem_reserved}, "
+                f"device memory used/total ({self.unit}): {mem_used}/{mem_total}"
             )

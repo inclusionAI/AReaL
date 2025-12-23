@@ -1,3 +1,5 @@
+import gc
+
 import torch
 
 import areal.utils.logging as logging
@@ -17,7 +19,9 @@ class UnknownPlatform(Platform):
     communication_backend: str = "nccl"
 
     def clear_memory(self) -> None:
-        pass
+        torch.cuda.synchronize()
+        gc.collect()
+        torch.cuda.empty_cache()
 
     @classmethod
     def clear_cublas_workspaces(cls) -> None:
