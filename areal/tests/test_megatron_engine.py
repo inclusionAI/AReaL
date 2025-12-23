@@ -19,7 +19,6 @@ from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils import logging
-from areal.utils.device import log_gpu_stats
 
 logger = logging.getLogger("MegatronEngine Test")
 
@@ -96,7 +95,7 @@ def engine():
     engine.create_process_group(alloc_mode.train)
     engine.initialize(addr=None, ft_spec=ft_spec)
     logger.info(f"mcore GPTModel initialized: {engine.model}")
-    log_gpu_stats("initialize")
+    engine.get_device_stats().log("initialize")
     try:
         yield engine
     finally:

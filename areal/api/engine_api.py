@@ -11,6 +11,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
 from areal.api.io_struct import (
+    DeviceRuntimeInfo,
     LocalInfServerInfo,
     ModelRequest,
     ModelResponse,
@@ -471,6 +472,10 @@ class TrainEngine(abc.ABC):
 
     @abc.abstractmethod
     def offload(self) -> None:
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def get_device_stats(self) -> DeviceRuntimeInfo:
         raise NotImplementedError()
 
 

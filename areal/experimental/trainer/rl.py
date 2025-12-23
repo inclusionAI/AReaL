@@ -39,7 +39,6 @@ from areal.platforms import current_platform
 from areal.scheduler import LocalScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
-from areal.utils.device import log_gpu_stats
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
@@ -238,7 +237,7 @@ class PPOTrainer:
                     ),
                 ):
                     rollout_batch["values"] = self.critic.compute_values(rollout_batch)
-                    log_gpu_stats("critic values")
+                    self.critic.get_device_stats().log("critic values")
 
             if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
                 with (
@@ -250,7 +249,7 @@ class PPOTrainer:
                     ),
                 ):
                     rollout_batch["prox_logp"] = self.actor.compute_logp(rollout_batch)
-                    log_gpu_stats("recompute logp")
+                    self.actor.get_device_stats().log("recompute logp")
 
             if self.ref is not None:
                 with (
@@ -262,7 +261,7 @@ class PPOTrainer:
                     ),
                 ):
                     rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
-                    log_gpu_stats("ref logp")
+                    self.ref.get_device_stats().log("ref logp")
 
             with (
                 stats_tracker.record_timing("compute_advantage"),
@@ -273,7 +272,7 @@ class PPOTrainer:
                 ),
             ):
                 adv_batch = self.actor.compute_advantages(rollout_batch)
-                log_gpu_stats("compute advantages")
+                self.actor.get_device_stats().log("compute advantages")
 
             with (
                 stats_tracker.record_timing("train_step"),
@@ -283,10 +282,9 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                # TODO: move log_gpu_stats to engine
                 self.actor.ppo_update(adv_batch)
                 self.actor.step_lr_scheduler()
-                log_gpu_stats("ppo update")
+                self.actor.get_device_stats().log("ppo update")
 
             if self.critic is not None:
                 with (
@@ -299,7 +297,7 @@ class PPOTrainer:
                 ):
                     self.critic.ppo_update(adv_batch)
                     self.critic.step_lr_scheduler()
-                    log_gpu_stats("ppo critic update")
+                    self.critic.get_device_stats().log("ppo critic update")
 
             # pause inference for updating weights, save, and evaluation
             self.rollout.pause()

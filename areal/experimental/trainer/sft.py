@@ -26,7 +26,6 @@ from areal.utils.data import (
     tensor_container_to,
 )
 from areal.utils.dataloader import create_dataloader
-from areal.utils.device import log_gpu_stats
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
@@ -163,7 +162,7 @@ class SFTTrainer:
             ):
                 self.actor.train_lm(batch)
                 self.actor.step_lr_scheduler()
-                log_gpu_stats("after train step")
+                self.actor.get_device_stats().log("after train step")
 
             self.actor.set_version(global_step + 1)
 

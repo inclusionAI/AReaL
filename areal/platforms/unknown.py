@@ -16,6 +16,9 @@ class UnknownPlatform(Platform):
     ray_experimental_noset: str = "RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES"
     communication_backend: str = "nccl"
 
+    def clear_memory(self) -> None:
+        pass
+
     @classmethod
     def clear_cublas_workspaces(cls) -> None:
         torch._C._cuda_clearCublasWorkspaces()

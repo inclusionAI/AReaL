@@ -85,6 +85,9 @@ class Platform:
                 f"'{type(self).__name__}' object has no attribute '{key}'"
             )
 
+    def clear_memory(self) -> None:
+        raise NotImplementedError()
+
     @classmethod
     def clear_cublas_workspaces(cls) -> None:
         raise NotImplementedError()
