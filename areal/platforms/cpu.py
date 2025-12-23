@@ -10,6 +10,9 @@ class CpuPlatform(Platform):
     ray_experimental_noset: str = ""
     communication_backend: str = "gloo"
 
+    def clear_memory(self) -> None:
+        pass
+
     @classmethod
     def clear_cublas_workspaces(cls) -> None:
         pass

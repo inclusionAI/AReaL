@@ -6,16 +6,20 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from PIL.Image import Image as ImageObject
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters
 from areal.platforms import current_platform
+from areal.utils import logging
 from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
     from transformers import AutoProcessor
+
+logger = logging.getLogger(__file__)
 
 
 @dataclass
@@ -276,3 +280,46 @@ class LocalInfServerInfo:
     host: str
     port: int
     process: subprocess.Popen
+
+
+@dataclass
+class DeviceRuntimeInfo:
+    mem_allocated: float
+    mem_reserved: float
+    mem_used: float
+    mem_total: float
+    unit: str
+
+    @classmethod
+    def get_current(cls, unit: str = "GB"):
+        unit_divisors = {"GB": 1024**3, "MB": 1024**2, "KB": 1024}
+        if unit not in unit_divisors:
+            raise ValueError(
+                f"Unsupported unit '{unit}'. Must be one of {list(unit_divisors.keys())}."
+            )
+        divisor = unit_divisors[unit]
+
+        mem_allocated = current_platform.memory_allocated()
+        mem_reserved = current_platform.memory_reserved()
+        mem_free, mem_total = current_platform.mem_get_info()
+        mem_used = mem_total - mem_free
+        return cls(
+            mem_allocated=mem_allocated / divisor,
+            mem_reserved=mem_reserved / divisor,
+            mem_used=mem_used / divisor,
+            mem_total=mem_total / divisor,
+            unit=unit,
+        )
+
+    def log(self, head: str = "", rank: int = 0, precision: int = 2):
+        mem_allocated = f"{self.mem_allocated:.{precision}f}"
+        mem_reserved = f"{self.mem_reserved:.{precision}f}"
+        mem_used = f"{self.mem_used:.{precision}f}"
+        mem_total = f"{self.mem_total:.{precision}f}"
+        if (not dist.is_initialized()) or (rank is None) or (dist.get_rank() == rank):
+            logger.info(
+                f"Memory-Usage {head}: "
+                f"memory allocated ({self.unit}): {mem_allocated}, "
+                f"memory reserved ({self.unit}): {mem_reserved}, "
+                f"device memory used/total ({self.unit}): {mem_used}/{mem_total}"
+            )

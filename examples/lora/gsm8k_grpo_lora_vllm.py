@@ -15,7 +15,6 @@ from areal.platforms import current_platform
 from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils import seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
-from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
@@ -181,16 +180,16 @@ def main(args):
             with stats_tracker.record_timing("recompute_logp"):
                 logp = actor.compute_logp(batch)
                 batch["prox_logp"] = logp
-                log_gpu_stats("recompute logp")
+                actor.get_device_stats().log("recompute logp")
 
         if ref is not None:
             with stats_tracker.record_timing("ref_logp"):
                 batch["ref_logp"] = ref.compute_logp(batch)
-                log_gpu_stats("ref logp")
+                ref.get_device_stats().log("ref logp")
 
         with stats_tracker.record_timing("compute_advantage"):
             actor.compute_advantages(batch)
-            log_gpu_stats("compute advantages")
+            actor.get_device_stats().log("compute advantages")
 
         with (
             stats_tracker.record_timing("train_step"),
@@ -198,7 +197,7 @@ def main(args):
         ):
             stats = actor.ppo_update(batch)
             actor.step_lr_scheduler()
-            log_gpu_stats("ppo update")
+            actor.get_device_stats().log("ppo update")
 
         # pause inference for updating weights, save, and evaluation
         rollout.pause()
