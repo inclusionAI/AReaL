@@ -144,7 +144,11 @@ class vLLMServerWrapper:
             visible = os.getenv(device_control_env_var).split(",")
             n_visible_devices = len(visible)
             n_servers_per_proc = max(1, n_visible_devices // gpus_per_server)
-            server_idx_offset = min(list(map(int, visible))) // gpus_per_server
+            # Use modulo to ensure server_idx_offset is node-local (0 to n_servers_per_node-1)
+            # This prevents port overflow when running multiple nodes
+            server_idx_offset = (
+                min(list(map(int, visible))) // gpus_per_server
+            ) % n_servers_per_node
         else:
             visible = [str(i) for i in range(self.n_gpus_per_node)]
             n_servers_per_proc = n_servers_per_node

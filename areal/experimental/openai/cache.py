@@ -1,4 +1,6 @@
-from collections import OrderedDict, defaultdict
+import threading
+from collections import OrderedDict
+from typing import Any
 
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
@@ -10,16 +12,27 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._apply_reward_discount_called = False
-        self._parent_relationship_built = False
+        self._total_reward = 0.0
+        self._lock = threading.Lock()
 
-    def set_reward(self, id: str, reward: float) -> None:
+    @property
+    def last_interaction_id(self) -> str:
+        return next(reversed(self))
+
+    @property
+    def total_reward(self) -> float:
+        return self._total_reward
+
+    def set_reward(self, interaction_id: str, reward: float) -> None:
         """Set reward for a specific completion/response by its ID."""
-        self[id].reward = reward
+        with self._lock:  # usually no need to lock, but just in case
+            self._total_reward -= self[interaction_id].reward or 0.0
+            self[interaction_id].reward = reward
+            self._total_reward += reward
 
-    def set_final_reward(self, reward: float) -> None:
+    def set_last_reward(self, reward: float) -> None:
         """Set reward for the most recent completion/response."""
-        last_interaction_id = next(reversed(self))
-        self[last_interaction_id].reward = reward
+        self.set_reward(self.last_interaction_id, reward)
 
     def apply_reward_discount(
         self, turn_discount: float = 1.0
@@ -52,91 +65,98 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             updated in-place.
         """
         # Assign rewards to interactions in cache based on their creation order
-        assert not self._apply_reward_discount_called, (
-            "apply_reward_discount should only be called once."
-        )
+        if self._apply_reward_discount_called:
+            raise RuntimeError("apply_reward_discount should only be called once.")
         self._apply_reward_discount_called = True
-        interaction_time_sequence = list(
-            reversed([interaction for _, interaction in self.items()])
-        )
+        reversed_interactions = list(reversed(self.values()))
 
-        # Check if the last-created interaction has a reward set
-        if interaction_time_sequence:
-            if interaction_time_sequence[0].reward is None:
-                logger.warning(
-                    "The most recent interaction does not have a reward set. "
-                    "All interactions will have None reward."
-                )
-                interaction_time_sequence[0].reward = 0.0
-            # Propagate rewards backwards with discounting if reward is not set
-            for i in range(1, len(interaction_time_sequence)):
-                if interaction_time_sequence[i].reward is None:
-                    interaction_time_sequence[i].reward = 0.0
-                interaction_time_sequence[i].reward += (
-                    interaction_time_sequence[i - 1].reward * turn_discount
-                )
+        if reversed_interactions:
+            current_reward = 0.0
+            for i, interaction in enumerate(reversed_interactions):
+                if interaction.reward is None:
+                    # If the last-created interaction has no reward set, log a warning
+                    if i == 0:
+                        logger.warning(
+                            "The most recent interaction does not have a reward set. "
+                            "All interactions will have None reward."
+                        )
+                    interaction.reward = 0.0
+
+                current_reward = current_reward * turn_discount + interaction.reward
+                interaction.reward = current_reward
         return dict(**self)
 
-    def _build_parent_child_relationships(self) -> None:
-        self._parent_relationship_built = True
-        if len(self) == 0:
-            return
+    def __setitem__(
+        self,
+        key: str,
+        value: InteractionWithTokenLogpReward,
+    ) -> None:
+        """Add a new interaction to the cache, automatically building
+        parent-child relationships if `find_parent` is True.
+        """
+        if value.messages is None:
+            raise ValueError(
+                "Interaction messages must be set to find parent relationship."
+            )
 
-        def _is_prefix(a: list[int], b: list[int]) -> bool:
-            # True if a is a strict prefix of b
-            if len(a) >= len(b):
+        def _is_prefix(a: list[dict], b: list[dict]) -> bool:
+            # True if a is a prefix of b
+            if len(a) > len(b):
                 return False
             return b[: len(a)] == a
 
-        # Precompute normalized data
-        meta = {}
-        # Here we use tokens to match parent-child relationships, both is_completion and is_response can be supported
-        for interaction_id, interaction in self.items():
-            parent_tokens = (
-                interaction.model_response.input_tokens
-                + interaction.model_response.output_tokens
-            )
-            child_tokens = interaction.model_response.input_tokens
-            meta[interaction_id] = {
-                "parent_tokens": parent_tokens,
-                "child_tokens": child_tokens,
-                "obj": interaction,
-            }
+        def _is_similar_on_last_message(
+            a: list[dict], b: list[dict]
+        ) -> tuple[bool, dict[str, Any] | None, dict[str, Any] | None]:
+            if len(a) > len(b):
+                return False, None, None
+            last_a_message = a[-1]
+            last_b_message = b[len(a) - 1]
 
-        # 1) Construct parent-child relationships using longest prefix rule
-        # Sort potential children by (data length asc, created asc)
-        # so parents are available
-        ordered = sorted(
-            meta.items(),
-            key=lambda kv: (
-                len(kv[1]["parent_tokens"]),
-                (
-                    kv[1]["obj"].completion.created
-                    if kv[1]["obj"].is_completion
-                    else kv[1]["obj"].response.created_at
-                ),
-            ),
+            same_keys = set(last_a_message.keys()).intersection(
+                set(last_b_message.keys())
+            )
+            for key in same_keys:
+                if last_a_message[key] != last_b_message[key]:
+                    return False, None, None
+            diff_a_message = {
+                k: v for k, v in last_a_message.items() if k not in same_keys
+            }
+            diff_b_message = {
+                k: v for k, v in last_b_message.items() if k not in same_keys
+            }
+            return True, diff_a_message, diff_b_message
+
+        # Construct parent-child relationships using longest prefix rule
+        # Sort potential parents by message length to find the longest prefix match first.
+        interactions = sorted(
+            self.values(), key=lambda x: len(x.messages), reverse=True
         )
 
         # Reset parents before rebuilding
-        for _, info in ordered:
-            info["obj"].parent = None
-
-        for child_id, child_info in ordered:
-            child_data = child_info["child_tokens"]
-            best_parent = None
-            best_len = -1
-            for parent_id, parent_info in ordered:
-                if parent_id == child_id:
-                    continue
-                parent_data = parent_info["parent_tokens"]
-                if _is_prefix(parent_data, child_data):
-                    plen = len(parent_data)
-                    # choose the longest prefix
-                    if plen > best_len:
-                        best_parent = parent_info["obj"]
-                        best_len = plen
-            child_info["obj"].parent = best_parent
+        for parent in interactions:
+            if parent.output_message_list is None or parent.messages is None:
+                raise ValueError(
+                    "Parent interaction output_message_list and messages must be set to find parent relationship."
+                )
+            parent_data = parent.messages + parent.output_message_list
+            if _is_prefix(parent_data, value.messages):
+                value.parent = parent
+                break
+            elif _is_prefix(parent.messages, value.messages):
+                is_similar, diff_a, diff_b = _is_similar_on_last_message(
+                    parent_data, value.messages
+                )
+                if is_similar:
+                    logger.warning(
+                        "Found a parent interaction with similar last message content, "
+                        "but not a strict prefix match. If you wish to use concat mode and build a conversation tree:\n"
+                        "1. For completion, append `chat_completion.choices[0].message.model_dump()` to your messages.\n"
+                        "2. For response, extend `[o.model_dump() for o in response.output]` to your messages.\n"
+                        f"Different keys in parent last message: {diff_a}\n"
+                        f"Different keys in child last message: {diff_b}\n"
+                    )
+        super().__setitem__(key, value)
 
     def export_interactions(
         self, style: str, reward_discount: float | None = None
@@ -177,6 +197,12 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         if len(cache) == 0:
             return {}
 
+        for id, interaction in self.items():
+            if interaction.interaction_id != id:
+                raise ValueError(
+                    f"Interaction ID mismatch: {interaction.interaction_id} != {id}"
+                )
+
         if style == "concat":
             for interaction in self.values():
                 if interaction.chat_template_type != "concat":
@@ -189,29 +215,18 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                         "Please use 'individual' style instead."
                     )
 
-            if not self._parent_relationship_built:
-                self._build_parent_child_relationships()
-
             # Build children mapping to find leaf nodes.
-            children_map: dict[
-                str,
-                list[InteractionWithTokenLogpReward],
-            ] = defaultdict(list)
-            for interaction_id, obj in self.items():
+            has_children = set()
+            for obj in self.values():
                 if obj.parent is not None:
-                    if obj.is_completion:
-                        children_map[obj.parent.completion.id].append(obj)
-                    else:  # response
-                        children_map[obj.parent.response.id].append(obj)
+                    has_children.add(obj.parent.interaction_id)
 
             # Return only leaf nodes (nodes without children)
-            parents_with_children = set(children_map.keys())
-            leaf_only: dict[str, InteractionWithTokenLogpReward] = {}
-            for interaction_id, obj in self.items():
-                obj_id = obj.completion.id if obj.is_completion else obj.response.id
-                if obj_id not in parents_with_children:
-                    leaf_only[interaction_id] = obj
-            return leaf_only
+            return {
+                id: interaction
+                for id, interaction in self.items()
+                if id not in has_children
+            }
         elif style == "individual":
             return dict(**cache)
         else:

@@ -16,21 +16,31 @@ from areal.api.cli_args import (
     PPOActorConfig,
     PPOConfig,
     PPOCriticConfig,
+    SGLangConfig,
     TrainDatasetConfig,
     ValidDatasetConfig,
+    vLLMConfig,
 )
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
+from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow
+from areal.controller import RolloutController
 from areal.engine.megatron_engine import MegatronEngine
-from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor
-from areal.engine.ppo.critic import FSDPPPOCritic, MegatronPPOCritic
+from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor, PPOActorController
+from areal.engine.ppo.critic import (
+    FSDPPPOCritic,
+    MegatronPPOCritic,
+    PPOCriticController,
+)
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
+from areal.scheduler import LocalScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
+from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.perf_tracer import Category
@@ -57,6 +67,9 @@ class PPOTrainer:
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
             config.tokenizer_path
         )
+        self.scheduler = None
+        if is_single_controller():
+            self.scheduler = self._init_scheduler()
 
         # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
@@ -104,12 +117,16 @@ class PPOTrainer:
         # Initialize models
         self.parallel_strategy = self.allocation_mode.train
         assert self.parallel_strategy is not None
-        engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
-        self.actor.initialize(**engine_init_kwargs)
+        engine_init_kwargs = {
+            "addr": None,
+            "ft_spec": ft_spec,
+            "alloc_mode": self.allocation_mode,
+        }
+        self.actor.initialize(**engine_init_kwargs, role="actor")
         if self.critic is not None:
-            self.critic.initialize(**engine_init_kwargs)
+            self.critic.initialize(**engine_init_kwargs, role="critic")
         if self.ref is not None:
-            self.ref.initialize(**engine_init_kwargs)
+            self.ref.initialize(**engine_init_kwargs, role="ref")
 
         # Prepare weight update meta and connect to inference engine
         if self.config.actor.weight_update_mode == "disk":
@@ -161,9 +178,13 @@ class PPOTrainer:
 
     def train(
         self,
-        workflow: RolloutWorkflow,
-        eval_workflow: RolloutWorkflow | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        eval_workflow_kwargs: dict[str, Any] | None = None,
         dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        total_epochs: int | None = None,
+        granularity: int | None = None,
     ):
         config = self.config
         start_step = (
@@ -172,7 +193,10 @@ class PPOTrainer:
             else 0
         )
 
-        total_epochs = config.total_train_epochs
+        if total_epochs is None:
+            total_epochs = config.total_train_epochs
+        if total_epochs <= 0:
+            raise ValueError(f"Total epochs must be positive: {total_epochs}")
         steps_per_epoch = len(self.train_dataloader)
         max_steps = total_epochs * steps_per_epoch
 
@@ -196,10 +220,11 @@ class PPOTrainer:
                     },
                 ),
             ):
-                batch = self.actor.prepare_batch(
+                rollout_batch = self.actor.prepare_batch(
                     self.train_dataloader,
-                    granularity=self.config.actor.group_size,
+                    granularity=granularity or self.config.actor.group_size,
                     workflow=workflow,
+                    workflow_kwargs=workflow_kwargs,
                     should_accept_fn=dynamic_filter_fn,
                 )
 
@@ -212,8 +237,7 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    values = self.critic.compute_values(batch)
-                    batch["values"] = values
+                    rollout_batch["values"] = self.critic.compute_values(rollout_batch)
                     log_gpu_stats("critic values")
 
             if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
@@ -225,8 +249,7 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    logp = self.actor.compute_logp(batch)
-                    batch["prox_logp"] = logp
+                    rollout_batch["prox_logp"] = self.actor.compute_logp(rollout_batch)
                     log_gpu_stats("recompute logp")
 
             if self.ref is not None:
@@ -238,7 +261,7 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    batch["ref_logp"] = self.ref.compute_logp(batch)
+                    rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
                     log_gpu_stats("ref logp")
 
             with (
@@ -249,7 +272,7 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                self.actor.compute_advantages(batch)
+                adv_batch = self.actor.compute_advantages(rollout_batch)
                 log_gpu_stats("compute advantages")
 
             with (
@@ -260,7 +283,8 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                self.actor.ppo_update(batch)
+                # TODO: move log_gpu_stats to engine
+                self.actor.ppo_update(adv_batch)
                 self.actor.step_lr_scheduler()
                 log_gpu_stats("ppo update")
 
@@ -273,7 +297,7 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    self.critic.ppo_update(batch)
+                    self.critic.ppo_update(adv_batch)
                     self.critic.step_lr_scheduler()
                     log_gpu_stats("ppo critic update")
 
@@ -328,10 +352,21 @@ class PPOTrainer:
             ):
                 self._evaluate(
                     eval_workflow=eval_workflow,
+                    eval_workflow_kwargs=eval_workflow_kwargs,
                     epoch=epoch,
                     epoch_step=step,
                     global_step=global_step,
                 )
+
+            with (
+                stats_tracker.record_timing("clear_batches"),
+                perf_tracer.trace_scope(
+                    "train.clear_batches",
+                    category=Category.INSTR,
+                    args={"global_step": global_step},
+                ),
+            ):
+                self.actor.clear_batches(rollout_batch, adv_batch)
 
             with perf_tracer.trace_scope(
                 "train.log_stats",
@@ -358,6 +393,12 @@ class PPOTrainer:
         self.actor.destroy()
         perf_tracer.save(force=True)
 
+    def _init_scheduler(self) -> Scheduler:
+        cfg = self.config.scheduler
+        if cfg.type == "local":
+            return LocalScheduler(exp_config=self.config)
+        raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
+
     def _create_dataloader(
         self,
         dataset: Dataset,
@@ -372,48 +413,97 @@ class PPOTrainer:
             dataset_config=dataset_config,
         )
 
-    def _create_actor(self, actor_config: PPOActorConfig):
+    def _create_actor(
+        self, actor_config: PPOActorConfig
+    ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
         if self.allocation_mode.train_backend == "fsdp":
-            actor = FSDPPPOActor(config=actor_config)
+            actor_cls = FSDPPPOActor
         elif self.allocation_mode.train_backend == "megatron":
-            actor = MegatronPPOActor(config=actor_config)
+            actor_cls = MegatronPPOActor
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
+        if is_single_controller():
+            if self.allocation_mode.gen_backend == "sglang":
+                # Disable some environ for NCCL weight update.
+                # These environs are set by the launcher in the SPMD mode.
+                for spec in actor_config.scheduling_spec:
+                    spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
+                    spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
+            actor = actor_cls.as_controller(actor_config, self.scheduler)
+        else:
+            actor = actor_cls(config=actor_config)
         actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
-    def _create_critic(self, critic_config: PPOCriticConfig):
+    def _create_critic(
+        self, critic_config: PPOCriticConfig
+    ) -> FSDPPPOCritic | MegatronPPOCritic | PPOCriticController:
         if self.allocation_mode.train_backend == "fsdp":
-            critic = FSDPPPOCritic(config=critic_config)
+            critic_cls = FSDPPPOCritic
         elif self.allocation_mode.train_backend == "megatron":
-            critic = MegatronPPOCritic(config=critic_config)
+            critic_cls = MegatronPPOCritic
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
+        if is_single_controller():
+            critic = critic_cls.as_controller(critic_config, self.scheduler)
+        else:
+            critic = critic_cls(config=critic_config)
         critic.create_process_group(parallel_strategy=self.allocation_mode.train)
         return critic
 
     def _init_rollout(
         self, rollout_config: InferenceEngineConfig, is_eval: bool = False
-    ) -> InferenceEngine:
-        # Initialize inference engine
+    ) -> InferenceEngine | RolloutController:
+        # Create a working copy of config
+        config = deepcopy(rollout_config)
+        if is_eval:
+            # NOTE: eval does not have any offpolicyness control
+            config.max_head_offpolicyness = int(1e12)
+
+        # Determine engine class and server args based on backend
         if self.allocation_mode.gen_backend == "sglang":
-            engine = RemoteSGLangEngine(deepcopy(rollout_config))
+            engine_cls = RemoteSGLangEngine
+            server_args = SGLangConfig.build_args(
+                sglang_config=self.config.sglang,
+                tp_size=self.allocation_mode.gen.tp_size,
+                base_gpu_id=0,
+            )
         elif self.allocation_mode.gen_backend == "vllm":
-            engine = RemotevLLMEngine(deepcopy(rollout_config))
+            engine_cls = RemotevLLMEngine
+            server_args = vLLMConfig.build_args(
+                vllm_config=self.config.vllm,
+                tp_size=self.allocation_mode.gen.tp_size,
+                pp_size=self.allocation_mode.gen.pp_size,
+            )
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.gen_backend}, expected sglang or vllm"
             )
 
+        if not is_single_controller():
+            engine = engine_cls(config)
+            engine.initialize(
+                train_data_parallel_size=self.allocation_mode.train.dp_size
+            )
+            return engine
+
+        # Single-controller mode - no engine instantiation needed
+        controller = engine_cls.as_controller(config, self.scheduler)
+        init_kwargs = dict(
+            role="rollout",
+            alloc_mode=self.allocation_mode,
+            server_args=server_args,
+        )
         if is_eval:
-            # NOTE: eval does not have any offpolicyness control
-            engine.config.max_head_offpolicyness = int(1e12)
-        engine.initialize(train_data_parallel_size=self.allocation_mode.train.dp_size)
-        return engine
+            assert len(self.rollout.server_infos) > 0
+            init_kwargs["server_infos"] = self.rollout.server_infos
+            init_kwargs["role"] = "eval-rollout"
+        controller.initialize(**init_kwargs)
+        return controller
 
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
         # Save as HF models for evaluation
@@ -435,7 +525,7 @@ class PPOTrainer:
                 processor=self.processor,
                 name="critic",
             )
-        dist.barrier(device_ids=[self.actor.device.index])
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
@@ -460,23 +550,25 @@ class PPOTrainer:
             processor=self.processor,
         )
 
-        dist.barrier(device_ids=[self.actor.device.index])
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
-    def _evaluate_fn(self, eval_workflow: RolloutWorkflow):
+    def _evaluate_fn(self, eval_workflow: RolloutWorkflow, eval_workflow_kwargs):
         if self.actor.is_data_parallel_head():
             cnt = 0
             for data in self.valid_dataloader:
                 for item in data:
-                    self.eval_rollout.submit(item, eval_workflow)
+                    self.eval_rollout.submit(item, eval_workflow, eval_workflow_kwargs)
                     cnt += 1
             self.eval_rollout.wait(cnt, timeout=None)
-        dist.barrier(device_ids=[self.actor.device.index])
+
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _evaluate(
         self,
         eval_workflow: RolloutWorkflow | None,
+        eval_workflow_kwargs,
         epoch: int,
         epoch_step: int,
         global_step: int,
@@ -484,20 +576,26 @@ class PPOTrainer:
         if self.valid_dataloader is None or eval_workflow is None:
             return
         self.evaluator.evaluate(
-            functools.partial(self._evaluate_fn, eval_workflow=eval_workflow),
+            functools.partial(
+                self._evaluate_fn,
+                eval_workflow=eval_workflow,
+                eval_workflow_kwargs=eval_workflow_kwargs,
+            ),
             epoch,
             epoch_step,
             global_step,
         )
-        dist.barrier(device_ids=[self.actor.device.index])
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _export_and_commit_stats(self, epoch: int, epoch_step: int, global_step: int):
         # Upload statistics to the logger (e.g., wandb)
         stats = self.actor.export_stats()
+        stats.update(self.rollout.export_stats())
+        stats.update(self.eval_rollout.export_stats())
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
-        dist.barrier(device_ids=[self.actor.device.index])
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def __enter__(self):

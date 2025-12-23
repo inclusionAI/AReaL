@@ -118,12 +118,11 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         completions_with_rewards = {}
         for client in clients:
             completion_with_rewards = client.export_interactions(style="concat")
-            # FIXME: sometimes len(completion_with_rewards) > 1, needs to figure out why
             assert len(completion_with_rewards) == 1, len(completion_with_rewards)
             completions_with_rewards.update(completion_with_rewards)
         assert len(all_stats) == self.n_trajs
         assert len(completions_with_rewards) == self.n_trajs
-        return completion_with_rewards
+        return completions_with_rewards
 
 
 @dataclass

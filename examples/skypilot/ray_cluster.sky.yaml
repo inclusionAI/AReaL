@@ -1,7 +1,7 @@
 
 resources:
   accelerators: A100:8
-  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.4.1
+  image_id: docker:ghcr.io/inclusionai/areal-runtime:v0.5.1
   memory: 32+
   cpus: 8+
 

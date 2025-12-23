@@ -4,7 +4,7 @@ import os
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import uvloop
 import yaml
@@ -12,15 +12,16 @@ from hydra import compose as hydra_compose
 from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
-from transformers import PreTrainedTokenizerFast
 
-from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, pkg_version
 from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
     PROX_LOGP_METHODS_ALL,
 )
 from areal.utils.pkg_version import is_version_less
+
+if TYPE_CHECKING:
+    from transformers import PreTrainedTokenizerFast
 
 uvloop.install()
 
@@ -149,6 +150,14 @@ class GenerationHyperparameters:
         default_factory=list,
         metadata={"help": "Stop generation when encountering these token IDs."},
     )
+    ignore_eos: bool = field(
+        default=False,
+        metadata={"help": "Do not stop generation when EOS is encountered."},
+    )
+    skip_special_tokens: bool = field(
+        default=True,
+        metadata={"help": "Skip special tokens when decoding/displaying outputs."},
+    )
     stop: list[str] | None = field(
         default=None,
         metadata={
@@ -168,13 +177,20 @@ class GenerationHyperparameters:
         default="",
         metadata={"help": "Lora name to be used for this generation."},
     )
+    use_beam_search: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored."
+        },
+    )
+    # NOTE: to add new parameters, please correctly handle them in the `to_openai_args_dict` method.
 
     def new(self, **kwargs):
         args = asdict(self)
         args.update(kwargs)
         return GenerationHyperparameters(**args)
 
-    def new_with_stop_and_pad_token_ids(self, tokenizer: PreTrainedTokenizerFast):
+    def new_with_stop_and_pad_token_ids(self, tokenizer: "PreTrainedTokenizerFast"):
         """Create a new generation hyperparameters with stop and pad token ids added."""
         new_stop_token_ids = self.stop_token_ids.copy()
         if tokenizer.pad_token_id not in new_stop_token_ids:
@@ -183,24 +199,58 @@ class GenerationHyperparameters:
             new_stop_token_ids.append(tokenizer.eos_token_id)
         return self.new(stop_token_ids=new_stop_token_ids)
 
-    def to_openai_args_dict(
+    def to_openai_completions_args_dict(
         self, exclude_args: list[str] | None = None
+    ) -> dict[str, Any]:
+        return self.to_openai_args_dict(
+            exclude_args=exclude_args, api_format="completions"
+        )
+
+    def to_openai_responses_args_dict(
+        self, exclude_args: list[str] | None = None
+    ) -> dict[str, Any]:
+        return self.to_openai_args_dict(
+            exclude_args=exclude_args, api_format="responses"
+        )
+
+    def to_openai_agents_model_settings_dict(
+        self, exclude_args: list[str] | None = None
+    ) -> dict[str, Any]:
+        return self.to_openai_args_dict(
+            exclude_args=exclude_args, api_format="openai-agents"
+        )
+
+    _OPENAI_UNSUPPORTED_ARGS: ClassVar[set[str]] = {
+        "min_new_tokens",  # Not supported by OpenAI
+        "greedy",  # Not directly supported by OpenAI
+        "top_k",  # Not supported by OpenAI
+        "stop_token_ids",  # Not supported by OpenAI
+        "ignore_eos",  # Not supported by OpenAI
+        "skip_special_tokens",  # Not supported by OpenAI
+        "lora_name",  # Not supported by OpenAI
+        "use_beam_search",  # Not supported by OpenAI
+        "max_tokens",  # deprecated by "completions", not used in "responses", should be `max_new_tokens` in "openai-agents"
+    }
+
+    def to_openai_args_dict(
+        self, exclude_args: list[str] | None = None, api_format: str = "completions"
     ) -> dict[str, Any]:
         """Convert the generation hyperparameters to a dictionary of arguments for OpenAI client."""
         final_exclude_args = set(exclude_args) if exclude_args is not None else set()
-        final_exclude_args.update(
-            {
-                "min_new_tokens",  # Not supported by OpenAI
-                "greedy",  # Not directly supported by OpenAI
-                "top_k",  # Not supported by OpenAI
-                "stop_token_ids",  # Not supported by OpenAI
-            }
-        )
+        final_exclude_args.update(self._OPENAI_UNSUPPORTED_ARGS)
+        # TODO: move the excluded args into extra body, so they can be passed through the client request
 
-        mapping = {
-            "n_samples": "n",
-            "max_new_tokens": "max_completion_tokens",
-        }
+        mapping = {"n_samples": "n"}
+        if api_format == "completions":
+            mapping["max_new_tokens"] = "max_completion_tokens"
+        elif api_format == "responses":
+            mapping["max_new_tokens"] = "max_output_tokens"
+        elif api_format == "openai-agents":
+            # NOTE: max_tokens in openai-agents means `max_new_tokens` in sglang/vllm. This is not a bug
+            mapping["max_new_tokens"] = "max_tokens"
+        else:
+            raise ValueError(f"Unsupported API format: {api_format}")
+
         res = {}
         for k, v in asdict(self).items():
             if k in final_exclude_args:
@@ -218,9 +268,14 @@ class GenerationHyperparameters:
                         should_warn = True
 
                 if should_warn:
-                    logger.warning(f"Unsupported arg for openai format: `{k}`")
+                    logger.warning(
+                        f"Unsupported arg for openai format: `{k}` with value {current_value}"
+                    )
                 continue
-            res[mapping.get(k, k)] = v
+            key = mapping.get(k, k)
+            if key in res:
+                logger.warning(f"Overriding key: {key} from {k} with value: {v}")
+            res[key] = v
 
         return res
 
@@ -526,7 +581,7 @@ class SchedulingSpec:
     image: str = field(
         default="", metadata={"help": "Docker/Singularity container image to use"}
     )
-    type: str = field(
+    task_type: str = field(
         default="worker",
         metadata={
             "help": "Task type (e.g., worker, engine)",
@@ -733,6 +788,20 @@ class PPOActorConfig(TrainEngineConfig):
     kl_estimator: str = field(
         default="k1",
         metadata={"help": "KL divergence estimator", "choices": ["k1", "k2", "k3"]},
+    )
+
+    # SAPO (Soft Adaptive Policy Optimization) - https://arxiv.org/abs/2511.20347
+    use_sapo_loss: bool = field(
+        default=False,
+        metadata={"help": "Use SAPO loss (mutually exclusive with PPO clipping)"},
+    )
+    sapo_tau_pos: float = field(
+        default=1.0,
+        metadata={"help": "SAPO temperature for positive advantages"},
+    )
+    sapo_tau_neg: float = field(
+        default=1.05,
+        metadata={"help": "SAPO temperature for negative advantages"},
     )
 
     # Asynchronous RL
@@ -1068,6 +1137,8 @@ class SGLangConfig:
             args["lora_target_modules"] = [
                 x.replace("-linear", "") for x in args["lora_target_modules"]
             ]
+        from areal.platforms import current_platform
+
         args = dict(
             # Model and tokenizer
             tokenizer_path=sglang_config.model_path,
@@ -1429,6 +1500,7 @@ class ClusterSpecConfig:
 class SchedulerConfig:
     """Configuration for worker scheduling. Used in the single-controller mode. Experimental."""
 
+    type: str = field(default="local")
     endpoint: str = field(default="http://localhost:8081")
     deploy_mode: str = field(default="separation")
     functioncall_service_domain: str = field(default="http://localhost:8080")

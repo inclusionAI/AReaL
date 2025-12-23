@@ -20,7 +20,9 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     WeightUpdateRequests,
 )
+from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow
+from areal.controller import RolloutController
 from areal.core import RemoteInfEngine
 from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
@@ -39,12 +41,19 @@ class SGLangBackend:
         stop_token_ids = gconfig.stop_token_ids
         stop = gconfig.stop
 
+        if gconfig.use_beam_search:
+            raise NotImplementedError(
+                "Currently Beam search is not supported in SGLang backend."
+            )
+
         sample_params = {
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
             "max_new_tokens": gconfig.max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
+            "ignore_eos": gconfig.ignore_eos,
+            "skip_special_tokens": gconfig.skip_special_tokens,
             "frequency_penalty": gconfig.frequency_penalty,
         }
         if stop:
@@ -276,7 +285,7 @@ class RemoteSGLangEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
-    ) -> None:
+    ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(data, workflow, workflow_kwargs, should_accept_fn)
 
@@ -285,6 +294,12 @@ class RemoteSGLangEngine(InferenceEngine):
     ) -> list[dict[str, Any] | None]:
         """Wait for a specified number of requests to complete."""
         return self._engine.wait(count, timeout, raise_timeout)
+
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """Wait for a specific task to complete by task_id."""
+        return self._engine.wait_for_task(task_id, timeout, raise_timeout)
 
     def rollout_batch(
         self,
@@ -337,3 +352,12 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def export_stats(self) -> dict[str, float]:
         return stats_tracker.export_all(reduce_group=None)
+
+    @classmethod
+    def as_controller(
+        cls, config: InferenceEngineConfig, scheduler: Scheduler
+    ) -> RolloutController:
+        return RolloutController(cls, config=config, scheduler=scheduler)
+
+    def clear_batches(self, *args):
+        """Placeholder method of single-controller API."""

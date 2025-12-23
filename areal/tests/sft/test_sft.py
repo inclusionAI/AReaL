@@ -8,26 +8,34 @@ import yaml
 from sh import Command
 
 from areal.api.cli_args import SFTConfig, load_expr_config
+from areal.tests.utils import get_dataset_path, get_model_path
 
 
-def test_sft(tmp_path: str):
+@pytest.mark.parametrize("backend", ["fsdp", "megatron"])
+def test_sft(tmp_path: str, backend: str) -> None:
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, f"config_{backend}.yaml")
+    ref_losses_path = os.path.join(base_dir, f"ref_losses_{backend}.json")
 
     # Wrap over the original config to use local models/datasets if possible
-    config, _ = load_expr_config(
-        ["--config", os.path.join(base_dir, "config.yaml")], SFTConfig
-    )
+    config, _ = load_expr_config(["--config", config_path], SFTConfig)
 
+    # Use get_model_path to check local or download from HuggingFace
     local_model_path = config.model.path.replace("/", "__")
-    local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
-    if os.path.exists(local_model_path):
-        config.model.path = local_model_path
-        config.tokenizer_path = local_model_path
+    model_path = get_model_path(
+        os.path.join("/storage/openpsi/models", local_model_path),
+        config.model.path,
+    )
+    config.model.path = model_path
+    config.tokenizer_path = model_path
 
+    # Use get_dataset_path to check local or download from HuggingFace
     local_dataset_path = config.train_dataset.path.replace("/", "__")
-    local_dataset_path = os.path.join("/storage/openpsi/data", local_dataset_path)
-    if os.path.exists(local_dataset_path):
-        config.train_dataset.path = local_dataset_path
+    dataset_path = get_dataset_path(
+        os.path.join("/storage/openpsi/data", local_dataset_path),
+        config.train_dataset.path,
+    )
+    config.train_dataset.path = dataset_path
 
     # save new config
     os.makedirs(os.path.join(tmp_path, "config"), exist_ok=True)
@@ -57,7 +65,7 @@ def test_sft(tmp_path: str):
     with open(os.path.join(tmp_path, "losses.json")) as f:
         losses: list[float] = json.load(f)
 
-    with open(os.path.join(base_dir, "ref_losses.json")) as f:
+    with open(ref_losses_path) as f:
         ref_losses: list[float] = json.load(f)
 
     # Refer to https://docs.pytorch.org/docs/stable/testing.html#torch.testing.assert_close

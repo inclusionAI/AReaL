@@ -11,11 +11,12 @@ from transformers import AutoTokenizer
 from areal.api.cli_args import MicroBatchSpec, OptimizerConfig, TrainEngineConfig
 from areal.api.io_struct import FinetuneSpec, SaveLoadMeta
 from areal.platforms import current_platform
+from areal.tests.utils import get_model_path
 
 VOCAB_SIZE = 100
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen3-0.6B"
+MODEL_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+)
 
 
 @pytest.fixture(scope="module")
@@ -171,7 +172,7 @@ def test_hf_save_load_weights(tmp_path_factory, engine, mock_input):
     assert torch.allclose(old, new)
 
 
-@torch.no_grad()
+@pytest.mark.slow
 def test_dcp_save_load_weights(tmp_path_factory, engine, mock_input):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     path = tmp_path_factory.mktemp("dcp_engine_test")

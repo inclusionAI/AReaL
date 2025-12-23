@@ -22,9 +22,11 @@ from areal.api.io_struct import (
 if TYPE_CHECKING:
     from areal.api.workflow_api import RolloutWorkflow
     from areal.core.workflow_executor import WorkflowExecutor
+    from areal.utils.data import MicroBatchList
 
 
 class TrainEngine(abc.ABC):
+    @abc.abstractmethod
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Initialize PyTorch distributed communication groups.
 
@@ -35,6 +37,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def initialize(self, *args, **kwargs):
         """Initialize environments for distributed training and load models.
 
@@ -50,6 +53,7 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @property
+    @abc.abstractmethod
     def data_parallel_group(self) -> dist.ProcessGroup:
         """Get the data parallel communication group of this engine.
 
@@ -61,6 +65,7 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @property
+    @abc.abstractmethod
     def data_parallel_rank(self) -> int:
         """Get the rank of the current process in the data parallel group.
 
@@ -72,6 +77,7 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @property
+    @abc.abstractmethod
     def data_parallel_world_size(self) -> int:
         """Get the world size of the data parallel group.
 
@@ -82,6 +88,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def current_data_parallel_head(self) -> int:
         """Get the current data parallel head rank.
 
@@ -92,6 +99,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def is_data_parallel_head(self) -> bool:
         """Check if the current rank is the data parallel head of the current engine.
 
@@ -103,6 +111,7 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @property
+    @abc.abstractmethod
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
         """Get the context and model parallel communication group of this engine.
 
@@ -114,6 +123,7 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @property
+    @abc.abstractmethod
     def cpu_group(self) -> dist.ProcessGroup:
         """Get the CPU communication group of this engine.
 
@@ -127,6 +137,7 @@ class TrainEngine(abc.ABC):
     def destroy(self):
         """Destroy the engine and release GPU memory of models."""
 
+    @abc.abstractmethod
     def train(self, mode: bool = True):
         """Set the engine to training mode.
 
@@ -144,6 +155,7 @@ class TrainEngine(abc.ABC):
         """
         return self.train(False)
 
+    @abc.abstractmethod
     def update_weights(self, meta: WeightUpdateMeta):
         """Update weights to the inference engine in a blocking manner.
 
@@ -154,6 +166,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
         """Connect to an inference engine for online training.
 
@@ -164,6 +177,71 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
+    def rollout_batch(
+        self,
+        data: list[dict[str, Any]],
+        granularity: int = 1,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Submit a batch of requests and wait for results.
+
+        This method does not support asynchronous rollout and should be used for offline
+        data collection or debugging, not in production experiments.
+        Should note that this is a simple rollout engine method forwarding with
+        distributed data management.
+
+        Parameters
+        ----------
+        data : list[dict[str, Any]]
+            A list of input data dictionaries.
+        granularity : int, optional
+            The granularity of the rollout, by default 1.
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str | None, optional
+            The workflow to use for rollout generation, by default None.
+        workflow_kwargs : dict[str, Any] | None, optional
+            Keyword arguments to pass to the workflow constructor, by default None.
+
+        Returns
+        -------
+        dict[str, Any]
+            The rollout results.
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def prepare_batch(
+        self,
+        dataloader: StatefulDataLoader,
+        granularity: int = 1,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+    ) -> dict[str, Any]:
+        """Prepare a batch of data for training from a dataloader.
+
+        Parameters
+        ----------
+        dataloader : StatefulDataLoader
+            The dataloader to fetch data from.
+        granularity : int, optional
+            The granularity of the rollout, by default 1.
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str | None, optional
+            The workflow to use for rollout generation, by default None.
+        workflow_kwargs : dict[str, Any] | None, optional
+            Keyword arguments to pass to the workflow constructor, by default None.
+        should_accept_fn : Callable[[dict[str, Any]], bool] | str | None, optional
+            A function to filter trajectories, by default None.
+
+        Returns
+        -------
+        dict[str, Any]
+            The prepared batch data.
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     def set_version(self, version: int):
         """Set the current weight version in the training engine.
 
@@ -174,6 +252,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def get_version(self) -> int:
         """Get the current weight version in the training engine.
 
@@ -184,6 +263,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def save(self, meta: SaveLoadMeta):
         """Save model weights and optimizer states for later use.
 
@@ -194,6 +274,7 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
     def load(self, meta: SaveLoadMeta):
         """Load model weights and optimizer states from a file.
 
@@ -204,15 +285,57 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def step_lr_scheduler(self):
-        """Step the learning rate scheduler.
+    @abc.abstractmethod
+    def optimizer_zero_grad(self):
+        """Zero out all gradients in the optimizer."""
+        raise NotImplementedError()
 
-        Since PPO uses minibatch updates, this method should be called periodically
-        (e.g., once per PPO step). It is separated from train_batch to allow
-        for more flexible learning rate scheduling.
+    @abc.abstractmethod
+    def optimizer_step(self):
+        """Perform a single optimization step.
+
+        Returns
+        -------
+        dict[str, float]
+            Training statistics containing ``update_successful``, ``grad_norm``, and ``lr``.
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
+    def lr_scheduler_step(self):
+        """Advance the learning rate scheduler by one step."""
+        raise NotImplementedError()
+
+    def step_lr_scheduler(self):
+        """This is an alias for `lr_scheduler_step()`."""
+        return self.lr_scheduler_step()
+
+    @abc.abstractmethod
+    def forward_backward_batch(
+        self,
+        mb_list: MicroBatchList,
+        process_output_fn: Callable[
+            [torch.Tensor, dict[str, Any]], torch.Tensor | None
+        ],
+        forward_only: bool = False,
+    ) -> None:
+        """Process micro-batches through forward and optionally backward pass.
+
+        Parameters
+        ----------
+        mb_list : MicroBatchList
+            The micro-batch list, which is iterable and yields MicroBatchItem tuples.
+        process_output_fn : Callable[[torch.Tensor, dict[str, Any]], torch.Tensor | None]
+            A function that processes the model output (logits) and returns the loss tensor.
+            If the returned loss is not None, backward() will be called on it.
+            Results can be collected via closure if needed.
+            Signature: ``(logits: Tensor, inputs: dict) -> loss | None``
+        forward_only : bool, optional
+            If True, skip backward pass. Default is False.
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     def train_batch(
         self,
         input_: dict[str, Any],
@@ -227,14 +350,14 @@ class TrainEngine(abc.ABC):
 
         Parameters
         ----------
-        input_ : Dict[str, Any]
+        input_ : dict[str, Any]
             The input data for model forward pass and the loss function.
             Redundant entries are allowed.
         loss_fn : Callable[..., torch.Tensor]
             The loss function. For actor (is_critic=False), it receives
             (logprobs, entropy, input_data). For critic (is_critic=True),
             it receives (values, input_data). Returns a scalar normalized loss.
-        loss_weight_fn : Callable[[Dict[str, Any]], torch.Tensor]
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
@@ -242,13 +365,14 @@ class TrainEngine(abc.ABC):
 
         Returns
         -------
-        Dict[str, float]
+        dict[str, float]
             Scalar statistics after training, e.g., the current learning rate,
             gradient norm, etc.
         """
         raise NotImplementedError()
 
     @torch.no_grad()
+    @abc.abstractmethod
     def eval_batch(
         self,
         input_: dict[str, Any],
@@ -263,14 +387,14 @@ class TrainEngine(abc.ABC):
 
         Parameters
         ----------
-        input_ : Dict[str, Any]
+        input_ : dict[str, Any]
             The input data for model forward pass and the loss function.
             Redundant entries are allowed.
         loss_fn : Callable[..., torch.Tensor]
             The loss function. For actor (is_critic=False), it receives
             (logprobs, entropy, input_data). For critic (is_critic=True),
             it receives (values, input_data). Returns a scalar normalized loss.
-        loss_weight_fn : Callable[[Dict[str, Any]], torch.Tensor]
+        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
@@ -285,12 +409,13 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @torch.no_grad()
-    def forward(
+    @abc.abstractmethod
+    def forward_batch(
         self,
         input_: dict[str, Any],
         output_seqlens: list[int] | None = None,
         aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
-    ) -> Any | None:
+    ) -> torch.Tensor:
         """Run the forward pass or inference on the model.
 
         Note
@@ -299,22 +424,32 @@ class TrainEngine(abc.ABC):
 
         Parameters
         ----------
-        input_ : Dict[str, Any]
+        input_ : dict[str, Any]
             The input data for model forward pass. Redundant entries are allowed.
-        output_seqlens : List[int], optional
+        output_seqlens : list[int], optional
             The desired output sequence lengths. If None, assumes that the output
             has the same lengths as inputs, by default None.
-        aggregate_fn : Callable[[List[Any]], Any], optional
+        aggregate_fn : Callable[[list[Any]], Any], optional
             A function to aggregate micro-batched outputs, by default torch.cat.
 
         Returns
         -------
-        Any or None
+        Any
             For actor (is_critic=False): logprobs tensor aggregated by `aggregate_fn`.
             For critic (is_critic=True): values tensor aggregated by `aggregate_fn`.
         """
         raise NotImplementedError()
 
+    @torch.no_grad()
+    def forward(
+        self,
+        input_: dict[str, Any],
+        output_seqlens: list[int] | None = None,
+        aggregate_fn: Callable[[list[Any]], Any] = torch.cat,
+    ) -> torch.Tensor:
+        return self.forward_batch(input_, output_seqlens, aggregate_fn)
+
+    @abc.abstractmethod
     def export_stats(self) -> dict[str, float]:
         """Export the statistics recorded in this engine process.
 
@@ -328,6 +463,14 @@ class TrainEngine(abc.ABC):
         dict[str, float]
             The exported scalar statistics.
         """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def onload(self) -> None:
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def offload(self) -> None:
         raise NotImplementedError()
 
 
@@ -373,7 +516,7 @@ class InferenceEngine(abc.ABC):
 
         Parameters
         ----------
-        server_args : Dict[str, Any]
+        server_args : dict[str, Any]
             CLI arguments for the inference server (e.g., model path, GPU indices,
             port numbers, backend-specific settings)
 
@@ -491,14 +634,14 @@ class InferenceEngine(abc.ABC):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         should_accept_fn: Callable | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> int:
         """Submit a request to the inference engine and return immediately.
 
         Should be used together with subsequent `wait`.
 
         Parameters
         ----------
-        data : Dict[str, Any]
+        data : dict[str, Any]
             The input data for rollout. Used by the user's customized workflow implementation.
         workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             The workflow to use for rollout generation. Can be:
@@ -507,13 +650,18 @@ class InferenceEngine(abc.ABC):
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
-        workflow_kwargs : Dict[str, Any], optional
+        workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
             By default None.
         should_accept_fn : Callable, optional
             A function used to decide whether to accept a specific trajectory, i.e., dynamic filtering.
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
+
+        Returns
+        -------
+        int
+            The id assigned to this task
         """
         raise NotImplementedError()
 
@@ -546,6 +694,34 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """Wait for a specific task to complete by task_id.
+
+        Parameters
+        ----------
+        task_id : int
+            The task ID returned by submit()
+        timeout : float | None, optional
+            Timeout in seconds, by default None
+        raise_timeout : bool, optional
+            Whether to raise TimeoutError on timeout, by default True
+
+        Returns
+        -------
+        dict[str, Any] | None
+            Trajectory dict, or None if rejected or timeout with raise_timeout=False
+
+        Raises
+        ------
+        ValueError
+            If task_id was never submitted or already consumed
+        TimeoutError
+            If timeout expires and raise_timeout=True
+        """
+        raise NotImplementedError()
+
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
@@ -561,7 +737,7 @@ class InferenceEngine(abc.ABC):
 
         Parameters
         ----------
-        data : List[Dict[str, Any]]
+        data : list[dict[str, Any]]
             A list of input data dictionaries for rollout
         workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             The workflow to use for rollout generation. Can be:
@@ -570,14 +746,14 @@ class InferenceEngine(abc.ABC):
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
-        workflow_kwargs : Dict[str, Any], optional
+        workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
             By default None.
 
         Returns
         -------
-        Dict[str, Any]
+        dict[str, Any]
             A concatenated batch of trajectory results
         """
         raise NotImplementedError()
@@ -617,7 +793,7 @@ class InferenceEngine(abc.ABC):
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
-        workflow_kwargs : Dict[str, Any], optional
+        workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
             By default None.
@@ -626,7 +802,7 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        Dict[str, Any]
+        dict[str, Any]
             A full batch of trajectory results with controlled staleness
         """
         raise NotImplementedError()

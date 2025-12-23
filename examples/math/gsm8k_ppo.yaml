@@ -38,7 +38,7 @@ actor:
   path: Qwen/Qwen2.5-1.5B-Instruct
   init_from_scratch: false
   disable_dropout: true
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 10240
@@ -78,7 +78,6 @@ critic:
   dtype: ${actor.dtype}
   eps_clip: 0.5
   ppo_n_minibatches: ${actor.ppo_n_minibatches}
-  mask_no_eos_with_zero: ${actor.mask_no_eos_with_zero}
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: ${actor.optimizer}

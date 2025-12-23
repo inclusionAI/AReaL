@@ -1,5 +1,4 @@
 import asyncio
-import os
 from unittest.mock import Mock
 
 import pytest
@@ -15,9 +14,9 @@ from areal.api.cli_args import (
 from areal.api.io_struct import ModelRequest, ParamSpec, WeightUpdateMeta
 from areal.api.scheduler_api import Worker
 from areal.controller import RolloutController
-from areal.controller.batch import DistributedBatchMemory
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.scheduler.local import LocalScheduler
+from areal.tests.utils import get_model_path
 from areal.utils.hf_utils import load_hf_tokenizer
 
 
@@ -41,7 +40,8 @@ class MockScheduler:
         self.workers = []
         self.call_count = 0
         self.engine_calls = []
-        self._pending_results = {}  # worker_id -> list of results
+        self._pending_results = {}  # worker_id -> dict[task_id -> result]
+        self._task_counter = 0
 
     def create_workers(self, job, *args, **kwargs):
         """Create workers based on Job specification."""
@@ -59,7 +59,7 @@ class MockScheduler:
         ]
         # Initialize pending results for each worker
         for wid in worker_ids:
-            self._pending_results[wid] = []
+            self._pending_results[wid] = {}
         return worker_ids
 
     def get_workers(self, role, timeout=None):
@@ -73,10 +73,13 @@ class MockScheduler:
         self.call_count += 1
         if method == "agenerate":
             return Mock()
-        # Handle submit method - add a result to pending results
+        # Handle submit method - return a task_id and store the result
         elif method == "submit":
             if worker_id not in self._pending_results:
-                self._pending_results[worker_id] = []
+                self._pending_results[worker_id] = {}
+            # Generate a unique task_id
+            task_id = self._task_counter
+            self._task_counter += 1
             # Simulate a successful rollout result
             result = {
                 "input_ids": torch.randint(0, 100, (1, 10)),
@@ -86,17 +89,29 @@ class MockScheduler:
                 ).unsqueeze(0),
                 "rewards": torch.randn(1),
             }
-            self._pending_results[worker_id].append(result)
+            self._pending_results[worker_id][task_id] = result
+            return task_id
+        # Handle wait_for_task method
+        elif method == "wait_for_task":
+            task_id = kwargs.get("task_id")
+            if (
+                worker_id in self._pending_results
+                and task_id in self._pending_results[worker_id]
+            ):
+                result = self._pending_results[worker_id].pop(task_id)
+                return result
+            return None
         elif method == "wait":
             # Return a result from pending results if available
             count = kwargs["count"]
             if worker_id in self._pending_results and self._pending_results[worker_id]:
                 if len(self._pending_results[worker_id]) < count:
                     return []
-                results, self._pending_results[worker_id] = (
-                    self._pending_results[worker_id][:count],
-                    self._pending_results[worker_id][count:],
-                )
+                # Get first count results
+                task_ids = list(self._pending_results[worker_id].keys())[:count]
+                results = [
+                    self._pending_results[worker_id].pop(tid) for tid in task_ids
+                ]
                 return results
             return []
         return None
@@ -112,10 +127,13 @@ class MockScheduler:
         ]:
             return self._async_call_engine_internal(worker_id, method, *args, **kwargs)
 
-        # Handle submit method - add a result to pending results
+        # Handle submit method - return a task_id and store the result
         if method == "submit":
             if worker_id not in self._pending_results:
-                self._pending_results[worker_id] = []
+                self._pending_results[worker_id] = {}
+            # Generate a unique task_id
+            task_id = self._task_counter
+            self._task_counter += 1
             # Simulate a successful rollout result
             result = {
                 "input_ids": torch.randint(0, 100, (1, 10)),
@@ -125,7 +143,8 @@ class MockScheduler:
                 ).unsqueeze(0),
                 "rewards": torch.randn(1),
             }
-            self._pending_results[worker_id].append(result)
+            self._pending_results[worker_id][task_id] = result
+            return task_id
 
         return None
 
@@ -136,6 +155,7 @@ class MockScheduler:
     def delete_workers(self, role):
         self.workers.clear()
         self._pending_results.clear()
+        self._task_counter = 0
 
 
 class MockInferenceEngine:
@@ -437,34 +457,18 @@ class TestRolloutControllerSubmitAndWait:
 
         controller.destroy()
 
-    def test_wait_handles_rejected_rollouts(self):
-        config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=20)
+
+class TestRolloutControllerBatchOperations:
+    def test_rollout_batch_returns_dict_not_rtensor(self):
+        """Verify RolloutController returns regular dicts, NOT RTensors.
+
+        Unlike TrainController which uses RTensors for distributed batch storage,
+        RolloutController uses task-based round-robin and returns regular Python dicts.
+        """
+        from areal.scheduler.rpc.rtensor import RTensor
+
+        config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
         scheduler = MockScheduler()
-
-        # Override call_engine to simulate mixed results (some accepted, some rejected)
-        original_call_engine = scheduler.call_engine
-        result_counter = [0]  # Use list to allow modification in nested function
-
-        def custom_call_engine(worker_id, method, *args, **kwargs):
-            if method == "submit":
-                result_counter[0] += 1
-                if worker_id not in scheduler._pending_results:
-                    scheduler._pending_results[worker_id] = []
-                # Every other submission is rejected (None)
-                if result_counter[0] % 2 == 0:
-                    scheduler._pending_results[worker_id].append(None)
-                else:
-                    result = {
-                        "input_ids": torch.randint(0, 100, (1, 10)),
-                        "attention_mask": torch.ones(1, 10, dtype=torch.bool),
-                        "loss_mask": torch.ones(1, 10, dtype=torch.bool),
-                        "rewards": torch.randn(1),
-                    }
-                    scheduler._pending_results[worker_id].append(result)
-            return original_call_engine(worker_id, method, *args, **kwargs)
-
-        scheduler.call_engine = custom_call_engine
-
         controller = RolloutController(
             inf_engine=MockInferenceEngine,
             config=config,
@@ -474,20 +478,26 @@ class TestRolloutControllerSubmitAndWait:
         alloc_mode = AllocationMode.from_str("sglang:d1")
         controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
-        for i in range(6):
-            controller.submit(
-                {"id": i},
-                workflow="areal.tests.utils.TestWorkflow",
-                workflow_kwargs={},
-            )
+        batch_data = [{"id": i} for i in range(3)]
+        batch = controller.rollout_batch(
+            batch_data,
+            workflow="areal.tests.utils.TestWorkflow",
+            workflow_kwargs={},
+        )
 
-        batch = controller.wait(count=3, timeout=2.0)
-        assert len(batch) == 3
+        # Verify batch is a dict, not RTensor
+        assert isinstance(batch, dict), "RolloutController should return dict"
+
+        # Verify no RTensors in the result
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                assert not isinstance(value, RTensor), f"Found RTensor at key {key}"
+            elif isinstance(value, dict):
+                for k, v in value.items():
+                    assert not isinstance(v, RTensor), f"Found RTensor at {key}.{k}"
 
         controller.destroy()
 
-
-class TestRolloutControllerBatchOperations:
     def test_rollout_batch_submits_all_data(self):
         config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
         scheduler = MockScheduler()
@@ -507,8 +517,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        assert isinstance(batch, DistributedBatchMemory)
-        assert len(batch) == 4
+        # Check batch size (first dimension of input_ids tensor)
+        assert batch["input_ids"].shape[0] == 4
 
         controller.destroy()
 
@@ -531,7 +541,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        assert len(batch) == 10
+        # Check batch size (first dimension of input_ids tensor)
+        assert batch["input_ids"].shape[0] == 10
 
         controller.destroy()
 
@@ -946,9 +957,9 @@ def test_parametrized_capacity_settings(
     controller.destroy()
 
 
-QWEN3_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
-if not os.path.exists(QWEN3_PATH):
-    QWEN3_PATH = "Qwen/Qwen3-0.6B"
+QWEN3_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+)
 
 
 @pytest.mark.parametrize("model_path", [QWEN3_PATH])
@@ -991,10 +1002,353 @@ def test_rollout_controller_integration(tmp_path, model_path):
                 tokenizer=tokenizer,
             ),
         )
-        assert isinstance(result, DistributedBatchMemory)
-        assert len(result) == bs
+        assert isinstance(result, dict)
+        assert len(result["attention_mask"].shards) == bs
     finally:
         rollout.destroy()
+
+
+class TestRolloutControllerResolveWorkflow:
+    """Tests for workflow resolution methods."""
+
+    def test_resolve_workflow_str_with_string(self):
+        """Test _resolve_workflow_str with string input."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        result = controller._resolve_workflow_str("areal.workflow.rlvr.RLVRWorkflow")
+        assert result == "areal.workflow.rlvr.RLVRWorkflow"
+
+    def test_resolve_workflow_str_with_invalid_type(self):
+        """Test _resolve_workflow_str raises for invalid type."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        with pytest.raises(ValueError, match="Invalid workflow type"):
+            controller._resolve_workflow_str(12345)
+
+
+class TestRolloutControllerShouldAcceptFn:
+    """Tests for should_accept_fn resolution."""
+
+    def test_resolve_should_accept_fn_with_none(self):
+        """Test _resolve_should_accept_fn with None input."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        result = controller._resolve_should_accept_fn(None)
+        assert result is None
+
+    def test_resolve_should_accept_fn_with_callable_raises(self):
+        """Test _resolve_should_accept_fn raises for callable input."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        def my_filter(data):
+            return True
+
+        with pytest.raises(RuntimeError, match="must be an importable string path"):
+            controller._resolve_should_accept_fn(my_filter)
+
+    def test_resolve_should_accept_fn_with_invalid_path_raises(self):
+        """Test _resolve_should_accept_fn raises for invalid import path."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        with pytest.raises(RuntimeError, match="Failed to import"):
+            controller._resolve_should_accept_fn("invalid.module.path.function")
+
+
+class TestRolloutControllerDispatcher:
+    """Tests for dispatcher property and initialization."""
+
+    def test_dispatcher_raises_before_initialization(self):
+        """Test dispatcher property raises when not initialized."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        with pytest.raises(RuntimeError, match="initialize\\(\\) must be called"):
+            _ = controller.dispatcher
+
+    def test_dispatcher_available_after_initialization(self):
+        """Test dispatcher property works after initialization."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        dispatcher = controller.dispatcher
+        assert dispatcher is not None
+
+        controller.destroy()
+
+
+class TestRolloutControllerStalenessManager:
+    """Tests for staleness manager property."""
+
+    def test_staleness_manager_none_before_initialization(self):
+        """Test staleness_manager is None before initialization."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        assert controller.staleness_manager is None
+
+    def test_staleness_manager_available_after_initialization(self):
+        """Test staleness_manager is available after initialization."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_head_offpolicyness=2,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        assert controller.staleness_manager is not None
+        assert controller.staleness_manager.max_staleness == 2
+
+        controller.destroy()
+
+
+class TestRolloutControllerRunner:
+    """Tests for runner property (backward compatibility)."""
+
+    def test_runner_property_returns_dispatcher_runner(self):
+        """Test runner property returns the dispatcher's runner."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        runner = controller.runner
+        assert runner is controller.dispatcher.runner
+
+        controller.destroy()
+
+
+class TestRolloutControllerExportStats:
+    """Tests for export_stats method."""
+
+    def test_export_stats_aggregates_from_workers(self):
+        """Test export_stats correctly aggregates stats from all workers."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+
+        # Override async_call_engine to return stats for export_stats method
+        original_async_call = scheduler.async_call_engine
+
+        async def mock_async_call_engine(worker_id, method, *args, **kwargs):
+            if method == "export_stats":
+                return {
+                    "reward": 0.5,
+                    "reward__count": 10,
+                    "loss": 0.3,
+                    "loss__count": 10,
+                }
+            return await original_async_call(worker_id, method, *args, **kwargs)
+
+        scheduler.async_call_engine = mock_async_call_engine
+
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d2")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        stats = controller.export_stats()
+
+        # Should aggregate stats from all workers
+        assert "reward" in stats or "loss" in stats
+
+        controller.destroy()
+
+
+class TestRolloutControllerRolloutStats:
+    """Tests for _rollout_stats method."""
+
+    def test_rollout_stats_returns_formatted_string(self):
+        """Test _rollout_stats returns properly formatted stats string."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_head_offpolicyness=2,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        stats_str = controller._rollout_stats()
+
+        assert "enqueued:" in stats_str
+        assert "running:" in stats_str
+        assert "accepted:" in stats_str
+        assert "rejected:" in stats_str
+
+        controller.destroy()
+
+
+class TestRolloutControllerSchedulingSpec:
+    """Tests for scheduling spec handling during initialization."""
+
+    def test_initialization_scales_scheduling_spec(self):
+        """Test initialization correctly scales scheduling spec for instance size."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_concurrent_rollouts=32,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        # Use TP=2 to test instance size scaling
+        alloc_mode = AllocationMode.from_str("sglang:d2t2")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        # Verify workers were created with correct count
+        assert len(controller.workers) == 2  # dp_size = 2
+
+        controller.destroy()
+
+
+class TestRolloutControllerQueueSize:
+    """Tests for queue size configuration."""
+
+    def test_queue_size_uses_config_value(self):
+        """Test queue size uses config value when provided."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_concurrent_rollouts=32,
+            queue_size=100,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        # Queue size should be used from config
+        assert controller.dispatcher is not None
+
+        controller.destroy()
+
+    def test_queue_size_defaults_to_concurrent_rollouts(self):
+        """Test queue size defaults to max_concurrent_rollouts * 16 when not provided."""
+        config = create_test_config(
+            consumer_batch_size=16,
+            max_concurrent_rollouts=32,
+            queue_size=None,
+        )
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        # Should use default queue size
+        assert controller.dispatcher is not None
+
+        controller.destroy()
+
+
+class TestRolloutControllerCollectiveRPC:
+    """Tests for collective RPC methods."""
+
+    def test_collective_rpc_calls_all_workers(self):
+        """Test _collective_rpc calls all workers."""
+        config = create_test_config(consumer_batch_size=16)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d3")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        # Clear previous calls
+        scheduler.engine_calls = []
+
+        controller._collective_rpc("test_method", arg1="value1")
+
+        # Should have called all 3 workers
+        test_calls = [
+            call for call in scheduler.engine_calls if call[1] == "test_method"
+        ]
+        assert len(test_calls) == 3
+
+        controller.destroy()
 
 
 if __name__ == "__main__":

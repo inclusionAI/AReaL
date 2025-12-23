@@ -3,32 +3,40 @@ import os
 import sys
 from dataclasses import asdict
 
+import pytest
 import yaml
 from sh import Command
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
+from areal.tests.utils import get_dataset_path, get_model_path
 
 
-def test_grpo(tmp_path: str):
+@pytest.mark.parametrize("backend", ["fsdp", "megatron"])
+def test_grpo(tmp_path: str, backend: str) -> None:
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, f"config_{backend}.yaml")
 
     # Wrap over the original config to use local models/datasets if possible
-    config, _ = load_expr_config(
-        ["--config", os.path.join(base_dir, "config.yaml")], GRPOConfig
-    )
+    config, _ = load_expr_config(["--config", config_path], GRPOConfig)
 
+    # Use get_model_path to check local or download from HuggingFace
     local_model_path = config.actor.path.replace("/", "__")
-    local_model_path = os.path.join("/storage/openpsi/models", local_model_path)
-    if os.path.exists(local_model_path):
-        config.actor.path = local_model_path
-        config.ref.path = local_model_path
-        config.tokenizer_path = local_model_path
-        config.sglang.model_path = local_model_path
+    model_path = get_model_path(
+        os.path.join("/storage/openpsi/models", local_model_path),
+        config.actor.path,
+    )
+    config.actor.path = model_path
+    config.ref.path = model_path
+    config.tokenizer_path = model_path
+    config.sglang.model_path = model_path
 
+    # Use get_dataset_path to check local or download from HuggingFace
     local_dataset_path = config.train_dataset.path.replace("/", "__")
-    local_dataset_path = os.path.join("/storage/openpsi/data", local_dataset_path)
-    if os.path.exists(local_dataset_path):
-        config.train_dataset.path = local_dataset_path
+    dataset_path = get_dataset_path(
+        os.path.join("/storage/openpsi/data", local_dataset_path),
+        config.train_dataset.path,
+    )
+    config.train_dataset.path = dataset_path
 
     # save new config
     os.makedirs(os.path.join(tmp_path, "config"), exist_ok=True)

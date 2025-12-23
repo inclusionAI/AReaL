@@ -12,6 +12,7 @@ from areal.dataset import get_custom_dataset
 from areal.engine.ppo.actor import FSDPPPOActor
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
+from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils import seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.device import log_gpu_stats
@@ -23,12 +24,6 @@ from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-
-def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **kwargs):
-    from areal.reward.math_parser import process_results
-
-    return int(process_results(completions, answer)[0])
 
 
 def main(args):
@@ -81,16 +76,29 @@ def main(args):
     eval_rollout.config.max_head_offpolicyness = int(1e12)
     eval_rollout.initialize()
 
-    # weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
-    weight_update_meta = WeightUpdateMeta.from_disk(
-        config.saver.experiment_name,
-        config.saver.trial_name,
-        config.saver.fileroot,
-        use_lora=config.actor.use_lora,
-        lora_name=config.gconfig.lora_name,
-        lora_int_id=1,  # hard coded for the single lora example
-        base_model_name=config.actor.path,
-    )
+    if config.actor.weight_update_mode == "xccl":
+        weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
+            allocation_mode,
+            use_lora=config.actor.use_lora,
+            lora_name=config.gconfig.lora_name,
+            lora_int_id=1,  # hard coded for the single lora example
+            base_model_name=config.actor.path,
+        )
+    elif config.actor.weight_update_mode == "disk":
+        weight_update_meta = WeightUpdateMeta.from_disk(
+            config.saver.experiment_name,
+            config.saver.trial_name,
+            config.saver.fileroot,
+            use_lora=config.actor.use_lora,
+            lora_name=config.gconfig.lora_name,
+            lora_int_id=1,  # hard coded for the single lora example
+            base_model_name=config.actor.path,
+        )
+
+    else:
+        raise ValueError(
+            f"Invalid weight_update_mode: {config.actor.weight_update_mode}. Expected 'xccl' or 'disk'."
+        )
 
     actor.initialize(None, ft_spec)
     actor.connect_engine(rollout, weight_update_meta)

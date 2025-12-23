@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -13,10 +14,15 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import InferenceEngineConfig, SchedulingSpec
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import ModelRequest, ModelResponse, ParamSpec, WeightUpdateMeta
+from areal.api.io_struct import (
+    LocalInfServerInfo,
+    ModelRequest,
+    ModelResponse,
+    ParamSpec,
+    WeightUpdateMeta,
+)
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
-from areal.controller.batch import DistributedBatchMemory
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher
 from areal.utils import logging, perf_tracer
@@ -31,17 +37,17 @@ logger = logging.getLogger(__name__)
 # type annotation, which disallows workflow object or types
 @dataclass
 class _RemoteRolloutTaskInput:
+    task_id: int
     data: dict[str, Any]
     workflow: str
     workflow_kwargs: dict[str, Any]
-    should_accept_fn: str
-    task_id: int | None = None
+    should_accept_fn: str | None
 
 
 @dataclass
 class _RemoteRolloutResult:
+    task_id: int
     trajectory: dict[str, Any]
-    task_id: int | None = None
 
 
 class RolloutController:
@@ -57,6 +63,7 @@ class RolloutController:
 
         # Worker management
         self.workers: list[Worker] = []  # List of Worker objects from scheduler
+        self.server_infos: list[LocalInfServerInfo] = []
         self._worker_role: str
 
         # Round-robin scheduling
@@ -80,6 +87,7 @@ class RolloutController:
         role: str,
         alloc_mode: AllocationMode,
         server_args: dict[str, Any],
+        server_infos: list[LocalInfServerInfo] | None = None,
         *args,
         **kwargs,
     ):
@@ -109,6 +117,7 @@ class RolloutController:
             self._async_initialize(
                 job,
                 server_args,
+                server_infos,
                 *args,
                 **kwargs,
             )
@@ -140,7 +149,12 @@ class RolloutController:
         self._dispatcher.initialize(logger=logger)
 
     async def _async_initialize(
-        self, job: Job, server_args: dict[str, Any], *args, **kwargs
+        self,
+        job: Job,
+        server_args: dict[str, Any],
+        server_infos: list[LocalInfServerInfo] | None = None,
+        *args,
+        **kwargs,
     ):
         # Create workers via scheduler
         logger.info("Creating workers via scheduler...")
@@ -170,8 +184,30 @@ class RolloutController:
         logger.info("Engine created on all workers!")
 
         logger.info("Calling engine initialization...")
-        await self._collective_rpc_async("launch_server", server_args=server_args)
-        await self._collective_rpc_async("initialize", *args, **kwargs)
+        if server_infos is not None:
+            # Connecting to existing local servers for evaluation
+            self.server_infos = server_infos
+            assert len(self.server_infos) == len(self.workers), (
+                len(self.server_infos),
+                len(self.workers),
+            )
+            tasks = [
+                self.scheduler.async_call_engine(
+                    worker_id=worker.id,
+                    method="initialize",
+                    addr=f"{info.host}:{info.port}",
+                    *args,
+                    **kwargs,
+                )
+                for worker, info in zip(self.workers, self.server_infos)
+            ]
+            await asyncio.gather(*tasks)
+        else:
+            self.server_infos = await self._collective_rpc_async(
+                "launch_server", server_args=server_args
+            )
+            await self._collective_rpc_async("initialize", *args, **kwargs)
+
         logger.info("All engines are initialized...")
 
     def destroy(self):
@@ -264,7 +300,7 @@ class RolloutController:
             # NOTE: No need to call `on_rollout_submitted` here.
             # This function will be passed to `BatchTaskDispather` where
             # `on_rollout_submitted` will be called upon dispatching
-            await self.scheduler.async_call_engine(
+            wait_task_id = await self.scheduler.async_call_engine(
                 worker.id,
                 "submit",
                 data=pending_task.data,
@@ -279,32 +315,27 @@ class RolloutController:
             traj: dict[str, Any] | None = None
 
             try:
-                # Wait for a generation to return
-                # NOTE: the returned result may not be the one that has
-                # been submitted before this callback
-                result = []
+                result = None
                 tik = time.time()
                 while (
-                    len(result) == 0 and time.time() - tik < self.config.request_timeout
+                    result is None and time.time() - tik < self.config.request_timeout
                 ):
                     result = await self.scheduler.async_call_engine(
                         worker.id,
-                        "wait",
-                        count=1,
+                        "wait_for_task",
+                        task_id=wait_task_id,
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
                         http_timeout=self.config.request_timeout,
                     )
 
                 # TimeourError will be catched below
-                if len(result) == 0:
+                if result is None:
                     raise TimeoutError(
                         f"Rollout request timed out after {self.config.request_timeout}"
                     )
 
-                assert len(result) == 1
-                traj = result[0]
-
+                traj = result
                 should_accept_traj = traj is not None
                 if should_accept_traj:
                     manager.on_rollout_accepted()
@@ -338,7 +369,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
-    ) -> None:
+    ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         if workflow_kwargs is None:
@@ -347,17 +378,18 @@ class RolloutController:
         # NOTE: RolloutController does not support `should_accept_fn`
         # If the workflow's result should be aborted,
         # `arun_episode` should return None instead.
+        task_id = int(uuid.uuid4())
         task_input = _RemoteRolloutTaskInput(
             data=data,
             workflow=workflow_str,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
-            # NOTE: For now we don't trace tasks at the controller level
-            task_id=None,
+            task_id=task_id,
         )
 
         # Delegate to dispatcher
         self.dispatcher.submit_task_input(task_input)
+        return task_id
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
@@ -367,6 +399,7 @@ class RolloutController:
         # Log and trace
         if self.config.enable_rollout_tracing:
             logger.info("Rollout results are ready!")
+
         return [r.trajectory if r is not None else None for r in results]
 
     @trace_perf("rollout_controller.rollout_batch", category="scheduler")
@@ -391,11 +424,7 @@ class RolloutController:
             )
         results = self.wait(count=len(data))
         # Concatenate into batch tensor format
-        batch = concat_padded_tensors([r for r in results if r is not None])
-
-        # NOTE: DistributedBatchMemory.from_dict does nothing for now
-        # Just for sync with internal code
-        return DistributedBatchMemory.from_dict(batch)
+        return concat_padded_tensors([r for r in results if r is not None])
 
     @trace_perf("rollout_controller.prepare_batch", category="scheduler")
     def prepare_batch(
@@ -404,7 +433,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
-    ):
+    ) -> dict[str, Any]:
         """Prepare a batch with controlled staleness.
 
         Continuously submits from dataloader and waits for results, ensuring at least
@@ -425,7 +454,7 @@ class RolloutController:
                         workflow=workflow_str,
                         workflow_kwargs=workflow_kwargs,
                         should_accept_fn=should_accept_fn,
-                        task_id=None,
+                        task_id=int(uuid.uuid4()),
                     )
 
         if not hasattr(self, "data_generator"):
@@ -439,11 +468,7 @@ class RolloutController:
 
         # Extract trajectories and concatenate
         trajectories = [r.trajectory if r is not None else None for r in results]
-        batch = concat_padded_tensors([t for t in trajectories if t is not None])
-
-        # NOTE: DistributedBatchMemory.from_dict does nothing for now
-        # Just for sync with internal code
-        return DistributedBatchMemory.from_dict(batch)
+        return concat_padded_tensors([t for t in trajectories if t is not None])
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.

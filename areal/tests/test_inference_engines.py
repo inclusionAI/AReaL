@@ -13,14 +13,15 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import WeightUpdateMeta
 from areal.api.workflow_api import RolloutWorkflow
+from areal.tests.utils import get_model_path
 from areal.utils import network
 from areal.utils.data import concat_padded_tensors, get_batch_size
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.pkg_version import is_available
 
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen3-0.6B"
+MODEL_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+)
 
 IS_VLLM_INSTALLED = is_available("vllm")
 
@@ -240,6 +241,82 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         results_list = engine.wait(count=bs * 2, timeout=5)
         results = concat_padded_tensors([r for r in results_list if r is not None])
         assert results["attention_mask"].shape[0] == bs * 2 * n_samples
+
+    engine.destroy()
+    assert not dist.is_initialized()
+
+
+@pytest.mark.slow
+@pytest.mark.ci
+def test_wait_for_task(inference_engine):
+    """Test wait_for_task functionality with real inference engines."""
+    from areal.workflow.rlvr import RLVRWorkflow
+
+    config = InferenceEngineConfig(
+        experiment_name=inference_engine["expr_name"],
+        trial_name=inference_engine["trial_name"],
+        max_concurrent_rollouts=8,
+        consumer_batch_size=4,
+        setup_timeout=360,
+        max_head_offpolicyness=int(1e10),
+    )
+
+    engine = inference_engine["engine_class"](config)
+    engine.initialize()
+
+    gconfig = GenerationHyperparameters(max_new_tokens=8, greedy=False, n_samples=1)
+    tokenizer = load_hf_tokenizer(MODEL_PATH)
+
+    workflow = RLVRWorkflow(
+        reward_fn=_dummy_reward_fn,
+        gconfig=gconfig,
+        tokenizer=tokenizer,
+        enable_thinking=False,
+    )
+
+    data = {"messages": [{"role": "user", "content": "Hello"}]}
+
+    # Test 1: Wait for specific task
+    task_id1 = engine.submit(data, workflow=workflow)
+    task_id2 = engine.submit(data, workflow=workflow)
+    task_id3 = engine.submit(data, workflow=workflow)
+
+    result2 = engine.wait_for_task(task_id2, timeout=30.0)
+    assert result2 is not None
+    assert isinstance(result2, dict)
+
+    result1 = engine.wait_for_task(task_id1, timeout=30.0)
+    assert result1 is not None
+
+    result3 = engine.wait_for_task(task_id3, timeout=30.0)
+    assert result3 is not None
+
+    # Test 2: Invalid task_id raises ValueError
+    with pytest.raises(ValueError, match="never submitted"):
+        engine.wait_for_task(999999, timeout=1.0)
+
+    # Test 3: Timeout with raise_timeout=False returns None
+    slow_task_id = engine.submit(data, workflow=workflow)
+    # Immediately try to get it with very short timeout
+    result = engine.wait_for_task(slow_task_id, timeout=0.001, raise_timeout=False)
+    # Should timeout and return None (task hasn't completed yet)
+    # But if it completed fast, that's ok too
+    if result is None:
+        # Now get it for real
+        result = engine.wait_for_task(slow_task_id, timeout=30.0)
+        assert result is not None
+
+    # Test 4: Mix wait_for_task with regular wait()
+    task_ids = [engine.submit(data, workflow=workflow) for _ in range(4)]
+
+    # Get specific task
+    specific_result = engine.wait_for_task(task_ids[1], timeout=30.0)
+    assert specific_result is not None
+
+    # Get remaining 3 with regular wait()
+    remaining = engine.wait(count=3, timeout=30.0)
+    assert len(remaining) == 3
+    assert all(r is not None for r in remaining)
 
     engine.destroy()
     assert not dist.is_initialized()

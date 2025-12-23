@@ -4,6 +4,7 @@ import random
 from typing import Any
 
 import torch
+from huggingface_hub import snapshot_download
 
 from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
@@ -12,28 +13,52 @@ from areal.utils import logging
 
 logger = logging.getLogger("areal.tests.utils")
 
-_warned_bool_env_var_keys = set()
+
+def get_model_path(local_path: str, hf_id: str) -> str:
+    """Get model path, preferring local storage over HuggingFace Hub.
+
+    If local_path exists, returns it directly. Otherwise downloads
+    the model from HuggingFace Hub using snapshot_download.
+    """
+    if os.path.exists(local_path):
+        logger.info(f"Model found at local path: {local_path}")
+        return local_path
+
+    try:
+        logger.info(f"Downloading model from HuggingFace Hub: {hf_id}")
+        downloaded_path = snapshot_download(
+            repo_id=hf_id,
+            # Allow partial downloads for faster testing
+            ignore_patterns=["*.gguf", "*.ggml", "consolidated*"],
+        )
+        logger.info(f"Model downloaded to: {downloaded_path}")
+        return downloaded_path
+    except Exception as e:
+        logger.error(f"Failed to download model {hf_id}: {e}")
+        raise
 
 
-def get_bool_env_var(name: str, default: str = "false") -> bool:
-    value = os.getenv(name, default)
-    value = value.lower()
+def get_dataset_path(local_path: str, hf_id: str) -> str:
+    """Get dataset path, preferring local storage over HuggingFace Hub.
 
-    truthy_values = ("true", "1")
-    falsy_values = ("false", "0")
+    If local_path exists, returns it directly. Otherwise downloads
+    the dataset from HuggingFace Hub using snapshot_download.
+    """
+    if os.path.exists(local_path):
+        logger.info(f"Dataset found at local path: {local_path}")
+        return local_path
 
-    if (value not in truthy_values) and (value not in falsy_values):
-        if value not in _warned_bool_env_var_keys:
-            logger.warning(
-                f"get_bool_env_var({name}) see non-understandable value={value} and treat as false"
-            )
-        _warned_bool_env_var_keys.add(value)
-
-    return value in truthy_values
-
-
-def is_in_ci():
-    return get_bool_env_var("AREAL_IS_IN_CI")
+    try:
+        logger.info(f"Downloading dataset from HuggingFace Hub: {hf_id}")
+        downloaded_path = snapshot_download(
+            repo_id=hf_id,
+            repo_type="dataset",
+        )
+        logger.info(f"Dataset downloaded to: {downloaded_path}")
+        return downloaded_path
+    except Exception as e:
+        logger.error(f"Failed to download dataset {hf_id}: {e}")
+        raise
 
 
 class TestWorkflow(RolloutWorkflow):

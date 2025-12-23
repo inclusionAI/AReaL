@@ -13,13 +13,14 @@ from areal.api.cli_args import (
 from areal.api.io_struct import FinetuneSpec, WeightUpdateMeta
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.sglang_remote import RemoteSGLangEngine
+from areal.tests.utils import get_model_path
 from areal.utils import network
 
 EXPR_NAME = "test_fsdp_engine_nccl"
 TRIAL_NAME = "trial_nccl"
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen3-0.6B"
+MODEL_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+)
 GROUP_NAME = "test_nccl_group"
 
 
@@ -54,6 +55,8 @@ def sglang_server():
         server_manager.destroy()
 
 
+# We have integration tests for this now. Skipping in CI.
+@pytest.mark.slow
 def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server):
     # Set environment variables for torch distributed
     os.environ["WORLD_SIZE"] = "1"

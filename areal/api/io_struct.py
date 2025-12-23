@@ -33,6 +33,9 @@ class ModelRequest:
     image_data: list[str] | None = field(default_factory=list)
     processor: Optional["AutoProcessor"] = None
 
+    # vlm+vllm:
+    vision_msg_vllm: list | None = None
+
     def copy(self):
         return ModelRequest(
             rid=self.rid,
@@ -42,6 +45,11 @@ class ModelRequest:
             tokenizer=self.tokenizer,
             image_data=self.image_data.copy() if self.image_data is not None else None,
             processor=self.processor,
+            vision_msg_vllm=(
+                self.vision_msg_vllm.copy()
+                if self.vision_msg_vllm is not None
+                else None
+            ),
         )
 
 
@@ -52,7 +60,7 @@ class ModelResponse:
     output_tokens: list[int] = field(default_factory=list)
     output_logprobs: list[float] = field(default_factory=list)
     output_versions: list[int] = field(default_factory=list)
-    stop_reason: Literal["length", "stop", "interrupt"] = "stop"
+    stop_reason: Literal["length", "stop", "tool_calls", "abort"] = "stop"
     # tokenizer is used for encode-decode in the inference engine
     tokenizer: PreTrainedTokenizerFast | None = None
 
@@ -72,6 +80,12 @@ class ModelResponse:
     @property
     def output_len(self) -> int:
         return len(self.output_tokens)
+
+    @property
+    def output_tokens_without_stop(self) -> list[int]:
+        if self.stop_reason not in ["length", "abort"] and self.output_tokens:
+            return self.output_tokens[:-1]
+        return self.output_tokens
 
 
 @dataclass
@@ -117,6 +131,7 @@ class WeightUpdateMeta:
     lora_name: str = ""
     lora_int_id: int = 0
     base_model_name: str = ""
+    peft_config: dict = field(default_factory=dict)
 
     clear_checkpoint_after_load: bool = True
 
@@ -171,6 +186,10 @@ class WeightUpdateMeta:
         allocation_mode: AllocationMode,
         nccl_group_name: str = "update_weight_group",
         weight_chunked_mem_mb: int = 1024,
+        use_lora: bool = False,
+        lora_name: str = "",
+        lora_int_id: int = 0,
+        base_model_name: str = "",
     ):
         return cls(
             type=current_platform.communication_backend,
@@ -179,6 +198,10 @@ class WeightUpdateMeta:
             nccl_master_port=find_free_ports(1)[0],
             nccl_group_name=nccl_group_name,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
+            use_lora=use_lora,
+            lora_name=lora_name,
+            lora_int_id=lora_int_id,
+            base_model_name=base_model_name,
         )
 
 

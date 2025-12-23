@@ -7,13 +7,16 @@ from openai.types.responses.response_output_text import ResponseOutputText
 
 from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.tests.utils import get_model_path
 from areal.utils.hf_utils import load_hf_tokenizer
 
 
 @pytest.fixture(scope="module")
 def tokenizer():
     """Load the tokenizer once for all tests in this module."""
-    return load_hf_tokenizer("Qwen/Qwen2.5-1.5B-Instruct")
+    return load_hf_tokenizer(
+        get_model_path("/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B")
+    )
 
 
 @pytest.fixture
@@ -48,12 +51,6 @@ def mock_interaction(tokenizer):
         mock_model_response.input_tokens = input_tokens
         mock_model_response.output_tokens = output_tokens
 
-        interaction = InteractionWithTokenLogpReward(
-            model_response=mock_model_response,
-            reward=reward,
-            chat_template_type=chat_template_type,
-        )
-
         output_message = ResponseOutputMessage(
             id=id,
             role="assistant",
@@ -66,6 +63,13 @@ def mock_interaction(tokenizer):
                     type="output_text",
                 )
             ],
+        )
+
+        interaction = InteractionWithTokenLogpReward(
+            model_response=mock_model_response,
+            reward=reward,
+            chat_template_type=chat_template_type,
+            output_message_list=[output_message.model_dump(exclude_none=True)],
         )
 
         if is_completion:
@@ -99,11 +103,11 @@ def test_set_reward(mock_interaction):
     assert cache["1"].reward == 10.0
 
 
-def test_set_final_reward(mock_interaction):
+def test_set_last_reward(mock_interaction):
     cache = InteractionCache()
     cache["1"] = mock_interaction(id="1")
     cache["2"] = mock_interaction(id="2")
-    cache.set_final_reward(20.0)
+    cache.set_last_reward(20.0)
     assert cache["1"].reward is None
     assert cache["2"].reward == 20.0
 
@@ -136,7 +140,7 @@ def test_export_triggers_reward_discount_once(mock_interaction):
     cache.apply_reward_discount(turn_discount=0.9)
     # Second call should not trigger it again
     with pytest.raises(
-        AssertionError, match="apply_reward_discount should only be called once."
+        RuntimeError, match="apply_reward_discount should only be called once."
     ):
         cache.apply_reward_discount(turn_discount=0.9)
 
@@ -161,19 +165,21 @@ def test_export_interactions_concat_style(mock_interaction):
     #             \
     #              -> i3
     # Leaves: i3, i4
+    i1_messages = [{"role": "user", "content": "A"}]
     i1 = mock_interaction(
         id="1",
         messages=[{"role": "user", "content": "A"}],
         response_text="B",
         created=1,
     )
+    i2_messages = (
+        i1_messages
+        + [o.model_dump(exclude_none=True) for o in i1.response.output]
+        + [{"role": "user", "content": "C"}]
+    )
     i2 = mock_interaction(
         id="2",
-        messages=[
-            {"role": "user", "content": "A"},
-            {"role": "assistant", "content": "B"},
-            {"role": "user", "content": "C"},
-        ],
+        messages=i2_messages,
         response_text="D",
         created=2,
     )
@@ -183,15 +189,14 @@ def test_export_interactions_concat_style(mock_interaction):
         response_text="E",  # Different response from i1
         created=3,
     )
+    i4_messages = (
+        i2_messages
+        + [o.model_dump(exclude_none=True) for o in i2.response.output]
+        + [{"role": "user", "content": "F"}]
+    )
     i4 = mock_interaction(
         id="4",
-        messages=[
-            {"role": "user", "content": "A"},
-            {"role": "assistant", "content": "B"},
-            {"role": "user", "content": "C"},
-            {"role": "assistant", "content": "D"},
-            {"role": "user", "content": "F"},
-        ],
+        messages=i4_messages,
         response_text="G",
         created=4,
     )
@@ -248,34 +253,6 @@ def test_export_interactions_concat_style_output_be_refactored(mock_interaction)
     assert i2.parent is None
 
 
-def test_concat_export_is_idempotent(mock_interaction):
-    cache = InteractionCache()
-    i1 = mock_interaction(
-        id="1", messages=[{"role": "user", "content": "A"}], response_text="B"
-    )
-    i2 = mock_interaction(
-        id="2",
-        messages=[
-            {"role": "user", "content": "A"},
-            {"role": "assistant", "content": "B"},
-        ],
-        response_text="C",
-    )
-    cache[i1.completion.id] = i1
-    cache[i2.completion.id] = i2
-
-    # First export builds the relationship
-    cache.export_interactions(style="concat")
-    assert i2.parent == i1
-
-    # Manually break it
-    i2.parent = None
-    cache._parent_relationship_built = False
-    # Second export should rebuild it
-    cache.export_interactions(style="concat")
-    assert i2.parent == i1
-
-
 def test_multiple_exports_after_build(mock_interaction):
     cache = InteractionCache()
     i1 = mock_interaction(
@@ -288,7 +265,7 @@ def test_multiple_exports_after_build(mock_interaction):
         id="2",
         messages=[
             {"role": "user", "content": "A"},
-            {"role": "assistant", "content": "B"},
+            i1.response.output[0].model_dump(exclude_none=True),
         ],
         response_text="C",
         created=2,

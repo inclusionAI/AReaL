@@ -17,9 +17,9 @@ from areal.api.io_struct import (
     AllocationMode,
     FinetuneSpec,
     SaveLoadMeta,
+    WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Worker
-from areal.controller.batch import DistributedBatchMemory
 from areal.controller.train_controller import TrainController
 
 
@@ -91,8 +91,8 @@ class MockScheduler:
             return {"lm_loss": 0.4, "perplexity": 1.5}
 
         elif method == "evaluate_lm":
-            # Return tensor with shape [batch_size, seq_len] to match expected format
-            return torch.tensor([[0.35, 0.35, 0.35, 0.35]])
+            # Return scalar loss (real implementation would return float or dict)
+            return {"eval_loss": 0.35}
 
         await asyncio.sleep(0.001)
         return None
@@ -152,19 +152,21 @@ def ft_spec():
 @pytest.fixture
 def train_controller(mock_scheduler, train_config):
     """Provide a TrainController instance."""
-    return TrainController(
+    train_controller = TrainController(
         train_engine=MockTrainEngine, config=train_config, scheduler=mock_scheduler
     )
+    yield train_controller
+    train_controller.destroy()
 
 
 def create_mock_distributed_batch(size=4, seq_len=10):
-    """Create a mock DistributedBatch for testing."""
+    """Create a mock batch for testing."""
     data = {
         "input_ids": torch.randint(0, 100, (size, seq_len)),
         "attention_mask": torch.ones(size, seq_len, dtype=torch.bool),
         "loss_mask": torch.ones(size, seq_len, dtype=torch.bool),
     }
-    return DistributedBatchMemory.from_dict(data)
+    return data
 
 
 # ==================== TEST CLASSES ====================
@@ -207,30 +209,6 @@ class TestTrainControllerInitialization:
         assert len(train_controller.scheduler.env_settings) == len(
             train_controller.workers
         )
-
-    def test_create_process_group_sets_parallel_strategy(
-        self, train_controller, parallel_strategy
-    ):
-        """Test that create_process_group correctly assigns parallel_strategy.
-
-        This is a regression test for the bug at line 79 where parallel_strategy
-        was being assigned to itself instead of the parameter.
-        """
-        # Setup: Add mock workers
-        train_controller.workers = [Mock(), Mock()]
-        train_controller.parallel_strategy = parallel_strategy
-
-        # Call create_process_group with a different strategy
-        new_strategy = ParallelStrategy(
-            data_parallel_size=8, tensor_parallel_size=1, pipeline_parallel_size=1
-        )
-
-        # create_process_group is now a dummy method that does nothing
-        # It no longer calls custom_function_call
-        train_controller.create_process_group(new_strategy)
-
-        # The parallel_strategy is not updated in create_process_group anymore
-        # It's set during initialize() from alloc_mode.train
 
     def test_identify_dp_heads(self, train_controller, alloc_mode, ft_spec):
         """Test _identify_dp_heads correctly identifies DP head workers."""
@@ -289,81 +267,14 @@ class TestTrainControllerDestroy:
         assert len(train_controller.workers) == 0
 
 
-class TestTrainControllerBatchOperations:
-    """Tests for batch splitting and alignment operations."""
-
-    def test_align_batches_with_dp_rebalance(
-        self, train_controller, alloc_mode, ft_spec
-    ):
-        """Test _align_batches_with_dp with rebalance=True."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=16)
-        chunks = train_controller._align_batches_with_dp(batch, rebalance=True)
-
-        # Should split into dp_size chunks
-        assert len(chunks) == alloc_mode.train.dp_size
-
-        # Each chunk should be a DistributedBatch
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)
-
-    def test_align_batches_with_dp_no_rebalance(
-        self, train_controller, alloc_mode, ft_spec
-    ):
-        """Test _align_batches_with_dp with rebalance=False."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=16)
-        chunks = train_controller._align_batches_with_dp(batch, rebalance=False)
-
-        # Should split into dp_size chunks
-        assert len(chunks) == alloc_mode.train.dp_size
-
-        # Each chunk should be a DistributedBatch
-        for chunk in chunks:
-            assert isinstance(chunk, DistributedBatchMemory)
-
-
 class TestTrainControllerMergeResults:
     """Tests for result merging from workers."""
-
-    def test_merge_results_with_tensor_dict(self, train_controller):
-        """Test _merge_results with dictionary of tensors."""
-        results = [
-            {"loss": torch.tensor([0.5, 0.6])},
-            {"loss": torch.tensor([0.3, 0.4])},
-        ]
-
-        merged = train_controller._merge_results(results, "some_method")
-
-        # Should concatenate into DistributedBatch
-        assert isinstance(merged, DistributedBatchMemory)
-        assert "loss" in merged.get_data()
-
-    def test_merge_results_with_empty_dict(self, train_controller):
-        """Test _merge_results with empty dictionaries."""
-        results = [{}, {}]
-
-        merged = train_controller._merge_results(results, "some_method")
-
-        # Should return empty DistributedBatch
-        assert isinstance(merged, DistributedBatchMemory)
-        assert len(merged.get_data()) == 0
 
     def test_merge_results_with_non_tensor(self, train_controller):
         """Test _merge_results with non-tensor results."""
         results = [{"status": "ok"}, {"status": "ok"}]
 
-        merged = train_controller._merge_results(results, "some_method")
+        merged = train_controller._merge_results(results, group_indices=[[0], [1]])
 
         # Should return first result (already synchronized)
         assert merged == {"status": "ok"}
@@ -379,7 +290,7 @@ class TestTrainControllerMergeResults:
 
         # This should work without TypeError
         try:
-            result = train_controller._merge_results(results, "some_method")
+            result = train_controller._merge_results(results, group_indices=[[0], [1]])
             # Test passes if no exception
             assert result is not None
         except TypeError as e:
@@ -437,46 +348,6 @@ class TestTrainControllerRPCWrappers:
         # Verify step_lr_scheduler was called on engines
         engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
         assert "step_lr_scheduler" in engine_calls
-
-
-class TestTrainControllerSFTMethods:
-    """Tests for SFT-specific methods."""
-
-    def test_train_lm(self, train_controller, alloc_mode, ft_spec):
-        """Test train_lm() method."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=8)
-        result = train_controller.train_lm(batch)
-
-        # Should return stats dictionary
-        assert isinstance(result, dict)
-
-        # Verify train_lm was called on engines
-        engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
-        assert "train_lm" in engine_calls
-
-    def test_evaluate_lm(self, train_controller, alloc_mode, ft_spec):
-        """Test evaluate_lm() method."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        batch = create_mock_distributed_batch(size=8)
-        result = train_controller.evaluate_lm(batch)
-
-        # Should return loss tensor or merged results
-        assert result is not None
-
-        # Verify evaluate_lm was called on engines
-        engine_calls = [call[1] for call in train_controller.scheduler.engine_calls]
-        assert "evaluate_lm" in engine_calls
 
 
 class TestTrainControllerWeightManagement:
@@ -554,7 +425,7 @@ class TestTrainControllerCustomFunctionCall:
     def test_custom_function_call_with_distributed_batch(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test custom_function_call with DistributedBatch argument."""
+        """Test custom_function_call with batch argument."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -579,7 +450,7 @@ class TestTrainControllerCustomFunctionCall:
     def test_custom_function_call_with_regular_args(
         self, train_controller, alloc_mode, ft_spec
     ):
-        """Test custom_function_call with non-DistributedBatch arguments."""
+        """Test custom_function_call with non-batch arguments."""
         train_controller.initialize(
             role="train_worker",
             alloc_mode=alloc_mode,
@@ -611,7 +482,7 @@ class TestTrainControllerCustomFunctionCall:
         )
 
         batch = create_mock_distributed_batch(size=8)
-        train_controller._custom_function_call("train_batch", input_=batch)
+        train_controller._custom_function_call("ppo_update", input_=batch)
 
         # Results should only come from DP head workers
         # (verified by _merge_results receiving filtered results)
@@ -638,3 +509,294 @@ class TestTrainControllerEdgeCases:
         # Should be able to chain calls
         result = train_controller.train().eval().train()
         assert result is train_controller
+
+
+class TestTrainControllerRolloutIntegration:
+    """Tests for rollout engine integration methods."""
+
+    def test_connect_engine_sets_rollout(self, train_controller, alloc_mode, ft_spec):
+        """Test connect_engine correctly sets the rollout controller."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        mock_rollout = Mock()
+        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
+
+        train_controller.connect_engine(mock_rollout, meta)
+
+        assert train_controller.rollout == mock_rollout
+
+    def test_connect_engine_warns_on_change(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test connect_engine logs warning when rollout controller changes."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        mock_rollout1 = Mock()
+        mock_rollout2 = Mock()
+        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
+
+        train_controller.connect_engine(mock_rollout1, meta)
+        train_controller.connect_engine(mock_rollout2, meta)
+
+        assert train_controller.rollout == mock_rollout2
+
+    def test_connect_engine_same_rollout_no_warning(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test connect_engine does not warn when same rollout controller is used."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        mock_rollout = Mock()
+        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
+
+        train_controller.connect_engine(mock_rollout, meta)
+        train_controller.connect_engine(mock_rollout, meta)
+
+        assert train_controller.rollout == mock_rollout
+
+    def test_check_rollout_engine_connected_raises_when_not_connected(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test _check_rollout_engine_connected raises when rollout is not connected."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        with pytest.raises(RuntimeError, match="Rollout engine not connected"):
+            train_controller._check_rollout_engine_connected()
+
+    def test_check_rollout_engine_connected_passes_when_connected(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test _check_rollout_engine_connected passes when rollout is connected."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        mock_rollout = Mock()
+        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
+        train_controller.connect_engine(mock_rollout, meta)
+
+        # Should not raise
+        train_controller._check_rollout_engine_connected()
+
+    def test_prepare_batch_delegates_to_rollout(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test prepare_batch delegates to rollout controller."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        mock_rollout = Mock()
+        mock_rollout.prepare_batch.return_value = {}
+        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
+        train_controller.connect_engine(mock_rollout, meta)
+
+        mock_dataloader = Mock()
+        train_controller.prepare_batch(
+            dataloader=mock_dataloader,
+            workflow="test.workflow",
+            workflow_kwargs={"key": "value"},
+        )
+
+        mock_rollout.prepare_batch.assert_called_once_with(
+            dataloader=mock_dataloader,
+            workflow="test.workflow",
+            workflow_kwargs={"key": "value"},
+            should_accept_fn=None,
+        )
+
+    def test_rollout_batch_delegates_to_rollout(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test rollout_batch delegates to rollout controller."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        mock_rollout = Mock()
+        mock_rollout.rollout_batch.return_value = {}
+        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
+        train_controller.connect_engine(mock_rollout, meta)
+
+        data = [{"id": 1}, {"id": 2}]
+        train_controller.rollout_batch(
+            data=data,
+            workflow="test.workflow",
+            workflow_kwargs={"key": "value"},
+        )
+
+        mock_rollout.rollout_batch.assert_called_once_with(
+            data=data,
+            workflow="test.workflow",
+            workflow_kwargs={"key": "value"},
+            should_accept_fn=None,
+        )
+
+
+class TestTrainControllerWeightUpdateMethods:
+    """Tests for weight update methods."""
+
+    def test_update_weights_raises_when_not_connected(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test update_weights raises when rollout is not connected."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
+
+        with pytest.raises(RuntimeError, match="Rollout engine not connected"):
+            train_controller.update_weights(meta)
+
+    def test_update_weights_invalid_type_raises(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test update_weights raises for invalid type."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        mock_rollout = Mock()
+        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
+        train_controller.connect_engine(mock_rollout, meta)
+
+        invalid_meta = WeightUpdateMeta(type="invalid_type", path="/tmp/test")
+
+        with pytest.raises(ValueError, match="Unknown weight update type"):
+            train_controller.update_weights(invalid_meta)
+
+
+class TestTrainControllerExportStats:
+    """Tests for export_stats method."""
+
+    def test_export_stats(self, train_controller, alloc_mode, ft_spec):
+        """Test export_stats returns statistics from first worker."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        # Mock the scheduler to return stats
+        expected_stats = {"loss": 0.5, "accuracy": 0.95}
+
+        async def mock_async_call(*args, **kwargs):
+            if kwargs.get("method") == "export_stats" or (
+                len(args) > 1 and args[1] == "export_stats"
+            ):
+                return expected_stats
+            return None
+
+        train_controller.scheduler.async_call_engine = mock_async_call
+
+        result = train_controller.export_stats()
+        for k in expected_stats:
+            assert result[k] == expected_stats[k]
+
+
+class TestTrainControllerAsyncMethods:
+    """Tests for async method handling."""
+
+    def test_run_async_task(self, train_controller):
+        """Test _run_async_task correctly runs async tasks."""
+
+        async def async_task():
+            return 42
+
+        result = train_controller._run_async_task(async_task())
+        assert result == 42
+
+    def test_run_async_task_with_exception(self, train_controller):
+        """Test _run_async_task propagates exceptions."""
+
+        async def failing_task():
+            raise ValueError("Test error")
+
+        with pytest.raises(ValueError, match="Test error"):
+            train_controller._run_async_task(failing_task())
+
+
+class TestTrainControllerDispatchInputs:
+    """Tests for input dispatching across DP groups."""
+
+    def test_dispatch_inputs_splits_distributed_batch(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test _dispatch_inputs correctly splits batch."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        batch = create_mock_distributed_batch(size=16)
+        split_args, split_kwargs, _ = train_controller._dispatch_inputs(batch)
+
+        # Should split into dp_size chunks
+        assert len(split_args) == 1
+        assert len(split_args[0]) == alloc_mode.train.dp_size
+
+    def test_dispatch_inputs_replicates_non_batch_args(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test _dispatch_inputs replicates non-batch arguments."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        scalar_arg = 42
+        split_args, split_kwargs, _ = train_controller._dispatch_inputs(scalar_arg)
+
+        # Should replicate to all DP groups
+        assert len(split_args) == 1
+        assert all(arg == 42 for arg in split_args[0])
+        assert len(split_args[0]) == alloc_mode.train.dp_size
+
+    def test_dispatch_inputs_handles_kwargs(
+        self, train_controller, alloc_mode, ft_spec
+    ):
+        """Test _dispatch_inputs correctly handles keyword arguments."""
+        train_controller.initialize(
+            role="train_worker",
+            alloc_mode=alloc_mode,
+            ft_spec=ft_spec,
+        )
+
+        batch = create_mock_distributed_batch(size=16)
+        split_args, split_kwargs, _ = train_controller._dispatch_inputs(
+            input_=batch, learning_rate=0.001
+        )
+
+        assert "input_" in split_kwargs
+        assert "learning_rate" in split_kwargs
+        assert len(split_kwargs["input_"]) == alloc_mode.train.dp_size
+        assert all(lr == 0.001 for lr in split_kwargs["learning_rate"])

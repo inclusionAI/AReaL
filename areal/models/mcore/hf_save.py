@@ -14,6 +14,7 @@ from megatron.core.fp8_utils import is_float8tensor
 from safetensors.torch import save_file
 from torch.distributed._functional_collectives import all_gather_into_tensor_coalesced
 
+from areal.models.mcore.registry import unwrap_to_gpt_model
 from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.fp8_utils import quantize_params
@@ -101,6 +102,7 @@ def save_weights_to_hf_with_mbridge_fast(
     base_model_path: str | None = None,
     max_shard_size_byte: int = int(3e9),
     max_workers: int | None = None,
+    is_critic: bool = False,
 ):
     # 1. Prepare some global metadata required for saving the model.
     models = [unwrap_model(model) for model in models]
@@ -451,3 +453,18 @@ def save_weights_to_hf_with_mbridge_fast(
             json.dump(bin_index, f, indent=4)
         if base_model_path is not None:
             copy_hf_configs(base_model_path, weights_path)
+
+    # 8. Save ValueHead weights separately for critic models.
+    if is_critic and mpu.is_pipeline_last_stage():
+        is_tp_first = mpu.get_tensor_model_parallel_rank() == 0
+        is_dp_first = mpu.get_data_parallel_rank(with_context_parallel=True) == 0
+        should_save_value_head = is_tp_first and is_dp_first
+
+        if should_save_value_head:
+            for model in models:
+                _model = unwrap_to_gpt_model(model)
+                if hasattr(_model, "output_layer"):
+                    value_head_path = os.path.join(weights_path, "value_head.pt")
+                    torch.save(_model.output_layer.state_dict(), value_head_path)
+                    logger.info(f"Saved ValueHead weights to {value_head_path}")
+                    break

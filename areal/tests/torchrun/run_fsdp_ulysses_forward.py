@@ -14,18 +14,16 @@ from areal.api.cli_args import (
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.platforms import current_platform
+from areal.tests.utils import get_model_path
 
 MODEL_PATHS = {
-    "qwen3": "/storage/openpsi/models/Qwen__Qwen3-0.6B/",
-    "qwen3moe": "/storage/openpsi/models/Qwen__Qwen3-30B-A3B/",
+    "qwen3": get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+    ),
+    "qwen3moe": get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-30B-A3B/", "Qwen/Qwen3-30B-A3B"
+    ),
 }
-HF_MODEL_PATHS = {
-    "qwen3": "Qwen/Qwen3-0.6B",
-    "qwen3moe": "Qwen/Qwen3-30B-A3B",
-}
-for model_type, path in MODEL_PATHS.items():
-    if not os.path.exists(path):
-        MODEL_PATHS[model_type] = HF_MODEL_PATHS[model_type]
 
 
 def setup_distributed_environment():

@@ -60,7 +60,7 @@ class OpenAIAgentWrapper:
                 not in ["messages", "answer", "prompt", "prompt_ids", "completion_ids"]
             },
         )
-        client.set_final_reward(reward)
+        client.set_last_reward(reward)
         return reward
 
 
@@ -93,7 +93,9 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
 
     async def arun_episode(self, engine, data):
         clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
+            ArealOpenAI(
+                engine=engine, tokenizer=self.tokenizer, tool_call_parser="qwen25"
+            )
             for _ in range(self.gconfig.n_samples)
         ]
 

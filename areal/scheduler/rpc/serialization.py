@@ -44,14 +44,14 @@ class SerializedTensor(BaseModel):
         Type marker, always "tensor"
     data : str
         Base64-encoded tensor data
-    shape : List[int]
+    shape : list[int]
         Tensor shape
     dtype : str
         String representation of dtype (e.g., "torch.float32")
     """
 
     type: Literal["tensor"] = Field(default="tensor")
-    data: str
+    data: str | None = None
     shape: list[int]
     dtype: str
 
@@ -71,6 +71,13 @@ class SerializedTensor(BaseModel):
         SerializedTensor
             Serialized tensor with metadata
         """
+        if tensor.is_meta:
+            return cls(
+                data=None,
+                shape=list(tensor.shape),
+                dtype=str(tensor.dtype),
+            )
+
         # Move to CPU for serialization (detach to avoid gradient tracking)
         cpu_tensor = tensor.detach().cpu()
 
@@ -102,12 +109,15 @@ class SerializedTensor(BaseModel):
         torch.Tensor
             Reconstructed CPU tensor
         """
-        # Decode base64 to bytes
-        buffer = base64.b64decode(self.data.encode("utf-8"))
-
         # Parse dtype string (e.g., "torch.float32" -> torch.float32)
         dtype_str = self.dtype.replace("torch.", "")
         dtype = getattr(torch, dtype_str)
+
+        if self.data is None:
+            return torch.empty(self.shape, dtype=dtype, device="meta")
+
+        # Decode base64 to bytes
+        buffer = base64.b64decode(self.data.encode("utf-8"))
 
         np_array = np.frombuffer(buffer, dtype=self._torch_dtype_to_numpy(dtype))
         # Copy the array to make it writable before converting to tensor
@@ -162,7 +172,7 @@ class SerializedNDArray(BaseModel):
         Type marker, always "ndarray"
     data : str
         Base64-encoded contiguous bytes of the array
-    shape : List[int]
+    shape : list[int]
         Array shape
     dtype : str
         NumPy dtype string representation (e.g., "<f4")

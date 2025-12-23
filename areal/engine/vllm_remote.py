@@ -20,7 +20,9 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     WeightUpdateRequests,
 )
+from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow
+from areal.controller import RolloutController
 from areal.core import RemoteInfEngine
 from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
@@ -40,19 +42,44 @@ class VLLMBackend:
 
         # NOTE: vLLM uses flat payload structure, not nested sampling_params
         payload = {
-            "prompt": req.input_ids.copy(),
             "top_p": gconfig.top_p,
             "top_k": gconfig.top_k,
             "max_tokens": gconfig.max_new_tokens,
             "temperature": 0.0 if gconfig.greedy else gconfig.temperature,
             "stop_token_ids": stop_token_ids,
+            "ignore_eos": gconfig.ignore_eos,
+            "skip_special_tokens": gconfig.skip_special_tokens,
             "return_tokens_as_token_ids": True,
             "logprobs": 0,
+            "use_beam_search": gconfig.use_beam_search,
             "stream": False,
         }
+
         if with_lora and len(gconfig.lora_name) > 0:
             payload["model"] = gconfig.lora_name
-        return HttpRequest(endpoint="/v1/completions", payload=payload)
+
+        if req.vision_msg_vllm:
+            images = iter(req.image_data)
+            parsed_input = req.vision_msg_vllm[0]
+            for msg in parsed_input:
+                if isinstance(msg["content"], list):
+                    for content in msg["content"]:
+                        if content.get("type") == "image_url":
+                            try:
+                                base64_img = next(images)
+                            except StopIteration:
+                                raise ValueError(
+                                    "Not enough images in req.image_data to match image_url entries."
+                                )
+                            content["image_url"] = {
+                                "url": f"data:image/jpeg;base64,{base64_img}"
+                            }
+            payload["messages"] = parsed_input.copy()
+            payload["logprobs"] = True
+            return HttpRequest(endpoint="/v1/chat/completions", payload=payload)
+        else:
+            payload["prompt"] = req.input_ids.copy()
+            return HttpRequest(endpoint="/v1/completions", payload=payload)
 
     def parse_generation_response(
         self, response: dict[str, Any]
@@ -62,16 +89,23 @@ class VLLMBackend:
         stop_reason = meta_info["finish_reason"]
 
         # Parse tokens from "token:123" format
-        output_tokens = meta_info["logprobs"]["tokens"]
+        if "tokens" in meta_info["logprobs"]:
+            output_tokens = meta_info["logprobs"]["tokens"]
+            output_tokens = [int(t.split(":")[1]) for t in output_tokens]
+            output_logprobs = meta_info["logprobs"]["token_logprobs"]
+        elif "content" in meta_info["logprobs"]:
+            outputs = meta_info["logprobs"]["content"]
+            output_tokens = [int(t["token"].split(":")[1]) for t in outputs]
+            output_logprobs = [t["logprob"] for t in outputs]
+        else:
+            raise ValueError("Unexpected vLLM response format.")
+
         if stop_reason == "abort" and len(output_tokens) == 0:
             return HttpGenerationResult(
                 output_tokens=[],
                 output_logprobs=[],
                 stop_reason=stop_reason,
             )
-        output_tokens = [int(t.split(":")[1]) for t in output_tokens]
-        output_logprobs = meta_info["logprobs"]["token_logprobs"]
-
         return HttpGenerationResult(
             output_tokens=output_tokens,
             output_logprobs=output_logprobs,
@@ -107,19 +141,40 @@ class VLLMBackend:
     ) -> WeightUpdateRequests:
         """Build vLLM distributed weight update requests."""
         # vLLM uses two-step process: set metadata, then update
+        # vLLM uses two-step process: set metadata, then update
+        base_payload = {
+            "names": [pspec.name for pspec in param_specs],
+            "dtypes": [pspec.dtype for pspec in param_specs],
+            "shapes": [pspec.shape for pspec in param_specs],
+            "group_name": meta.nccl_group_name,
+        }
+
+        if meta.use_lora:
+            lora_payload = {
+                "lora_name": meta.lora_name,
+                "lora_int_id": meta.lora_int_id,
+                "lora_target_modules": meta.peft_config["target_modules"],
+                "lora_rank": meta.peft_config["r"],
+                "lora_alpha": meta.peft_config["lora_alpha"],
+                "lora_bias": meta.peft_config["bias"],
+                "base_model_name": meta.base_model_name,
+            }
+            payload = {**base_payload, **lora_payload}
+            meta_endpoint = "/areal_set_update_weight_meta_lora"
+            update_endpoint = "/areal_update_weights_lora_xccl"
+        else:
+            payload = base_payload
+            meta_endpoint = "/areal_set_update_weight_meta"
+            update_endpoint = "/areal_update_weights_xccl"
+
         return WeightUpdateRequests(
             requests=[
                 HttpRequest(
-                    endpoint="/areal_set_update_weight_meta",
-                    payload={
-                        "names": [pspec.name for pspec in param_specs],
-                        "dtypes": [pspec.dtype for pspec in param_specs],
-                        "shapes": [pspec.shape for pspec in param_specs],
-                        "group_name": meta.nccl_group_name,
-                    },
+                    endpoint=meta_endpoint,
+                    payload=payload,
                 ),
                 HttpRequest(
-                    endpoint="/areal_update_weights_xccl",
+                    endpoint=update_endpoint,
                     payload={},
                 ),
             ]
@@ -272,7 +327,7 @@ class RemotevLLMEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
-    ) -> None:
+    ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(data, workflow, workflow_kwargs, should_accept_fn)
 
@@ -281,6 +336,12 @@ class RemotevLLMEngine(InferenceEngine):
     ) -> list[dict[str, Any] | None]:
         """Wait for a specified number of requests to complete."""
         return self._engine.wait(count, timeout, raise_timeout)
+
+    def wait_for_task(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | None:
+        """Wait for a specific task to complete by task_id."""
+        return self._engine.wait_for_task(task_id, timeout, raise_timeout)
 
     def rollout_batch(
         self,
@@ -333,3 +394,12 @@ class RemotevLLMEngine(InferenceEngine):
 
     def export_stats(self) -> dict[str, float]:
         return stats_tracker.export_all(reduce_group=None)
+
+    @classmethod
+    def as_controller(
+        cls, config: InferenceEngineConfig, scheduler: Scheduler
+    ) -> RolloutController:
+        return RolloutController(cls, config=config, scheduler=scheduler)
+
+    def clear_batches(self, *args):
+        """Placeholder method of single-controller API."""

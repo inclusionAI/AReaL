@@ -15,7 +15,7 @@ env:
   RUNNER_LABELS: gcp-a2-highgpu-2g
   RUNNER_VERSION: '2.317.0'
   GCP_OS_IMAGE: areal-cicd-test-202510270
-  CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:${{ (github.head_ref == 'build-docker-image' || github.ref_name == 'build-docker-image') && 'dev' || 'v0.4.1' }}
+  CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:${{ (github.head_ref == 'build-docker-image' || github.ref_name == 'build-docker-image') && 'dev' || 'v0.5.1' }}
 
 jobs:
   provision-runner:
@@ -254,7 +254,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          TOKENIZERS_PARALLELISM=false AREAL_IS_IN_CI=1 pytest -m "not slow or ci" --durations=20 -s -vv areal/tests/test_*.py
+          TOKENIZERS_PARALLELISM=false AREAL_IS_IN_CI=1 pytest -m "not slow or ci" --durations=20 -s -vv areal/tests/test_*.py areal/tests/experimental/
 
       - name: Run SFT integration tests
         env:

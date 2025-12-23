@@ -23,7 +23,7 @@ model:
   init_from_scratch: false
   is_critic: true
   disable_dropout: true
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 4096

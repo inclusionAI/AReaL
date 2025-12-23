@@ -15,12 +15,13 @@ from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
+from areal.tests.utils import get_model_path
 from areal.utils.network import find_free_ports
 from areal.utils.offload import get_tms_env_vars
 
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen3-0.6B"
+MODEL_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+)
 
 
 def _create_engine(engine_type: str):
@@ -216,6 +217,7 @@ def _test_offload_and_onload(
 
 
 @pytest.mark.parametrize("engine_type", ["FSDP", "Megatron"])
+@pytest.mark.slow
 def test_engine_offload_and_onload(engine_type):
     """Test engine offload releases memory and onload recovers it correctly.
 
