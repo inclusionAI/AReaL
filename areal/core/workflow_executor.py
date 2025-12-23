@@ -655,6 +655,18 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         return results
 
 
+class TaskIdGenerator:
+    def __init__(self):
+        self._task_cnt = 0
+        self._lock = threading.Lock()
+
+    def next(self):
+        with self._lock:
+            task_id = self._task_cnt
+            self._task_cnt += 1
+        return task_id
+
+
 class WorkflowExecutor:
     """Executor for asynchronous workflow-based rollout generation.
 
@@ -690,9 +702,7 @@ class WorkflowExecutor:
             BatchTaskDispatcher[_RolloutTaskInput, _RolloutResult] | None
         ) = None
 
-        # Internal states
-        self._lock = threading.Lock()
-        self._task_cnt = 0
+        self._task_id_generator = TaskIdGenerator()
 
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start background threads.
@@ -1033,12 +1043,6 @@ class WorkflowExecutor:
 
         return _managed_workflow
 
-    def _register_task(self) -> int:
-        with self._lock:
-            task_id = self._task_cnt
-            self._task_cnt += 1
-        return task_id
-
     def submit(
         self,
         data: dict[str, Any],
@@ -1059,7 +1063,7 @@ class WorkflowExecutor:
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
 
         if task_id is None:
-            task_id = self._register_task()
+            task_id = self._task_id_generator.next()
         perf_tracer.register_task(task_id)
         task_input = _RolloutTaskInput(
             data=data,
@@ -1190,7 +1194,7 @@ class WorkflowExecutor:
                     resolved_workflow = self._resolve_workflow(
                         workflow, workflow_kwargs
                     )
-                    task_id = self._register_task()
+                    task_id = self._task_id_generator.next()
                     perf_tracer.register_task(task_id)
                     yield _RolloutTaskInput(
                         data=item,

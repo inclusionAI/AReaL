@@ -23,7 +23,7 @@ from areal.api.io_struct import (
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.staleness_manager import StalenessManager
-from areal.core.workflow_executor import BatchTaskDispatcher
+from areal.core.workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
@@ -71,7 +71,8 @@ class RolloutController:
         # State
         self._version_lock = Lock()
         self._version = 0
-        self._task_cnt = 0
+
+        self._task_id_generator = TaskIdGenerator()
 
         # Use provided staleness manager or create a default one
         # The manager will be properly initialized in initialize()
@@ -365,12 +366,6 @@ class RolloutController:
     def get_capacity(self):
         return self.staleness_manager.get_capacity()
 
-    def _register_task(self) -> int:
-        with self._version_lock:
-            task_id = self._task_cnt
-            self._task_cnt += 1
-        return task_id
-
     def submit(
         self,
         data: dict[str, Any],
@@ -388,7 +383,7 @@ class RolloutController:
         # If the workflow's result should be aborted,
         # `arun_episode` should return None instead.
         if task_id is None:
-            task_id = self._register_task()
+            task_id = self._task_id_generator.next()
         task_input = _RemoteRolloutTaskInput(
             data=data,
             workflow=workflow_str,
@@ -464,7 +459,7 @@ class RolloutController:
                         workflow=workflow_str,
                         workflow_kwargs=workflow_kwargs,
                         should_accept_fn=should_accept_fn,
-                        task_id=self._register_task(),
+                        task_id=self._task_id_generator.next(),
                     )
 
         if not hasattr(self, "data_generator"):
