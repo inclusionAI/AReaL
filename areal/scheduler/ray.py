@@ -214,8 +214,9 @@ class RayScheduler(Scheduler):
         # create placement_groups
         for idx, spec in enumerate(schedulings):
             worker_id = f"{role}/{idx}"
-
-            bundles = [self._bundle_spec(spec.cpu, spec.gpu, spec.mem)]
+            # TODO: should later support some parameter whether to allocate gpus or not
+            gpu = 0 if "eval-rollout" in role else spec.gpu
+            bundles = [self._bundle_spec(spec.cpu, gpu, spec.mem)]
             pg = placement_group(bundles, strategy="PACK")
 
             try:
@@ -234,7 +235,7 @@ class RayScheduler(Scheduler):
             )
 
             # define resources to actor
-            options = self._actor_resource_spec(spec.cpu, spec.gpu, spec.mem)
+            options = self._actor_resource_spec(spec.cpu, gpu, spec.mem)
 
             env = get_env_vars(
                 self.exp_config,
@@ -413,7 +414,7 @@ class RayScheduler(Scheduler):
                     "RayScheduler only supports separation strategy",
                 )
 
-        if role == "rollout":
+        if "rollout" in role:
             worker_info_list, worker_ids = self._create_rollout_workers(
                 role, schedulings
             )
