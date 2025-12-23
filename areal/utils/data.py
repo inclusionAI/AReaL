@@ -1120,7 +1120,7 @@ def bcast_mb_list(
     )
 
 
-def cycle_dataloader(dataloader: StatefulDataLoader):
+def cycle_dataloader(dataloader: StatefulDataLoader, num_cycles: int = -1):
     """Cycle through a dataloader indefinitely."""
     epoch = 0
     while True:
@@ -1128,6 +1128,8 @@ def cycle_dataloader(dataloader: StatefulDataLoader):
             dataloader.sampler.set_epoch(epoch)
         yield from dataloader
         epoch += 1
+        if num_cycles > 0 and epoch >= num_cycles:
+            break
 
 
 class Normalization:

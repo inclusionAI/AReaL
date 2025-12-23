@@ -10,6 +10,9 @@ class CpuPlatform(Platform):
     ray_experimental_noset: str = ""
     communication_backend: str = "gloo"
 
+    def clear_memory(self) -> None:
+        pass
+
     @classmethod
     def clear_cublas_workspaces(cls) -> None:
         pass
@@ -20,7 +23,7 @@ class CpuPlatform(Platform):
 
     @classmethod
     def synchronize(cls) -> None:
-        raise NotImplementedError()
+        pass
 
     @classmethod
     def update_env_vars_for_visible_devices(

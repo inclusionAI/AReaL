@@ -345,7 +345,9 @@ class ProxyServer:
         rollout: InferenceEngine | None = None,
         tokenizer: PreTrainedTokenizerFast | None = None,
         tool_call_parser: str = "qwen25",
+        reasoning_parser: str = "qwen3",
         chat_template_type: str = "hf",
+        engine_max_tokens: int | None = None,
         session_cache: dict[str, SessionData] | None = None,
         buffer_size: int | None = None,  # buffer size for session ids queue
         limit_active_tasks: bool = True,
@@ -359,7 +361,12 @@ class ProxyServer:
                     "rollout and tokenizer are required if client is not provided"
                 )
             client = self._create_client(
-                rollout, tokenizer, tool_call_parser, chat_template_type
+                rollout,
+                tokenizer,
+                tool_call_parser,
+                reasoning_parser,
+                chat_template_type,
+                engine_max_tokens,
             )
         self.client = client
         self.name = name
@@ -394,12 +401,16 @@ class ProxyServer:
         rollout: InferenceEngine,
         tokenizer: PreTrainedTokenizerFast,
         tool_call_parser: str,
+        reasoning_parser: str,
         chat_template_type: str,
+        engine_max_tokens: int | None = None,
     ) -> ArealOpenAI:
         return ArealOpenAI(
             engine=rollout,
             tokenizer=tokenizer,
             tool_call_parser=tool_call_parser,
+            reasoning_parser=reasoning_parser,
+            engine_max_tokens=engine_max_tokens,
             chat_template_type=chat_template_type,
         )
 
@@ -449,9 +460,11 @@ class ProxyServer:
             await self.session_cache[session_id].completed_event.wait()
         return self.session_cache[session_id]
 
-    async def get_results(
+    async def get_sessionwise_results(
         self, session_ids: list[str], discount: float = 1.0, style: str = "individual"
-    ) -> tuple[dict[str, float | None], dict[str, "InteractionWithTokenLogpReward"]]:
+    ) -> tuple[
+        dict[str, float | None], dict[str, dict[str, "InteractionWithTokenLogpReward"]]
+    ]:
         session_caches = await asyncio.gather(
             *[self.get_session_cache_data(session_id) for session_id in session_ids]
         )
@@ -462,8 +475,19 @@ class ProxyServer:
             )
         )
         completions = {}
-        for result in session_caches:
-            completions.update(result.export_interactions(discount, style))
+        for session_id, result in zip(session_ids, session_caches):
+            completions[session_id] = result.export_interactions(discount, style)
+        return rewards, completions
+
+    async def get_results(
+        self, session_ids: list[str], discount: float = 1.0, style: str = "individual"
+    ) -> tuple[dict[str, float | None], dict[str, "InteractionWithTokenLogpReward"]]:
+        rewards, completions_by_session = await self.get_sessionwise_results(
+            session_ids, discount, style
+        )
+        completions = {}
+        for session_id, session_completions in completions_by_session.items():
+            completions.update(session_completions)
         return rewards, completions
 
     async def get_interactions(

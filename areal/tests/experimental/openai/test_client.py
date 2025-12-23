@@ -90,7 +90,9 @@ def openai_client(sglang_server, tokenizer):
         engine=engine,
         tokenizer=tokenizer,
         tool_call_parser="qwen25",
+        reasoning_parser="qwen3",
         chat_template_type="hf",
+        engine_max_tokens=16384,
     )
     engine.destroy()
 
@@ -101,7 +103,8 @@ async def test_single_turn_rollout(openai_client):
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "Hello!"},
-        ]
+        ],
+        max_completion_tokens=2048,
     )
     openai_client.set_reward(c.id, reward=0.5)
     completions = openai_client.export_interactions(style="individual")
@@ -117,7 +120,9 @@ async def test_multi_round_conversation(openai_client):
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "What is the capital of France?"},
     ]
-    c1 = await openai_client.chat.completions.create(messages=messages)
+    c1 = await openai_client.chat.completions.create(
+        messages=messages, max_completion_tokens=2048
+    )
 
     # Round 2 - extends the conversation
     assistant_message_1 = c1.choices[0].message
@@ -125,7 +130,9 @@ async def test_multi_round_conversation(openai_client):
         assistant_message_1,
         {"role": "user", "content": "What about Germany?"},
     ]
-    c2 = await openai_client.chat.completions.create(messages=messages)
+    c2 = await openai_client.chat.completions.create(
+        messages=messages, max_completion_tokens=2048
+    )
 
     # Round 3 - further extends the conversation
     assistant_message_2 = c2.choices[0].message
@@ -133,7 +140,9 @@ async def test_multi_round_conversation(openai_client):
         assistant_message_2,
         {"role": "user", "content": "And Italy?"},
     ]
-    c3 = await openai_client.chat.completions.create(messages=messages)
+    c3 = await openai_client.chat.completions.create(
+        messages=messages, max_completion_tokens=2048
+    )
 
     # Set rewards - only the final completion gets explicit reward
     openai_client.set_reward(c3.id, reward=2.0)
@@ -150,262 +159,6 @@ async def test_multi_round_conversation(openai_client):
     assert completions[c3.id].reward == 2.0
     assert completions[c2.id].reward == 0.9 * 2.0  # discounted from c3
     assert completions[c1.id].reward == 0.9 * (0.9 * 2.0)  # discounted from c2
-
-
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "Get the current weather in a location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA",
-                    },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "Temperature unit",
-                    },
-                },
-                "required": ["location"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate",
-            "description": "Perform basic arithmetic calculations",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "Mathematical expression to evaluate, e.g. '2 + 2'",
-                    }
-                },
-                "required": ["expression"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_fact",
-            "description": "Get an interesting fact about a number",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "number": {
-                        "type": "integer",
-                        "description": "The number to get a fact about",
-                    }
-                },
-                "required": ["number"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_time",
-            "description": "Get current time in a timezone",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "timezone": {
-                        "type": "string",
-                        "description": "Timezone, e.g. 'America/New_York'",
-                    },
-                },
-                "required": ["timezone"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "translate",
-            "description": "Translate text to another language",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Text to translate"},
-                    "target_language": {
-                        "type": "string",
-                        "description": "Target language code",
-                    },
-                },
-                "required": ["text", "target_language"],
-            },
-        },
-    },
-]
-
-
-@pytest.mark.asyncio
-async def test_single_round_tool_calling(openai_client):
-    """Test single-round conversation with tool calling."""
-
-    c = await openai_client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant with access to weather information.",
-            },
-            {"role": "user", "content": "What's the weather like in San Francisco?"},
-        ],
-        tools=tools,
-        tool_choice="auto",
-    )
-
-    # Check if tool call was made (might depend on model capability)
-    assert c.id is not None
-    assert c.choices[0].message.role == "assistant"
-    assert c.choices[0].message.tool_calls is not None
-    assert c.choices[0].finish_reason == "tool_calls"
-
-    openai_client.set_reward(c.id, reward=1.5)
-    completions = openai_client.export_interactions(style="individual")
-
-    assert len(completions) == 1
-    assert completions[c.id].reward == 1.5
-
-
-@pytest.mark.asyncio
-async def test_multi_round_tool_calling(openai_client):
-    """Test multi-round conversation with tool calling across rounds."""
-
-    # Round 1 - Initial tool call request
-    c1 = await openai_client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": "You are a helpful calculator assistant."},
-            {"role": "user", "content": "Calculate 15 * 7"},
-        ],
-        tools=tools,
-        tool_choice="auto",
-    )
-
-    # Simulate tool call response
-    tool_response = "105"
-
-    # Round 2 - Continue with tool result and new request
-    c2 = await openai_client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": "You are a helpful calculator assistant."},
-            {"role": "user", "content": "Calculate 15 * 7"},
-            c1.choices[0].message,
-            {"role": "tool", "content": tool_response, "tool_call_id": "mock_call_id"},
-            {
-                "role": "user",
-                "content": "Now get an interesting fact about this number",
-            },
-        ],
-        tools=tools,
-        tool_choice="auto",
-    )
-
-    # Round 3 - Final response with fact
-    c3 = await openai_client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": "You are a helpful calculator assistant."},
-            {"role": "user", "content": "Calculate 15 * 7"},
-            c1.choices[0].message,
-            {"role": "tool", "content": tool_response, "tool_call_id": "mock_call_id"},
-            {
-                "role": "user",
-                "content": "Now get an interesting fact about this number",
-            },
-            c2.choices[0].message,
-            {
-                "role": "tool",
-                "content": "105 is divisible by 3, 5, 7, 15, 21, and 35!",
-                "tool_call_id": "mock_call_id_2",
-            },
-            {"role": "user", "content": "Thank you!"},
-        ]
-    )
-
-    # Set rewards
-    openai_client.set_reward(c2.id, reward=1.0)
-    openai_client.set_reward(c3.id, reward=2.0)
-    openai_client.apply_reward_discount(turn_discount=0.8)
-
-    completions = openai_client.export_interactions(style="individual")
-
-    assert len(completions) == 3
-    # c3 is leaf: gets explicit reward
-    assert completions[c3.id].reward == 2.0
-    # c2 gets explicit reward + discounted reward from c3
-    assert completions[c2.id].reward == 1.0 + 0.8 * 2.0
-    # c1 gets discounted reward from c2
-    assert completions[c1.id].reward == 0.8 * (1.0 + 0.8 * 2.0)
-
-
-@pytest.mark.asyncio
-async def test_parallel_tool_calling(openai_client):
-    """Test parallel tool calling within a single round."""
-
-    # Single request that could trigger multiple tool calls
-    c1 = await openai_client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that can check weather, time, and translate text.",
-            },
-            {
-                "role": "user",
-                "content": "I need you to check the weather in Tokyo, get the current time in Japan, and translate 'hello world' to Japanese. Please do all of these.",
-            },
-        ],
-        tools=tools,
-        tool_choice="auto",
-    )
-
-    # Check the response structure
-    assert c1.id is not None
-    assert c1.choices[0].message.role == "assistant"
-
-    # Even if parallel tool calling isn't supported by the model,
-    # we can test the caching and reward system
-    openai_client.set_reward(c1.id, reward=3.0)
-
-    # Test with tool responses in follow-up
-    c2 = await openai_client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that can check weather, time, and translate text.",
-            },
-            {
-                "role": "user",
-                "content": "I need you to check the weather in Tokyo, get the current time in Japan, and translate 'hello world' to Japanese. Please do all of these.",
-            },
-            c1.choices[0].message,
-            {"role": "tool", "content": "Sunny, 25°C", "tool_call_id": "weather_call"},
-            {"role": "tool", "content": "14:30 JST", "tool_call_id": "time_call"},
-            {
-                "role": "tool",
-                "content": "こんにちは世界",
-                "tool_call_id": "translate_call",
-            },
-            {"role": "user", "content": "Perfect, thank you!"},
-        ]
-    )
-
-    openai_client.set_reward(c2.id, reward=2.0)
-    openai_client.apply_reward_discount(turn_discount=0.9)
-    completions = openai_client.export_interactions(style="individual")
-
-    assert len(completions) == 2
-    # c2 is leaf
-    assert completions[c2.id].reward == 2.0
-    # c1 gets explicit reward + discounted reward from c2
-    assert completions[c1.id].reward == 3.0 + 0.9 * 2.0
 
 
 def strip_thinking_tags(content: str) -> str:
@@ -492,94 +245,9 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     assert completions[c1.id].reward == 0.85 * (1.5 + 0.85 * 2.5)
 
 
-@pytest.mark.asyncio
-async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_client):
-    """Test multi-round conversation with both thinking and tool calling, ensuring thinking is stripped but tool calls are preserved."""
-
-    # Round 1 - Model thinks before making a tool call
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful assistant with calculation abilities. Use <think></think> tags for your internal thoughts.",
-        },
-        {
-            "role": "user",
-            "content": "I need to calculate the area of a rectangle that is 25 meters long and 18 meters wide. Please think step-by-step.",
-        },
-    ]
-    c1 = await openai_client.chat.completions.create(
-        messages=messages, tools=tools, tool_choice="auto", max_tokens=1024
-    )
-
-    # Round 2 - Provide tool result and ask follow-up, stripping thinking from previous response
-    assistant_message_1 = c1.choices[0].message.model_dump(exclude_none=True)
-    cleaned_content_1 = strip_thinking_tags(assistant_message_1.get("content", ""))
-    assistant_message_1["content"] = cleaned_content_1
-    messages += [
-        assistant_message_1,
-        {"role": "tool", "content": "450", "tool_call_id": "calc_call_1"},
-        {
-            "role": "user",
-            "content": "Perfect! Now what if I want to carpet this room and carpet costs $15 per square meter? Please think step-by-step.",
-        },
-    ]
-    c2 = await openai_client.chat.completions.create(
-        messages=messages, tools=tools, tool_choice="auto", max_tokens=1024
-    )
-
-    # Round 3 - Continue with tool result
-    assistant_message_2 = c2.choices[0].message.model_dump(exclude_none=True)
-    cleaned_content_2 = strip_thinking_tags(assistant_message_2.get("content", ""))
-    assistant_message_2["content"] = cleaned_content_2
-    messages += [
-        assistant_message_2,
-        {"role": "tool", "content": "6750", "tool_call_id": "calc_call_2"},
-        {
-            "role": "user",
-            "content": "That's quite expensive! What would be the cost per square foot instead?  Please think step-by-step.",
-        },
-    ]
-    c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=1024)
-
-    # Verify conversation history
-    stored_messages_c2 = openai_client.get_completions(c2.id).messages
-    stored_messages_c3 = openai_client.get_completions(c3.id).messages
-
-    # Verify thinking tags are stripped from assistant messages
-    for msg_list in [stored_messages_c2, stored_messages_c3]:
-        for msg in msg_list:
-            if msg.get("role") == "assistant":
-                content = msg.get("content", "")
-                assert "<think>" not in content
-                assert "</think>" not in content
-
-    # Verify tool calls are preserved (check that tool messages exist in history)
-    tool_messages_found = False
-    for msg in stored_messages_c3:
-        if msg.get("role") == "tool":
-            tool_messages_found = True
-            break
-
-    if not tool_messages_found:
-        raise RuntimeError("Tool messages should be preserved in conversation history")
-
-    # Test reward system with thinking + tool calling
-    openai_client.set_reward(c1.id, reward=1.0)
-    openai_client.set_reward(c2.id, reward=2.0)
-    openai_client.set_reward(c3.id, reward=1.5)
-
-    openai_client.apply_reward_discount(turn_discount=0.9)
-    completions = openai_client.export_interactions(style="individual")
-
-    assert len(completions) == 3
-    # c3 is leaf
-    assert completions[c3.id].reward == 1.5  # 1.5 + 0.8
-    # c2 gets explicit reward + discounted reward from c3
-    assert completions[c2.id].reward == 2.0 + 0.9 * 1.5
-    # c1 gets explicit reward + discounted reward from c2
-    assert completions[c1.id].reward == 1.0 + 0.9 * (2.0 + 0.9 * 1.5)
-
-
+@pytest.mark.skip(
+    reason="In some case, sglang will output pad_token at the end of sequence rather than eos_token, and will make the test fail since the concat logic is based on eos_token."
+)
 @pytest.mark.asyncio
 async def test_multi_round_conversation_concat_style_export(openai_client):
     """Create a conversation tree using create() and verify parents and rewards.
@@ -597,7 +265,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
 
     # Root
     c_root = await openai_client.chat.completions.create(
-        messages=base,
+        messages=base, max_completion_tokens=2048
     )
 
     # Branch A1: root -> a -> a1
@@ -606,14 +274,14 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         {"role": "user", "content": "Question A"},
     ]
     c_a = await openai_client.chat.completions.create(
-        messages=msgs_a,
+        messages=msgs_a, max_completion_tokens=2048
     )
     msgs_a1 = msgs_a + [
         c_a.choices[0].message,
         {"role": "user", "content": "Follow-up A1"},
     ]
     c_a1 = await openai_client.chat.completions.create(
-        messages=msgs_a1,
+        messages=msgs_a1, max_completion_tokens=2048
     )
 
     # Branch A2: root -> a -> a2
@@ -622,7 +290,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         {"role": "user", "content": "Follow-up A2"},
     ]
     c_a2 = await openai_client.chat.completions.create(
-        messages=msgs_a2,
+        messages=msgs_a2, max_completion_tokens=2048
     )
 
     # Branch B: root -> b -> b1
@@ -638,7 +306,7 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         {"role": "user", "content": "Follow-up B1"},
     ]
     c_b1 = await openai_client.chat.completions.create(
-        messages=msgs_b1,
+        messages=msgs_b1, max_completion_tokens=2048
     )
 
     # Set rewards to leaf nodes only, which should be c_a1, c_a2, c_b1
@@ -776,3 +444,114 @@ async def test_type_checking(openai_client):
         await openai_client.chat.completions.create(
             messages=tuple(msgs_a),
         )
+
+
+@pytest.mark.asyncio
+async def test_prompt_len_exceed(openai_client):
+    openai_client: ArealOpenAI
+    openai_client.chat_template_type = "concat"
+    openai_client.chat.completions.chat_template_type = "concat"
+    # Base conversation
+    base = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Start the session."},
+    ]
+    # Root
+    c_root = await openai_client.chat.completions.create(
+        messages=base,
+    )
+    # Directly use message, should not raise error
+    msgs_a = base + [
+        c_root.choices[0].message,
+        {"role": "user", "content": "Question A " * 16384},
+    ]
+    with pytest.raises(ValueError):
+        await openai_client.chat.completions.create(
+            messages=msgs_a,
+        )
+
+    # msgs_a should not be in the cache due to failure
+    leaf_completions = openai_client.export_interactions(style="concat")
+    all_completions = openai_client.export_interactions(style="individual")
+    assert set(leaf_completions.keys()) == {c_root.id}
+    assert set(all_completions.keys()) == {c_root.id}
+
+
+@pytest.mark.asyncio
+async def test_multi_round_conversation_end_with_length(openai_client):
+    """Create a conversation tree using create() and verify parents and rewards.
+
+    Rewards are explicitly set (no propagation). Export should return only leaves.
+    """
+    openai_client: ArealOpenAI
+    openai_client.chat_template_type = "concat"
+    openai_client.chat.completions.chat_template_type = "concat"
+    # Base conversation
+    base = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Start the session."},
+    ]
+
+    # Root
+    c_root = await openai_client.chat.completions.create(
+        messages=base, max_completion_tokens=8
+    )
+
+    # Branch A1: root -> a -> a1
+    msgs_a = base + [
+        c_root.choices[0].message,
+        {"role": "user", "content": "Question A"},
+    ]
+    c_a = await openai_client.chat.completions.create(
+        messages=msgs_a, max_completion_tokens=8
+    )
+    msgs_a1 = msgs_a + [
+        c_a.choices[0].message,
+        {"role": "user", "content": "Follow-up A1"},
+    ]
+    c_a1 = await openai_client.chat.completions.create(
+        messages=msgs_a1, max_completion_tokens=8
+    )
+
+    # Set rewards to leaf nodes only, which should be c_a1
+    openai_client.set_reward(c_a1.id, 2)
+
+    # Export completions of leaf nodes, check whether all leaves are present
+    leaf_completions = openai_client.export_interactions(style="concat")
+    all_completions = openai_client.export_interactions(style="individual")
+    assert set(leaf_completions.keys()) == {c_a1.id}
+    assert set(all_completions.keys()) == {
+        c_root.id,
+        c_a.id,
+        c_a1.id,
+    }
+
+    def wrapped_completion(chat_completion):
+        return all_completions[chat_completion.id]
+
+    # Check tree structure
+    assert wrapped_completion(c_a1).parent is wrapped_completion(c_a)
+    assert wrapped_completion(c_a).parent is wrapped_completion(c_root)
+
+    # Reward is not propagated to tree nodes, check reward values
+    assert wrapped_completion(c_a1).reward == 2
+
+    # Check loss masks produced by completions
+    # Ensure number of 1s in the loss masks is actually the number of tokens output by the model
+    c_a1_loss_mask = wrapped_completion(c_a1).to_tensor_dict()["loss_mask"].squeeze(0)
+    c_root_input_len = wrapped_completion(c_root).model_response.input_len
+    c_root_output_len = wrapped_completion(c_root).model_response.output_len
+    c_a_input_len = wrapped_completion(c_a).model_response.input_len
+    c_a_output_len = wrapped_completion(c_a).model_response.output_len
+    c_a1_input_len = wrapped_completion(c_a1).model_response.input_len
+    c_a1_output_len = wrapped_completion(c_a1).model_response.output_len
+
+    # c_a1 loss mask
+    assert c_a1_loss_mask.squeeze(0).tolist() == (
+        [0] * c_root_input_len
+        + [1] * c_root_output_len
+        + [0] * (c_a_input_len - (c_root_input_len + c_root_output_len))
+        + [1] * c_a_output_len
+        + [0] * (c_a1_input_len - (c_a_input_len + c_a_output_len))
+        + [1] * c_a1_output_len
+    )

@@ -1,3 +1,5 @@
+import gc
+
 import torch
 
 import areal.utils.logging as logging
@@ -15,6 +17,11 @@ class UnknownPlatform(Platform):
     device_control_env_var: str = "CUDA_VISIBLE_DEVICES"
     ray_experimental_noset: str = "RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES"
     communication_backend: str = "nccl"
+
+    def clear_memory(self) -> None:
+        torch.cuda.synchronize()
+        gc.collect()
+        torch.cuda.empty_cache()
 
     @classmethod
     def clear_cublas_workspaces(cls) -> None:

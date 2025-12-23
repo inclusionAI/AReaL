@@ -6,16 +6,20 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from PIL.Image import Image as ImageObject
 from transformers import PreTrainedTokenizerFast
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters
 from areal.platforms import current_platform
+from areal.utils import logging
 from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
     from transformers import AutoProcessor
+
+logger = logging.getLogger(__file__)
 
 
 @dataclass
@@ -45,9 +49,11 @@ class ModelRequest:
             tokenizer=self.tokenizer,
             image_data=self.image_data.copy() if self.image_data is not None else None,
             processor=self.processor,
-            vision_msg_vllm=self.vision_msg_vllm.copy()
-            if self.vision_msg_vllm is not None
-            else None,
+            vision_msg_vllm=(
+                self.vision_msg_vllm.copy()
+                if self.vision_msg_vllm is not None
+                else None
+            ),
         )
 
 
@@ -58,7 +64,7 @@ class ModelResponse:
     output_tokens: list[int] = field(default_factory=list)
     output_logprobs: list[float] = field(default_factory=list)
     output_versions: list[int] = field(default_factory=list)
-    stop_reason: Literal["length", "stop", "interrupt"] = "stop"
+    stop_reason: Literal["length", "stop", "tool_calls", "abort"] = "stop"
     # tokenizer is used for encode-decode in the inference engine
     tokenizer: PreTrainedTokenizerFast | None = None
 
@@ -78,6 +84,12 @@ class ModelResponse:
     @property
     def output_len(self) -> int:
         return len(self.output_tokens)
+
+    @property
+    def output_tokens_without_stop(self) -> list[int]:
+        if self.stop_reason not in ["length", "abort"] and self.output_tokens:
+            return self.output_tokens[:-1]
+        return self.output_tokens
 
 
 @dataclass
@@ -268,3 +280,46 @@ class LocalInfServerInfo:
     host: str
     port: int
     process: subprocess.Popen
+
+
+@dataclass
+class DeviceRuntimeInfo:
+    mem_allocated: float
+    mem_reserved: float
+    mem_used: float
+    mem_total: float
+    unit: str
+
+    @classmethod
+    def get_current(cls, unit: str = "GB"):
+        unit_divisors = {"GB": 1024**3, "MB": 1024**2, "KB": 1024}
+        if unit not in unit_divisors:
+            raise ValueError(
+                f"Unsupported unit '{unit}'. Must be one of {list(unit_divisors.keys())}."
+            )
+        divisor = unit_divisors[unit]
+
+        mem_allocated = current_platform.memory_allocated()
+        mem_reserved = current_platform.memory_reserved()
+        mem_free, mem_total = current_platform.mem_get_info()
+        mem_used = mem_total - mem_free
+        return cls(
+            mem_allocated=mem_allocated / divisor,
+            mem_reserved=mem_reserved / divisor,
+            mem_used=mem_used / divisor,
+            mem_total=mem_total / divisor,
+            unit=unit,
+        )
+
+    def log(self, head: str = "", rank: int = 0, precision: int = 2):
+        mem_allocated = f"{self.mem_allocated:.{precision}f}"
+        mem_reserved = f"{self.mem_reserved:.{precision}f}"
+        mem_used = f"{self.mem_used:.{precision}f}"
+        mem_total = f"{self.mem_total:.{precision}f}"
+        if (not dist.is_initialized()) or (rank is None) or (dist.get_rank() == rank):
+            logger.info(
+                f"Memory-Usage {head}: "
+                f"memory allocated ({self.unit}): {mem_allocated}, "
+                f"memory reserved ({self.unit}): {mem_reserved}, "
+                f"device memory used/total ({self.unit}): {mem_used}/{mem_total}"
+            )

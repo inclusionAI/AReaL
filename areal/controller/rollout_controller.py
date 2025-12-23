@@ -14,7 +14,13 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import InferenceEngineConfig, SchedulingSpec
 from areal.api.engine_api import InferenceEngine
-from areal.api.io_struct import ModelRequest, ModelResponse, ParamSpec, WeightUpdateMeta
+from areal.api.io_struct import (
+    LocalInfServerInfo,
+    ModelRequest,
+    ModelResponse,
+    ParamSpec,
+    WeightUpdateMeta,
+)
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.staleness_manager import StalenessManager
@@ -57,6 +63,7 @@ class RolloutController:
 
         # Worker management
         self.workers: list[Worker] = []  # List of Worker objects from scheduler
+        self.server_infos: list[LocalInfServerInfo] = []
         self._worker_role: str
 
         # Round-robin scheduling
@@ -80,6 +87,7 @@ class RolloutController:
         role: str,
         alloc_mode: AllocationMode,
         server_args: dict[str, Any],
+        server_infos: list[LocalInfServerInfo] | None = None,
         *args,
         **kwargs,
     ):
@@ -109,6 +117,7 @@ class RolloutController:
             self._async_initialize(
                 job,
                 server_args,
+                server_infos,
                 *args,
                 **kwargs,
             )
@@ -140,7 +149,12 @@ class RolloutController:
         self._dispatcher.initialize(logger=logger)
 
     async def _async_initialize(
-        self, job: Job, server_args: dict[str, Any], *args, **kwargs
+        self,
+        job: Job,
+        server_args: dict[str, Any],
+        server_infos: list[LocalInfServerInfo] | None = None,
+        *args,
+        **kwargs,
     ):
         # Create workers via scheduler
         logger.info("Creating workers via scheduler...")
@@ -170,8 +184,30 @@ class RolloutController:
         logger.info("Engine created on all workers!")
 
         logger.info("Calling engine initialization...")
-        await self._collective_rpc_async("launch_server", server_args=server_args)
-        await self._collective_rpc_async("initialize", *args, **kwargs)
+        if server_infos is not None:
+            # Connecting to existing local servers for evaluation
+            self.server_infos = server_infos
+            assert len(self.server_infos) == len(self.workers), (
+                len(self.server_infos),
+                len(self.workers),
+            )
+            tasks = [
+                self.scheduler.async_call_engine(
+                    worker_id=worker.id,
+                    method="initialize",
+                    addr=f"{info.host}:{info.port}",
+                    *args,
+                    **kwargs,
+                )
+                for worker, info in zip(self.workers, self.server_infos)
+            ]
+            await asyncio.gather(*tasks)
+        else:
+            self.server_infos = await self._collective_rpc_async(
+                "launch_server", server_args=server_args
+            )
+            await self._collective_rpc_async("initialize", *args, **kwargs)
+
         logger.info("All engines are initialized...")
 
     def destroy(self):

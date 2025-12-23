@@ -14,8 +14,10 @@ from areal.api.cli_args import (
     ValidDatasetConfig,
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo
-from areal.engine.sft.lm_engine import FSDPLMEngine, MegatronLMEngine
+from areal.api.scheduler_api import Scheduler
+from areal.engine.sft.lm_engine import FSDPLMEngine, LMController, MegatronLMEngine
 from areal.platforms import current_platform
+from areal.scheduler import LocalScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -24,7 +26,7 @@ from areal.utils.data import (
     tensor_container_to,
 )
 from areal.utils.dataloader import create_dataloader
-from areal.utils.device import log_gpu_stats
+from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.perf_tracer import Category
@@ -51,6 +53,9 @@ class SFTTrainer:
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
             config.tokenizer_path
         )
+        self.scheduler = None
+        if is_single_controller():
+            self.scheduler = self._init_scheduler()
 
         # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
@@ -88,8 +93,12 @@ class SFTTrainer:
         # Initialize models
         self.parallel_strategy = self.allocation_mode.train
         assert self.parallel_strategy is not None
-        engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
-        self.actor.initialize(**engine_init_kwargs)
+        engine_init_kwargs = {
+            "addr": None,
+            "ft_spec": ft_spec,
+            "alloc_mode": self.allocation_mode,
+        }
+        self.actor.initialize(**engine_init_kwargs, role="actor")
 
         # Set up evaluation
         self.evaluator = Evaluator(config.evaluator, ft_spec)
@@ -133,32 +142,15 @@ class SFTTrainer:
             epoch = global_step // steps_per_epoch
             step = global_step % steps_per_epoch
 
-            batch = next(data_generator)
-
             with (
-                stats_tracker.record_timing("to_device"),
+                stats_tracker.record_timing("load_bcast"),
                 perf_tracer.trace_scope(
-                    "train.to_device",
+                    "train.load_bcast",
                     category=Category.IO,
                     args={"global_step": global_step},
                 ),
             ):
-                # NOTE: data are identical across model+context parallel group
-                batch = tensor_container_to(batch, current_platform.current_device())
-
-            with (
-                stats_tracker.record_timing("bcast"),
-                perf_tracer.trace_scope(
-                    "train.bcast",
-                    category=Category.COMM,
-                    args={"global_step": global_step},
-                ),
-            ):
-                batch = broadcast_tensor_container(
-                    batch,
-                    src_rank=self.actor.current_data_parallel_head(),
-                    group=self.actor.context_and_model_parallel_group,
-                )
+                batch = self._load_bcast_from(data_generator)
 
             with (
                 stats_tracker.record_timing("train_step"),
@@ -170,7 +162,7 @@ class SFTTrainer:
             ):
                 self.actor.train_lm(batch)
                 self.actor.step_lr_scheduler()
-                log_gpu_stats("after train step")
+                self.actor.get_device_stats().log("after train step")
 
             self.actor.set_version(global_step + 1)
 
@@ -210,6 +202,16 @@ class SFTTrainer:
                     global_step=global_step,
                 )
 
+            with (
+                stats_tracker.record_timing("clear_batches"),
+                perf_tracer.trace_scope(
+                    "train.clear_batches",
+                    category=Category.INSTR,
+                    args={"global_step": global_step},
+                ),
+            ):
+                self.actor.clear_batches(batch)
+
             with perf_tracer.trace_scope(
                 "train.log_stats",
                 category=Category.INSTR,
@@ -226,6 +228,12 @@ class SFTTrainer:
         self.actor.destroy()
         perf_tracer.save(force=True)
 
+    def _init_scheduler(self) -> Scheduler:
+        cfg = self.config.scheduler
+        if cfg.type == "local":
+            return LocalScheduler(exp_config=self.config)
+        raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
+
     def _create_dataloader(
         self,
         dataset: Dataset,
@@ -241,17 +249,38 @@ class SFTTrainer:
             collate_fn=pad_sequences_to_tensors,
         )
 
-    def _create_actor(self, actor_config: TrainEngineConfig):
+    def _create_actor(
+        self, actor_config: TrainEngineConfig
+    ) -> FSDPLMEngine | MegatronLMEngine | LMController:
         if self.allocation_mode.train_backend == "fsdp":
-            actor = FSDPLMEngine(config=actor_config)
+            actor_cls = FSDPLMEngine
         elif self.allocation_mode.train_backend == "megatron":
-            actor = MegatronLMEngine(config=actor_config)
+            actor_cls = MegatronLMEngine
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
+        if is_single_controller():
+            actor = actor_cls.as_controller(actor_config, self.scheduler)
+        else:
+            actor = actor_cls(config=actor_config)
         actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
+
+    def _load_bcast_from(self, data_generator):
+        batch = next(data_generator)
+
+        if is_single_controller():
+            return batch
+
+        # NOTE: data are identical across model+context parallel group
+        batch = tensor_container_to(batch, current_platform.current_device())
+        batch = broadcast_tensor_container(
+            batch,
+            src_rank=self.actor.current_data_parallel_head(),
+            group=self.actor.context_and_model_parallel_group,
+        )
+        return batch
 
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
         # Save as HF models for evaluation
@@ -263,7 +292,8 @@ class SFTTrainer:
             tokenizer=self.tokenizer,
             processor=self.processor,
         )
-        dist.barrier(device_ids=[self.actor.device.index])
+
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
@@ -286,19 +316,16 @@ class SFTTrainer:
             processor=self.processor,
         )
 
-        dist.barrier(device_ids=[self.actor.device.index])
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _evaluate_fn(self):
-        for data in self.valid_dataloader:
-            data = tensor_container_to(data, current_platform.current_device())
-            data = broadcast_tensor_container(
-                data,
-                src_rank=self.actor.current_data_parallel_head(),
-                group=self.actor.context_and_model_parallel_group,
-            )
+        data_generator = cycle_dataloader(self.valid_dataloader, num_cycles=1)
+        for _ in range(len(self.valid_dataloader)):
+            data = self._load_bcast_from(data_generator)
             self.actor.evaluate_lm(data)
-        dist.barrier(device_ids=[self.actor.device.index])
+
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _evaluate(
@@ -315,7 +342,7 @@ class SFTTrainer:
             epoch_step,
             global_step,
         )
-        dist.barrier(device_ids=[self.actor.device.index])
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def _export_and_commit_stats(self, epoch: int, epoch_step: int, global_step: int):
@@ -323,7 +350,7 @@ class SFTTrainer:
         stats = self.actor.export_stats()
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
-        dist.barrier(device_ids=[self.actor.device.index])
+        dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
     def __enter__(self):

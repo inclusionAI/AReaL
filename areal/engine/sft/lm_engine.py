@@ -4,6 +4,8 @@ import torch
 
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
+from areal.api.scheduler_api import Scheduler
+from areal.controller.train_controller import TrainController
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import stats_tracker
@@ -36,6 +38,14 @@ class LMEngine:
         )
 
 
+class LMController(TrainController):
+    def train_lm(self, *args, **kwargs):
+        self._custom_function_call("train_lm", *args, **kwargs)
+
+    def evaluate_lm(self, *args, **kwargs):
+        self._custom_function_call("evaluate_lm", *args, **kwargs)
+
+
 class FSDPLMEngine(FSDPEngine):
     def __init__(self, config: TrainEngineConfig):
         super().__init__(config)
@@ -46,6 +56,12 @@ class FSDPLMEngine(FSDPEngine):
 
     def evaluate_lm(self, data):
         return self.lm_engine.evaluate_lm(data)
+
+    @classmethod
+    def as_controller(
+        cls, config: TrainEngineConfig, scheduler: Scheduler
+    ) -> LMController:
+        return LMController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 class MegatronLMEngine(MegatronEngine):
@@ -58,6 +74,12 @@ class MegatronLMEngine(MegatronEngine):
 
     def evaluate_lm(self, data):
         return self.lm_engine.evaluate_lm(data)
+
+    @classmethod
+    def as_controller(
+        cls, config: TrainEngineConfig, scheduler: Scheduler
+    ) -> LMController:
+        return LMController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 def compute_packed_sft_loss(

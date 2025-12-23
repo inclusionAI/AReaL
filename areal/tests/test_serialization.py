@@ -8,6 +8,7 @@ import torch
 from transformers import AutoTokenizer
 
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
+from areal.tests.utils import get_model_path
 
 
 @dataclass
@@ -97,7 +98,11 @@ class TestSerializationRoundTrip:
 
     def test_tokenizer(self):
         """Test Hugging Face tokenizer serialization."""
-        original = AutoTokenizer.from_pretrained("hf-internal-testing/tiny-random-bert")
+        original = AutoTokenizer.from_pretrained(
+            get_model_path(
+                "/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B"
+            )
+        )
 
         serialized = serialize_value(original)
         assert serialized["type"] == "tokenizer"

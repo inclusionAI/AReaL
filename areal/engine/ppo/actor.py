@@ -5,6 +5,8 @@ import torch
 
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.api.engine_api import TrainEngine
+from areal.api.scheduler_api import Scheduler
+from areal.controller.train_controller import TrainController
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import logging, stats_tracker
@@ -364,6 +366,17 @@ class PPOActor:
                 stats_tracker.scalar(**train_stat)
 
 
+class PPOActorController(TrainController):
+    def compute_logp(self, *args, **kwargs):
+        return self._custom_function_call("compute_logp", *args, **kwargs)
+
+    def compute_advantages(self, *args, **kwargs):
+        return self._custom_function_call("compute_advantages", *args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs) -> None:
+        self._custom_function_call("ppo_update", *args, **kwargs)
+
+
 class FSDPPPOActor(FSDPEngine):
     def __init__(self, config: PPOActorConfig):
         super().__init__(config)
@@ -379,6 +392,12 @@ class FSDPPPOActor(FSDPEngine):
 
     def ppo_update(self, *args, **kwargs) -> None:
         self.actor.ppo_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(
+        cls, config: PPOActorConfig, scheduler: Scheduler
+    ) -> PPOActorController:
+        return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 class MegatronPPOActor(MegatronEngine):
@@ -396,6 +415,12 @@ class MegatronPPOActor(MegatronEngine):
 
     def ppo_update(self, *args, **kwargs) -> None:
         self.actor.ppo_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(
+        cls, config: PPOActorConfig, scheduler: Scheduler
+    ) -> PPOActorController:
+        return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 def grpo_loss_fn(

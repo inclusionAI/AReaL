@@ -20,7 +20,9 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     WeightUpdateRequests,
 )
+from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow
+from areal.controller import RolloutController
 from areal.core import RemoteInfEngine
 from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
@@ -350,3 +352,12 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def export_stats(self) -> dict[str, float]:
         return stats_tracker.export_all(reduce_group=None)
+
+    @classmethod
+    def as_controller(
+        cls, config: InferenceEngineConfig, scheduler: Scheduler
+    ) -> RolloutController:
+        return RolloutController(cls, config=config, scheduler=scheduler)
+
+    def clear_batches(self, *args):
+        """Placeholder method of single-controller API."""
