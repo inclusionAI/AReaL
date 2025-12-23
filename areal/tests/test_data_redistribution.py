@@ -6,8 +6,8 @@ import torch
 from torch.testing import assert_close
 
 from areal.platforms import current_platform
-from areal.tests.utils import is_in_ci
 from areal.utils.data import concat_padded_tensors
+from areal.utils.environ import is_in_ci
 from areal.utils.network import find_free_ports
 
 

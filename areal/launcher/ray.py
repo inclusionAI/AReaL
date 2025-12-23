@@ -581,6 +581,7 @@ def ray_main(config, run_id: int = 0):
                 ),
                 **_env_vars,
                 **tms_env_vars,
+                AREAL_SPMD_MODE=str(1),
             ),
             env_hook=partial(torch_env_hook, trainer_n_nodes * n_gpus_per_node),
         )

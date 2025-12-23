@@ -165,7 +165,7 @@ class MegatronEngine(TrainEngine):
         )
         self.process_group_initialized = True
 
-    def initialize(self, addr: str | None, ft_spec: FinetuneSpec):
+    def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
         try:
             self.seed = get_seed()
         except ValueError:
@@ -683,6 +683,9 @@ class MegatronEngine(TrainEngine):
         log_gpu_stats("after onload model")
 
         self.is_offload = False
+
+    def clear_batches(self, *args):
+        """Placeholder method of single-controller API."""
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
