@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -72,6 +71,7 @@ class RolloutController:
         # State
         self._version_lock = Lock()
         self._version = 0
+        self._task_cnt = 0
 
         # Use provided staleness manager or create a default one
         # The manager will be properly initialized in initialize()
@@ -300,7 +300,8 @@ class RolloutController:
             # NOTE: No need to call `on_rollout_submitted` here.
             # This function will be passed to `BatchTaskDispather` where
             # `on_rollout_submitted` will be called upon dispatching
-            wait_task_id = await self.scheduler.async_call_engine(
+            task_id = pending_task.task_id
+            engine_task_id = await self.scheduler.async_call_engine(
                 worker.id,
                 "submit",
                 data=pending_task.data,
@@ -308,9 +309,10 @@ class RolloutController:
                 workflow_kwargs=pending_task.workflow_kwargs,
                 should_accept_fn=pending_task.should_accept_fn,
                 http_timeout=self.config.request_timeout,
+                task_id=task_id,
             )
 
-            task_id = pending_task.task_id
+            assert task_id == engine_task_id, (task_id, engine_task_id)
             manager = self.staleness_manager
             traj: dict[str, Any] | None = None
 
@@ -323,7 +325,7 @@ class RolloutController:
                     result = await self.scheduler.async_call_engine(
                         worker.id,
                         "wait_for_task",
-                        task_id=wait_task_id,
+                        task_id=engine_task_id,
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
                         http_timeout=self.config.request_timeout,
@@ -363,12 +365,19 @@ class RolloutController:
     def get_capacity(self):
         return self.staleness_manager.get_capacity()
 
+    def _register_task(self) -> int:
+        with self._version_lock:
+            task_id = self._task_cnt
+            self._task_cnt += 1
+        return task_id
+
     def submit(
         self,
         data: dict[str, Any],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
+        task_id: int | None = None,
     ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -378,7 +387,8 @@ class RolloutController:
         # NOTE: RolloutController does not support `should_accept_fn`
         # If the workflow's result should be aborted,
         # `arun_episode` should return None instead.
-        task_id = int(uuid.uuid4())
+        if task_id is None:
+            task_id = self._register_task()
         task_input = _RemoteRolloutTaskInput(
             data=data,
             workflow=workflow_str,
@@ -454,7 +464,7 @@ class RolloutController:
                         workflow=workflow_str,
                         workflow_kwargs=workflow_kwargs,
                         should_accept_fn=should_accept_fn,
-                        task_id=int(uuid.uuid4()),
+                        task_id=self._register_task(),
                     )
 
         if not hasattr(self, "data_generator"):
