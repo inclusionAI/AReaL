@@ -275,5 +275,8 @@ class ProxyRLVRWorkflow(RolloutWorkflow):
             ), completion_list
 
             trajs.extend([v.to_tensor_dict() for v in completion_list])
+
+            if len(trajs) > 0:
+                print(f"[wht debug], trajs[0] keys: {trajs[0].keys()}, trajs[0] is {trajs[0]}")
         results = concat_padded_tensors(trajs)
         return results
