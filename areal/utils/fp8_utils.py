@@ -82,9 +82,6 @@ def quantize_params(
     assert quantization_config["fmt"] == "e4m3"
     assert quantization_config["activation_scheme"] == "dynamic"
     weight_block_size = quantization_config.get("weight_block_size", None)
-    # TODO: check
-    # if weight_block_size is not None and isinstance(weight_block_size, list):
-    #     weight_block_size = tuple(weight_block_size)
 
     # handle both with and without "module.module." prefix
     if not megatron_name.startswith("module.module."):
