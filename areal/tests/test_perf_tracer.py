@@ -414,7 +414,7 @@ def test_session_tracer_configuration(tmp_path):
     assert session_tracer is not None
 
     task_id = 123
-    session_tracer.register_task()
+    session_tracer.register_task(task_id)
     session_id = session_tracer.register_session(task_id)
     session_tracer.record_event(
         session_id,
