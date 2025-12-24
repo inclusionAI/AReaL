@@ -493,7 +493,18 @@ class TrainEngine(abc.ABC):
     def config_perf_tracer(
         self, config: PerfTracerConfig, rank: int, role: str
     ) -> None:
-        """Configure performance tracer."""
+        """Configure performance tracer.
+
+        Parameters
+        ----------
+        config : PerfTracerConfig
+            Configuration for the performance tracer.
+        rank : int
+            Rank of the current process within its role.
+        role : str
+            Role of this process. "master" by default or "actor",
+            "ref", "rollout", etc. in RPC workers.
+        """
 
 
 class InferenceEngine(abc.ABC):
