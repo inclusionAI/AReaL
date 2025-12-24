@@ -487,6 +487,9 @@ class TrainController:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
+    def get_device_stats(self):
+        return self._custom_function_call("get_device_stats")
+
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
