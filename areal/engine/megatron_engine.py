@@ -240,8 +240,9 @@ class MegatronEngine(TrainEngine):
             self._load_model_from_hf(self.config.path)
 
         for model in self.model:
-            for _, param in get_named_parameters(model, self.tf_config.num_moe_experts):
+            for _, param in model.named_parameters():
                 if hasattr(param, "get_high_precision_init_val"):
+                    param.clear_high_precision_init_val()
                     delattr(param, "get_high_precision_init_val")
                     delattr(param, "clear_high_precision_init_val")
 
