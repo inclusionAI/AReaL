@@ -8,7 +8,7 @@ from typing import Any
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import InferenceEngineConfig, SGLangConfig
+from areal.api.cli_args import InferenceEngineConfig, PerfTracerConfig, SGLangConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     HttpGenerationResult,
@@ -26,7 +26,7 @@ from areal.controller import RolloutController
 from areal.core import RemoteInfEngine
 from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
-from areal.utils import stats_tracker
+from areal.utils import perf_tracer, stats_tracker
 from areal.utils.launcher import TRITON_CACHE_PATH
 
 
@@ -364,3 +364,11 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def clear_batches(self, *args):
         """Placeholder method of single-controller API."""
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        perf_tracer.save(step=step, force=force)
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        perf_tracer.configure(config, rank=rank, role=role)

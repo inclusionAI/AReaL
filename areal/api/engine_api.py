@@ -10,6 +10,7 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
+from areal.api.cli_args import PerfTracerConfig
 from areal.api.io_struct import (
     DeviceRuntimeInfo,
     LocalInfServerInfo,
@@ -478,6 +479,22 @@ class TrainEngine(abc.ABC):
     def get_device_stats(self) -> DeviceRuntimeInfo:
         raise NotImplementedError()
 
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        """Save performance tracer data.
+
+        Parameters
+        ----------
+        step : int, optional
+            The current training step number, by default None
+        force : bool, optional
+            If True, force save regardless of internal conditions, by default False
+        """
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        """Configure performance tracer."""
+
 
 class InferenceEngine(abc.ABC):
     def initialize(self, *args, **kwargs):
@@ -867,3 +884,19 @@ class InferenceEngine(abc.ABC):
             The recorded scalar statistics.
         """
         raise NotImplementedError()
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        """Save performance tracer data.
+
+        Parameters
+        ----------
+        step : int, optional
+            The current training step number, by default None
+        force : bool, optional
+            If True, force save regardless of internal conditions, by default False
+        """
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        """Configure performance tracer."""

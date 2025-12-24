@@ -286,7 +286,7 @@ def _resolve_trace_files(source: Path) -> list[Path]:
     if source.is_file():
         return [source]
     if source.is_dir():
-        return sorted(p for p in source.glob("*.jsonl") if p.is_file())
+        return sorted(p for p in source.rglob("*.jsonl") if p.is_file())
     matches = [Path(p) for p in glob(str(source), recursive=True)]
     files = [p for p in matches if p.is_file()]
     return sorted(files)

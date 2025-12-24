@@ -131,8 +131,6 @@ def configure():
         config: BaseExperimentConfig
 
         def execute_configure():
-            if config.perf_tracer is not None:
-                perf_tracer.configure(config.perf_tracer, rank=rank, role=role)
             seeding.set_random_seed(config.seed, key=f"{role}{rank}")
             return {
                 "status": "success",
@@ -332,6 +330,17 @@ def call_engine_method():
                         f"Broadcasting data for TrainEngine method: {method_name}"
                     )
 
+                    nonlocal raw_args, raw_kwargs
+                    raw_args = broadcast_tensor_container(
+                        raw_args,
+                        src_rank=_engine.current_data_parallel_head(),
+                        group=_engine.context_and_model_parallel_group,
+                    )
+                    raw_kwargs = broadcast_tensor_container(
+                        raw_kwargs,
+                        src_rank=_engine.current_data_parallel_head(),
+                        group=_engine.context_and_model_parallel_group,
+                    )
                     args_bcast = tensor_container_to(
                         args, current_platform.current_device()
                     )
@@ -354,14 +363,49 @@ def call_engine_method():
                     kwargs_bcast = kwargs
 
                 logger.debug(f"Calling engine method: {method_name}")
-                method = getattr(_engine, method_name)
-                result = method(*args_bcast, **kwargs_bcast)
 
-                # Handle update weights future
-                if isinstance(result, Future):
-                    logger.debug("Waiting for update weights future")
-                    result = result.result()
-                    logger.debug("Update weights future done")
+                # Determine trace category based on method name
+                category = "misc"  # Default category
+                method_lower = method_name.lower()
+                if any(keyword in method_lower for keyword in ["submit", "wait"]):
+                    category = "scheduler"
+                elif any(
+                    keyword in method_lower
+                    for keyword in ["update_weights", "broadcast"]
+                ):
+                    category = "comm"
+                elif any(keyword in method_lower for keyword in ["save", "load"]):
+                    category = "io"
+                elif any(
+                    keyword in method_lower
+                    for keyword in [
+                        "train",
+                        "eval",
+                        "forward",
+                        "compute",
+                        "step",
+                        "update",
+                        "optimizer",
+                        "zero_grad",
+                        "lr_scheduler",
+                    ]
+                ):
+                    category = "compute"
+
+                # Wrap engine method call with perf_tracer
+                with perf_tracer.trace_scope(
+                    f"rpc.{method_name}",
+                    category=category,
+                    args={"method": method_name},
+                ):
+                    method = getattr(_engine, method_name)
+                    result = method(*args_bcast, **kwargs_bcast)
+
+                    # Handle update weights future
+                    if isinstance(result, Future):
+                        logger.debug("Waiting for update weights future")
+                        result = result.result()
+                        logger.debug("Update weights future done")
 
                 return result
             except AttributeError as e:
@@ -597,6 +641,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("Shutting down sync RPC server")
     finally:
+        perf_tracer.save(force=True)
         cleanup_engine_thread()
         cleanup_engine()
         server.shutdown()

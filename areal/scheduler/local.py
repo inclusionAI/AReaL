@@ -331,7 +331,7 @@ class LocalScheduler(Scheduler):
                 if scheduling.env_vars:
                     env.update(scheduling.env_vars)
 
-                log_file = self.log_dir / f"{worker_id.replace('/', '_')}.log"
+                log_file = self.log_dir / f"{role}.log"
 
                 if not scheduling.cmd:
                     self._cleanup_workers(workers)

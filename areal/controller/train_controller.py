@@ -9,7 +9,7 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
-from areal.api.cli_args import TrainEngineConfig
+from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
 from areal.api.engine_api import TrainEngine
 from areal.api.io_struct import (
     AllocationMode,
@@ -489,6 +489,25 @@ class TrainController:
 
     def get_device_stats(self):
         return self._custom_function_call("get_device_stats")
+
+    def config_perf_tracer(self, config: PerfTracerConfig, role: str) -> None:
+        async def _call():
+            tasks = [
+                self.scheduler.async_call_engine(
+                    worker_id=worker.id,
+                    method="config_perf_tracer",
+                    rank=rank,
+                    role=role,
+                    config=config,
+                )
+                for rank, worker in enumerate(self.workers)
+            ]
+            return await asyncio.gather(*tasks)
+
+        self._run_async_task(_call())
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        self._custom_function_call("save_perf_tracer", step=step, force=force)
 
     def prepare_batch(
         self,

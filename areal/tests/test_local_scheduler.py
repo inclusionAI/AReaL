@@ -769,7 +769,7 @@ class TestWorkerCreation:
         mock_popen.return_value = mock_proc
 
         # Create log file with error message
-        log_file = tmp_path / "test_0.log"
+        log_file = tmp_path / "test.log"
         log_file.write_text("Error: Failed to start server\n")
 
         scheduler = LocalScheduler(
@@ -872,10 +872,10 @@ class TestGetWorkers:
         """Should return workers when all are ready."""
         # Create mock workers
         worker1 = create_worker_info(
-            worker_id="test/0", ports=["8000"], log_file=str(tmp_path / "test_0.log")
+            worker_id="test/0", ports=["8000"], log_file=str(tmp_path / "test.log")
         )
         worker2 = create_worker_info(
-            worker_id="test/1", ports=["8001"], log_file=str(tmp_path / "test_1.log")
+            worker_id="test/1", ports=["8001"], log_file=str(tmp_path / "test.log")
         )
 
         scheduler._workers["test"] = [worker1, worker2]
@@ -894,7 +894,7 @@ class TestGetWorkers:
         # Mock time progression - provide enough values
         mock_time.side_effect = [0.0] + [i for i in range(1, 20)]
 
-        worker = create_worker_info(log_file=str(tmp_path / "test_0.log"))
+        worker = create_worker_info(log_file=str(tmp_path / "test.log"))
         worker.created_at = 0.0
 
         scheduler._workers["test"] = [worker]
@@ -909,7 +909,7 @@ class TestGetWorkers:
 
     def test_get_workers_process_died(self, scheduler, tmp_path):
         """Should raise WorkerFailedError when worker process dies during readiness check."""
-        log_file = tmp_path / "test_0.log"
+        log_file = tmp_path / "test.log"
         log_file.write_text("Error: Connection refused\n")
 
         # Process dies after first check
@@ -931,10 +931,10 @@ class TestGetWorkers:
     def test_get_workers_gradual_readiness(self, mock_sleep, scheduler, tmp_path):
         """Should wait for all workers to become ready gradually."""
         worker1 = create_worker_info(
-            worker_id="test/0", ports=["8000"], log_file=str(tmp_path / "test_0.log")
+            worker_id="test/0", ports=["8000"], log_file=str(tmp_path / "test.log")
         )
         worker2 = create_worker_info(
-            worker_id="test/1", ports=["8001"], log_file=str(tmp_path / "test_1.log")
+            worker_id="test/1", ports=["8001"], log_file=str(tmp_path / "test.log")
         )
 
         scheduler._workers["test"] = [worker1, worker2]
@@ -982,10 +982,10 @@ class TestWorkerHealthCheck:
     def test_check_worker_health_all_healthy(self, scheduler, tmp_path):
         """Should pass when all workers are healthy."""
         worker1 = create_worker_info(
-            worker_id="test/0", ports=["8000"], log_file=str(tmp_path / "test_0.log")
+            worker_id="test/0", ports=["8000"], log_file=str(tmp_path / "test.log")
         )
         worker2 = create_worker_info(
-            worker_id="test/1", ports=["8001"], log_file=str(tmp_path / "test_1.log")
+            worker_id="test/1", ports=["8001"], log_file=str(tmp_path / "test.log")
         )
 
         scheduler._workers["test"] = [worker1, worker2]
@@ -995,7 +995,7 @@ class TestWorkerHealthCheck:
 
     def test_check_worker_health_worker_failed(self, scheduler, tmp_path):
         """Should raise WorkerFailedError when a worker has failed."""
-        log_file = tmp_path / "test_0.log"
+        log_file = tmp_path / "test.log"
         log_file.write_text("Killed by signal\n")
 
         mock_proc = create_mock_process(is_alive=False, exit_code=137)
@@ -1025,13 +1025,13 @@ class TestDeleteWorkers:
             worker_id="role1/0",
             role="role1",
             ports=["8000"],
-            log_file=str(tmp_path / "role1_0.log"),
+            log_file=str(tmp_path / "role1.log"),
         )
         worker2 = create_worker_info(
             worker_id="role2/0",
             role="role2",
             ports=["8001"],
-            log_file=str(tmp_path / "role2_0.log"),
+            log_file=str(tmp_path / "role2.log"),
         )
 
         scheduler._workers["role1"] = [worker1]
@@ -1052,13 +1052,13 @@ class TestDeleteWorkers:
             worker_id="role1/0",
             role="role1",
             ports=["8000"],
-            log_file=str(tmp_path / "role1_0.log"),
+            log_file=str(tmp_path / "role1.log"),
         )
         worker2 = create_worker_info(
             worker_id="role2/0",
             role="role2",
             ports=["8001"],
-            log_file=str(tmp_path / "role2_0.log"),
+            log_file=str(tmp_path / "role2.log"),
         )
 
         scheduler._workers["role1"] = [worker1]
@@ -1093,10 +1093,10 @@ class TestDeleteWorkers:
     ):
         """Should continue cleanup even if terminating a process fails."""
         worker1 = create_worker_info(
-            worker_id="test/0", ports=["8000"], log_file=str(tmp_path / "test_0.log")
+            worker_id="test/0", ports=["8000"], log_file=str(tmp_path / "test.log")
         )
         worker2 = create_worker_info(
-            worker_id="test/1", ports=["8001"], log_file=str(tmp_path / "test_1.log")
+            worker_id="test/1", ports=["8001"], log_file=str(tmp_path / "test.log")
         )
 
         # First termination fails, second succeeds
@@ -1651,13 +1651,13 @@ class TestFindWorkerById:
             worker_id="role1/0",
             role="role1",
             ports=["8000"],
-            log_file=str(tmp_path / "role1_0.log"),
+            log_file=str(tmp_path / "role1.log"),
         )
         worker2 = create_worker_info(
             worker_id="role2/0",
             role="role2",
             ports=["8001"],
-            log_file=str(tmp_path / "role2_0.log"),
+            log_file=str(tmp_path / "role2.log"),
         )
 
         scheduler._workers["role1"] = [worker1]
@@ -1671,7 +1671,7 @@ class TestFindWorkerById:
     def test_find_worker_by_id_not_found(self, scheduler, tmp_path):
         """Should return None when worker ID is not found."""
         worker = create_worker_info(
-            worker_id="role1/0", role="role1", log_file=str(tmp_path / "role1_0.log")
+            worker_id="role1/0", role="role1", log_file=str(tmp_path / "role1.log")
         )
         scheduler._workers["role1"] = [worker]
 
