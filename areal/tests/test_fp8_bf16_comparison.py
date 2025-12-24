@@ -498,15 +498,15 @@ def test_fp8_bf16_gradient_comparison(fixed_input):
     logger.info(f"  Min cosine similarity: {overall_min_cos_sim:.6f}")
     logger.info("=" * 80)
 
-    # Log parameters with largest differences
-    layer_stats_sorted = sorted(layer_stats, key=lambda x: x["max_diff"], reverse=True)
-    logger.info("Top 10 parameters with largest gradient differences:")
+    # Log parameters with lowest cosine similarity
+    layer_stats_sorted = sorted(layer_stats, key=lambda x: x["cos_sim"], reverse=False)
+    logger.info("Top 10 parameters with lowest gradient cosine similarity:")
     for i, stat in enumerate(layer_stats_sorted[:10]):
         logger.info(
             f"  {i + 1}. {stat['name']}: "
+            f"cos_sim={stat['cos_sim']:.6f}"
             f"max_diff={stat['max_diff']:.6f}, "
             f"mean_diff={stat['mean_diff']:.6f}, "
-            f"cos_sim={stat['cos_sim']:.6f}"
         )
 
     # Assertions - allow some tolerance for FP8 quantization
