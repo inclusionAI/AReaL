@@ -34,6 +34,30 @@ MODEL_PATH_FP8 = get_model_path(
 )
 
 
+@pytest.fixture(scope="module")
+def engine_bf16():
+    engine = create_engine(
+        MODEL_PATH_BF16, fp8_enabled=False, fp8_param=False, port=7777
+    )
+    try:
+        yield engine
+    finally:
+        engine.destroy()
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
+@pytest.fixture(scope="module")
+def engine_fp8():
+    engine = create_engine(MODEL_PATH_FP8, fp8_enabled=True, fp8_param=True, port=7778)
+    try:
+        yield engine
+    finally:
+        engine.destroy()
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
 def dequantize_fp8_param(tensor: torch.Tensor) -> torch.Tensor:
     """Dequantize FP8 tensor to bfloat16."""
     if is_float8tensor(tensor):
@@ -632,6 +656,8 @@ def compare_rmsnorm_bf16_fp8(
 def test_rmsnorm_from_file(
     use_custom_rmsnorm: bool,
     activation_inputs_file: str | Path | None,
+    engine_bf16,
+    engine_fp8,
     layer_path: str | None = None,
     save_data: bool = False,
 ):
@@ -662,123 +688,110 @@ def test_rmsnorm_from_file(
     logger.info(f"Loaded BF16 inputs: {list(bf16_inputs.keys())}")
     logger.info(f"Loaded FP8 inputs: {list(fp8_inputs.keys())}")
 
-    # Create engines
-    engine_bf16 = create_engine(MODEL_PATH_BF16, fp8_enabled=False, port=7777)
-    engine_fp8 = create_engine(
-        MODEL_PATH_FP8, fp8_enabled=True, fp8_param=True, port=7778
-    )
+    # Find matching layer paths
+    common_keys = set(bf16_inputs.keys()) & set(fp8_inputs.keys())
+    if not common_keys:
+        logger.warning("No common layer paths found between BF16 and FP8 inputs")
+        return
 
-    try:
-        # Find matching layer paths
-        common_keys = set(bf16_inputs.keys()) & set(fp8_inputs.keys())
-        if not common_keys:
-            logger.warning("No common layer paths found between BF16 and FP8 inputs")
+    # Filter by layer_path if specified
+    if layer_path:
+        # Convert layer_path to input key format
+        if layer_path.endswith(".q_layernorm"):
+            input_key = layer_path.replace(".q_layernorm", ".q_layernorm.input")
+        elif layer_path.endswith(".k_layernorm"):
+            input_key = layer_path.replace(".k_layernorm", ".k_layernorm.input")
+        else:
+            input_key = f"{layer_path}.input"
+
+        if input_key not in common_keys:
+            logger.warning(f"Layer path {layer_path} not found in loaded inputs")
+            logger.info(f"Available keys: {sorted(common_keys)}")
             return
 
-        # Filter by layer_path if specified
-        if layer_path:
-            # Convert layer_path to input key format
-            if layer_path.endswith(".q_layernorm"):
-                input_key = layer_path.replace(".q_layernorm", ".q_layernorm.input")
-            elif layer_path.endswith(".k_layernorm"):
-                input_key = layer_path.replace(".k_layernorm", ".k_layernorm.input")
-            else:
-                input_key = f"{layer_path}.input"
+        common_keys = {input_key}
 
-            if input_key not in common_keys:
-                logger.warning(f"Layer path {layer_path} not found in loaded inputs")
-                logger.info(f"Available keys: {sorted(common_keys)}")
-                return
+    # Only test q_layernorm
+    common_keys = {k for k in common_keys if k.endswith(".q_layernorm.input")}
 
-            common_keys = {input_key}
+    # Test each matching layer
+    results = []
+    for input_key in sorted(common_keys):
+        # Extract layer path from input key
+        if input_key.endswith(".q_layernorm.input"):
+            test_layer_path = input_key.replace(".input", "")
+            layernorm_type = "q_layernorm"
+        elif input_key.endswith(".k_layernorm.input"):
+            test_layer_path = input_key.replace(".input", "")
+            layernorm_type = "k_layernorm"
+        else:
+            logger.warning(f"Unexpected input key format: {input_key}")
+            continue
 
-        # Only test q_layernorm
-        common_keys = {k for k in common_keys if k.endswith(".q_layernorm.input")}
-
-        # Test each matching layer
-        results = []
-        for input_key in sorted(common_keys):
-            # Extract layer path from input key
-            if input_key.endswith(".q_layernorm.input"):
-                test_layer_path = input_key.replace(".input", "")
-                layernorm_type = "q_layernorm"
-            elif input_key.endswith(".k_layernorm.input"):
-                test_layer_path = input_key.replace(".input", "")
-                layernorm_type = "k_layernorm"
-            else:
-                logger.warning(f"Unexpected input key format: {input_key}")
-                continue
-
-            logger.info("\n" + "=" * 80)
-            logger.info(f"Testing {layernorm_type} for {test_layer_path}")
-            logger.info("=" * 80)
-
-            # Get input activations
-            q_layernorm_input_bf16 = bf16_inputs[input_key]
-            q_layernorm_input_fp8 = fp8_inputs[input_key]
-
-            # Get output gradients (from downstream layers)
-            output_grad_key = input_key.replace(".input", ".output_grad")
-            output_grad_bf16 = bf16_output_grads.get(output_grad_key, None)
-            output_grad_fp8 = fp8_output_grads.get(output_grad_key, None)
-
-            q_layernorm_input_bf16 = q_layernorm_input_bf16.to(engine_bf16.device)
-            q_layernorm_input_fp8 = q_layernorm_input_fp8.to(engine_fp8.device)
-            if output_grad_bf16 is not None:
-                output_grad_bf16 = output_grad_bf16.to(engine_bf16.device)
-            if output_grad_fp8 is not None:
-                output_grad_fp8 = output_grad_fp8.to(engine_fp8.device)
-
-            # Compare RMSNorm
-            result = compare_rmsnorm_bf16_fp8(
-                engine_bf16,
-                engine_fp8,
-                q_layernorm_input_bf16,
-                q_layernorm_input_fp8,
-                test_layer_path,
-                output_grad_bf16=output_grad_bf16,
-                output_grad_fp8=output_grad_fp8,
-                use_custom_rmsnorm=use_custom_rmsnorm,
-                save_data=save_data,
-            )
-            results.append(result)
-
-        # Summary
         logger.info("\n" + "=" * 80)
-        logger.info("RMSNorm Test Summary")
+        logger.info(f"Testing {layernorm_type} for {test_layer_path}")
         logger.info("=" * 80)
-        for result in results:
-            if "shape_mismatch" in result and result["shape_mismatch"]:
-                logger.warning(
-                    f"{result['layer_path']}: Shape mismatch - "
-                    f"BF16={result['bf16_shape']}, FP8={result['fp8_shape']}"
+
+        # Get input activations
+        q_layernorm_input_bf16 = bf16_inputs[input_key]
+        q_layernorm_input_fp8 = fp8_inputs[input_key]
+
+        # Get output gradients (from downstream layers)
+        output_grad_key = input_key.replace(".input", ".output_grad")
+        output_grad_bf16 = bf16_output_grads.get(output_grad_key, None)
+        output_grad_fp8 = fp8_output_grads.get(output_grad_key, None)
+
+        q_layernorm_input_bf16 = q_layernorm_input_bf16.to(engine_bf16.device)
+        q_layernorm_input_fp8 = q_layernorm_input_fp8.to(engine_fp8.device)
+        if output_grad_bf16 is not None:
+            output_grad_bf16 = output_grad_bf16.to(engine_bf16.device)
+        if output_grad_fp8 is not None:
+            output_grad_fp8 = output_grad_fp8.to(engine_fp8.device)
+
+        # Compare RMSNorm
+        result = compare_rmsnorm_bf16_fp8(
+            engine_bf16,
+            engine_fp8,
+            q_layernorm_input_bf16,
+            q_layernorm_input_fp8,
+            test_layer_path,
+            output_grad_bf16=output_grad_bf16,
+            output_grad_fp8=output_grad_fp8,
+            use_custom_rmsnorm=use_custom_rmsnorm,
+            save_data=save_data,
+        )
+        results.append(result)
+
+    # Summary
+    logger.info("\n" + "=" * 80)
+    logger.info("RMSNorm Test Summary")
+    logger.info("=" * 80)
+    for result in results:
+        if "shape_mismatch" in result and result["shape_mismatch"]:
+            logger.warning(
+                f"{result['layer_path']}: Shape mismatch - "
+                f"BF16={result['bf16_shape']}, FP8={result['fp8_shape']}"
+            )
+        else:
+            logger.info(
+                f"{result['layer_path']}: "
+                f"output_max_diff={result['output_max_diff']:.6f}, "
+                f"output_mean_diff={result['output_mean_diff']:.6f}, "
+                f"output_cos_sim={result['output_cos_sim']:.6f}"
+            )
+
+            # Gradient summary
+            if "gradient_comparison" in result and result["gradient_comparison"]:
+                grad_comp = result["gradient_comparison"]
+                avg_grad_cos_sim = sum(g["cos_sim"] for g in grad_comp.values()) / len(
+                    grad_comp
                 )
-            else:
+                max_grad_diff = max(g["max_diff"] for g in grad_comp.values())
                 logger.info(
-                    f"{result['layer_path']}: "
-                    f"output_max_diff={result['output_max_diff']:.6f}, "
-                    f"output_mean_diff={result['output_mean_diff']:.6f}, "
-                    f"output_cos_sim={result['output_cos_sim']:.6f}"
+                    f"  Gradients: "
+                    f"avg_cos_sim={avg_grad_cos_sim:.6f}, "
+                    f"max_diff={max_grad_diff:.6f}, "
+                    f"n_gradients={len(grad_comp)}"
                 )
 
-                # Gradient summary
-                if "gradient_comparison" in result and result["gradient_comparison"]:
-                    grad_comp = result["gradient_comparison"]
-                    avg_grad_cos_sim = sum(
-                        g["cos_sim"] for g in grad_comp.values()
-                    ) / len(grad_comp)
-                    max_grad_diff = max(g["max_diff"] for g in grad_comp.values())
-                    logger.info(
-                        f"  Gradients: "
-                        f"avg_cos_sim={avg_grad_cos_sim:.6f}, "
-                        f"max_diff={max_grad_diff:.6f}, "
-                        f"n_gradients={len(grad_comp)}"
-                    )
-
-        logger.info("=" * 80)
-
-    finally:
-        engine_bf16.destroy()
-        engine_fp8.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
+    logger.info("=" * 80)

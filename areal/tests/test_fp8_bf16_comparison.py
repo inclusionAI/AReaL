@@ -144,7 +144,31 @@ def fixed_input(
     )
 
 
-def test_megatron_decode_output():
+@pytest.fixture(scope="module")
+def engine_bf16():
+    engine = create_engine(
+        MODEL_PATH_BF16, fp8_enabled=False, fp8_param=False, port=7777
+    )
+    try:
+        yield engine
+    finally:
+        engine.destroy()
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
+@pytest.fixture(scope="module")
+def engine_fp8():
+    engine = create_engine(MODEL_PATH_FP8, fp8_enabled=True, fp8_param=True, port=7778)
+    try:
+        yield engine
+    finally:
+        engine.destroy()
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
+def test_megatron_decode_output(engine_bf16, engine_fp8):
     """Test decode using Megatron forward pass and print model output."""
     # Test prompts
     test_prompts = [
@@ -157,82 +181,48 @@ def test_megatron_decode_output():
     temperature = 0.7
     max_new_tokens = 100
 
-    # Create BF16 engine
-    engine_bf16 = create_engine(MODEL_PATH_BF16, fp8_enabled=False, port=7777)
-    try:
-        logger.info("=" * 80)
-        logger.info("Testing decode with BF16 model")
-        logger.info("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Testing decode with BF16 model")
+    logger.info("=" * 80)
 
-        for prompt in test_prompts:
-            logger.info(f"{'=' * 80}")
-            logger.info(f"Prompt: {prompt}")
-            logger.info(f"{'=' * 80}")
-            generated = decode_with_megatron_forward(
-                engine_bf16,
-                prompt,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_k=top_k,
-            )
-            logger.info(f"BF16 Final output: {generated}\n")
-    finally:
-        engine_bf16.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
+    for prompt in test_prompts:
+        logger.info(f"{'=' * 80}")
+        logger.info(f"Prompt: {prompt}")
+        logger.info(f"{'=' * 80}")
+        generated = decode_with_megatron_forward(
+            engine_bf16,
+            prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+        )
+        logger.info(f"BF16 Final output: {generated}\n")
 
-    # Create FP8 engine with fp8_param enabled
-    engine_fp8 = create_engine(
-        MODEL_PATH_FP8, fp8_enabled=True, fp8_param=True, port=7778
-    )
-    try:
-        logger.info("=" * 80)
-        logger.info("Testing decode with FP8 model")
-        logger.info("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Testing decode with FP8 model")
+    logger.info("=" * 80)
 
-        for prompt in test_prompts:
-            logger.info(f"{'=' * 80}")
-            logger.info(f"Prompt: {prompt}")
-            logger.info(f"{'=' * 80}")
-            generated = decode_with_megatron_forward(
-                engine_fp8,
-                prompt,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_k=top_k,
-            )
-            logger.info(f"FP8 Final output: {generated}\n")
-    finally:
-        engine_fp8.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
+    for prompt in test_prompts:
+        logger.info(f"{'=' * 80}")
+        logger.info(f"Prompt: {prompt}")
+        logger.info(f"{'=' * 80}")
+        generated = decode_with_megatron_forward(
+            engine_fp8,
+            prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+        )
+        logger.info(f"FP8 Final output: {generated}\n")
 
 
-def test_fp8_bf16_logits_logprobs_comparison(fixed_input):
+def test_fp8_bf16_logits_logprobs_comparison(fixed_input, engine_bf16, engine_fp8):
     """Compare both logits and logprobs between FP8 and BF16 models."""
-    # Create BF16 engine
-    engine_bf16 = create_engine(MODEL_PATH_BF16, fp8_enabled=False, port=7777)
-    try:
-        logits_bf16, logprobs_bf16 = forward_with_logits_and_logprobs(
-            engine_bf16, fixed_input
-        )
-    finally:
-        engine_bf16.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
-
-    # Create FP8 engine with fp8_param enabled
-    engine_fp8 = create_engine(
-        MODEL_PATH_FP8, fp8_enabled=True, fp8_param=True, port=7778
+    logits_bf16, logprobs_bf16 = forward_with_logits_and_logprobs(
+        engine_bf16, fixed_input
     )
-    try:
-        logits_fp8, logprobs_fp8 = forward_with_logits_and_logprobs(
-            engine_fp8, fixed_input
-        )
-    finally:
-        engine_fp8.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
+
+    logits_fp8, logprobs_fp8 = forward_with_logits_and_logprobs(engine_fp8, fixed_input)
 
     # Get attention mask to filter out padding positions
     attention_mask = fixed_input["attention_mask"]  # [batch, seq_len]
@@ -367,35 +357,19 @@ def test_fp8_bf16_logits_logprobs_comparison(fixed_input):
         )
 
 
-def test_fp8_bf16_gradient_comparison(fixed_input):
+def test_fp8_bf16_gradient_comparison(fixed_input, engine_bf16, engine_fp8):
     """Compare gradients between FP8 and BF16 models after train_batch.
 
     This test verifies that gradients computed from FP8 and BF16 models
     are consistent across all layers.
     """
-    # Create BF16 engine
-    engine_bf16 = create_engine(MODEL_PATH_BF16, fp8_enabled=False, port=7777)
-    try:
-        engine_bf16.train()
-        gradients_bf16 = collect_gradients_after_train_batch(engine_bf16, fixed_input)
-        logger.info(f"BF16 model: collected {len(gradients_bf16)} parameter gradients")
-    finally:
-        engine_bf16.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
+    engine_bf16.train()
+    gradients_bf16 = collect_gradients_after_train_batch(engine_bf16, fixed_input)
+    logger.info(f"BF16 model: collected {len(gradients_bf16)} parameter gradients")
 
-    # Create FP8 engine with fp8_param enabled
-    engine_fp8 = create_engine(
-        MODEL_PATH_FP8, fp8_enabled=True, fp8_param=True, port=7778
-    )
-    try:
-        engine_fp8.train()
-        gradients_fp8 = collect_gradients_after_train_batch(engine_fp8, fixed_input)
-        logger.info(f"FP8 model: collected {len(gradients_fp8)} parameter gradients")
-    finally:
-        engine_fp8.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
+    engine_fp8.train()
+    gradients_fp8 = collect_gradients_after_train_batch(engine_fp8, fixed_input)
+    logger.info(f"FP8 model: collected {len(gradients_fp8)} parameter gradients")
 
     # Compare gradients
     assert len(gradients_bf16) == len(gradients_fp8), (
@@ -521,68 +495,52 @@ def test_fp8_bf16_gradient_comparison(fixed_input):
 
 
 @pytest.mark.skip(reason="This test is only for debugging")
-def test_profile_gemm_kernels(fixed_input):
+def test_profile_gemm_kernels(fixed_input, engine_bf16, engine_fp8):
     """Profile and print GEMM kernels used in forward and backward pass.
 
     This test profiles the GEMM kernels (matrix multiplication operations) used
     during forward and backward passes to understand which operators are being used.
     """
-    # Create BF16 engine
-    engine_bf16 = create_engine(MODEL_PATH_BF16, fp8_enabled=False, port=7777)
-    try:
-        logger.info("=" * 80)
-        logger.info("Profiling GEMM kernels - BF16 Model")
-        logger.info("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Profiling GEMM kernels - BF16 Model")
+    logger.info("=" * 80)
 
-        # Profile forward pass
-        logger.info("\n>>> Profiling FORWARD pass...")
-        logits_bf16, logprobs_bf16 = forward_with_logits_and_logprobs(
-            engine_bf16, fixed_input, profile_gemm=True
-        )
-
-        # Profile backward pass
-        logger.info("\n>>> Profiling BACKWARD pass...")
-        engine_bf16.train()
-        gradients_bf16 = collect_gradients_after_train_batch(
-            engine_bf16, fixed_input, profile_gemm=True
-        )
-        logger.info(f"Collected {len(gradients_bf16)} parameter gradients")
-
-    finally:
-        engine_bf16.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
-
-    # Create FP8 engine with fp8_param enabled
-    engine_fp8 = create_engine(
-        MODEL_PATH_FP8, fp8_enabled=True, fp8_param=True, port=7778
+    # Profile forward pass
+    logger.info("\n>>> Profiling FORWARD pass...")
+    logits_bf16, logprobs_bf16 = forward_with_logits_and_logprobs(
+        engine_bf16, fixed_input, profile_gemm=True
     )
-    try:
-        logger.info("\n" + "=" * 80)
-        logger.info("Profiling GEMM kernels - FP8 Model")
-        logger.info("=" * 80)
 
-        # Profile forward pass
-        logger.info("\n>>> Profiling FORWARD pass...")
-        logits_fp8, logprobs_fp8 = forward_with_logits_and_logprobs(
-            engine_fp8, fixed_input, profile_gemm=True
-        )
+    # Profile backward pass
+    logger.info("\n>>> Profiling BACKWARD pass...")
+    engine_bf16.train()
+    gradients_bf16 = collect_gradients_after_train_batch(
+        engine_bf16, fixed_input, profile_gemm=True
+    )
+    logger.info(f"Collected {len(gradients_bf16)} parameter gradients")
 
-        # Profile backward pass
-        logger.info("\n>>> Profiling BACKWARD pass...")
-        engine_fp8.train()
-        gradients_fp8 = collect_gradients_after_train_batch(
-            engine_fp8, fixed_input, profile_gemm=True
-        )
-        logger.info(f"Collected {len(gradients_fp8)} parameter gradients")
+    logger.info("\n" + "=" * 80)
+    logger.info("Profiling GEMM kernels - FP8 Model")
+    logger.info("=" * 80)
 
-    finally:
-        engine_fp8.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
+    # Profile forward pass
+    logger.info("\n>>> Profiling FORWARD pass...")
+    logits_fp8, logprobs_fp8 = forward_with_logits_and_logprobs(
+        engine_fp8, fixed_input, profile_gemm=True
+    )
+
+    # Profile backward pass
+    logger.info("\n>>> Profiling BACKWARD pass...")
+    engine_fp8.train()
+    gradients_fp8 = collect_gradients_after_train_batch(
+        engine_fp8, fixed_input, profile_gemm=True
+    )
+    logger.info(f"Collected {len(gradients_fp8)} parameter gradients")
 
 
-def test_fp8_bf16_partial_layers_comparison(fixed_input, save_data: bool = False):
+def test_fp8_bf16_partial_layers_comparison(
+    fixed_input, engine_bf16, engine_fp8, save_data: bool = False
+):
     """Compare FP8 and BF16 on a model reduced to specified layers.
 
     This test reduces the model to specified transformer layers while keeping the full
@@ -595,59 +553,41 @@ def test_fp8_bf16_partial_layers_comparison(fixed_input, save_data: bool = False
         range(2)
     )  # Test the first layer, or use [0, 1] to test first two layers
 
-    # Create BF16 engine
-    engine_bf16 = create_engine(MODEL_PATH_BF16, fp8_enabled=False, port=7777)
-    try:
-        logger.info("=" * 80)
-        logger.info(f"Testing model with layers {layer_indices} - BF16 Model")
-        logger.info("=" * 80)
+    logger.info("=" * 80)
+    logger.info(f"Testing model with layers {layer_indices} - BF16 Model")
+    logger.info("=" * 80)
 
-        # Forward and backward on model with specified layers
-        logits_bf16, activations_bf16, gradients_bf16, output_gradients_bf16 = (
-            forward_backward_model_with_hooks(
-                engine_bf16,
-                fixed_input,
-                layer_indices=layer_indices,
-            )
+    # Forward and backward on model with specified layers
+    logits_bf16, activations_bf16, gradients_bf16, output_gradients_bf16 = (
+        forward_backward_model_with_hooks(
+            engine_bf16,
+            fixed_input,
+            layer_indices=layer_indices,
         )
-
-        logger.info(f"BF16 - Logits shape: {logits_bf16.shape}")
-        logger.info(f"BF16 - Collected {len(activations_bf16)} activations")
-        logger.info(f"BF16 - Collected {len(gradients_bf16)} gradients")
-        logger.info(f"BF16 - Collected {len(output_gradients_bf16)} output gradients")
-
-    finally:
-        engine_bf16.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
-
-    # Create FP8 engine
-    engine_fp8 = create_engine(
-        MODEL_PATH_FP8, fp8_enabled=True, fp8_param=True, port=7778
     )
-    try:
-        logger.info("\n" + "=" * 80)
-        logger.info(f"Testing model with layers {layer_indices} - FP8 Model")
-        logger.info("=" * 80)
 
-        # Forward and backward on model with specified layers
-        logits_fp8, activations_fp8, gradients_fp8, output_gradients_fp8 = (
-            forward_backward_model_with_hooks(
-                engine_fp8,
-                fixed_input,
-                layer_indices=layer_indices,
-            )
+    logger.info(f"BF16 - Logits shape: {logits_bf16.shape}")
+    logger.info(f"BF16 - Collected {len(activations_bf16)} activations")
+    logger.info(f"BF16 - Collected {len(gradients_bf16)} gradients")
+    logger.info(f"BF16 - Collected {len(output_gradients_bf16)} output gradients")
+
+    logger.info("\n" + "=" * 80)
+    logger.info(f"Testing model with layers {layer_indices} - FP8 Model")
+    logger.info("=" * 80)
+
+    # Forward and backward on model with specified layers
+    logits_fp8, activations_fp8, gradients_fp8, output_gradients_fp8 = (
+        forward_backward_model_with_hooks(
+            engine_fp8,
+            fixed_input,
+            layer_indices=layer_indices,
         )
+    )
 
-        logger.info(f"FP8 - Logits shape: {logits_fp8.shape}")
-        logger.info(f"FP8 - Collected {len(activations_fp8)} activations")
-        logger.info(f"FP8 - Collected {len(gradients_fp8)} gradients")
-        logger.info(f"FP8 - Collected {len(output_gradients_fp8)} output gradients")
-
-    finally:
-        engine_fp8.destroy()
-        if dist.is_initialized():
-            dist.destroy_process_group()
+    logger.info(f"FP8 - Logits shape: {logits_fp8.shape}")
+    logger.info(f"FP8 - Collected {len(activations_fp8)} activations")
+    logger.info(f"FP8 - Collected {len(gradients_fp8)} gradients")
+    logger.info(f"FP8 - Collected {len(output_gradients_fp8)} output gradients")
 
     # Compare logits
     compare_logits(logits_bf16, logits_fp8)
