@@ -285,9 +285,12 @@ class RemoteSGLangEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        task_id: int | None = None,
     ) -> int:
         """Submit a request to the inference engine."""
-        return self._engine.submit(data, workflow, workflow_kwargs, should_accept_fn)
+        return self._engine.submit(
+            data, workflow, workflow_kwargs, should_accept_fn, task_id
+        )
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
