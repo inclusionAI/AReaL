@@ -16,14 +16,18 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 import requests
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from transformers import PreTrainedTokenizerFast
 
 from openai.types.chat import ChatCompletion
-from openai.types.chat.completion_create_params import CompletionCreateParams
+from openai.types.chat.completion_create_params import (
+    CompletionCreateParamsNonStreaming,
+)
 from openai.types.responses import Response
-from openai.types.responses.response_create_params import ResponseCreateParams
+from openai.types.responses.response_create_params import (
+    ResponseCreateParamsNonStreaming,
+)
 
 from areal.api.engine_api import InferenceEngine
 from areal.experimental.openai.cache import InteractionCache
@@ -42,6 +46,7 @@ from areal.utils.proxy_utils import (
     AReaLStartSessionRequest,
     ensure_end_with_slash,
     get_retry_strategy,
+    parse_request,
     post_json,
     post_json_with_retry,
     set_interaction_reward,
@@ -96,6 +101,7 @@ class SharedData:
     num_active_tasks: int = field(default=0)
     task_sessions: dict[str, list[str]] = field(default_factory=dict)
     active_tasks_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    additional_create_kwargs: dict[str, Any] | None = field(default=None)
 
 
 def build_app(
@@ -104,6 +110,7 @@ def build_app(
     session_ids_queue: asyncio.Queue | None = None,
     limit_active_tasks: bool = True,
     logger: logging.Logger | None = None,
+    additional_create_kwargs: dict[str, Any] | None = None,
 ):
     app = FastAPI()
 
@@ -116,6 +123,7 @@ def build_app(
         num_active_tasks=0,
         task_sessions=dict(),
         active_tasks_lock=asyncio.Lock(),
+        additional_create_kwargs=additional_create_kwargs,
     )
 
     def get_shared_data() -> SharedData:
@@ -247,6 +255,7 @@ def build_app(
         request: dict[str, Any] | BaseModel,
         session_id: str,
         extra_ignored_args: list[str] | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ChatCompletion | Response:
         state = get_shared_data()
         session_cache = state.session_cache
@@ -254,6 +263,8 @@ def build_app(
             raise HTTPException(
                 status_code=400, detail=f"Session {session_id} not found"
             )
+
+        additional_create_kwargs = state.additional_create_kwargs or dict()
 
         sig = inspect.signature(create_fn)
         areal_client_ignored_args = ["model"] + (extra_ignored_args or [])
@@ -307,7 +318,10 @@ def build_app(
 
         try:
             return await create_fn(
-                areal_cache=session_cache[session_id].completions, **kwargs
+                areal_cache=session_cache[session_id].completions,
+                extra_body=extra_body,
+                **kwargs,
+                **additional_create_kwargs,
             )
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -316,13 +330,15 @@ def build_app(
         f"/v1/{{session_id}}/{CHAT_COMPLETIONS_PATHNAME}",
         dependencies=[Depends(validate_json_request)],
     )
-    async def chat_completions(
-        request: CompletionCreateParams, session_id: str
-    ) -> ChatCompletion:
+    async def chat_completions(request: Request, session_id: str) -> ChatCompletion:
+        params, extra_body = await parse_request(
+            request, CompletionCreateParamsNonStreaming
+        )
         client = get_client()
         return await _call_client_create(
             create_fn=client.chat.completions.create,
-            request=request,
+            request=params,
+            extra_body=extra_body,
             session_id=session_id,
         )
 
@@ -330,11 +346,15 @@ def build_app(
         f"/v1/{{session_id}}/{RESPONSES_PATHNAME}",
         dependencies=[Depends(validate_json_request)],
     )
-    async def responses(request: ResponseCreateParams, session_id: str) -> Response:
+    async def responses(request: Request, session_id: str) -> Response:
+        params, extra_body = await parse_request(
+            request, ResponseCreateParamsNonStreaming
+        )
         client = get_client()
         return await _call_client_create(
             create_fn=client.responses.create,
-            request=request,
+            request=params,
+            extra_body=extra_body,
             session_id=session_id,
         )
 
@@ -357,6 +377,7 @@ class ProxyServer:
         limit_active_tasks: bool = True,
         server_log_level: int = logging.INFO,
         uvicorn_log_level: int = logging.WARNING,
+        max_total_tokens: int | None = None,
     ):
         self.port = port if port is not None else find_free_ports(1)[0]
         if client is None:
@@ -372,12 +393,16 @@ class ProxyServer:
         self.session_cache = session_cache if session_cache is not None else {}
         self.session_ids_queue = asyncio.Queue(maxsize=buffer_size or 0)
         self.logger = getLogger("ArealOpenAI Proxy", level=server_log_level)
+        self.additional_create_kwargs = dict(
+            max_total_tokens=max_total_tokens,
+        )
         self.app = build_app(
             client=client,
             session_cache=self.session_cache,
             session_ids_queue=self.session_ids_queue,
             limit_active_tasks=limit_active_tasks,
             logger=self.logger,
+            additional_create_kwargs=self.additional_create_kwargs,
         )
         self.host_ip = gethostip()
         self._localhost = "0.0.0.0"

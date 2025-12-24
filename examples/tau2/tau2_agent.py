@@ -79,6 +79,10 @@ class Tau2Runner:
 
         async def _acompletion(*args, **kwargs):
             start_time = time.perf_counter()
+            kwargs.update(
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                thinking=False,
+            )
             try:
                 return await acompletion(*args, **kwargs)
             finally:
