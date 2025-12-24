@@ -4,24 +4,19 @@ This module contains functions for extracting layers, reducing models,
 and collecting activations/gradients using hooks.
 """
 
-import functools
 from typing import Any
 
 import torch
-import torch.distributed as dist
 from megatron.core import parallel_state as mpu
-from megatron.core.pipeline_parallel import get_forward_backward_func
 
+from areal.engine.core.train_engine import compute_total_loss_weight
 from areal.engine.megatron_engine import MegatronEngine
 from areal.tests.fp8.engine_utils import (
     extract_gemm_kernels,
     print_gemm_profile,
 )
 from areal.utils import logging
-from areal.utils.data import unpad_logits
-from areal.utils.functional import gather_logprobs_entropy
-from areal.utils.mcore.packed_context_parallel import packed_context_parallel_forward
-from areal.utils.megatron import all_gather_param, get_named_parameters
+from areal.utils.megatron import get_named_parameters
 
 logger = logging.getLogger("FP8 BF16 Model Utils")
 
@@ -118,25 +113,21 @@ def collect_gradients_after_train_batch(
     Returns:
         Dictionary mapping parameter names to their gradients.
     """
-    if engine.is_offload:
-        engine.onload()
-
-    assert engine.model is not None, "Model is not initialized."
+    engine._ensure_ready()
     assert engine.optimizer is not None, "Optimizer is not initialized."
     engine.optimizer.zero_grad()
     for model in engine.model:
         model.zero_grad_buffer()
 
-    # Prepare input
-    mb_list = engine.prepare_mb_list(input_)
-    mb_list = mb_list.to(engine.device)
+    # Step 1: Prepare micro-batches
+    mb_list = engine._prepare_mb_list(input_).to(engine.device)
 
-    # SFT loss function based on compute_packed_sft_loss from lm_engine.py
+    # Step 2: Define loss functions
     def sft_loss_fn(logprobs, entropy, input_):
         """SFT loss function based on compute_packed_sft_loss."""
         del entropy  # SFT does not use entropy
 
-        # Get cu_seqlens and loss_mask from input
+        # Get loss_mask from input
         loss_mask = input_["loss_mask"].bool()
 
         # Shift loss_mask to align with next-token prediction
@@ -158,67 +149,25 @@ def collect_gradients_after_train_batch(
         """Loss weight function based on number of valid tokens."""
         return mb["loss_mask"].count_nonzero()
 
-    total_loss_weight = (
-        torch.stack([loss_weight_fn(mb) for mb in mb_list.padded_mbs])
-        .sum()
-        .detach()
-        .clone()
-        .to(dtype=torch.float32)
+    # Step 3: Compute total loss weight
+    total_loss_weight = compute_total_loss_weight(
+        mb_list, loss_weight_fn, mpu.get_data_parallel_group()
     )
-    assert total_loss_weight != 0
-    dist.all_reduce(total_loss_weight, group=mpu.get_data_parallel_group())
-    max_total_len = max(m["cu_seqlens"][-1].item() for m in mb_list.padded_mbs)
-    micro_batch_generator = [mb_list.padded_mbs] * len(engine.model)
-    micro_batch_generator = [iter(b) for b in micro_batch_generator]
-    forward_step_counts = [0] * len(engine.model)
 
-    def forward_step(batch_iter, model):
-        nonlocal forward_step_counts
-        batch = next(batch_iter)
-        model_vp_stage = getattr(model, "vp_stage", 0)
-        forward_step_count = forward_step_counts[model_vp_stage]
-        padding_length = mb_list.padding_lengths[forward_step_count]
-        orig_input = mb_list.mbs[forward_step_count]
-        cu_seqlens = batch["cu_seqlens"]
-        old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
-
-        forward_step_counts[model_vp_stage] += 1
-        output = packed_context_parallel_forward(model, batch)
-
-        if mpu.is_pipeline_last_stage(ignore_virtual=False, vp_stage=model_vp_stage):
-            output = unpad_logits(
-                output,
-                padding_length=padding_length,
-                cu_seqlens=cu_seqlens,
-                old_cu_seqlens=old_cu_seqlens,
-            )
-
-        def _scaled_loss_fn(input_, output):
-            # Prepare input dict with cu_seqlens for loss function
-            loss_input = input_.copy()
-
-            labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
-            logprobs, entropy = gather_logprobs_entropy(
-                output,
-                labels,
-                temperature=engine.config.temperature,
-                tp_group=mpu.get_tensor_model_parallel_group()
-                if mpu.get_tensor_model_parallel_world_size() > 1
-                else None,
-            )
-            loss = sft_loss_fn(logprobs, entropy, loss_input)
-            loss_scale = loss_weight_fn(input_) / total_loss_weight
-            loss_scale *= mpu.get_data_parallel_world_size()
-            loss_scale *= engine.optimizer.get_loss_scale().item()
-            loss *= loss_scale
-            return loss, {}
-
-        return output, functools.partial(_scaled_loss_fn, orig_input)
-
-    forward_backward_func = get_forward_backward_func()
-    data_iterator = (
-        micro_batch_generator if len(engine.model) > 1 else micro_batch_generator[0]
+    # Step 4: Forward-backward using Megatron's pipeline function
+    loss_multiplier = (
+        mpu.get_data_parallel_world_size() * engine.optimizer.get_loss_scale().item()
     )
+
+    def process_output(output: torch.Tensor, inputs: dict[str, Any]) -> torch.Tensor:
+        return engine._compute_logprobs_and_loss(
+            output,
+            inputs,
+            loss_fn=sft_loss_fn,
+            loss_weight_fn=loss_weight_fn,
+            total_loss_weight=total_loss_weight,
+            loss_multiplier=loss_multiplier,
+        )
 
     # Profile GEMM kernels if requested
     if profile_gemm:
@@ -231,32 +180,16 @@ def collect_gradients_after_train_batch(
             with_stack=False,
             profile_memory=False,
         ) as prof:
-            forward_backward_func(
-                forward_step_func=forward_step,
-                data_iterator=data_iterator,
-                model=engine.model if len(engine.model) > 1 else engine.model[0],
-                num_microbatches=len(mb_list.padded_mbs),
-                seq_length=max_total_len,
-                micro_batch_size=1,
-                forward_only=False,
-            )
+            engine.forward_backward_batch(mb_list, process_output, forward_only=False)
             torch.cuda.synchronize()
 
         # Extract and print GEMM kernels
         gemm_profile = extract_gemm_kernels(prof, phase="backward")
         print_gemm_profile(gemm_profile)
     else:
-        forward_backward_func(
-            forward_step_func=forward_step,
-            data_iterator=data_iterator,
-            model=engine.model if len(engine.model) > 1 else engine.model[0],
-            num_microbatches=len(mb_list.padded_mbs),
-            seq_length=max_total_len,
-            micro_batch_size=1,
-            forward_only=False,
-        )
+        engine.forward_backward_batch(mb_list, process_output, forward_only=False)
 
-    # Collect gradients before optimizer.step()
+    # Step 5: Collect gradients before optimizer.step()
     gradients = {}
     for name, param in get_named_parameters(engine.model, num_experts=None):
         if param.requires_grad:
@@ -270,26 +203,11 @@ def collect_gradients_after_train_batch(
                 raise ValueError(f"No gradient found for {name}")
 
             if grad is not None:
-                # All-gather gradient if it's tensor parallel
                 if (
                     hasattr(param, "tensor_model_parallel")
                     and param.tensor_model_parallel
                 ):
-                    try:
-                        # Create a temporary parameter with gradient as data for all_gather_param
-                        temp_param = torch.nn.Parameter(grad)
-                        # Copy tensor_model_parallel and other attributes from original param
-                        temp_param.tensor_model_parallel = param.tensor_model_parallel
-                        if hasattr(param, "partition_dim"):
-                            temp_param.partition_dim = param.partition_dim
-                        if hasattr(param, "partition_stride"):
-                            temp_param.partition_stride = param.partition_stride
-                        if hasattr(param, "parallel_mode"):
-                            temp_param.parallel_mode = param.parallel_mode
-                        grad = all_gather_param(name, temp_param)
-                    except Exception as e:
-                        logger.warning(f"Failed to all_gather gradient for {name}: {e}")
-                        # If all_gather fails, use the local gradient
+                    raise NotImplementedError("TP gradients are not supported yet")
                 gradients[name] = grad
 
     return gradients
