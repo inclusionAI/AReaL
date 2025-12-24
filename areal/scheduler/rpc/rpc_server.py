@@ -34,6 +34,7 @@ logger = logging.getLogger("SyncRPCServer")
 # Global engine instance - must be TrainEngine or InferenceEngine
 _engine: TrainEngine | InferenceEngine | None = None
 
+_role: str | None = None
 
 # Engine thread for executing all engine-related endpoints serially
 # This ensures NCCL compatibility by running engine operations in a single thread,
@@ -119,10 +120,6 @@ def configure():
         if config is None:
             return jsonify({"detail": "Missing 'config' field in request"}), 400
 
-        role = data.get("role")
-        if role is None:
-            return jsonify({"detail": "Missing 'role' field in request"}), 400
-
         rank = data.get("rank")
         if rank is None:
             return jsonify({"detail": "Missing 'rank' field in request"}), 400
@@ -131,7 +128,8 @@ def configure():
         config: BaseExperimentConfig
 
         def execute_configure():
-            seeding.set_random_seed(config.seed, key=f"{role}{rank}")
+            global _role
+            seeding.set_random_seed(config.seed, key=f"{_role}{rank}")
             return {
                 "status": "success",
                 "message": "Worker configured successful.",
@@ -607,10 +605,11 @@ def main():
     werkzeug_logger.setLevel(getattr(stdlib_logging, args.werkzeug_log_level))
 
     # Set global server address variables
-    global _server_host, _server_port
+    global _server_host, _server_port, _role
     _server_host = args.host
     if _server_host == "0.0.0.0":
         _server_host = gethostip()
+    _role = args.role
 
     # Get worker identity
     worker_id = f"{args.role}/{args.worker_index}"

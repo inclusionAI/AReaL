@@ -87,9 +87,9 @@ class LocalScheduler(Scheduler):
         startup_timeout: float = 30.0,
         health_check_interval: float = 1.0,
         *,
-        fileroot: str | None = None,
         experiment_name: str | None = None,
         trial_name: str | None = None,
+        fileroot: str | None = None,
         name_resolve_type: str = "nfs",
         nfs_record_root: str = "/tmp/areal/name_resolve",
         etcd3_addr: str = "localhost:2379",
@@ -351,8 +351,8 @@ class LocalScheduler(Scheduler):
                 cmd = shlex.split(scheduling.cmd)
                 cmd.extend(["--port", str(ports[0])])
                 # Add name_resolve and worker identity args
-                cmd.extend(["--experiment-name", self.experiment_name])
-                cmd.extend(["--trial-name", self.trial_name])
+                cmd.extend(["--experiment-name", str(self.experiment_name)])
+                cmd.extend(["--trial-name", str(self.trial_name)])
                 cmd.extend(["--role", role])
                 cmd.extend(["--worker-index", str(idx)])
                 cmd.extend(["--name-resolve-type", self.name_resolve_config.type])
