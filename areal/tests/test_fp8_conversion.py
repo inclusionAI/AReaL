@@ -139,8 +139,8 @@ def _perform_fp8_gemm(
     """Perform FP8 GEMM using general_gemm.
 
     Args:
-        weight_fp8: Weight tensor in FP8 format [N, K]
-        input_fp8: Input tensor in FP8 format [M, K]
+        weight_fp8: Weight tensor in FP8 format [N, K] or [K, N]
+        input_fp8: Input tensor in FP8 format [M, K] or [K, M]
         output_shape: Output shape [M, N]
         device: Device to perform computation on
         layout: GEMM layout ("TN", "NN", etc.)
@@ -241,7 +241,7 @@ def test_te_linear_autocast_vs_bf16(test_tensors):
     )
 
 
-def test_te_linear_autocast_vs_gemm(test_tensors):
+def test_te_linear_autocast_vs_gemm(test_tensors, device):
     """Test TransformerEngine Linear autocast FP8 vs manual FP8 GEMM."""
     a_bf16, b_bf16 = test_tensors
     K, N = a_bf16.shape[1], b_bf16.shape[1]
@@ -395,22 +395,21 @@ def test_pytorch_fp8_vs_te_fp8_gemm(test_tensors, device):
     # Convert to PyTorch FP8 first
     b_pytorch_fp8, b_scale_inv = blockwise_cast_to_fp8_triton(b_bf16, block_size)
 
-    # Convert PyTorch FP8 to TE FP8 for weight B (transposed)
+    # Convert PyTorch FP8 to TE FP8 for weight B
     # Create TE FP8 tensor initialized with random data (will be overwritten)
     b_rand = torch.randn(b_bf16.shape, device=device, dtype=torch.bfloat16)
-    b_te_fp8_pytorch_t = high_precision_to_te_blockwise_fp8(
+    b_te_fp8_pytorch = high_precision_to_te_blockwise_fp8(
         b_rand,
         fp8_dtype=tex.DType.kFloat8E4M3,
         rowwise=True,
         block_scaling_dim=2,  # 2D scaling for weight
     )
     # Convert transposed PyTorch FP8 to TE FP8
-    b_pytorch_fp8_t = b_pytorch_fp8.t().contiguous()
-    _pytorch_fp8_to_te_fp8(b_pytorch_fp8_t, b_scale_inv, b_te_fp8_pytorch_t)
+    _pytorch_fp8_to_te_fp8(b_pytorch_fp8, b_scale_inv, b_te_fp8_pytorch)
 
     # Perform FP8 GEMM with PyTorch -> TE FP8 conversion
     result_pytorch = _perform_fp8_gemm(
-        b_te_fp8_pytorch_t, a_te_fp8_direct, (M, N), device, layout="TN"
+        b_te_fp8_pytorch, a_te_fp8_direct, (M, N), device, layout="NN"
     )
 
     # Compare results from both paths
