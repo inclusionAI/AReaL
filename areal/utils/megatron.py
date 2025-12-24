@@ -354,7 +354,6 @@ def convert_deepseekv3_to_hf(
                         param,
                     ),
                 ]
-                # TODO: check
                 if kwargs.get("inference_enable_ep_moe", False):
                     outputs += [
                         (
