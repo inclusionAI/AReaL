@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, Generic, Protocol
 from collections.abc import Generator
 from collections import deque
-import uuid
-
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
@@ -657,6 +655,18 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         return results
 
 
+class TaskIdGenerator:
+    def __init__(self):
+        self._task_cnt = 0
+        self._lock = threading.Lock()
+
+    def next(self):
+        with self._lock:
+            task_id = self._task_cnt
+            self._task_cnt += 1
+        return task_id
+
+
 class WorkflowExecutor:
     """Executor for asynchronous workflow-based rollout generation.
 
@@ -691,6 +701,8 @@ class WorkflowExecutor:
         self._dispatcher: (
             BatchTaskDispatcher[_RolloutTaskInput, _RolloutResult] | None
         ) = None
+
+        self._task_id_generator = TaskIdGenerator()
 
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start background threads.
@@ -1037,6 +1049,7 @@ class WorkflowExecutor:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        task_id: int | None = None,
     ) -> int:
         """Submit a rollout request to the workflow executor.
 
@@ -1049,12 +1062,13 @@ class WorkflowExecutor:
         resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
 
-        task_id = perf_tracer.register_task() or int(uuid.uuid4())
+        if task_id is None:
+            task_id = self._task_id_generator.next()
+        perf_tracer.register_task(task_id)
         task_input = _RolloutTaskInput(
             data=data,
             workflow=resolved_workflow,
             should_accept_fn=resolved_should_accept_fn,
-            # Create a task_id from uuid when perf_tracer is not used.
             task_id=task_id,
         )
 
@@ -1180,12 +1194,13 @@ class WorkflowExecutor:
                     resolved_workflow = self._resolve_workflow(
                         workflow, workflow_kwargs
                     )
+                    task_id = self._task_id_generator.next()
+                    perf_tracer.register_task(task_id)
                     yield _RolloutTaskInput(
                         data=item,
                         workflow=resolved_workflow,
                         should_accept_fn=resolved_should_accept_fn,
-                        # Create a task_id from uuid when perf_tracer is not used.
-                        task_id=perf_tracer.register_task() or int(uuid.uuid4()),
+                        task_id=task_id,
                     )
 
         if not hasattr(self, "data_generator"):

@@ -639,6 +639,7 @@ class InferenceEngine(abc.ABC):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         should_accept_fn: Callable | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
+        task_id: int | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -662,6 +663,8 @@ class InferenceEngine(abc.ABC):
         should_accept_fn : Callable, optional
             A function used to decide whether to accept a specific trajectory, i.e., dynamic filtering.
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
+        task_id : int, optional
+            The task ID to use. If None, a new task ID will be generated internally.
 
         Returns
         -------
