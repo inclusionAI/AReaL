@@ -755,6 +755,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        task_id: int | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -768,6 +769,8 @@ class RemoteInfEngine(InferenceEngine):
             Keyword arguments to pass to the workflow constructor
         should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
             A function or module path for trajectory filtering
+        task_id : int, optional
+            The task ID to use. If None, a new task ID will be generated internally.
         """
         assert workflow is not None, "Workflow must be specified for submit."
         return self.workflow_executor.submit(
@@ -775,6 +778,7 @@ class RemoteInfEngine(InferenceEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            task_id=task_id,
         )
 
     def wait(

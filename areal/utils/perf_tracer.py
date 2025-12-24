@@ -955,7 +955,6 @@ class SessionTracer:
         self._config = config
         self._rank = rank
         self._lock = threading.Lock()
-        self._next_task_id = 0
         self._next_session_id = 0
         # task id sequence and mapping from task_id -> set(session_id)
         self._task_to_sessions: dict[int, set[int]] = {}
@@ -965,17 +964,14 @@ class SessionTracer:
         self._output_path = output_path
         self._event_rules = _SESSION_EVENT_RULES
 
-    def register_task(self) -> int:
-        """Register a new logical task (dataset-level) and return a task_id.
+    def register_task(self, task_id: int) -> None:
+        """Register a new logical task (dataset-level) given a task_id.
 
         Tasks group multiple sessions (one per generated sample). Use
         :meth:`register_session` to create sessions that belong to a task.
         """
         with self._lock:
-            task_id = self._next_task_id
-            self._next_task_id += 1
             self._task_to_sessions.setdefault(task_id, set())
-        return task_id
 
     def register_session(self, task_id: int) -> int:
         """Register a new session and optionally associate it with a task.
@@ -1108,7 +1104,6 @@ class SessionTracer:
         with self._lock:
             self._records.clear()
             self._ready.clear()
-            self._next_task_id = 0
             self._next_session_id = 0
             self._flush_threshold = _normalize_flush_threshold(self._config)
 
@@ -1947,13 +1942,11 @@ def get_task_id() -> int | None:
     return _current_task_id.get()
 
 
-def register_task() -> int | None:
-    """Register a new task and return the task_id in the current async context."""
-    task_id = None
+def register_task(task_id: int) -> None:
+    """Register a new task given a task_id in the current async context."""
     tracer = get_session_tracer()
     if tracer is not None:
-        task_id = tracer.register_task()
-    return task_id
+        tracer.register_task(task_id)
 
 
 def register_session(task_id: int) -> int | None:
