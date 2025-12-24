@@ -8,14 +8,6 @@ This test verifies:
 
 import pytest
 import torch
-import transformer_engine.pytorch as te
-import transformer_engine_torch as tex
-from transformer_engine.common import recipe
-from transformer_engine.pytorch.cpp_extensions import general_gemm
-from transformer_engine.pytorch.tensor import (
-    Float8BlockQuantizer,
-    Float8BlockwiseQTensor,
-)
 
 from areal.models.mcore.hf_load import _pytorch_fp8_to_te_fp8
 from areal.platforms import current_platform
@@ -23,6 +15,33 @@ from areal.utils import logging
 from areal.utils.fp8_kernels import blockwise_cast_to_fp8_triton, weight_dequant
 
 logger = logging.getLogger("Test FP8 Conversion")
+
+try:
+    import transformer_engine.pytorch as te
+    import transformer_engine_torch as tex
+    from transformer_engine.common import recipe
+    from transformer_engine.pytorch.cpp_extensions import general_gemm
+    from transformer_engine.pytorch.tensor import (
+        Float8BlockQuantizer,
+        Float8BlockwiseQTensor,
+    )
+except ImportError as e:
+    logger.warning(
+        f"transformer_engine not available: {e}. "
+        "Skipping all FP8 conversion tests. "
+        "To run FP8 tests, please install transformer_engine.",
+    )
+    pytestmark = pytest.mark.skip(
+        reason="transformer_engine is required for FP8 tests. "
+        "Please install transformer_engine to run these tests."
+    )
+    # Set dummy values to avoid NameError
+    te = None
+    tex = None
+    recipe = None
+    general_gemm = None
+    Float8BlockQuantizer = None
+    Float8BlockwiseQTensor = None
 
 
 def high_precision_to_te_blockwise_fp8(

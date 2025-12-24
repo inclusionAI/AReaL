@@ -11,7 +11,6 @@ from mbridge.core.bridge import Bridge
 from megatron.core import parallel_state as mpu
 from megatron.core.fp8_utils import is_float8tensor
 from safetensors import safe_open
-from transformer_engine.pytorch.constants import TE_DType_To_Torch
 
 from areal.models.mcore.registry import unwrap_to_gpt_model
 from areal.platforms import current_platform
@@ -415,6 +414,13 @@ def _load_weight_with_bridge_worker(
         # Load the parameter
         if is_te_fp8_param and hf_has_fp8 and hf_all_fp8 and enable_fp8_param:
             # Direct FP8 to FP8 conversion
+            try:
+                from transformer_engine.pytorch.constants import TE_DType_To_Torch
+            except ImportError as e:
+                raise ImportError(
+                    "transformer_engine is required for FP8 training. "
+                    "Please install transformer_engine to use FP8 functionality."
+                ) from e
             if TE_DType_To_Torch[param._fp8_dtype] is not param_to_load.dtype:
                 raise ValueError(
                     f"Expected {TE_DType_To_Torch[param._fp8_dtype]} tensor for TE FP8 param, got {param_to_load.dtype}"
