@@ -13,7 +13,7 @@ import aiohttp
 import orjson
 import requests
 
-from areal.api.cli_args import BaseExperimentConfig
+from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
 from areal.platforms import current_platform
 from areal.scheduler.exceptions import (
@@ -31,7 +31,7 @@ from areal.scheduler.exceptions import (
     WorkerTimeoutError,
 )
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
-from areal.utils import logging
+from areal.utils import logging, name_resolve, names
 from areal.utils.http import get_default_connector
 from areal.utils.launcher import (
     get_env_vars,
@@ -90,24 +90,50 @@ class LocalScheduler(Scheduler):
         fileroot: str | None = None,
         experiment_name: str | None = None,
         trial_name: str | None = None,
+        name_resolve_type: str = "nfs",
+        nfs_record_root: str = "/tmp/areal/name_resolve",
+        etcd3_addr: str = "localhost:2379",
         exp_config: BaseExperimentConfig | None = None,
     ):
         self.gpu_devices = gpu_devices or self._detect_gpus()
+
+        # Resolve experiment/trial names (exp_config overwrites direct params)
+        self.experiment_name = experiment_name
+        self.trial_name = trial_name
+        self.fileroot = fileroot
+        if exp_config is not None:
+            self.experiment_name = exp_config.experiment_name
+            self.trial_name = exp_config.trial_name
+            self.fileroot = exp_config.cluster.fileroot
+
+        # name_resolve config (exp_config overwrites direct params)
+        self.name_resolve_config = NameResolveConfig(
+            type=name_resolve_type,
+            nfs_record_root=nfs_record_root,
+            etcd3_addr=etcd3_addr,
+        )
+        if exp_config is not None:
+            self.name_resolve_config = exp_config.cluster.name_resolve
+
+        # Reconfigure name_resolve and clear old entries
+        if self.experiment_name and self.trial_name:
+            name_resolve.reconfigure(self.name_resolve_config)
+            name_resolve.clear_subtree(
+                names.trial_root(self.experiment_name, self.trial_name)
+            )
+
         if log_dir is not None:
             self.log_dir = Path(log_dir)
         else:
-            experiment_name = experiment_name or exp_config.experiment_name
-            trial_name = trial_name or exp_config.trial_name
-            fileroot = fileroot or exp_config.cluster.fileroot
-            assert experiment_name is not None
-            assert trial_name is not None
-            assert fileroot is not None
+            assert self.experiment_name is not None
+            assert self.trial_name is not None
+            assert self.fileroot is not None
             self.log_dir = (
-                Path(fileroot)
+                Path(self.fileroot)
                 / "logs"
                 / getpass.getuser()
-                / experiment_name
-                / trial_name
+                / self.experiment_name
+                / self.trial_name
             )
         self.exp_config = exp_config
 
@@ -168,6 +194,7 @@ class LocalScheduler(Scheduler):
         return target_workers[worker_idx].gpu_devices
 
     def _allocate_ports(self, count: int) -> list[int]:
+        # Workers are on the same node, so we can directly allocate ports in the scheduler
         try:
             ports = find_free_ports(count, exclude_ports=set(self._allocated_ports))
             self._allocated_ports.update(ports)
@@ -323,6 +350,16 @@ class LocalScheduler(Scheduler):
                     )
                 cmd = shlex.split(scheduling.cmd)
                 cmd.extend(["--port", str(ports[0])])
+                # Add name_resolve and worker identity args
+                cmd.extend(["--experiment-name", self.experiment_name])
+                cmd.extend(["--trial-name", self.trial_name])
+                cmd.extend(["--role", role])
+                cmd.extend(["--worker-index", str(idx)])
+                cmd.extend(["--name-resolve-type", self.name_resolve_config.type])
+                cmd.extend(
+                    ["--nfs-record-root", self.name_resolve_config.nfs_record_root]
+                )
+                cmd.extend(["--etcd3-addr", self.name_resolve_config.etcd3_addr])
 
                 logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
                 if cmd[0].startswith("python"):

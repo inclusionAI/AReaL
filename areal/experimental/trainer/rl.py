@@ -60,7 +60,7 @@ class PPOTrainer:
         rank = int(os.getenv("RANK", "0"))
         # Configure performance tracer
         if config.perf_tracer is not None:
-            perf_tracer.configure(config.perf_tracer, rank=rank)
+            perf_tracer.configure(config.perf_tracer, rank=rank, role="master")
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(

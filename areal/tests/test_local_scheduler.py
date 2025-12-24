@@ -8,7 +8,6 @@ import psutil
 import pytest
 import requests
 
-from areal.api.cli_args import BaseExperimentConfig
 from areal.api.scheduler_api import (
     Job,
     SchedulingSpec,
@@ -39,7 +38,10 @@ from areal.utils.proc import kill_process_tree
 def scheduler(tmp_path):
     """Create a LocalScheduler instance with default configuration."""
     return LocalScheduler(
-        gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        gpu_devices=[0],
+        log_dir=str(tmp_path),
+        experiment_name="test_exp",
+        trial_name="test_trial",
     )
 
 
@@ -47,7 +49,10 @@ def scheduler(tmp_path):
 def multi_gpu_scheduler(tmp_path):
     """Create a LocalScheduler instance with multiple GPUs."""
     return LocalScheduler(
-        gpu_devices=[0, 1, 2], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+        gpu_devices=[0, 1, 2],
+        log_dir=str(tmp_path),
+        experiment_name="test_exp",
+        trial_name="test_trial",
     )
 
 
@@ -144,7 +149,8 @@ class TestLocalSchedulerInitialization:
             log_dir=str(tmp_path),
             startup_timeout=60.0,
             health_check_interval=2.0,
-            exp_config=BaseExperimentConfig(),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         assert scheduler.gpu_devices == [0, 1, 2]
@@ -160,7 +166,9 @@ class TestLocalSchedulerInitialization:
         """Should detect GPUs from CUDA_VISIBLE_DEVICES environment variable."""
         with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1,3"}):
             scheduler = LocalScheduler(
-                log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+                log_dir=str(tmp_path),
+                experiment_name="test_exp",
+                trial_name="test_trial",
             )
             assert scheduler.gpu_devices == [0, 1, 3]
 
@@ -168,7 +176,9 @@ class TestLocalSchedulerInitialization:
         """Should fall back to default [0] when CUDA_VISIBLE_DEVICES is invalid."""
         with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "invalid,gpu,ids"}):
             scheduler = LocalScheduler(
-                log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+                log_dir=str(tmp_path),
+                experiment_name="test_exp",
+                trial_name="test_trial",
             )
             assert scheduler.gpu_devices == [0]
 
@@ -178,7 +188,9 @@ class TestLocalSchedulerInitialization:
         assert not log_dir.exists()
 
         scheduler = LocalScheduler(
-            log_dir=str(log_dir), exp_config=BaseExperimentConfig()
+            log_dir=str(log_dir),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         assert log_dir.exists()
@@ -193,7 +205,8 @@ class TestGPUAllocation:
         scheduler = LocalScheduler(
             gpu_devices=[0, 1, 2],
             log_dir=str(tmp_path),
-            exp_config=BaseExperimentConfig(),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         # First allocation
@@ -211,7 +224,10 @@ class TestGPUAllocation:
     def test_allocate_gpus_exceeds_available(self, tmp_path):
         """Should raise GPUAllocationError when requesting more GPUs than available."""
         scheduler = LocalScheduler(
-            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0, 1],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         with pytest.raises(GPUAllocationError) as exc_info:
@@ -276,7 +292,8 @@ class TestPortAllocation:
             scheduler = LocalScheduler(
                 gpu_devices=[0],
                 log_dir=str(tmp_path),
-                exp_config=BaseExperimentConfig(),
+                experiment_name="test_exp",
+                trial_name="test_trial",
             )
             ports = scheduler._allocate_ports(3)
 
@@ -295,7 +312,8 @@ class TestPortAllocation:
             scheduler = LocalScheduler(
                 gpu_devices=[0],
                 log_dir=str(tmp_path),
-                exp_config=BaseExperimentConfig(),
+                experiment_name="test_exp",
+                trial_name="test_trial",
             )
 
             # First allocation
@@ -320,7 +338,8 @@ class TestPortAllocation:
             scheduler = LocalScheduler(
                 gpu_devices=[0],
                 log_dir=str(tmp_path),
-                exp_config=BaseExperimentConfig(),
+                experiment_name="test_exp",
+                trial_name="test_trial",
             )
 
             with pytest.raises(PortAllocationError) as exc_info:
@@ -352,7 +371,10 @@ class TestWorkerCreation:
         mock_popen.side_effect = [mock_process1, mock_process2]
 
         scheduler = LocalScheduler(
-            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0, 1],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         with patch.object(scheduler, "_configure_worker", return_value=None):
@@ -388,7 +410,8 @@ class TestWorkerCreation:
         scheduler = LocalScheduler(
             gpu_devices=[0, 1, 2],
             log_dir=str(tmp_path),
-            exp_config=BaseExperimentConfig(),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(
@@ -434,7 +457,10 @@ class TestWorkerCreation:
         mock_popen.side_effect = [mock_proc1, mock_proc2]
 
         scheduler = LocalScheduler(
-            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0, 1],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(
@@ -480,7 +506,10 @@ class TestWorkerCreation:
         mock_popen.return_value = mock_proc
 
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(
@@ -528,7 +557,10 @@ class TestWorkerCreation:
         mock_popen.return_value = mock_proc
 
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(
@@ -584,7 +616,8 @@ class TestWorkerCreation:
         scheduler = LocalScheduler(
             gpu_devices=[0, 1, 2, 3],
             log_dir=str(tmp_path),
-            exp_config=BaseExperimentConfig(),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         # Create target workers (actors)
@@ -642,7 +675,10 @@ class TestWorkerCreation:
     def test_create_workers_duplicate_role_error(self, tmp_path):
         """Should raise WorkerCreationError when attempting to create workers for existing role."""
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         with (
@@ -671,7 +707,10 @@ class TestWorkerCreation:
     def test_create_workers_zero_replicas_error(self, tmp_path):
         """Should raise WorkerCreationError when replicas is 0."""
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(replicas=0, role="test")
@@ -684,7 +723,10 @@ class TestWorkerCreation:
     def test_create_workers_invalid_specs_length(self, tmp_path):
         """Should raise WorkerCreationError when tasks length is invalid."""
         scheduler = LocalScheduler(
-            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0, 1],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(
@@ -731,7 +773,10 @@ class TestWorkerCreation:
         log_file.write_text("Error: Failed to start server\n")
 
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(replicas=1, role="test")
@@ -764,7 +809,10 @@ class TestWorkerCreation:
         mock_popen.return_value = mock_proc1
 
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(replicas=2, role="test")
@@ -780,7 +828,10 @@ class TestWorkerCreation:
     def test_create_workers_colocate_strategy_missing_target(self, tmp_path):
         """Should raise WorkerCreationError when colocation strategy is missing target role."""
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(
@@ -1132,7 +1183,10 @@ class TestLogFileHandling:
     def test_read_log_tail_success(self, tmp_path):
         """Should read last N lines from log file."""
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         log_file = tmp_path / "test.log"
@@ -1149,7 +1203,10 @@ class TestLogFileHandling:
     def test_read_log_tail_file_not_found(self, tmp_path):
         """Should return error message when log file doesn't exist."""
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         tail = scheduler._read_log_tail("/nonexistent/file.log")
@@ -1159,7 +1216,10 @@ class TestLogFileHandling:
     def test_read_log_tail_fewer_lines_than_requested(self, tmp_path):
         """Should return all lines when file has fewer lines than requested."""
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         log_file = tmp_path / "test.log"
@@ -1646,7 +1706,10 @@ class TestEdgeCases:
     def test_gpu_counter_wraps_correctly(self, tmp_path):
         """Should correctly wrap GPU counter for round-robin allocation."""
         scheduler = LocalScheduler(
-            gpu_devices=[0, 1], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0, 1],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         # Allocate many times to ensure wrapping
@@ -1667,7 +1730,8 @@ class TestEdgeCases:
             scheduler = LocalScheduler(
                 gpu_devices=[0],
                 log_dir=str(tmp_path),
-                exp_config=BaseExperimentConfig(),
+                experiment_name="test_exp",
+                trial_name="test_trial",
             )
 
             scheduler._allocate_ports(2)
@@ -1703,7 +1767,10 @@ class TestEdgeCases:
         mock_popen.side_effect = mock_processes
 
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         job = Job(replicas=5, role="worker")
@@ -1721,7 +1788,10 @@ class TestEdgeCases:
     def test_empty_workers_dict_operations(self, tmp_path):
         """Should handle operations on empty workers dictionary gracefully."""
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(tmp_path), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         # Delete all workers when none exist
@@ -1738,7 +1808,8 @@ class TestEdgeCases:
         scheduler = LocalScheduler(
             gpu_devices=[0, 1, 2],
             log_dir=str(tmp_path),
-            exp_config=BaseExperimentConfig(),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         # Simulate multiple workers requesting GPUs simultaneously
@@ -1754,7 +1825,10 @@ class TestEdgeCases:
         """Should handle log directory paths with special characters."""
         log_dir = tmp_path / "logs with spaces" / "special-chars_123"
         scheduler = LocalScheduler(
-            gpu_devices=[0], log_dir=str(log_dir), exp_config=BaseExperimentConfig()
+            gpu_devices=[0],
+            log_dir=str(log_dir),
+            experiment_name="test_exp",
+            trial_name="test_trial",
         )
 
         assert log_dir.exists()

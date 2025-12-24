@@ -1,7 +1,6 @@
 import argparse
 import logging as stdlib_logging
 import os
-import socket
 import traceback
 from collections.abc import Callable
 from concurrent.futures import Future
@@ -11,8 +10,9 @@ from typing import Any
 
 import orjson
 from flask import Flask, Response, jsonify, request
+from werkzeug.serving import make_server
 
-from areal.api.cli_args import BaseExperimentConfig
+from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.platforms import current_platform
 from areal.scheduler.rpc import rtensor
@@ -21,12 +21,13 @@ from areal.scheduler.rpc.serialization import (
     deserialize_value,
     serialize_value,
 )
-from areal.utils import logging, name_resolve, seeding
+from areal.utils import logging, name_resolve, names, perf_tracer, seeding
 from areal.utils.data import (
     broadcast_tensor_container,
     tensor_container_to,
 )
 from areal.utils.dynamic_import import import_from_string
+from areal.utils.network import gethostip
 
 logger = logging.getLogger("SyncRPCServer")
 
@@ -44,6 +45,7 @@ _engine_thread_lock = Lock()
 # Server address (set at startup)
 _server_host: str = "0.0.0.0"
 _server_port: int = 8000
+
 
 # Create Flask app
 app = Flask(__name__)
@@ -129,7 +131,8 @@ def configure():
         config: BaseExperimentConfig
 
         def execute_configure():
-            name_resolve.reconfigure(config.cluster.name_resolve)
+            if config.perf_tracer is not None:
+                perf_tracer.configure(config.perf_tracer, rank=rank, role=role)
             seeding.set_random_seed(config.seed, key=f"{role}{rank}")
             return {
                 "status": "success",
@@ -526,7 +529,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="AReaL Sync RPC Server for TrainEngine/InferenceEngine"
     )
-    parser.add_argument("--port", type=int, required=True, help="Port to serve on")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="Port to serve on (default: 0 = auto-assign)",
+    )
     parser.add_argument(
         "--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
     )
@@ -537,6 +545,16 @@ def main():
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Log level for Werkzeug (Flask's WSGI server). Default: WARNING",
     )
+    # name_resolve config
+    parser.add_argument("--experiment-name", type=str, required=True)
+    parser.add_argument("--trial-name", type=str, required=True)
+    parser.add_argument("--role", type=str, required=True)
+    parser.add_argument("--worker-index", type=int, required=True)
+    parser.add_argument("--name-resolve-type", type=str, default="nfs")
+    parser.add_argument(
+        "--nfs-record-root", type=str, default="/tmp/areal/name_resolve"
+    )
+    parser.add_argument("--etcd3-addr", type=str, default="localhost:2379")
 
     args, _ = parser.parse_known_args()
 
@@ -548,26 +566,40 @@ def main():
     global _server_host, _server_port
     _server_host = args.host
     if _server_host == "0.0.0.0":
-        _server_host = socket.gethostbyname(socket.gethostname())
-    _server_port = args.port
+        _server_host = gethostip()
 
-    logger.info(f"Starting sync RPC server on {args.host}:{args.port}")
+    # Get worker identity
+    worker_id = f"{args.role}/{args.worker_index}"
+
+    # Make a flask server
+    server = make_server(args.host, args.port, app, threaded=True)
+    _server_port = server.socket.getsockname()[1]
+
+    name_resolve.reconfigure(
+        NameResolveConfig(
+            type=args.name_resolve_type,
+            nfs_record_root=args.nfs_record_root,
+            etcd3_addr=args.etcd3_addr,
+        )
+    )
+    key = names.worker_discovery(
+        args.experiment_name, args.trial_name, args.role, args.worker_index
+    )
+    name_resolve.add(key, f"{_server_host}:{_server_port}", replace=True)
+
+    logger.info(
+        f"Starting sync RPC server on {_server_host}:{_server_port} for worker {worker_id}"
+    )
     logger.info(f"Werkzeug log level: {args.werkzeug_log_level}")
 
     try:
-        app.run(
-            host=args.host,
-            port=args.port,
-            threaded=True,  # Multi-threaded for concurrent /data/ request handling
-            processes=1,  # Single process
-            debug=False,
-            use_reloader=False,
-        )
+        server.serve_forever()
     except KeyboardInterrupt:
         logger.info("Shutting down sync RPC server")
     finally:
         cleanup_engine_thread()
         cleanup_engine()
+        server.shutdown()
 
 
 if __name__ == "__main__":

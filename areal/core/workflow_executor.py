@@ -1043,12 +1043,6 @@ class WorkflowExecutor:
 
         return _managed_workflow
 
-    def _register_task(self) -> int:
-        with self._lock:
-            task_id = self._task_cnt
-            self._task_cnt += 1
-        return task_id
-
     def submit(
         self,
         data: dict[str, Any],
