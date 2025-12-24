@@ -621,7 +621,7 @@ def compare_rmsnorm_bf16_fp8(
     }
 
 
-@pytest.skip(reason="This test is only for debugging")
+@pytest.mark.skip(reason="This test is only for debugging")
 @pytest.mark.parametrize("use_custom_rmsnorm", [True, False])
 @pytest.mark.parametrize(
     "activation_inputs_file",
@@ -631,7 +631,7 @@ def compare_rmsnorm_bf16_fp8(
 )
 def test_rmsnorm_from_file(
     use_custom_rmsnorm: bool,
-    activation_inputs_file: str | Path | None = None,
+    activation_inputs_file: str | Path | None,
     layer_path: str | None = None,
     save_data: bool = False,
 ):
