@@ -478,7 +478,7 @@ def test_fp8_bf16_gradient_comparison(fixed_input):
     for stat in layer_stats_less_than_0:
         name_str = f"Layer {stat['name']}"
         logger.info(
-            f"{name_str:<50} "
+            f"{name_str:<70} "
             f"max_diff={stat['max_diff']:>12.6f}, "
             f"mean_diff={stat['mean_diff']:>12.6f}, "
             f"cos_sim={stat['cos_sim']:>10.6f}"
