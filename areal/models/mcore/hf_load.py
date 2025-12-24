@@ -170,15 +170,9 @@ def _weight_to_mcore_tp(
             ):
                 if weight_block_size is not None:
                     # q, k, v weights are split along dim=0, so scale_inv should be split along dim=0 first
-                    # Get original weight shapes for q (assuming they have same shape)
-                    # q_shape = _get_shape(hf_weights_safe_slice[0])
-
                     scale_inv_shape = _get_shape(q_scale_inv)
                     # TP split scale_inv along dim=0
                     slices = _get_tp_slice(scale_inv_shape, 0, tp_rank, tp_size)
-                    # slices = _get_tp_slice_for_scale_inv(
-                    #     q_scale_inv_shape, q_shape, 0, tp_rank, tp_size, weight_block_size
-                    # )
                     q_scale_inv = q_scale_inv[slices]
                     scale_inv_shape = _get_shape(k_scale_inv)
                     slices = _get_tp_slice(scale_inv_shape, 0, tp_rank, tp_size)
@@ -193,7 +187,6 @@ def _weight_to_mcore_tp(
                     raise NotImplementedError(
                         "Per-tensor quantization is not supported for FP8"
                     )
-                    # scale_inv = torch.maximum(q_scale_inv, k_scale_inv, v_scale_inv)
     elif (
         "linear_fc1.weight" in mcore_weights_name
         or "linear_fc1.bias" in mcore_weights_name
@@ -214,13 +207,6 @@ def _weight_to_mcore_tp(
             gate_scale_inv, up_scale_inv = hf_scale_invs
             if gate_scale_inv is not None and up_scale_inv is not None:
                 if weight_block_size is not None:
-                    # gate, up weights are split along dim=0, so scale_inv should be split along dim=0 first
-                    # gate_shape = _get_shape(hf_weights_safe_slice[0])
-                    # gate_scale_inv_shape = _get_shape(gate_scale_inv)
-                    # TP split scale_inv along dim=0
-                    # slices = _get_tp_slice_for_scale_inv(
-                    #     gate_scale_inv_shape, gate_shape, 0, tp_rank, tp_size, weight_block_size
-                    # )
                     slices = _get_tp_slice(
                         _get_shape(gate_scale_inv), 0, tp_rank, tp_size
                     )
@@ -235,7 +221,6 @@ def _weight_to_mcore_tp(
                     raise NotImplementedError(
                         "Per-tensor quantization is not supported for FP8"
                     )
-                    # scale_inv = torch.maximum(gate_scale_inv, up_scale_inv)
     elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
         assert len(hf_weights_safe_slice) == 1
         x = hf_weights_safe_slice[0]
@@ -275,9 +260,6 @@ def _weight_to_mcore_tp(
             if weight_block_size is not None:
                 if partition_dim is not None:
                     scale_inv_shape = _get_shape(scale_inv)
-                    # slices = _get_tp_slice_for_scale_inv(
-                    #     scale_inv_shape, x_shape, partition_dim, tp_rank, tp_size, weight_block_size
-                    # )
                     slices = _get_tp_slice(
                         scale_inv_shape, partition_dim, tp_rank, tp_size
                     )
