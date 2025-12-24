@@ -203,10 +203,7 @@ def collect_gradients_after_train_batch(
                 raise ValueError(f"No gradient found for {name}")
 
             if grad is not None:
-                if (
-                    hasattr(param, "tensor_model_parallel")
-                    and param.tensor_model_parallel
-                ):
+                if mpu.get_tensor_model_parallel_world_size() > 1:
                     raise NotImplementedError("TP gradients are not supported yet")
                 gradients[name] = grad
 
@@ -321,6 +318,61 @@ def forward_backward_model_with_hooks(
 
         return hook
 
+    def make_input_pre_hook(activation_key: str, log_name: str):
+        """Create a pre-hook to capture module input."""
+
+        def input_hook(module, input):
+            try:
+                if isinstance(input, tuple):
+                    activations[activation_key] = (
+                        input[0].clone().detach() if len(input) > 0 else None
+                    )
+                else:
+                    activations[activation_key] = input.clone().detach()
+                logger.info(
+                    f"Captured {log_name} input: {activations[activation_key].shape}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to capture {log_name} input: {e}")
+
+        return input_hook
+
+    def make_output_grad_hook(grad_key: str, log_name: str):
+        """Create a backward hook to capture module output gradient."""
+
+        def backward_hook(module, grad_input, grad_output):
+            try:
+                if grad_output is not None and len(grad_output) > 0:
+                    if grad_output[0] is not None:
+                        output_gradients[grad_key] = grad_output[0].clone().detach()
+                        logger.info(
+                            f"Captured {log_name} output grad: {output_gradients[grad_key].shape}"
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to capture {log_name} output grad: {e}")
+
+        return backward_hook
+
+    def register_layernorm_hooks(
+        module, layer_prefix: str, layernorm_name: str
+    ) -> list:
+        """Register input pre-hook and backward hook for a layernorm module."""
+        registered_hooks = []
+        activation_key = f"{layer_prefix}.self_attention.{layernorm_name}.input"
+        grad_key = f"{layer_prefix}.self_attention.{layernorm_name}.output_grad"
+
+        pre_hook = module.register_forward_pre_hook(
+            make_input_pre_hook(activation_key, layernorm_name)
+        )
+        registered_hooks.append(pre_hook)
+
+        backward_hook = module.register_full_backward_hook(
+            make_output_grad_hook(grad_key, layernorm_name)
+        )
+        registered_hooks.append(backward_hook)
+
+        return registered_hooks
+
     # Get model and register hooks
     model = get_model_from_engine(engine)
 
@@ -384,138 +436,23 @@ def forward_backward_model_with_hooks(
                                 layer.self_attention.core_attention,
                             )
                         )
-                    if hasattr(layer.self_attention, "q_layernorm"):
-                        hook_names.append(
-                            (
-                                f"{layer_prefix}.self_attention.q_layernorm",
-                                layer.self_attention.q_layernorm,
+                    # Register hooks for q_layernorm and k_layernorm
+                    for layernorm_name in ["q_layernorm", "k_layernorm"]:
+                        if hasattr(layer.self_attention, layernorm_name):
+                            layernorm_module = getattr(
+                                layer.self_attention, layernorm_name
                             )
-                        )
-
-                        # Add pre-hook to capture input to q_layernorm
-                        def make_q_layernorm_input_hook(prefix):
-                            def q_layernorm_input_hook(module, input):
-                                try:
-                                    if isinstance(input, tuple):
-                                        activations[
-                                            f"{prefix}.self_attention.q_layernorm.input"
-                                        ] = (
-                                            input[0].clone().detach()
-                                            if len(input) > 0
-                                            else None
-                                        )
-                                    else:
-                                        activations[
-                                            f"{prefix}.self_attention.q_layernorm.input"
-                                        ] = input.clone().detach()
-                                    logger.info(
-                                        f"Captured q_layernorm input for {prefix}: {activations[f'{prefix}.self_attention.q_layernorm.input'].shape}"
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to capture q_layernorm input for {prefix}: {e}"
-                                    )
-
-                            return q_layernorm_input_hook
-
-                        pre_hook = (
-                            layer.self_attention.q_layernorm.register_forward_pre_hook(
-                                make_q_layernorm_input_hook(layer_prefix)
+                            hook_names.append(
+                                (
+                                    f"{layer_prefix}.self_attention.{layernorm_name}",
+                                    layernorm_module,
+                                )
                             )
-                        )
-                        hooks.append(pre_hook)
-
-                        # Add backward hook to capture gradient flowing back to q_layernorm output
-                        def make_q_layernorm_backward_hook(prefix):
-                            def q_layernorm_backward_hook(
-                                module, grad_input, grad_output
-                            ):
-                                try:
-                                    if grad_output is not None and len(grad_output) > 0:
-                                        if grad_output[0] is not None:
-                                            output_gradients[
-                                                f"{prefix}.self_attention.q_layernorm.output_grad"
-                                            ] = grad_output[0].clone().detach()
-                                            logger.info(
-                                                f"Captured q_layernorm output grad for {prefix}: {output_gradients[f'{prefix}.self_attention.q_layernorm.output_grad'].shape}"
-                                            )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to capture q_layernorm output grad for {prefix}: {e}"
-                                    )
-
-                            return q_layernorm_backward_hook
-
-                        backward_hook = layer.self_attention.q_layernorm.register_full_backward_hook(
-                            make_q_layernorm_backward_hook(layer_prefix)
-                        )
-                        hooks.append(backward_hook)
-                    if hasattr(layer.self_attention, "k_layernorm"):
-                        hook_names.append(
-                            (
-                                f"{layer_prefix}.self_attention.k_layernorm",
-                                layer.self_attention.k_layernorm,
+                            hooks.extend(
+                                register_layernorm_hooks(
+                                    layernorm_module, layer_prefix, layernorm_name
+                                )
                             )
-                        )
-
-                        # Add pre-hook to capture input to k_layernorm
-                        def make_k_layernorm_input_hook(prefix):
-                            def k_layernorm_input_hook(module, input):
-                                try:
-                                    if isinstance(input, tuple):
-                                        activations[
-                                            f"{prefix}.self_attention.k_layernorm.input"
-                                        ] = (
-                                            input[0].clone().detach()
-                                            if len(input) > 0
-                                            else None
-                                        )
-                                    else:
-                                        activations[
-                                            f"{prefix}.self_attention.k_layernorm.input"
-                                        ] = input.clone().detach()
-                                    logger.info(
-                                        f"Captured k_layernorm input for {prefix}: {activations[f'{prefix}.self_attention.k_layernorm.input'].shape}"
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to capture k_layernorm input for {prefix}: {e}"
-                                    )
-
-                            return k_layernorm_input_hook
-
-                        pre_hook = (
-                            layer.self_attention.k_layernorm.register_forward_pre_hook(
-                                make_k_layernorm_input_hook(layer_prefix)
-                            )
-                        )
-                        hooks.append(pre_hook)
-
-                        # Add backward hook to capture gradient flowing back to k_layernorm output
-                        def make_k_layernorm_backward_hook(prefix):
-                            def k_layernorm_backward_hook(
-                                module, grad_input, grad_output
-                            ):
-                                try:
-                                    if grad_output is not None and len(grad_output) > 0:
-                                        if grad_output[0] is not None:
-                                            output_gradients[
-                                                f"{prefix}.self_attention.k_layernorm.output_grad"
-                                            ] = grad_output[0].clone().detach()
-                                            logger.info(
-                                                f"Captured k_layernorm output grad for {prefix}: {output_gradients[f'{prefix}.self_attention.k_layernorm.output_grad'].shape}"
-                                            )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to capture k_layernorm output grad for {prefix}: {e}"
-                                    )
-
-                            return k_layernorm_backward_hook
-
-                        backward_hook = layer.self_attention.k_layernorm.register_full_backward_hook(
-                            make_k_layernorm_backward_hook(layer_prefix)
-                        )
-                        hooks.append(backward_hook)
 
                 # Post attention layernorm
                 if hasattr(layer, "post_attention_layernorm"):
@@ -544,32 +481,10 @@ def forward_backward_model_with_hooks(
 
                     # Add pre-hook to capture activation output
                     if hasattr(layer.mlp, "linear_fc2"):
-
-                        def make_mlp_activation_hook(prefix):
-                            def mlp_activation_output_hook(module, input):
-                                try:
-                                    if isinstance(input, tuple):
-                                        activations[
-                                            f"{prefix}.mlp.activation_output"
-                                        ] = (
-                                            input[0].clone().detach()
-                                            if len(input) > 0
-                                            else None
-                                        )
-                                    else:
-                                        activations[
-                                            f"{prefix}.mlp.activation_output"
-                                        ] = input.clone().detach()
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to capture MLP activation output for {prefix}: {e}"
-                                    )
-
-                            return mlp_activation_output_hook
-
+                        activation_key = f"{layer_prefix}.mlp.activation_output"
                         activation_hook = (
                             layer.mlp.linear_fc2.register_forward_pre_hook(
-                                make_mlp_activation_hook(layer_prefix)
+                                make_input_pre_hook(activation_key, "MLP activation")
                             )
                         )
                         hooks.append(activation_hook)
