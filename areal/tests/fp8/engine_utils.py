@@ -4,7 +4,6 @@ This module contains common helper functions, fixtures, and constants
 used across multiple FP8/BF16 comparison test files.
 """
 
-import functools
 import os
 from collections import defaultdict
 from typing import Any
@@ -12,7 +11,6 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 from megatron.core import parallel_state as mpu
-from megatron.core.pipeline_parallel import get_forward_backward_func
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
@@ -21,18 +19,14 @@ from areal.api.cli_args import (
     TrainEngineConfig,
 )
 from areal.api.io_struct import FinetuneSpec
+from areal.engine.core.train_engine import reorder_and_pad_outputs
 from areal.engine.megatron_engine import MegatronEngine
 from areal.utils import logging
 from areal.utils.data import (
     broadcast_tensor,
     pack_tensor_dict,
-    pad_and_stack_tensors_along_first_dim,
-    reorder_list,
-    unpack_sequence,
-    unpad_logits,
 )
 from areal.utils.functional import gather_logprobs
-from areal.utils.mcore.packed_context_parallel import packed_context_parallel_forward
 
 logger = logging.getLogger("FP8 BF16 Comparison Utils")
 
@@ -267,6 +261,7 @@ def create_engine(
     return engine
 
 
+@torch.no_grad()
 def forward_with_logits_and_logprobs(
     engine: MegatronEngine, input_: dict[str, Any], profile_gemm: bool = False
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -281,74 +276,34 @@ def forward_with_logits_and_logprobs(
         tuple: (logits, logprobs) both with shape [batch, seq_len, ...]
     """
     engine.eval()
-    if engine.is_offload:
-        engine.onload()
+    engine._ensure_ready()
 
-    assert engine.model is not None, "Model is not initialized."
-
-    # Prepare input similar to forward method
+    # Prepare input similar to forward_batch method
     cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
-    mb_list = engine.prepare_mb_list(input_)
-    mb_list = mb_list.to(engine.device)
-    cu_seqlens = cu_seqlens.to(engine.device)
-
     output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
-    max_total_len = max(m["max_seqlen"] for m in mb_list.padded_mbs)
-    micro_batch_generator = [mb_list.padded_mbs] * len(engine.model)
-    micro_batch_generator = [iter(b) for b in micro_batch_generator]
-    forward_step_counts = [0] * len(engine.model)
 
-    logits_list = []
-    logprobs_list = []
+    # Prepare micro-batches
+    mb_list = engine._prepare_mb_list(input_).to(engine.device)
 
-    def forward_step(batch_iter, model):
-        nonlocal forward_step_counts, logits_list, logprobs_list
-        batch = next(batch_iter)
-        model_vp_stage = getattr(model, "vp_stage", 0)
-        forward_step_count = forward_step_counts[model_vp_stage]
-        padding_length = mb_list.padding_lengths[forward_step_count]
-        orig_input = mb_list.mbs[forward_step_count]
-        cu_seqlens_batch = batch["cu_seqlens"]
-        old_cu_seqlens = mb_list.old_cu_seqlens_list[forward_step_count]
+    # Collect logits and logprobs from forward pass
+    logits_list: list[torch.Tensor] = []
+    logprobs_list: list[torch.Tensor] = []
 
-        forward_step_counts[model_vp_stage] += 1
-        output = packed_context_parallel_forward(model, batch)
-
-        if mpu.is_pipeline_last_stage(ignore_virtual=False, vp_stage=model_vp_stage):
-            output_unpadded = unpad_logits(
-                output,
-                padding_length=padding_length,
-                cu_seqlens=cu_seqlens_batch,
-                old_cu_seqlens=old_cu_seqlens,
-            )
-
-            def _post_process_fn(input_, output_unpadded):
-                labels = torch.roll(input_["input_ids"], shifts=-1, dims=-1)
-                logprobs = gather_logprobs(
-                    output_unpadded,
-                    labels,
-                    temperature=engine.config.temperature,
-                    tp_group=mpu.get_tensor_model_parallel_group()
-                    if mpu.get_tensor_model_parallel_world_size() > 1
-                    else None,
-                )
-                # Store logits and logprobs
-                logits_list.append(output_unpadded)
-                logprobs_list.append(logprobs)
-                return torch.tensor(1.0, device=logprobs.device), {"output": logprobs}
-
-            return output_unpadded, functools.partial(_post_process_fn, orig_input)
-
-        return output, lambda x: (
-            torch.tensor(1.0, device=output.device),
-            {"output": None},
+    def process_output(output: torch.Tensor, inputs: dict[str, Any]) -> None:
+        """Process output to extract logits and logprobs."""
+        # output is already unpad_logits'd by forward_backward_batch
+        labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+        logprobs = gather_logprobs(
+            output,
+            labels,
+            temperature=engine.config.temperature,
+            tp_group=mpu.get_tensor_model_parallel_group()
+            if mpu.get_tensor_model_parallel_world_size() > 1
+            else None,
         )
-
-    forward_backward_func = get_forward_backward_func()
-
-    data_iterator = (
-        micro_batch_generator if len(engine.model) > 1 else micro_batch_generator[0]
-    )
+        logits_list.append(output)
+        logprobs_list.append(logprobs)
+        return None
 
     # Profile GEMM kernels if requested
     if profile_gemm:
@@ -361,60 +316,26 @@ def forward_with_logits_and_logprobs(
             with_stack=False,
             profile_memory=False,
         ) as prof:
-            _ = forward_backward_func(
-                forward_step_func=forward_step,
-                data_iterator=data_iterator,
-                model=engine.model if len(engine.model) > 1 else engine.model[0],
-                num_microbatches=len(mb_list.padded_mbs),
-                seq_length=max_total_len,
-                micro_batch_size=1,
-                forward_only=True,
-            )
+            engine.forward_backward_batch(mb_list, process_output, forward_only=True)
             torch.cuda.synchronize()
 
         # Extract and print GEMM kernels
         gemm_profile = extract_gemm_kernels(prof, phase="forward")
         print_gemm_profile(gemm_profile)
     else:
-        _ = forward_backward_func(
-            forward_step_func=forward_step,
-            data_iterator=data_iterator,
-            model=engine.model if len(engine.model) > 1 else engine.model[0],
-            num_microbatches=len(mb_list.padded_mbs),
-            seq_length=max_total_len,
-            micro_batch_size=1,
-            forward_only=True,
-        )
+        engine.forward_backward_batch(mb_list, process_output, forward_only=True)
 
-    # Aggregate logits and logprobs
+    # Aggregate, reorder, and pad outputs
+    logits = None
+    logprobs = None
     if mpu.is_pipeline_last_stage():
         if logits_list:
-            logits_res = torch.cat([logits for logits in logits_list], dim=0)
-            logprobs_res = torch.cat([logprobs for logprobs in logprobs_list], dim=0)
-
-            output_seqlens_filtered = [
-                output_seqlens[i] for i in mb_list.forward_indices
-            ]
-            logits_unpacked = unpack_sequence(
-                logits_res, lens=output_seqlens_filtered, dim=0
+            logits = reorder_and_pad_outputs(
+                logits_list, output_seqlens, mb_list, aggregate_fn=torch.cat
             )
-            logprobs_unpacked = unpack_sequence(
-                logprobs_res, lens=output_seqlens_filtered, dim=0
+            logprobs = reorder_and_pad_outputs(
+                logprobs_list, output_seqlens, mb_list, aggregate_fn=torch.cat
             )
-
-            logits_reordered = reorder_list(logits_unpacked, mb_list.backward_indices)
-            logprobs_reordered = reorder_list(
-                logprobs_unpacked, mb_list.backward_indices
-            )
-
-            logits = pad_and_stack_tensors_along_first_dim(logits_reordered)
-            logprobs = pad_and_stack_tensors_along_first_dim(logprobs_reordered)
-        else:
-            logits = None
-            logprobs = None
-    else:
-        logits = None
-        logprobs = None
 
     # Broadcast results
     logits = broadcast_tensor(
