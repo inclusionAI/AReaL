@@ -239,6 +239,11 @@ class MegatronEngine(TrainEngine):
         with self.device:
             self._load_model_from_hf(self.config.path)
 
+        # NOTE: When using distributed optimizer, megatron will use the
+        # high precision init val to initialize the main parameters for optimizer.
+        # However, the high precision init val does not exist for FP8 models.
+        # (The high precision init val is random initialization for FP8 models.)
+        # So we need to clear the high precision init val here.
         for model in self.model:
             for _, param in model.named_parameters():
                 if hasattr(param, "get_high_precision_init_val"):
