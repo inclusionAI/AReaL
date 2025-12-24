@@ -208,7 +208,7 @@ def test_megatron_decode_output():
             dist.destroy_process_group()
 
 
-def test_fp8_bf16_both_comparison(fixed_input):
+def test_fp8_bf16_logits_logprobs_comparison(fixed_input):
     """Compare both logits and logprobs between FP8 and BF16 models."""
     # Create BF16 engine
     engine_bf16 = create_engine(MODEL_PATH_BF16, fp8_enabled=False, port=7777)
@@ -520,6 +520,7 @@ def test_fp8_bf16_gradient_comparison(fixed_input):
     )
 
 
+@pytest.mark.skip(reason="This test is only for debugging")
 def test_profile_gemm_kernels(fixed_input):
     """Profile and print GEMM kernels used in forward and backward pass.
 
@@ -581,7 +582,7 @@ def test_profile_gemm_kernels(fixed_input):
             dist.destroy_process_group()
 
 
-def test_fp8_bf16_single_layer_comparison(fixed_input, save_data: bool = False):
+def test_fp8_bf16_partial_layers_comparison(fixed_input, save_data: bool = False):
     """Compare FP8 and BF16 on a model reduced to specified layers.
 
     This test reduces the model to specified transformer layers while keeping the full
