@@ -58,6 +58,22 @@ os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 logger = logging.getLogger("OpenAIClient")
 
 
+def _ensure_dict(
+    name: str,
+    item: Any,
+) -> Any:
+    _item = None
+    if isinstance(item, dict):
+        _item = {k: _ensure_dict(name, v) for k, v in item.items() if v is not None}
+    elif isinstance(item, BaseModel):
+        _item = item.model_dump(exclude_none=True, mode="json")
+    elif type(item).__name__ == "ValidatorIterator" or isinstance(item, list):
+        _item = [_ensure_dict(name, i) for i in item]
+    else:
+        _item = item
+    return _item
+
+
 def _ensure_message_dict_list(
     name: str,
     value: list[Any],
@@ -260,7 +276,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         messages_list_raw = list(messages)
         if not messages_list_raw:
             raise ValueError("messages cannot be empty")
-        messages_list = _ensure_message_dict_list(
+        messages_list = _ensure_dict(
             "messages",
             messages_list_raw,
         )
@@ -288,14 +304,21 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 raise TypeError("tools must be an iterable of ChatCompletionToolParam")
             tools_list = list(tools)
         if self.chat_template_type == "hf":
-            prompt_token_ids = self.tokenizer.apply_chat_template(
+            prompt_text = self.tokenizer.apply_chat_template(
                 messages_list,
-                tools=tools_list,
+                tools=deepcopy(tools_list),
                 add_generation_prompt=True,
-                tokenize=True,
+                tokenize=False,
                 **extra_body.get("chat_template_kwargs", {}),
             )
+            prompt_token_ids = self.tokenizer.encode(
+                prompt_text, add_special_tokens=False
+            )
         elif self.chat_template_type == "concat":
+            if tools is not None:
+                logger.warning(
+                    "'concat' mode is not compatible with tool call scenarios. Unexpected behavior may occur"
+                )
             messages_list = (
                 interaction.remaining_messages
                 if interaction is not None
@@ -595,7 +618,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         if isinstance(input, str):
             input = [{"role": "user", "content": input}]
         if isinstance(input, list):
-            normalized_input = _ensure_message_dict_list(
+            normalized_input = _ensure_dict(
                 "input",
                 input,
             )
