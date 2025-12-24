@@ -165,7 +165,7 @@ def _load_weight_with_bridge_worker(
             hf_slice = all_slices[hf_name]
             scale_inv_name = f"{hf_name}_scale_inv"
             if scale_inv_name in all_slices:
-                # HF weight is FP8, dequantize to higher precision
+                # HF weight is FP8, dequantize to higher precision (bf16)
                 # TODO: convert pytorch fp8 to te fp8 directly
                 device = torch.device(current_platform.device_type)
                 weight = hf_slice[:].to(device)
@@ -195,7 +195,7 @@ def _load_weight_with_bridge_worker(
         )
 
         # Load the parameter
-        # Standard copy (dequantized or non-FP8)
+        # NOTE: for megatron FP8 param, `param.copy_` will do quantization internally
         param.copy_(param_to_load, non_blocking=True)
 
 
