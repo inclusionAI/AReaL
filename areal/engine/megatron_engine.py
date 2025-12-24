@@ -228,6 +228,7 @@ class MegatronEngine(TrainEngine):
         self.quantization_config = getattr(self.hf_config, "quantization_config", None)
 
         self._check_and_apply_fp8_config()
+        self._validate_fp8_consistency()
 
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
@@ -747,6 +748,26 @@ class MegatronEngine(TrainEngine):
                 f"fp8_param={self.mcore_config.fp8_param}"
             )
             # fp8_param_gather is passed from make_mcore_model()
+
+    def _validate_fp8_consistency(self):
+        """Validate that training and inference precision are consistent.
+
+        If FP8 training is enabled, inference must also use FP8.
+        If FP8 training is disabled, inference must not use FP8.
+        """
+        train_fp8 = self.mcore_config.fp8 is not None
+        inference_fp8 = (
+            self.quantization_config is not None
+            and self.quantization_config.get("quant_method", None) == "fp8"
+        )
+
+        if not train_fp8 and inference_fp8 or train_fp8 and not inference_fp8:
+            raise RuntimeError(
+                "Inconsistent FP8 configuration: "
+                "Training and inference must both use FP8 or both not use FP8. "
+                f"Training fp8={train_fp8}, "
+                f"Inference fp8={inference_fp8}"
+            )
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
