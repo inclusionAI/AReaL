@@ -392,8 +392,9 @@ class PPOTrainer:
 
     def _config_perf_tracer(self):
         rank = int(os.getenv("RANK", "0"))
-        if self.config.perf_tracer is not None:
-            perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+        if self.config.perf_tracer is None:
+            return
+        perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
         self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
         if self.critic is not None:
             self.critic.config_perf_tracer(self.config.perf_tracer, role="critic")

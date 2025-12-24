@@ -229,11 +229,14 @@ class SFTTrainer:
 
     def _config_perf_tracer(self):
         rank = int(os.getenv("RANK", "0"))
-        if self.config.perf_tracer is not None:
-            perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+        if self.config.perf_tracer is None:
+            return
+        perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
         self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
 
     def _save_perf_tracer(self, step: int):
+        if self.config.perf_tracer is None:
+            return
         self.actor.save_perf_tracer(step=step)
         perf_tracer.save(step=step)
 
