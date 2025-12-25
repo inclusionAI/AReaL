@@ -34,36 +34,42 @@ def _expected_trace_path(
     config: PerfTracerConfig,
     *,
     rank: int,
+    role: str | None = None,
 ) -> Path:
     base_dir = Path(os.path.expanduser(config.fileroot))
     filename = f"traces-r{rank}.jsonl"
-    return (
+    path = (
         base_dir
         / "logs"
         / getpass.getuser()
         / config.experiment_name
         / config.trial_name
         / "perf_tracer"
-        / filename
     )
+    if role:
+        path = path / role
+    return path / filename
 
 
 def _expected_session_trace_path(
     config: PerfTracerConfig,
     *,
     rank: int,
+    role: str | None = None,
 ) -> Path:
     base_dir = Path(os.path.expanduser(config.fileroot))
     filename = f"sessions-r{rank}.jsonl"
-    return (
+    path = (
         base_dir
         / "logs"
         / getpass.getuser()
         / config.experiment_name
         / config.trial_name
         / "session_tracer"
-        / filename
     )
+    if role:
+        path = path / role
+    return path / filename
 
 
 def _load_trace_events(path: Path) -> list[dict]:
@@ -135,6 +141,41 @@ def test_perf_tracer_records_events_and_save(tmp_path):
     events = _load_trace_events(saved_path)
     event_names = {evt["name"] for evt in events if evt["ph"] != "M"}
     assert {"unit-block", "inner-mark", "outer-mark"}.issubset(event_names)
+
+
+def test_perf_tracer_with_role(tmp_path):
+    """Test that role parameter is properly handled in tracer."""
+    config = _make_config(tmp_path, experiment="unit", trial="role_test")
+    tracer = perf_tracer.PerfTracer(config, rank=0, role="actor")
+    assert tracer._rank == 0  # noqa: SLF001
+    assert tracer._role == "actor"  # noqa: SLF001
+
+    with tracer.trace_scope("role-block", category=Category.INSTR):
+        tracer.instant("role-mark")
+
+    tracer.save()
+    saved_path = _expected_trace_path(config, rank=0, role="actor")
+    assert saved_path.exists()
+
+    events = _load_trace_events(saved_path)
+    non_meta_events = [evt for evt in events if evt.get("ph") != "M"]
+
+    # Verify role is in event args
+    for evt in non_meta_events:
+        assert evt["args"].get("role") == "actor"
+        assert evt["args"].get("rank") == 0
+
+    # Verify process metadata includes role in label
+    process_name_events = [
+        evt
+        for evt in events
+        if evt.get("ph") == "M" and evt.get("name") == "process_name"
+    ]
+    assert len(process_name_events) > 0
+    for evt in process_name_events:
+        process_name = evt["args"].get("name", "")
+        assert "[actor]" in process_name
+        assert "Rank 0" in process_name
 
 
 def test_perf_tracer_emits_separate_rank_logs(tmp_path):
@@ -238,6 +279,47 @@ async def test_global_tracer_configure_roundtrip(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_configure_with_role(tmp_path):
+    """Test that configure() function accepts role parameter."""
+    config = _make_config(tmp_path, experiment="global", trial="role_roundtrip")
+    tracer = perf_tracer.configure(
+        config,
+        rank=1,
+        role="learner",
+    )
+
+    # Verify tracer has role stored
+    assert tracer._role == "learner"  # noqa: SLF001
+
+    with perf_tracer.trace_scope("role-sync-step", category=Category.INSTR):
+        perf_tracer.instant("role-inside", args={"task": "train"})
+
+    tracer.save()
+    saved_path = _expected_trace_path(config, rank=1, role="learner")
+    assert saved_path.exists()
+    # Session tracer is not enabled in this config, so session_path doesn't exist
+
+    events = _load_trace_events(saved_path)
+
+    # Verify role in events
+    non_meta_events = [evt for evt in events if evt.get("ph") != "M"]
+    for evt in non_meta_events:
+        assert evt["args"].get("role") == "learner"
+
+    # Verify process metadata
+    process_events = [
+        evt
+        for evt in events
+        if evt.get("ph") == "M" and evt.get("name") == "process_name"
+    ]
+    assert len(process_events) > 0
+    for evt in process_events:
+        pname = evt["args"].get("name", "")
+        assert "[learner]" in pname
+        assert "Rank 1" in pname
+
+
+@pytest.mark.asyncio
 async def test_async_multi_session_cross_phase_trace(tmp_path):
     config = _make_config(tmp_path, experiment="async", trial="sessions")
     tracer = perf_tracer.configure(
@@ -325,6 +407,42 @@ def test_configure_rejects_repeated_calls(tmp_path):
             config,
             rank=1,
         )
+
+
+def test_session_tracer_with_role(tmp_path):
+    """Test SessionTracer with role parameter produces correct output paths."""
+    config = _make_config(tmp_path, experiment="session", trial="role_enabled")
+    config.session_tracer = SessionTracerConfig(enabled=True, flush_threshold=1)
+    tracer = perf_tracer.PerfTracer(config, rank=2, role="critic")
+
+    session_tracer = tracer.session_tracer
+    assert session_tracer is not None
+    assert session_tracer._role == "critic"  # noqa: SLF001
+
+    task_id = 456
+    session_tracer.register_task(task_id)
+    session_id = session_tracer.register_session(task_id)
+    session_tracer.record_event(
+        session_id,
+        SessionTraceEvent.GENERATE_START,
+    )
+    session_tracer.record_event(
+        session_id,
+        SessionTraceEvent.GENERATE_END,
+    )
+    session_tracer.record_event(
+        session_id, SessionTraceEvent.FINALIZED, status="accepted"
+    )
+    tracer.save(force=True)
+
+    session_path = _expected_session_trace_path(config, rank=2, role="critic")
+    assert session_path.exists()
+    payload = [json.loads(line) for line in session_path.read_text().splitlines()]
+    assert any(entry["status"] == "accepted" for entry in payload)
+
+    # Verify role field in session record
+    record = payload[0]
+    assert record.get("role") == "critic"
 
 
 def test_module_level_save_helper(tmp_path):
