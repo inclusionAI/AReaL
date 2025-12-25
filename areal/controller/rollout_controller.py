@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -12,7 +11,7 @@ from typing import Any
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import InferenceEngineConfig, SchedulingSpec
+from areal.api.cli_args import InferenceEngineConfig, PerfTracerConfig, SchedulingSpec
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     LocalInfServerInfo,
@@ -24,7 +23,7 @@ from areal.api.io_struct import (
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.staleness_manager import StalenessManager
-from areal.core.workflow_executor import BatchTaskDispatcher
+from areal.core.workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
@@ -72,6 +71,8 @@ class RolloutController:
         # State
         self._version_lock = Lock()
         self._version = 0
+
+        self._task_id_generator = TaskIdGenerator()
 
         # Use provided staleness manager or create a default one
         # The manager will be properly initialized in initialize()
@@ -300,7 +301,8 @@ class RolloutController:
             # NOTE: No need to call `on_rollout_submitted` here.
             # This function will be passed to `BatchTaskDispather` where
             # `on_rollout_submitted` will be called upon dispatching
-            wait_task_id = await self.scheduler.async_call_engine(
+            task_id = pending_task.task_id
+            engine_task_id = await self.scheduler.async_call_engine(
                 worker.id,
                 "submit",
                 data=pending_task.data,
@@ -308,9 +310,10 @@ class RolloutController:
                 workflow_kwargs=pending_task.workflow_kwargs,
                 should_accept_fn=pending_task.should_accept_fn,
                 http_timeout=self.config.request_timeout,
+                task_id=task_id,
             )
 
-            task_id = pending_task.task_id
+            assert task_id == engine_task_id, (task_id, engine_task_id)
             manager = self.staleness_manager
             traj: dict[str, Any] | None = None
 
@@ -323,7 +326,7 @@ class RolloutController:
                     result = await self.scheduler.async_call_engine(
                         worker.id,
                         "wait_for_task",
-                        task_id=wait_task_id,
+                        task_id=engine_task_id,
                         timeout=0.1,  # A short time to prevent blocking other requests
                         raise_timeout=False,
                         http_timeout=self.config.request_timeout,
@@ -369,6 +372,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
+        task_id: int | None = None,
     ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -378,7 +382,8 @@ class RolloutController:
         # NOTE: RolloutController does not support `should_accept_fn`
         # If the workflow's result should be aborted,
         # `arun_episode` should return None instead.
-        task_id = int(uuid.uuid4())
+        if task_id is None:
+            task_id = self._task_id_generator.next()
         task_input = _RemoteRolloutTaskInput(
             data=data,
             workflow=workflow_str,
@@ -454,7 +459,7 @@ class RolloutController:
                         workflow=workflow_str,
                         workflow_kwargs=workflow_kwargs,
                         should_accept_fn=should_accept_fn,
-                        task_id=int(uuid.uuid4()),
+                        task_id=self._task_id_generator.next(),
                     )
 
         if not hasattr(self, "data_generator"):
@@ -545,6 +550,25 @@ class RolloutController:
             if count_key in counts and counts[count_key] > 0:
                 final_stats[k] = v / counts[count_key]
         return final_stats
+
+    def config_perf_tracer(self, config: PerfTracerConfig, role: str) -> None:
+        async def _call():
+            tasks = [
+                self.scheduler.async_call_engine(
+                    worker_id=worker.id,
+                    method="config_perf_tracer",
+                    rank=rank,
+                    role=role,
+                    config=config,
+                )
+                for rank, worker in enumerate(self.workers)
+            ]
+            return await asyncio.gather(*tasks)
+
+        asyncio.run(_call())
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        self._collective_rpc("save_perf_tracer", step=step, force=force)
 
     @property
     def staleness_manager(self):

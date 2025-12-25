@@ -33,9 +33,15 @@ from areal.api.alloc_mode import (
     MegatronParallelStrategy,
     ParallelStrategy,
 )
-from areal.api.cli_args import MicroBatchSpec, TrainEngineConfig
+from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
-from areal.api.io_struct import FinetuneSpec, ParamSpec, SaveLoadMeta, WeightUpdateMeta
+from areal.api.io_struct import (
+    DeviceRuntimeInfo,
+    FinetuneSpec,
+    ParamSpec,
+    SaveLoadMeta,
+    WeightUpdateMeta,
+)
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.core import (
@@ -47,7 +53,7 @@ from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, stats_tracker
+from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchItem,
@@ -59,7 +65,6 @@ from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
     unpad_logits,
 )
-from areal.utils.device import clear_memory, log_gpu_stats
 from areal.utils.distributed import init_custom_process_group
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -685,14 +690,14 @@ class MegatronEngine(TrainEngine):
         Ref: https://github.com/THUDM/slime/blob/main/slime/backends/megatron_utils/actor.py
         """
 
-        log_gpu_stats("before offload model")
-        clear_memory()
+        self.get_device_stats().log("before offload model")
+        current_platform.clear_memory()
         torch_memory_saver.pause()
 
         # TODO: NCCL offload
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
-        log_gpu_stats("after offload model")
+        self.get_device_stats().log("after offload model")
 
         self.is_offload = True
 
@@ -703,12 +708,12 @@ class MegatronEngine(TrainEngine):
         """
 
         torch_memory_saver.resume()
-        clear_memory()
+        current_platform.clear_memory()
 
         # TODO: NCCL onload
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
-        log_gpu_stats("after onload model")
+        self.get_device_stats().log("after onload model")
 
         self.is_offload = False
 
@@ -768,6 +773,17 @@ class MegatronEngine(TrainEngine):
                 f"Training fp8={train_fp8}, "
                 f"Inference fp8={inference_fp8}"
             )
+
+    def get_device_stats(self) -> DeviceRuntimeInfo:
+        return DeviceRuntimeInfo.get_current()
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        perf_tracer.save(step=step, force=force)
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        perf_tracer.configure(config, rank=rank, role=role)
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy

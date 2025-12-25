@@ -198,6 +198,7 @@ def _default_trace_path(
     config: PerfTracerConfig,
     *,
     rank: int,
+    role: str | None = None,
     filename: str = _PERF_TRACE_FILENAME,
     subdir: str | None = None,
 ) -> str:
@@ -212,6 +213,9 @@ def _default_trace_path(
         Configuration containing fileroot, experiment_name, and trial_name.
     rank : int
         Rank identifier to include in filename.
+    role : str | None, default=None
+        Optional role identifier (e.g., "actor", "learner"). When provided,
+        creates a subdirectory under the tracer directory.
     filename : str, default="traces.jsonl"
         Base filename before rank qualification.
     subdir : str | None, default=None
@@ -232,6 +236,8 @@ def _default_trace_path(
     )
     if subdir:
         base_dir = os.path.join(base_dir, subdir)
+    if role:
+        base_dir = os.path.join(base_dir, role)
     return os.path.join(base_dir, _rank_qualified_filename(filename, rank))
 
 
@@ -450,6 +456,8 @@ class SessionRecord:
         Unique identifier for this session.
     rank : int
         Rank identifier for the process that created this session.
+    role : str | None, default=None
+        Optional role identifier (e.g., "actor", "learner") for the process.
     submit_ts : float
         Timestamp when the session was submitted (from time.time(), wall-clock time).
     status : str, default="pending"
@@ -469,6 +477,7 @@ class SessionRecord:
     task_id: int
     session_id: int
     rank: int
+    role: str | None
     submit_ts: float
     status: str = "pending"
     reason: str | None = None
@@ -613,6 +622,7 @@ class SessionRecord:
             FieldSpec("task_id"),
             FieldSpec("session_id"),
             FieldSpec("rank"),
+            FieldSpec("role", omit_if_none=True),
             FieldSpec("status"),
             FieldSpec("reason", omit_if_none=True),
             FieldSpec("submit_ts"),
@@ -937,6 +947,8 @@ class SessionTracer:
         Absolute path to the output JSONL file where session records will be written.
     rank : int
         Rank identifier for this process in distributed training.
+    role : str | None, default=None
+        Optional role identifier (e.g., "actor", "learner") for the process.
 
     See Also
     --------
@@ -951,11 +963,12 @@ class SessionTracer:
         *,
         output_path: str,
         rank: int,
+        role: str | None = None,
     ) -> None:
         self._config = config
         self._rank = rank
+        self._role = role
         self._lock = threading.Lock()
-        self._next_task_id = 0
         self._next_session_id = 0
         # task id sequence and mapping from task_id -> set(session_id)
         self._task_to_sessions: dict[int, set[int]] = {}
@@ -965,17 +978,14 @@ class SessionTracer:
         self._output_path = output_path
         self._event_rules = _SESSION_EVENT_RULES
 
-    def register_task(self) -> int:
-        """Register a new logical task (dataset-level) and return a task_id.
+    def register_task(self, task_id: int) -> None:
+        """Register a new logical task (dataset-level) given a task_id.
 
         Tasks group multiple sessions (one per generated sample). Use
         :meth:`register_session` to create sessions that belong to a task.
         """
         with self._lock:
-            task_id = self._next_task_id
-            self._next_task_id += 1
             self._task_to_sessions.setdefault(task_id, set())
-        return task_id
 
     def register_session(self, task_id: int) -> int:
         """Register a new session and optionally associate it with a task.
@@ -990,6 +1000,7 @@ class SessionTracer:
                 task_id=task_id,
                 session_id=session_id,
                 rank=self._rank,
+                role=self._role,
                 submit_ts=now,
             )
             self._task_to_sessions.setdefault(task_id, set()).add(session_id)
@@ -1108,7 +1119,6 @@ class SessionTracer:
         with self._lock:
             self._records.clear()
             self._ready.clear()
-            self._next_task_id = 0
             self._next_session_id = 0
             self._flush_threshold = _normalize_flush_threshold(self._config)
 
@@ -1278,6 +1288,8 @@ class PerfTracer:
         Configuration including enable flags, output paths, and session tracer settings.
     rank : int
         Rank identifier for this process in distributed training.
+    role : str | None, default=None
+        Optional role identifier (e.g., "actor", "learner") for the process.
 
     See Also
     --------
@@ -1285,12 +1297,15 @@ class PerfTracer:
     trace_session_event : Function to record session events
     """
 
-    def __init__(self, config: PerfTracerConfig, *, rank: int) -> None:
+    def __init__(
+        self, config: PerfTracerConfig, *, rank: int, role: str | None = None
+    ) -> None:
         if rank < 0:
             raise ValueError("rank must be a non-negative integer")
         self._config = config
         self._enabled = config.enabled
         self._rank = rank
+        self._role = role
         self._events: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._pid = os.getpid()
@@ -1303,12 +1318,13 @@ class PerfTracer:
         self._output_path = _default_trace_path(
             config,
             rank=rank,
+            role=role,
             subdir="perf_tracer",
         )
         self._save_interval = _normalize_save_interval(config)
         self._profile_steps = self._normalize_profile_steps(config.profile_steps)
         self._session_tracer: SessionTracer | None = None
-        self._configure_session_tracer(config, rank=rank)
+        self._configure_session_tracer(config, rank=rank, role=role)
 
     # ------------------------------------------------------------------
     # Configuration helpers
@@ -1320,7 +1336,9 @@ class PerfTracer:
     def set_enabled(self, flag: bool) -> None:
         self._enabled = flag
 
-    def _configure_session_tracer(self, config: PerfTracerConfig, *, rank: int) -> None:
+    def _configure_session_tracer(
+        self, config: PerfTracerConfig, *, rank: int, role: str | None = None
+    ) -> None:
         session_cfg = getattr(config, "session_tracer", None)
         enabled = bool(session_cfg and getattr(session_cfg, "enabled", False))
         if enabled:
@@ -1329,6 +1347,7 @@ class PerfTracer:
                 config,
                 filename=_SESSION_TRACE_FILENAME,
                 rank=rank,
+                role=role,
                 subdir="session_tracer",
             )
             if self._session_tracer is None:
@@ -1336,6 +1355,7 @@ class PerfTracer:
                     session_cfg,
                     output_path=output_path,
                     rank=rank,
+                    role=role,
                 )
             else:
                 raise RuntimeError("Session tracer is already configured")
@@ -1567,12 +1587,14 @@ class PerfTracer:
                 if "ts" in new_event:
                     new_event["ts"] = new_event["ts"] + time_offset_us
 
-                # Attach rank info
+                # Attach rank and role info
                 event_args = new_event.get("args")
                 if not isinstance(event_args, dict):
                     event_args = {}
                     new_event["args"] = event_args
                 event_args["rank"] = self._rank
+                if self._role is not None:
+                    event_args["role"] = self._role
 
                 new_events.append(new_event)
 
@@ -1672,6 +1694,8 @@ class PerfTracer:
         if event.get("ph") != "M":
             args = event.setdefault("args", {})
             args.setdefault("rank", self._rank)
+            if self._role is not None:
+                args.setdefault("role", self._role)
         with self._lock:
             self._events.append(event)
 
@@ -1725,7 +1749,10 @@ class PerfTracer:
         if pid in self._process_meta_emitted:
             return
         self._process_meta_emitted.add(pid)
-        rank_label = f"Rank {self._rank}, Process"
+        if self._role is not None:
+            rank_label = f"[{self._role}] Rank {self._rank}, Process"
+        else:
+            rank_label = f"Rank {self._rank}, Process"
         process_name_event = {
             "name": "process_name",
             "ph": "M",
@@ -1792,6 +1819,7 @@ def configure(
     config: PerfTracerConfig,
     *,
     rank: int,
+    role: str | None = None,
 ) -> PerfTracer:
     global GLOBAL_TRACER
     with _GLOBAL_TRACER_LOCK:
@@ -1800,12 +1828,13 @@ def configure(
                 "PerfTracer has already been configured. Call perf_tracer.reset() "
                 "before configuring again."
             )
-        GLOBAL_TRACER = PerfTracer(config, rank=rank)
+        GLOBAL_TRACER = PerfTracer(config, rank=rank, role=role)
         logger.info(
-            "Configured global PerfTracer: enabled=%s, session_tracing=%s, rank=%s",
+            "Configured global PerfTracer: enabled=%s, session_tracing=%s, rank=%s, role=%s",
             GLOBAL_TRACER.enabled,
             GLOBAL_TRACER.session_tracer is not None,
             rank,
+            role,
         )
         return GLOBAL_TRACER
 
@@ -1947,13 +1976,11 @@ def get_task_id() -> int | None:
     return _current_task_id.get()
 
 
-def register_task() -> int | None:
-    """Register a new task and return the task_id in the current async context."""
-    task_id = None
+def register_task(task_id: int) -> None:
+    """Register a new task given a task_id in the current async context."""
     tracer = get_session_tracer()
     if tracer is not None:
-        task_id = tracer.register_task()
-    return task_id
+        tracer.register_task(task_id)
 
 
 def register_session(task_id: int) -> int | None:

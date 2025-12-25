@@ -10,7 +10,9 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
+from areal.api.cli_args import PerfTracerConfig
 from areal.api.io_struct import (
+    DeviceRuntimeInfo,
     LocalInfServerInfo,
     ModelRequest,
     ModelResponse,
@@ -473,6 +475,37 @@ class TrainEngine(abc.ABC):
     def offload(self) -> None:
         raise NotImplementedError()
 
+    @abc.abstractmethod
+    def get_device_stats(self) -> DeviceRuntimeInfo:
+        raise NotImplementedError()
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        """Save performance tracer data.
+
+        Parameters
+        ----------
+        step : int, optional
+            The current training step number, by default None
+        force : bool, optional
+            If True, force save regardless of internal conditions, by default False
+        """
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        """Configure performance tracer.
+
+        Parameters
+        ----------
+        config : PerfTracerConfig
+            Configuration for the performance tracer.
+        rank : int
+            Rank of the current process within its role.
+        role : str
+            Role of this process. "master" by default or "actor",
+            "ref", "rollout", etc. in RPC workers.
+        """
+
 
 class InferenceEngine(abc.ABC):
     def initialize(self, *args, **kwargs):
@@ -634,6 +667,7 @@ class InferenceEngine(abc.ABC):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         should_accept_fn: Callable | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
+        task_id: int | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -657,6 +691,8 @@ class InferenceEngine(abc.ABC):
         should_accept_fn : Callable, optional
             A function used to decide whether to accept a specific trajectory, i.e., dynamic filtering.
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
+        task_id : int, optional
+            The task ID to use. If None, a new task ID will be generated internally.
 
         Returns
         -------
@@ -859,3 +895,30 @@ class InferenceEngine(abc.ABC):
             The recorded scalar statistics.
         """
         raise NotImplementedError()
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        """Save performance tracer data.
+
+        Parameters
+        ----------
+        step : int, optional
+            The current training step number, by default None
+        force : bool, optional
+            If True, force save regardless of internal conditions, by default False
+        """
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        """Configure performance tracer.
+
+        Parameters
+        ----------
+        config : PerfTracerConfig
+            Configuration for the performance tracer.
+        rank : int
+            Rank of the current process within its role.
+        role : str
+            Role of this process. "master" by default or "actor",
+            "ref", "rollout", etc. in RPC workers.
+        """

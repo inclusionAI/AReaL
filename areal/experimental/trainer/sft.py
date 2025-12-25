@@ -26,7 +26,6 @@ from areal.utils.data import (
     tensor_container_to,
 )
 from areal.utils.dataloader import create_dataloader
-from areal.utils.device import log_gpu_stats
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
@@ -46,9 +45,6 @@ class SFTTrainer:
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
-        # Configure performance tracer
-        if config.perf_tracer is not None:
-            perf_tracer.configure(config.perf_tracer, rank=rank)
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
@@ -120,6 +116,8 @@ class SFTTrainer:
             self.train_dataloader,
         )
 
+        self._config_perf_tracer()
+
     def train(self):
         config = self.config
         start_step = (
@@ -163,7 +161,7 @@ class SFTTrainer:
             ):
                 self.actor.train_lm(batch)
                 self.actor.step_lr_scheduler()
-                log_gpu_stats("after train step")
+                self.actor.get_device_stats().log("after train step")
 
             self.actor.set_version(global_step + 1)
 
@@ -222,12 +220,25 @@ class SFTTrainer:
                     epoch=epoch, epoch_step=step, global_step=global_step
                 )
 
-            perf_tracer.save(step=global_step)
+            self._save_perf_tracer(step=global_step)
 
     def close(self):
         self.stats_logger.close()
         self.actor.destroy()
         perf_tracer.save(force=True)
+
+    def _config_perf_tracer(self):
+        rank = int(os.getenv("RANK", "0"))
+        if self.config.perf_tracer is None:
+            return
+        perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+        self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
+
+    def _save_perf_tracer(self, step: int):
+        if self.config.perf_tracer is None:
+            return
+        self.actor.save_perf_tracer(step=step)
+        perf_tracer.save(step=step)
 
     def _init_scheduler(self) -> Scheduler:
         cfg = self.config.scheduler

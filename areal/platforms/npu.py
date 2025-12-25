@@ -1,3 +1,5 @@
+import gc
+
 import torch
 
 import areal.utils.logging as logging
@@ -19,3 +21,7 @@ class NPUPlatform(Platform):
     @classmethod
     def synchronize(cls) -> None:
         torch.npu.synchronize()
+
+    def clear_memory(self) -> None:
+        self.synchronize()
+        gc.collect()

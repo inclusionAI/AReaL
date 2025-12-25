@@ -21,7 +21,6 @@ from areal.utils.data import (
     broadcast_tensor_container,
     tensor_container_to,
 )
-from areal.utils.device import log_gpu_stats
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.recover import RecoverHandler
@@ -184,21 +183,21 @@ def main(args):
             with stats_tracker.record_timing("recompute_logp"):
                 logp = actor.compute_logp(batch)
                 batch["prox_logp"] = logp
-                log_gpu_stats("recompute logp")
+                actor.get_device_stats().log("recompute logp")
 
         if ref is not None:
             with stats_tracker.record_timing("ref_logp"):
                 batch["ref_logp"] = ref.compute_logp(batch)
-                log_gpu_stats("ref logp")
+                ref.get_device_stats().log("ref logp")
 
         with stats_tracker.record_timing("compute_advantage"):
             actor.compute_advantages(batch)
-            log_gpu_stats("compute advantages")
+            actor.get_device_stats().log("compute advantages")
 
         with stats_tracker.record_timing("train_step"):
             actor.aent_ppo_update(batch, global_step)
             actor.step_lr_scheduler()
-            log_gpu_stats("ppo update")
+            actor.get_device_stats().log("ppo update")
 
         # pause inference for updating weights, save, and evaluation
         rollout.pause()

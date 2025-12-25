@@ -39,7 +39,6 @@ from areal.platforms import current_platform
 from areal.scheduler import LocalScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
-from areal.utils.device import log_gpu_stats
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
@@ -59,9 +58,6 @@ class PPOTrainer:
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
-        # Configure performance tracer
-        if config.perf_tracer is not None:
-            perf_tracer.configure(config.perf_tracer, rank=rank)
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
@@ -176,6 +172,8 @@ class PPOTrainer:
             weight_update_meta=self.weight_update_meta,
         )
 
+        self._config_perf_tracer()
+
     def train(
         self,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
@@ -238,7 +236,7 @@ class PPOTrainer:
                     ),
                 ):
                     rollout_batch["values"] = self.critic.compute_values(rollout_batch)
-                    log_gpu_stats("critic values")
+                    self.critic.get_device_stats().log("critic values")
 
             if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
                 with (
@@ -250,7 +248,7 @@ class PPOTrainer:
                     ),
                 ):
                     rollout_batch["prox_logp"] = self.actor.compute_logp(rollout_batch)
-                    log_gpu_stats("recompute logp")
+                    self.actor.get_device_stats().log("recompute logp")
 
             if self.ref is not None:
                 with (
@@ -262,7 +260,7 @@ class PPOTrainer:
                     ),
                 ):
                     rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
-                    log_gpu_stats("ref logp")
+                    self.ref.get_device_stats().log("ref logp")
 
             with (
                 stats_tracker.record_timing("compute_advantage"),
@@ -273,7 +271,7 @@ class PPOTrainer:
                 ),
             ):
                 adv_batch = self.actor.compute_advantages(rollout_batch)
-                log_gpu_stats("compute advantages")
+                self.actor.get_device_stats().log("compute advantages")
 
             with (
                 stats_tracker.record_timing("train_step"),
@@ -283,10 +281,9 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                # TODO: move log_gpu_stats to engine
                 self.actor.ppo_update(adv_batch)
                 self.actor.step_lr_scheduler()
-                log_gpu_stats("ppo update")
+                self.actor.get_device_stats().log("ppo update")
 
             if self.critic is not None:
                 with (
@@ -299,7 +296,7 @@ class PPOTrainer:
                 ):
                     self.critic.ppo_update(adv_batch)
                     self.critic.step_lr_scheduler()
-                    log_gpu_stats("ppo critic update")
+                    self.critic.get_device_stats().log("ppo critic update")
 
             # pause inference for updating weights, save, and evaluation
             self.rollout.pause()
@@ -380,7 +377,7 @@ class PPOTrainer:
             # Resume rollout
             self.rollout.resume()
 
-            perf_tracer.save(step=global_step)
+            self._save_perf_tracer(step=global_step)
 
     def close(self):
         self.stats_logger.close()
@@ -392,6 +389,31 @@ class PPOTrainer:
             self.critic.destroy()
         self.actor.destroy()
         perf_tracer.save(force=True)
+
+    def _config_perf_tracer(self):
+        rank = int(os.getenv("RANK", "0"))
+        if self.config.perf_tracer is None:
+            return
+        perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+        self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
+        if self.critic is not None:
+            self.critic.config_perf_tracer(self.config.perf_tracer, role="critic")
+        if self.ref is not None:
+            self.ref.config_perf_tracer(self.config.perf_tracer, role="ref")
+        self.rollout.config_perf_tracer(self.config.perf_tracer, role="rollout")
+        self.eval_rollout.config_perf_tracer(
+            self.config.perf_tracer, role="eval-rollout"
+        )
+
+    def _save_perf_tracer(self, step: int):
+        self.actor.save_perf_tracer(step=step)
+        if self.ref is not None:
+            self.ref.save_perf_tracer(step=step)
+        if self.critic is not None:
+            self.critic.save_perf_tracer(step=step)
+        self.eval_rollout.save_perf_tracer(step=step)
+        self.rollout.save_perf_tracer(step=step)
+        perf_tracer.save(step=step)
 
     def _init_scheduler(self) -> Scheduler:
         cfg = self.config.scheduler

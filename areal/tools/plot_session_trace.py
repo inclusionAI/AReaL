@@ -434,11 +434,15 @@ def _build_timeline(
 
     for idx, record_tuple in enumerate(timeline_df.itertuples()):
         rank_label = _format_index_label(getattr(record_tuple, "rank", math.nan))
+        role_value = getattr(record_tuple, "role", None)
         task_label = _format_index_label(getattr(record_tuple, "task_id", math.nan))
         session_label = _format_index_label(
             getattr(record_tuple, "session_id", math.nan)
         )
-        label = f"r{rank_label}-t{task_label}-s{session_label}"
+        if role_value:
+            label = f"[{role_value}]r{rank_label}-t{task_label}-s{session_label}"
+        else:
+            label = f"r{rank_label}-t{task_label}-s{session_label}"
 
         submit_offset = getattr(record_tuple, "submit_ts_offset", math.nan)
         finalized_offset = getattr(record_tuple, "finalized_ts_offset", math.nan)
@@ -612,6 +616,10 @@ def _build_latency_scatter(
 
         # Build customdata with available fields
         custom_cols: list[str] = ["rank", "task_id", "session_id", "status"]
+        # Add role if available
+        has_role = "role" in subset.columns and subset["role"].notna().any()
+        if has_role:
+            custom_cols.append("role")
         # Add optional duration fields if they exist
         for col_name in ["generate_s", "reward_s", "toolcall_s"]:
             if col_name in subset.columns:
@@ -625,6 +633,9 @@ def _build_latency_scatter(
             "Status: %{customdata[3]}",
         ]
         custom_idx = 4
+        if has_role:
+            hover_parts.insert(0, "Role: %{customdata[4]}")
+            custom_idx += 1
         hover_parts.append("Total duration: %{y:.3f}s")
         if "generate_s" in custom_cols:
             hover_parts.append(f"Generate: %{{customdata[{custom_idx}]:.3f}}s")
