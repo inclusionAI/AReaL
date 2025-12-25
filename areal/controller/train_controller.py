@@ -538,7 +538,7 @@ class TrainController:
             engine=engine_path,
             meta=meta,
         )
-       
+
     def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
         if self.rollout is not None and self.rollout != rollout:
             logger.warning(
