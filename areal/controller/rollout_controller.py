@@ -507,7 +507,7 @@ class RolloutController:
                 worker_id=worker.id,
                 method="init_weights_update_group",
                 meta=meta,
-                rank_ids=[i],
+                xccl_group_ranks=[i],
             )
             for i, worker in enumerate(self.workers)
         ]

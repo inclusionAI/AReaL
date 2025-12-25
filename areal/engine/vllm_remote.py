@@ -308,10 +308,12 @@ class RemotevLLMEngine(InferenceEngine):
         return await self._engine.agenerate(req)
 
     def init_weights_update_group(
-        self, meta: WeightUpdateMeta, rank_ids: list[int] | None = None
+        self, meta: WeightUpdateMeta, xccl_group_ranks: list[int] | None = None
     ) -> Future[None]:
         """Initialize the weight update process group."""
-        return self._engine.init_weights_update_group(meta, rank_ids=rank_ids)
+        return self._engine.init_weights_update_group(
+            meta, xccl_group_ranks=xccl_group_ranks
+        )
 
     def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
