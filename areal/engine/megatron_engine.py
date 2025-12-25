@@ -766,7 +766,7 @@ class MegatronEngine(TrainEngine):
             and self.quantization_config.get("quant_method", None) == "fp8"
         )
 
-        if not train_fp8 and inference_fp8 or train_fp8 and not inference_fp8:
+        if train_fp8 != inference_fp8:
             raise RuntimeError(
                 "Inconsistent FP8 configuration: "
                 "Training and inference must both use FP8 or both not use FP8. "
