@@ -810,18 +810,17 @@ Configuration for Megatron's DistributedDataParallel.
 
 Refer to Megatron-LM documentation for details.
 
-| Parameter                         | Type            | Default      | Description                                                                                            |
-| --------------------------------- | --------------- | ------------ | ------------------------------------------------------------------------------------------------------ |
-| `grad_reduce_in_fp32`             | boolean         | `True`       | -                                                                                                      |
-| `overlap_grad_reduce`             | boolean         | `False`      | -                                                                                                      |
-| `overlap_param_gather`            | boolean         | `False`      | -                                                                                                      |
-| `align_param_gather`              | boolean         | `False`      | -                                                                                                      |
-| `use_distributed_optimizer`       | boolean         | `True`       | -                                                                                                      |
-| `check_for_nan_in_grad`           | boolean         | `False`      | -                                                                                                      |
-| `bucket_size`                     | integer \| None | `None`       | -                                                                                                      |
-| `average_in_collective`           | boolean         | `False`      | -                                                                                                      |
-| `fp8_param_gather`                | boolean         | `False`      | -                                                                                                      |
-| `data_parallel_sharding_strategy` | string          | `"no_shard"` | Sharding strategy for FSDP. Valid values are 'no_shard', 'optim', 'optim_grads', 'optim_grads_params'. |
+| Parameter                   | Type            | Default | Description |
+| --------------------------- | --------------- | ------- | ----------- |
+| `grad_reduce_in_fp32`       | boolean         | `True`  | -           |
+| `overlap_grad_reduce`       | boolean         | `False` | -           |
+| `overlap_param_gather`      | boolean         | `False` | -           |
+| `align_param_gather`        | boolean         | `False` | -           |
+| `use_distributed_optimizer` | boolean         | `True`  | -           |
+| `check_for_nan_in_grad`     | boolean         | `False` | -           |
+| `bucket_size`               | integer \| None | `None`  | -           |
+| `average_in_collective`     | boolean         | `False` | -           |
+| `fp8_param_gather`          | boolean         | `False` | -           |
 
 (section-megatron-engine)=
 
@@ -852,7 +851,7 @@ Refer to Megatron-LM documentation for implementation details.
 | `recompute_num_layers`                     | integer \| None                                                      | `1`             | -                                                                                                                                                                             |
 | `distribute_saved_activations`             | boolean \| None                                                      | `None`          | -                                                                                                                                                                             |
 | `recompute_modules`                        | list of string \| None                                               | `None`          | -                                                                                                                                                                             |
-| `moe_router_dtype`                         | string \| None                                                       | `None`          | -                                                                                                                                                                             |
+| `moe_router_dtype`                         | string \| None                                                       | `"fp32"`        | -                                                                                                                                                                             |
 | `moe_shared_expert_overlap`                | boolean                                                              | `False`         | Enable overlapping between shared expert computations and dispatcher communications. Without this, the shared epxerts execute after the routed experts.                       |
 | `moe_enable_deepep`                        | boolean                                                              | `False`         | -                                                                                                                                                                             |
 | `moe_token_dispatcher_type`                | string                                                               | `"alltoall"`    | Type of token dispatcher. Options: 'allgather','alltoall' and 'flex'.                                                                                                         |

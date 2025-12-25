@@ -393,12 +393,6 @@ class DistributedDataParallelConfig:
     bucket_size: int | None = None
     average_in_collective: bool = False
     fp8_param_gather: bool = False
-    data_parallel_sharding_strategy: str = field(
-        default="no_shard",
-        metadata={
-            "help": "Sharding strategy for FSDP. Valid values are 'no_shard', 'optim', 'optim_grads', 'optim_grads_params'."
-        },
-    )
 
 
 @dataclass
@@ -453,7 +447,7 @@ class MegatronEngineConfig:
     recompute_modules: list[str] | None = None
 
     # MoE
-    moe_router_dtype: str | None = None
+    moe_router_dtype: str | None = "fp32"
     moe_shared_expert_overlap: bool = field(
         default=False,
         metadata={
