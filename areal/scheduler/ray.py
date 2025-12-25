@@ -239,7 +239,9 @@ class RayScheduler(Scheduler):
 
             additional_envs_str = None
             if spec.env_vars:
-                additional_envs_str = ",".join(f"{k}={v}" for k, v in spec.env_vars.items())
+                additional_envs_str = ",".join(
+                    f"{k}={v}" for k, v in spec.env_vars.items()
+                )
             env = get_env_vars(
                 self.exp_config.cluster.cluster_name if self.exp_config else "",
                 additional_envs_str,
@@ -329,7 +331,9 @@ class RayScheduler(Scheduler):
 
             additional_envs_str = None
             if spec.env_vars:
-                additional_envs_str = ",".join(f"{k}={v}" for k, v in spec.env_vars.items())
+                additional_envs_str = ",".join(
+                    f"{k}={v}" for k, v in spec.env_vars.items()
+                )
             env = get_env_vars(
                 self.exp_config.cluster.cluster_name if self.exp_config else "",
                 additional_envs_str,
