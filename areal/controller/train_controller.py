@@ -4,7 +4,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import aiohttp
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -707,25 +706,14 @@ class TrainController:
             raise ValueError(f"Unknown weight update type {meta.type}")
 
     async def _async_clear_batches(self, *targets: dict[str, RTensor]):
-        """Extract shard IDs and call /data/clear on each worker."""
+        """Extract shard IDs and clear tensors on each worker."""
         shards_by_node = RTensor.collect_shards(targets)
 
         if not shards_by_node:
             return
 
-        async def clear_node(node_addr, shard_ids):
-            async with aiohttp.ClientSession() as session:
-                async with session.delete(
-                    f"http://{node_addr}/data/clear", json={"shard_ids": shard_ids}
-                ) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        logger.info(
-                            f"Cleared {result.get('cleared_count', 0)} shards on {node_addr}"
-                        )
-
         await asyncio.gather(
-            *[clear_node(addr, sids) for addr, sids in shards_by_node.items()],
+            *[RTensor.clear_node(addr, sids) for addr, sids in shards_by_node.items()],
             return_exceptions=True,
         )
 

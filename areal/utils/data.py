@@ -336,7 +336,9 @@ def pad_and_stack_tensors_along_first_dim(tensor_list: list[torch.Tensor]):
 
 
 def tensor_container_to(
-    d: dict[str, Any] | torch.Tensor | list[torch.Tensor], *args, **kwargs
+    d: dict[str, Any] | torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...],
+    *args,
+    **kwargs,
 ):
     """Apply `t.to(*args, **kwargs)` to all tensors in the dictionary.
     Support nested dictionaries.
@@ -344,7 +346,7 @@ def tensor_container_to(
     if torch.is_tensor(d):
         return d.to(*args, **kwargs)
 
-    if isinstance(d, list):
+    if isinstance(d, list) or isinstance(d, tuple):
         return [tensor_container_to(v, *args, **kwargs) for v in d]
 
     if isinstance(d, dict):
