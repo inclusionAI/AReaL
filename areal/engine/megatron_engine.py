@@ -75,25 +75,9 @@ from areal.utils.megatron import (
 )
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
-from areal.utils.offload import is_tms_enabled
+from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
-
-try:
-    from torch_memory_saver import torch_memory_saver
-except ImportError:
-
-    class MockTorchMemorySaver:
-        def disable(self):
-            return nullcontext()
-
-        def pause(self):
-            pass
-
-        def resume(self):
-            pass
-
-    torch_memory_saver = MockTorchMemorySaver()
 
 
 class _MegatronModelList(list):
