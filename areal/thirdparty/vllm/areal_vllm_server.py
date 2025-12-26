@@ -25,6 +25,7 @@ from vllm.utils import FlexibleArgumentParser
 from vllm.v1.engine import EngineCoreOutput, EngineCoreOutputs, FinishReason
 from vllm.v1.engine.core import EngineCore
 from vllm.v1.request import RequestStatus
+from vllm.v1.metrics.stats import LoRARequestStates
 
 logger = init_logger("areal_vllm_server")
 logger.setLevel(logging.INFO)
@@ -336,6 +337,14 @@ def areal_injected_update_weight_lora_xccl(self):
     return self.collective_rpc("update_weight_lora_xccl")
 
 
+def finish_request(self, req_state: 'RequestState'):
+    if req_state.lora_name is None:
+        return
+    lora_stats = self.lora_name_to_stats[req_state.lora_name]
+    if req_state.request_id in lora_stats.running_requests:
+        lora_stats.running_requests.remove(req_state.request_id)
+
+
 def hook():
     setattr(EngineCore, "abort_all_reqs", abort_all_reqs)
     setattr(EngineCore, "areal_injected_update_weight", areal_injected_update_weight)
@@ -354,7 +363,11 @@ def hook():
         "areal_injected_update_weight_lora_xccl",
         areal_injected_update_weight_lora_xccl,
     )
-
+    setattr(
+        LoRARequestStates,
+        "finish_request",
+        finish_request,
+    )
 
 hook()
 
