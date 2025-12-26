@@ -14,6 +14,7 @@ from werkzeug.serving import make_server
 
 from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
+from areal.engine.mock.mock_inference_engine import MockInferenceEngine
 from areal.platforms import current_platform
 from areal.scheduler.rpc import rtensor
 from areal.scheduler.rpc.rtensor import RTensor
@@ -50,6 +51,29 @@ _server_port: int = 8000
 
 # Create Flask app
 app = Flask(__name__)
+
+
+def _inject_special_args(method: str, args, kwargs):
+    if method != "connect_engine":
+        return args, kwargs
+
+    engine_path = kwargs.pop("engine", None)
+    if engine_path is None:
+        raise ValueError("connect_engine requires 'engine' to be a class path string")
+
+    EngineCls = import_from_string(engine_path)
+
+    if not issubclass(EngineCls, MockInferenceEngine):
+        raise TypeError(
+            f"connect_engine for single controller should only support MockInferenceEngine. "
+            f"Got {EngineCls.__module__}.{EngineCls.__name__}"
+        )
+
+    # MockInferenceEngine takes no args → safe
+    engine = EngineCls()
+
+    kwargs["engine"] = engine
+    return args, kwargs
 
 
 def _init_engine_thread():
@@ -306,6 +330,7 @@ def call_engine_method():
         method_name = data.get("method")
         raw_args = data.get("args", [])
         raw_kwargs = data.get("kwargs", {})
+        raw_args, raw_kwargs = _inject_special_args(method_name, raw_args, raw_kwargs)
 
         if not method_name:
             return jsonify({"error": "Missing 'method' field in request"}), 400

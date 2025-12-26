@@ -927,6 +927,71 @@ class FSDPEngine(TrainEngine):
 
         named_tensors.clear()
 
+    def _get_bucket_param_specs(
+        self, meta: WeightUpdateMeta
+    ) -> list[list[ParamSpec]] | None:
+        """
+        Build parameter bucket specs for distributed weight update.
+        All ranks must execute this function because _get_full_tensor()
+        may involve DTensor/FSDP collectives. Only DP-head returns the specs.
+        """
+        weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
+        main_rank = self.is_data_parallel_head()
+
+        buffer_size = 0
+        named_tensors: list[tuple[str, torch.Tensor]] = []
+        buckets: list[list[ParamSpec]] = []
+
+        if self.config.use_lora:
+            param_iterator = (
+                (name, param)
+                for name, param in self._get_model_name_parameters()
+                if param.requires_grad
+            )
+        else:
+            param_iterator = self._get_model_name_parameters()
+
+        for name, param in param_iterator:
+            tensor = self._get_full_tensor(param)
+
+            if not main_rank:
+                continue
+
+            tensor_size = tensor.numel() * tensor.element_size()
+
+            # If adding this tensor would exceed chunk size, flush current bucket first
+            if named_tensors and (buffer_size + tensor_size > weight_chunked_mem_size):
+                buckets.append(
+                    [
+                        ParamSpec(
+                            name=n,
+                            shape=tuple(t.shape),
+                            dtype=str(t.dtype).split("torch.")[1],
+                        )
+                        for n, t in named_tensors
+                    ]
+                )
+                named_tensors.clear()
+                buffer_size = 0
+
+            named_tensors.append((name, tensor))
+            buffer_size += tensor_size
+
+        # Flush final bucket ONCE (after loop)
+        if main_rank and named_tensors:
+            buckets.append(
+                [
+                    ParamSpec(
+                        name=n,
+                        shape=tuple(t.shape),
+                        dtype=str(t.dtype).split("torch.")[1],
+                    )
+                    for n, t in named_tensors
+                ]
+            )
+
+        return buckets if main_rank else None
+
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         assert meta.type == current_platform.communication_backend
 
