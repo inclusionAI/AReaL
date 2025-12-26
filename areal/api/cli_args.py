@@ -459,9 +459,9 @@ class SchedulingStrategy:
 
 @dataclass
 class SchedulingSpec:
-    cpu: int = field(default=0, metadata={"help": "Number of CPU cores required"})
+    cpu: int = field(default=2, metadata={"help": "Number of CPU cores required"})
     gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
-    mem: int = field(default=0, metadata={"help": "Amount of memory (GB) required"})
+    mem: int = field(default=1, metadata={"help": "Amount of memory (GB) required"})
     port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
     image: str = field(
         default="", metadata={"help": "Docker/Singularity container image to use"}
@@ -1021,7 +1021,6 @@ class SGLangConfig:
             args["lora_target_modules"] = [
                 x.replace("-linear", "") for x in args["lora_target_modules"]
             ]
-        from areal.platforms import current_platform
 
         args = dict(
             # Model and tokenizer
@@ -1029,7 +1028,6 @@ class SGLangConfig:
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            device=current_platform.device_type,
             is_embedding=False,
             # Other runtime options
             tp_size=tp_size,

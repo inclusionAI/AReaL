@@ -1,0 +1,1191 @@
+import asyncio
+import getpass
+import os
+import re
+import subprocess
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import aiohttp
+import orjson
+import requests
+
+from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
+from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
+from areal.scheduler.exceptions import (
+    EngineCallError,
+    EngineCreationError,
+    EngineImportError,
+    RPCConnectionError,
+    SchedulerError,
+    WorkerConfigurationError,
+    WorkerCreationError,
+    WorkerFailedError,
+    WorkerNotFoundError,
+    WorkerTimeoutError,
+)
+from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
+from areal.utils import logging, name_resolve, names
+from areal.utils.http import get_default_connector
+from areal.utils.launcher import (
+    JobState,
+    get_env_vars,
+)
+from areal.utils.offload import get_tms_env_vars
+from areal.utils.slurm import (
+    cancel_jobs,
+    parse_slurm_nodelist,
+    query_jobs,
+)
+
+logger = logging.getLogger("SlurmScheduler")
+
+
+@dataclass
+class SlurmWorkerInfo:
+    """Slurm worker information."""
+
+    worker: Worker
+    role: str
+    slurm_job_id: int
+    task_index: int
+    discovered: bool = False
+    spec: SchedulingSpec | None = None
+    node: str | None = None
+
+
+class SlurmScheduler(Scheduler):
+    def __init__(
+        self,
+        n_gpus_per_node: int = 8,
+        experiment_name: str | None = None,
+        trial_name: str | None = None,
+        fileroot: str | None = None,
+        cluster_name: str | None = None,
+        container_type: str = "apptainer",
+        container_image: str | None = "/storage/openpsi/images/areal-latest.sif",
+        container_mounts: str | None = "/storage:/storage",
+        srun_additional_args: str = "--unbuffered --mpi=pmi2 -K --chdir $PWD",
+        startup_timeout: float = 300.0,
+        health_check_interval: float = 5.0,
+        enable_tms_offload: bool | None = None,
+        name_resolve_type: str = "nfs",
+        nfs_record_root: str = "/tmp/areal/name_resolve",
+        etcd3_addr: str = "localhost:2379",
+        exp_config: BaseExperimentConfig | None = None,
+    ):
+        # Get n_gpus_per_node from parameter or config
+        self.n_gpus_per_node = n_gpus_per_node
+        if exp_config is not None:
+            self.n_gpus_per_node = exp_config.cluster.n_gpus_per_node
+
+        # Get other params from config if provided
+        self.experiment_name = experiment_name
+        self.trial_name = trial_name
+        self.fileroot = fileroot
+        self.enable_tms_offload = bool(enable_tms_offload)
+        self.cluster_name = cluster_name
+        if exp_config is not None:
+            self.experiment_name = exp_config.experiment_name
+            self.trial_name = exp_config.trial_name
+            self.fileroot = exp_config.cluster.fileroot
+            self.cluster_name = exp_config.cluster.cluster_name
+            self.enable_tms_offload = exp_config.enable_offload
+        if self.experiment_name is None or self.trial_name is None:
+            raise ValueError("experiment_name and trial_name must be provided")
+
+        # name_resolve config (exp_config overwrites direct params)
+        self.name_resolve_config = NameResolveConfig(
+            type=name_resolve_type,
+            nfs_record_root=nfs_record_root,
+            etcd3_addr=etcd3_addr,
+        )
+        if exp_config is not None:
+            self.name_resolve_config = exp_config.cluster.name_resolve
+
+        # Reconfigure name_resolve and clear old entries
+        if self.experiment_name and self.trial_name:
+            name_resolve.reconfigure(self.name_resolve_config)
+            name_resolve.clear_subtree(
+                names.trial_root(self.experiment_name, self.trial_name)
+            )
+
+        self.container_type = container_type
+        self.container_image = container_image
+        self.container_mounts = container_mounts
+        self.srun_additional_args = srun_additional_args
+        self.startup_timeout = startup_timeout
+        self.health_check_interval = health_check_interval
+        self.exp_config = exp_config
+
+        # Internal state
+        self._workers: dict[str, list[SlurmWorkerInfo]] = {}
+        self._jobs: dict[str, int] = {}  # role -> slurm_job_id
+        self._job_status_cache: dict[
+            int, tuple[JobState, float]
+        ] = {}  # job_id -> (state, timestamp)
+        self._status_cache_ttl = 5.0  # Cache status for 5 seconds
+
+        logger.info(
+            f"Initialized SlurmScheduler: exp={self.experiment_name}, "
+            f"trial={self.trial_name}, fileroot={self.fileroot}, "
+            f"n_gpus_per_node={self.n_gpus_per_node}"
+        )
+
+    def _slurm_name(self, job_name: str) -> str:
+        return f"{self.experiment_name}_{self.trial_name}:{job_name}"
+
+    def _log_path_of(self, role: str) -> str:
+        log_path = (
+            Path(self.fileroot)
+            / "logs"
+            / getpass.getuser()
+            / self.experiment_name
+            / self.trial_name
+        )
+        log_path.mkdir(parents=True, exist_ok=True)
+        return str(log_path / f"{role}.log")
+
+    def _sbatch_path_of(self, role: str) -> str:
+        sbatch_path = (
+            Path(self.fileroot)
+            / "logs"
+            / getpass.getuser()
+            / self.experiment_name
+            / self.trial_name
+        )
+        sbatch_path.mkdir(parents=True, exist_ok=True)
+        return str(sbatch_path / f"{role}.sh")
+
+    def _read_log_tail(self, role: str, lines: int = 50) -> str:
+        try:
+            with open(self._log_path_of(role)) as f:
+                all_lines = f.readlines()
+                return "".join(all_lines[-lines:])
+        except Exception as e:
+            return f"[Could not read log file: {e}]"
+
+    def _find_worker_by_id(self, worker_id: str) -> SlurmWorkerInfo | None:
+        """Find worker by ID across all roles."""
+        for workers in self._workers.values():
+            for worker_info in workers:
+                if worker_info.worker.id == worker_id:
+                    return worker_info
+        return None
+
+    def _check_job_status(self, role: str) -> None:
+        """Check Slurm job status and raise if failed/cancelled."""
+        if role not in self._jobs:
+            raise WorkerNotFoundError(f"Role '{role}' not found")
+
+        job_id = self._jobs[role]
+
+        # Check cache first
+        current_time = time.time()
+        if job_id in self._job_status_cache:
+            cached_state, cached_time = self._job_status_cache[job_id]
+            if current_time - cached_time < self._status_cache_ttl:
+                if cached_state in [JobState.FAILED, JobState.CANCELLED]:
+                    logs = self._read_log_tail(role)
+                    raise WorkerFailedError(
+                        f"{role}/*", -1, f"Job {job_id} {cached_state}. Logs:\n{logs}"
+                    )
+                return
+
+        try:
+            job_infos = query_jobs(slurm_ids=[job_id])
+            if not job_infos:
+                logs = self._read_log_tail(role)
+                raise WorkerFailedError(
+                    f"{role}/*", -1, f"Job {job_id} not in queue. Logs:\n{logs}"
+                )
+
+            state = job_infos[0].state
+            self._job_status_cache[job_id] = (state, current_time)
+
+            if state in [JobState.FAILED, JobState.CANCELLED]:
+                logs = self._read_log_tail(role)
+                raise WorkerFailedError(
+                    f"{role}/*", -1, f"Job {job_id} {state}. Logs:\n{logs}"
+                )
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to query job status: {e}")
+
+    def _verify_worker_alive(self, worker_id: str) -> SlurmWorkerInfo:
+        """Verify worker exists and job is running."""
+        worker_info = self._find_worker_by_id(worker_id)
+        if worker_info is None:
+            raise WorkerNotFoundError(worker_id)
+
+        # Check Slurm job status
+        self._check_job_status(worker_info.role)
+
+        return worker_info
+
+    def _wait_worker_ready(self, worker_info: SlurmWorkerInfo, timeout: int = 60):
+        tik = time.time()
+        while time.time() - tik < timeout:
+            if self._is_worker_ready(worker_info):
+                return
+            time.sleep(1)
+
+    def _is_worker_ready(self, worker_info: SlurmWorkerInfo) -> bool:
+        """Check if worker is ready via health endpoint."""
+        if not worker_info.discovered:
+            return False
+
+        port = int(worker_info.worker.worker_ports[0])
+        url = f"http://{worker_info.worker.ip}:{port}/health"
+
+        try:
+            response = requests.get(url, timeout=2.0)
+            return response.status_code == 200
+        except Exception:
+            return False
+
+    def _configure_worker(self, worker_info: SlurmWorkerInfo, worker_rank: int) -> None:
+        # Wait for worker to be ready
+        while not self._is_worker_ready(worker_info):
+            time.sleep(0.1)
+
+        worker_id = worker_info.worker.id
+        port = int(worker_info.worker.worker_ports[0])
+        url = f"http://{worker_info.worker.ip}:{port}/configure"
+
+        try:
+            response = requests.post(
+                url,
+                data=orjson.dumps(
+                    serialize_value(
+                        dict(
+                            config=self.exp_config,
+                            role=worker_info.role,
+                            rank=worker_rank,
+                        )
+                    )
+                ),
+                headers={"Content-Type": "application/json"},
+                timeout=300.0,
+            )
+
+            if response.status_code == 200:
+                logger.info(f"Configuration successful on worker '{worker_id}'")
+                return
+            elif response.status_code == 400:
+                error_detail = response.json().get("detail", "Unknown error")
+                raise WorkerConfigurationError(worker_id, error_detail, str(400))
+            elif response.status_code == 500:
+                error_detail = response.json().get("detail", "Unknown error")
+                raise WorkerConfigurationError(worker_id, error_detail, str(500))
+            else:
+                raise WorkerConfigurationError(
+                    worker_id,
+                    f"Unexpected status code: {response.status_code}",
+                    str(response.status_code),
+                )
+
+        except requests.exceptions.ConnectionError as e:
+            self._check_job_status(worker_info.role)
+            raise RPCConnectionError(
+                worker_id, worker_info.worker.ip, port, str(e)
+            ) from e
+
+        except requests.exceptions.Timeout as e:
+            raise WorkerConfigurationError(worker_id, f"Request timed out: {e}") from e
+
+        except WorkerConfigurationError:
+            raise
+
+        except Exception as e:
+            raise WorkerConfigurationError(
+                worker_id, f"Unexpected error: {str(e)}"
+            ) from e
+
+    def _discover_worker_network(self, role: str) -> None:
+        if role not in self._workers:
+            raise WorkerNotFoundError(f"Role '{role}' is not created yet")
+
+        # Apply discoveries to worker infos
+        for worker_info in self._workers[role]:
+            if worker_info.discovered:
+                continue
+            task_index = worker_info.task_index
+            key = names.worker_discovery(
+                self.experiment_name, self.trial_name, role, str(task_index)
+            )
+            try:
+                addr = name_resolve.get(key)
+            except name_resolve.NameEntryNotFoundError:
+                continue
+            ip, ports_str = addr.split(":")
+            worker_info.worker.ip = ip
+            worker_info.discovered = True
+            worker_ports = [ports_str]
+            worker_info.worker.worker_ports = worker_ports
+
+            self._wait_worker_ready(worker_info)
+
+            # Allocate new ports from the worker
+            if worker_info.spec.port_count > 1:
+                resp = requests.post(
+                    f"http://{addr}/alloc_ports",
+                    json=dict(count=worker_info.spec.port_count - 1),
+                )
+                resp.raise_for_status()
+                worker_ports += list(map(str, resp.json()["ports"]))
+
+            # Set CUDA_VISIBLE_DEVICES
+            n_workers_per_node = max(1, self.n_gpus_per_node // worker_info.spec.gpu)
+            local_idx = worker_info.task_index % n_workers_per_node
+            gpus_per_task = min(worker_info.spec.gpu, self.n_gpus_per_node)
+            visible_deivces = list(
+                map(
+                    str,
+                    list(
+                        range(
+                            local_idx * gpus_per_task, (local_idx + 1) * gpus_per_task
+                        )
+                    ),
+                )
+            )
+            resp = requests.post(
+                f"http://{addr}/set_env",
+                json=dict(
+                    env=dict(
+                        CUDA_VISIBLE_DEVICES=",".join(visible_deivces),
+                        ASCEND_RT_VISIBLE_DEVICES=",".join(visible_deivces),
+                    )
+                ),
+            )
+            resp.raise_for_status()
+
+            logger.debug(f"Discovered {worker_info.worker.id} at {addr}")
+
+    def _prepare_worker_specs(
+        self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
+    ) -> list[SchedulingSpec]:
+        """Prepare scheduling specs for workers."""
+        if schedulings is None or len(schedulings) == 0:
+            raise ValueError(f"No scheduling specs provided for role '{role}'")
+
+        # Amend environment variables
+        for sch in schedulings:
+            # AReaL env var forwarding
+            sch.env_vars["AREAL_RECOVER_RUN"] = os.getenv("AREAL_RECOVER_RUN", str(0))
+            if self.enable_tms_offload:
+                sch.env_vars.update(get_tms_env_vars())
+            sch.env_vars.update(get_env_vars(self.cluster_name))
+
+        if len(schedulings) == 1:
+            # Expand single spec to all workers
+            return [schedulings[0]] * num_workers
+        elif len(schedulings) == num_workers:
+            return list(schedulings)
+        else:
+            raise ValueError(
+                f"Number of scheduling specs ({len(schedulings)}) must be 1 or match "
+                f"number of workers ({num_workers})"
+            )
+
+    def _get_colocation_nodes(self, target_role: str, replicas: int) -> tuple[int, str]:
+        """Get node allocation for colocation strategy."""
+        if target_role not in self._jobs:
+            raise WorkerNotFoundError(
+                f"Target role '{target_role}' not found for colocation"
+            )
+        target_workers = self._workers[target_role]
+        if replicas != len(target_workers):
+            raise SchedulerError(
+                f"Colocated target role {target_role} should "
+                f"have the same number of replicas: target {target_workers} != {replicas}"
+            )
+
+        # Query Slurm for target job's nodelist
+        job_id = self._jobs[target_role]
+        try:
+            job_infos = query_jobs(slurm_ids=[job_id])
+            if not job_infos:
+                raise WorkerCreationError(
+                    target_role, f"Target job {job_id} not found in queue"
+                )
+
+            nodelist = job_infos[0].host  # NodeList from squeue
+            nodes = len(parse_slurm_nodelist(nodelist))
+
+            return nodes, nodelist
+        except subprocess.CalledProcessError as e:
+            raise WorkerCreationError(target_role, f"Failed to query target job: {e}")
+
+    def _generate_sbatch_script(
+        self,
+        role: str,
+        replicas: int,
+        nodes: int,
+        total_gpus: int,
+        cpus_per_task: int,
+        mem_per_task: int,
+        schedulings: list[SchedulingSpec],
+        nodelist: str | None,
+        exclude: str | None,
+    ) -> str:
+        """Generate sbatch script for worker job with single srun command."""
+        ntasks_per_node = replicas // nodes if nodes > 0 else replicas
+        spec = schedulings[0]  # Use first spec for global settings
+
+        if total_gpus % self.n_gpus_per_node != 0:
+            raise ValueError(
+                "Slurm only supports allocating entire nodes. "
+                f"Requesting {total_gpus} GPUs but each node has {self.n_gpus_per_node}."
+            )
+
+        # Build SBATCH directives
+        sbatch_options = [
+            f"--job-name={self._slurm_name(role)}",
+            f"--output={self._log_path_of(role)}",  # Shared log!
+            "--open-mode=append",
+            "--no-requeue",
+            f"--nodes={nodes}",
+            f"--ntasks-per-node={ntasks_per_node}",
+            f"--gres=gpu:{total_gpus}",
+            f"--cpus-per-task={cpus_per_task}",
+            f"--mem={mem_per_task * ntasks_per_node}M",
+        ]
+
+        if nodelist:
+            sbatch_options.append(f"--nodelist={nodelist}")
+        if exclude:
+            sbatch_options.append(f"--exclude={exclude}")
+        if spec.partition:
+            sbatch_options.append(f"--partition={spec.partition}")
+        if spec.time_limit:
+            sbatch_options.append(f"--time={spec.time_limit}")
+
+        sbatch_options_str = "\n".join([f"#SBATCH {opt}" for opt in sbatch_options])
+
+        # Calculate resources
+        mem_per_cpu = (
+            mem_per_task // cpus_per_task if cpus_per_task > 0 else mem_per_task
+        )
+
+        # Build RPC command (port will be auto-assigned by server)
+        rpc_cmd = spec.cmd or "python -m areal.scheduler.rpc.rpc_server"
+        rpc_cmd_flags = [
+            "--experiment-name",
+            self.experiment_name,
+            "--trial-name",
+            self.trial_name,
+            "--role",
+            role,
+            "--name-resolve-type",
+            self.name_resolve_config.type,
+            "--nfs-record-root",
+            self.name_resolve_config.nfs_record_root,
+            "--etcd3-addr",
+            self.name_resolve_config.etcd3_addr,
+        ]
+        rpc_cmd = " ".join([rpc_cmd] + rpc_cmd_flags)
+
+        # Build environment variables (common to all workers)
+        env_vars_dict = spec.env_vars.copy() if spec.env_vars else {}
+
+        # Build final command and export string
+        if self.container_type == "apptainer":
+            # For apptainer, pass env vars to singularity
+            env_string = " ".join(f"--env {k}={v}" for k, v in env_vars_dict.items())
+            final_cmd = "singularity exec --no-home --writable-tmpfs --nv"
+            if self.container_mounts:
+                final_cmd += f" --bind {self.container_mounts}"
+            final_cmd += f" {env_string}"
+            final_cmd += f" {self.container_image}"
+            final_cmd += f" {rpc_cmd}"
+        else:  # native
+            final_cmd = rpc_cmd
+
+        # Complete sbatch script with single srun command
+        sbatch_script = f"""#!/bin/bash
+{sbatch_options_str}
+
+# Single srun command launches all workers
+srun {self.srun_additional_args} \\
+    --nodes={nodes} \\
+    --ntasks={replicas} \\
+    --gres=gpu:{total_gpus} \\
+    --cpus-per-task={cpus_per_task} \\
+    --mem-per-cpu={mem_per_cpu}M \\
+    {final_cmd}
+"""
+        return sbatch_script
+
+    def create_workers(self, job: Job, *args, **kwargs) -> list[str]:
+        """Create workers via Slurm job array submission.
+
+        Parameters
+        ----------
+        job : Job
+            Job specification with replicas, tasks, and scheduling strategy
+
+        Returns
+        -------
+        list[str]
+            List of worker IDs created
+
+        Raises
+        ------
+        WorkerCreationError
+            If worker creation fails
+        """
+        role = job.role
+        replicas = job.replicas
+        if ":" in role:
+            raise ValueError("Invalid worker name.")
+        replicas = job.replicas
+
+        # Validation
+        if role in self._workers:
+            raise WorkerCreationError(role, f"Role '{role}' already exists")
+        if replicas <= 0:
+            raise WorkerCreationError(
+                role, "Invalid configuration", "replicas must be greater than 0"
+            )
+
+        # Prepare scheduling specs
+        schedulings = self._prepare_worker_specs(role, replicas, job.tasks)
+        spec = schedulings[0]
+
+        # Determine node allocation
+        strategy = job.scheduling_strategy
+        if strategy and strategy.type == "colocation":
+            nodes, nodelist = self._get_colocation_nodes(strategy.target, replicas)
+        else:
+            # Calculate nodes needed
+            total_gpus = spec.gpu * replicas
+            nodes = max(
+                1, (total_gpus + self.n_gpus_per_node - 1) // self.n_gpus_per_node
+            )
+            nodelist = spec.nodelist
+
+        # Calculate resource requirements
+        n_gpus_per_node = min(
+            self.n_gpus_per_node, (spec.gpu * replicas + nodes - 1) // nodes
+        )
+        cpus_per_task = spec.cpu
+        mem_per_task = spec.mem * 1024  # Convert GB to MB
+
+        logger.info(
+            f"Creating {replicas} workers for role '{role}': "
+            f"nodes={nodes}, gpus_per_node={n_gpus_per_node}, "
+            f"cpus={cpus_per_task}, mem={mem_per_task}MB"
+        )
+
+        # Generate sbatch script
+        sbatch_script = self._generate_sbatch_script(
+            role=role,
+            replicas=replicas,
+            nodes=nodes,
+            total_gpus=spec.gpu * replicas,
+            cpus_per_task=cpus_per_task,
+            mem_per_task=mem_per_task,
+            schedulings=schedulings,
+            nodelist=nodelist,
+            exclude=spec.exclude,
+        )
+
+        # Write and submit sbatch script
+        sbatch_path = self._sbatch_path_of(role)
+        with open(sbatch_path, "w") as f:
+            f.write(sbatch_script)
+
+        try:
+            output = (
+                subprocess.check_output(["sbatch", sbatch_path]).decode("utf-8").strip()
+            )
+            logger.info(f"Submitted job for role '{role}': {output}")
+        except subprocess.CalledProcessError as e:
+            raise WorkerCreationError(
+                role, "sbatch submission failed", f"Error: {e}\nScript: {sbatch_path}"
+            )
+
+        # Parse job ID
+        match = re.search(r"Submitted batch job (\d+)", output)
+        if not match:
+            raise WorkerCreationError(
+                role, "Failed to parse job ID from sbatch output", f"Output: {output}"
+            )
+        slurm_job_id = int(match.group(1))
+
+        # Initialize worker tracking
+        workers = []
+        worker_ids = []
+        for idx in range(replicas):
+            worker_id = f"{role}/{idx}"
+            worker = Worker(
+                id=worker_id,
+                ip="",  # Will be discovered
+                worker_ports=[],  # Will be discovered
+                engine_ports=[],
+            )
+            worker_spec = (
+                schedulings[idx] if len(schedulings) == replicas else schedulings[0]
+            )
+            worker_info = SlurmWorkerInfo(
+                worker=worker,
+                role=role,
+                slurm_job_id=slurm_job_id,
+                task_index=idx,
+                discovered=False,
+                spec=worker_spec,
+            )
+            workers.append(worker_info)
+            worker_ids.append(worker_id)
+
+        self._workers[role] = workers
+        self._jobs[role] = slurm_job_id
+
+        logger.info(
+            f"Created {replicas} workers for role '{role}' with job ID {slurm_job_id}"
+        )
+        return worker_ids
+
+    def get_workers(self, role: str, timeout: int | None = None) -> list[Worker]:
+        """Wait for workers to be ready and return their information.
+
+        Parameters
+        ----------
+        role : str
+            Role name to query
+        timeout : int, optional
+            Maximum wait time in seconds
+
+        Returns
+        -------
+        list[Worker]
+            List of ready workers
+
+        Raises
+        ------
+        WorkerNotFoundError
+            If role doesn't exist
+        WorkerTimeoutError
+            If timeout exceeded
+        WorkerFailedError
+            If workers failed
+        """
+        if role not in self._workers:
+            raise WorkerNotFoundError(f"Role '{role}' not found")
+
+        workers = self._workers[role]
+        timeout = timeout if timeout is not None else self.startup_timeout
+        start_time = time.time()
+        pending_logged = False
+
+        logger.info(
+            f"Waiting for {len(workers)} workers of role '{role}' to be ready..."
+        )
+
+        while time.time() - start_time < timeout:
+            # Check job status
+            try:
+                self._check_job_status(role)
+            except WorkerFailedError:
+                raise
+
+            # Log if job is pending
+            job_id = self._jobs[role]
+            if job_id in self._job_status_cache:
+                state, _ = self._job_status_cache[job_id]
+                if state == JobState.PENDING and not pending_logged:
+                    logger.info(
+                        f"Job {job_id} for role '{role}' is PENDING in queue..."
+                    )
+                    pending_logged = True
+
+            if any(not w.discovered for w in workers):
+                self._discover_worker_network(role)
+
+            # Wait for all to be discovered
+            discovered_count = sum(1 for w in workers if w.discovered)
+            if discovered_count < len(workers):
+                if discovered_count > 0:
+                    logger.debug(
+                        f"Discovered {discovered_count}/{len(workers)} workers"
+                    )
+                time.sleep(self.health_check_interval)
+                continue
+
+            # Health check all workers
+            ready_workers = []
+
+            for worker_info in workers:
+                if self._is_worker_ready(worker_info):
+                    ready_workers.append(worker_info)
+
+            # All ready
+            if len(ready_workers) == len(workers):
+                logger.info(f"All {len(workers)} workers ready for role '{role}'")
+
+                # Configure workers if exp_config is available
+                if self.exp_config is not None:
+                    for worker_rank, worker_info in enumerate(workers):
+                        self._configure_worker(worker_info, worker_rank)
+
+                return [w.worker for w in workers]
+
+            # Log progress
+            if ready_workers:
+                logger.debug(f"{len(ready_workers)}/{len(workers)} workers ready")
+
+            time.sleep(self.health_check_interval)
+
+        raise WorkerTimeoutError(role, timeout)
+
+    def delete_workers(self, role: str | None = None):
+        """Delete workers and cancel Slurm jobs.
+
+        Parameters
+        ----------
+        role : str, optional
+            Role to delete. If None, deletes all roles.
+        """
+        if role is None:
+            for r in list(self._workers.keys()):
+                self.delete_workers(r)
+            return
+
+        if role not in self._workers:
+            logger.warning(f"Role '{role}' not found, skipping deletion")
+            return
+
+        job_id = self._jobs[role]
+        logger.info(f"Deleting workers for role '{role}' (job ID {job_id})")
+
+        # Cancel Slurm job
+        try:
+            cancel_jobs(slurm_ids=[job_id], signal="SIGTERM")
+            time.sleep(2)  # Give time for graceful shutdown
+
+            # Check if still running, force kill if needed
+            try:
+                job_infos = query_jobs(slurm_ids=[job_id])
+                if job_infos and job_infos[0].state == JobState.RUNNING:
+                    logger.warning(f"Job {job_id} still running, force killing")
+                    cancel_jobs(slurm_ids=[job_id], signal="SIGKILL")
+            except subprocess.CalledProcessError:
+                pass  # Job already gone
+        except Exception as e:
+            logger.error(f"Error cancelling job {job_id}: {e}")
+
+        # Clean up internal state
+        del self._workers[role]
+        del self._jobs[role]
+        if job_id in self._job_status_cache:
+            del self._job_status_cache[job_id]
+
+        logger.info(f"Successfully deleted workers for role '{role}'")
+
+    async def set_worker_env(self, worker_id: str, env: dict[str, str]) -> None:
+        """Set environment variables on a worker before engine creation.
+
+        Parameters
+        ----------
+        worker_id : str
+            Worker ID in format "role/index"
+        env : dict[str, str]
+            Environment variables to set
+        """
+        worker_info = self._verify_worker_alive(worker_id)
+        if not env:
+            return
+
+        payload = {"env": env}
+        port = int(worker_info.worker.worker_ports[0])
+        url = f"http://{worker_info.worker.ip}:{port}/set_env"
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=30.0)
+            async with aiohttp.ClientSession(
+                timeout=timeout,
+                connector=get_default_connector(),
+            ) as session:
+                async with session.post(
+                    url,
+                    data=orjson.dumps(payload),
+                    headers={"Content-Type": "application/json"},
+                ) as response:
+                    if response.status == 200:
+                        return
+                    detail = (await response.json()).get("error", "Unknown error")
+                    raise SchedulerError(
+                        worker_id,
+                        f"Failed to set env on worker (status={response.status}): {detail}",
+                    )
+        except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:
+            self._check_job_status(worker_info.role)
+            raise RPCConnectionError(
+                worker_id, worker_info.worker.ip, port, str(e)
+            ) from e
+        except asyncio.TimeoutError as e:
+            raise SchedulerError(worker_id, f"set_env timed out: {e}") from e
+
+    async def create_engine(
+        self,
+        worker_id: str,
+        engine: str,
+        *args,
+        **kwargs,
+    ) -> Any:
+        """Create an engine instance on a remote worker.
+
+        Parameters
+        ----------
+        worker_id : str
+            Worker ID in format "role/index"
+        engine : str
+            Import path to engine class
+        *args
+            Initialization arguments
+        **kwargs
+            Initialization keyword arguments
+
+        Returns
+        -------
+        Any
+            Result from engine initialization
+
+        Raises
+        ------
+        WorkerNotFoundError
+            If worker doesn't exist
+        WorkerFailedError
+            If worker has failed
+        EngineCreationError
+            If engine creation fails
+        """
+        worker_info = self._verify_worker_alive(worker_id)
+
+        if not isinstance(engine, str):
+            raise EngineCreationError(
+                worker_id,
+                f"Engine must be a string import path, got {type(engine)}",
+            )
+
+        payload = {
+            "engine": engine,
+            "init_args": serialize_value(list(args)),
+            "init_kwargs": serialize_value(kwargs),
+        }
+
+        port = int(worker_info.worker.worker_ports[0])
+        url = f"http://{worker_info.worker.ip}:{port}/create_engine"
+
+        try:
+            logger.debug(f"Creating engine '{engine}' on worker '{worker_id}'")
+
+            timeout = aiohttp.ClientTimeout(total=300.0)
+            async with aiohttp.ClientSession(
+                timeout=timeout,
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            ) as session:
+                async with session.post(
+                    url,
+                    data=orjson.dumps(payload),
+                    headers={"Content-Type": "application/json"},
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        logger.debug(
+                            f"Engine created successfully on worker '{worker_id}'"
+                        )
+                        return result.get("result")
+                    elif response.status == 400:
+                        error_detail = (await response.json()).get(
+                            "detail", "Unknown error"
+                        )
+                        if "Failed to import" in error_detail:
+                            raise EngineImportError(engine, error_detail)
+                        else:
+                            raise EngineCreationError(worker_id, error_detail, 400)
+                    elif response.status == 500:
+                        error_detail = (await response.json()).get(
+                            "detail", "Unknown error"
+                        )
+                        raise EngineCreationError(worker_id, error_detail, 500)
+                    else:
+                        raise EngineCreationError(
+                            worker_id,
+                            f"Unexpected status code: {response.status}",
+                            response.status,
+                        )
+
+        except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:
+            self._check_job_status(worker_info.role)
+            raise RPCConnectionError(
+                worker_id, worker_info.worker.ip, port, str(e)
+            ) from e
+
+        except asyncio.TimeoutError as e:
+            raise EngineCreationError(
+                worker_id, f"Engine creation timed out: {e}"
+            ) from e
+
+    def call_engine(
+        self,
+        worker_id: str,
+        method: str,
+        *args,
+        http_timeout: float = 7200.0,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        **kwargs,
+    ) -> Any:
+        """Call a method on an engine instance (synchronous).
+
+        Parameters
+        ----------
+        worker_id : str
+            Worker ID in format "role/index"
+        method : str
+            Name of method to call
+        *args
+            Method arguments
+        http_timeout : float, default=7200.0
+            HTTP request timeout in seconds
+        max_retries : int, default=3
+            Maximum retry attempts
+        retry_delay : float, default=1.0
+            Initial retry delay in seconds
+        **kwargs
+            Method keyword arguments
+
+        Returns
+        -------
+        Any
+            Result from engine method call
+
+        Raises
+        ------
+        WorkerNotFoundError
+            If worker doesn't exist
+        WorkerFailedError
+            If worker has failed
+        EngineCallError
+            If method call fails
+        """
+        worker_info = self._find_worker_by_id(worker_id)
+        if worker_info is None:
+            raise WorkerNotFoundError(worker_id)
+
+        serialized_args = serialize_value(list(args))
+        serialized_kwargs = serialize_value(kwargs)
+        payload = {
+            "method": method,
+            "args": serialized_args,
+            "kwargs": serialized_kwargs,
+        }
+
+        port = int(worker_info.worker.worker_ports[0])
+        url = f"http://{worker_info.worker.ip}:{port}/call"
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            # Check job status before each attempt
+            try:
+                self._check_job_status(worker_info.role)
+            except WorkerFailedError:
+                raise
+
+            try:
+                response = requests.post(url, json=payload, timeout=http_timeout)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    return deserialize_value(result.get("result"))
+                elif response.status_code == 500:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    # Check if retryable
+                    if attempt < max_retries and "timeout" in error_detail.lower():
+                        last_error = f"Engine method timeout: {error_detail}"
+                        logger.warning(
+                            f"Retryable error on attempt {attempt}/{max_retries}: {last_error}"
+                        )
+                    else:
+                        raise EngineCallError(
+                            worker_id, method, error_detail, attempt=attempt
+                        )
+                elif response.status_code == 503:
+                    # Service unavailable - retryable
+                    last_error = "Service unavailable (503)"
+                    logger.warning(
+                        f"Worker temporarily unavailable, retry {attempt}/{max_retries}"
+                    )
+                else:
+                    error_detail = response.json().get("detail", "Unknown error")
+                    raise EngineCallError(
+                        worker_id,
+                        method,
+                        f"HTTP {response.status_code}: {error_detail}",
+                        attempt=attempt,
+                    )
+
+            except requests.exceptions.Timeout as e:
+                last_error = f"Request timeout: {e}"
+                logger.warning(f"Request timeout on attempt {attempt}/{max_retries}")
+            except requests.exceptions.ConnectionError as e:
+                self._check_job_status(worker_info.role)
+                last_error = f"Connection error: {e}"
+                logger.warning(f"Connection error on attempt {attempt}/{max_retries}")
+            except Exception as e:
+                last_error = f"Unexpected error: {e}"
+                logger.warning(
+                    f"Unexpected error on attempt {attempt}/{max_retries}: {e}"
+                )
+
+            if attempt < max_retries:
+                delay = retry_delay * (2 ** (attempt - 1))
+                logger.info(
+                    f"Retrying in {delay:.1f}s (attempt {attempt}/{max_retries})"
+                )
+                time.sleep(delay)
+
+        raise EngineCallError(
+            worker_id, method, last_error or "Max retries exceeded", attempt=max_retries
+        )
+
+    async def async_call_engine(
+        self,
+        worker_id: str,
+        method: str,
+        *args,
+        http_timeout: float = 7200.0,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        **kwargs,
+    ) -> Any:
+        """Call a method on an engine instance (asynchronous).
+
+        Parameters
+        ----------
+        worker_id : str
+            Worker ID in format "role/index"
+        method : str
+            Name of method to call
+        *args
+            Method arguments
+        http_timeout : float, default=7200.0
+            HTTP request timeout in seconds
+        max_retries : int, default=3
+            Maximum retry attempts
+        retry_delay : float, default=1.0
+            Initial retry delay in seconds
+        **kwargs
+            Method keyword arguments
+
+        Returns
+        -------
+        Any
+            Result from engine method call
+
+        Raises
+        ------
+        WorkerNotFoundError
+            If worker doesn't exist
+        WorkerFailedError
+            If worker has failed
+        EngineCallError
+            If method call fails
+        """
+        worker_info = self._find_worker_by_id(worker_id)
+        if worker_info is None:
+            raise WorkerNotFoundError(worker_id)
+
+        serialized_args = serialize_value(list(args))
+        serialized_kwargs = serialize_value(kwargs)
+        payload = {
+            "method": method,
+            "args": serialized_args,
+            "kwargs": serialized_kwargs,
+        }
+
+        port = int(worker_info.worker.worker_ports[0])
+        url = f"http://{worker_info.worker.ip}:{port}/call"
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            # Check job status before each attempt
+            try:
+                self._check_job_status(worker_info.role)
+            except WorkerFailedError:
+                raise
+
+            try:
+                timeout = aiohttp.ClientTimeout(total=http_timeout)
+                async with aiohttp.ClientSession(
+                    timeout=timeout,
+                    read_bufsize=1024 * 1024 * 10,
+                    connector=get_default_connector(),
+                ) as session:
+                    async with session.post(
+                        url,
+                        data=orjson.dumps(payload),
+                        headers={"Content-Type": "application/json"},
+                    ) as response:
+                        if response.status == 200:
+                            result = await response.json()
+                            return deserialize_value(result.get("result"))
+                        elif response.status == 500:
+                            error_detail = (await response.json()).get(
+                                "detail", "Unknown error"
+                            )
+                            if (
+                                attempt < max_retries
+                                and "timeout" in error_detail.lower()
+                            ):
+                                last_error = f"Engine method timeout: {error_detail}"
+                                logger.warning(
+                                    f"Retryable error on attempt {attempt}/{max_retries}: {last_error}"
+                                )
+                            else:
+                                raise EngineCallError(
+                                    worker_id, method, error_detail, attempt=attempt
+                                )
+                        elif response.status == 503:
+                            last_error = "Service unavailable (503)"
+                            logger.warning(
+                                f"Worker temporarily unavailable, retry {attempt}/{max_retries}"
+                            )
+                        else:
+                            error_detail = (await response.json()).get(
+                                "detail", "Unknown error"
+                            )
+                            raise EngineCallError(
+                                worker_id,
+                                method,
+                                f"HTTP {response.status}: {error_detail}",
+                                attempt=attempt,
+                            )
+
+            except asyncio.TimeoutError as e:
+                last_error = f"Request timeout: {e}"
+                logger.warning(f"Request timeout on attempt {attempt}/{max_retries}")
+            except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:
+                self._check_job_status(worker_info.role)
+                last_error = f"Connection error: {e}"
+                logger.warning(f"Connection error on attempt {attempt}/{max_retries}")
+            except Exception as e:
+                last_error = f"Unexpected error: {e}"
+                logger.warning(
+                    f"Unexpected error on attempt {attempt}/{max_retries}: {e}"
+                )
+
+            if attempt < max_retries:
+                delay = retry_delay * (2 ** (attempt - 1))
+                logger.info(
+                    f"Retrying in {delay:.1f}s (attempt {attempt}/{max_retries})"
+                )
+                await asyncio.sleep(delay)
+
+        raise EngineCallError(
+            worker_id, method, last_error or "Max retries exceeded", attempt=max_retries
+        )

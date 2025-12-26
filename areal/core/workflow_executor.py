@@ -10,7 +10,7 @@ from collections.abc import Generator
 from collections import deque
 import torch
 import torch.distributed as dist
-from megatron.core import parallel_state as mpu
+
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
@@ -735,6 +735,9 @@ class WorkflowExecutor:
                 dp_world_size = train_data_parallel_size
             else:
                 if dist.is_initialized():
+                    # Avoid cuda initialization
+                    from megatron.core import parallel_state as mpu
+
                     if not mpu.is_initialized():
                         dp_world_size = dist.get_world_size()
                     else:
