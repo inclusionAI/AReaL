@@ -266,7 +266,6 @@ def estimate_stage_parameter_buckets(
 
         moe_layer_indices: set[int] = set()
         freq = getattr(tf_conf, "moe_layer_freq", 1)
-        assert freq > 0
         if isinstance(freq, int):
             step = abs(freq)
             assert step >= 1
