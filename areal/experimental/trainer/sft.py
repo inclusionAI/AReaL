@@ -17,7 +17,7 @@ from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.api.scheduler_api import Scheduler
 from areal.engine.sft.lm_engine import FSDPLMEngine, LMController, MegatronLMEngine
 from areal.platforms import current_platform
-from areal.scheduler import LocalScheduler
+from areal.scheduler import LocalScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -45,9 +45,6 @@ class SFTTrainer:
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
-        # Configure performance tracer
-        if config.perf_tracer is not None:
-            perf_tracer.configure(config.perf_tracer, rank=rank)
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
@@ -118,6 +115,8 @@ class SFTTrainer:
             self.stats_logger,
             self.train_dataloader,
         )
+
+        self._config_perf_tracer()
 
     def train(self):
         config = self.config
@@ -221,17 +220,32 @@ class SFTTrainer:
                     epoch=epoch, epoch_step=step, global_step=global_step
                 )
 
-            perf_tracer.save(step=global_step)
+            self._save_perf_tracer(step=global_step)
 
     def close(self):
         self.stats_logger.close()
         self.actor.destroy()
         perf_tracer.save(force=True)
 
+    def _config_perf_tracer(self):
+        rank = int(os.getenv("RANK", "0"))
+        if self.config.perf_tracer is None:
+            return
+        perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+        self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
+
+    def _save_perf_tracer(self, step: int):
+        if self.config.perf_tracer is None:
+            return
+        self.actor.save_perf_tracer(step=step)
+        perf_tracer.save(step=step)
+
     def _init_scheduler(self) -> Scheduler:
         cfg = self.config.scheduler
         if cfg.type == "local":
             return LocalScheduler(exp_config=self.config)
+        elif cfg.type == "slurm":
+            return SlurmScheduler(exp_config=self.config)
         raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
 
     def _create_dataloader(

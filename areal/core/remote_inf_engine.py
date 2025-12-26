@@ -631,13 +631,23 @@ class RemoteInfEngine(InferenceEngine):
         )
         return response
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+    def init_weights_update_group(
+        self, meta: WeightUpdateMeta, xccl_group_ranks: list[int] | None = None
+    ) -> Future[None]:
         """Initialize the weight update process group for distributed weight updates.
 
         Parameters
         ----------
         meta : WeightUpdateMeta
             Metadata containing information about the weight update
+        xccl_group_ranks : list[int] | None, optional
+            Explicit rank assignment for each remote inference worker, aligned with
+            ``self.addresses`` (same length, same order).
+
+            - If provided, worker at ``self.addresses[i]`` will initialize the
+            communication group using rank ``xccl_group_ranks[i]``.
+            - If None, ranks are assigned by address order: rank ``i`` for
+            ``self.addresses[i]``.
 
         Returns
         -------
@@ -653,6 +663,7 @@ class RemoteInfEngine(InferenceEngine):
             meta,
             self.addresses,
             self.config.request_timeout,
+            xccl_group_ranks,
         )
 
         def callback(fut):
@@ -663,7 +674,6 @@ class RemoteInfEngine(InferenceEngine):
             self.distributed_weight_update_initialized = True
 
         fut.add_done_callback(callback)
-
         return fut
 
     def update_weights_from_distributed(
@@ -746,7 +756,6 @@ class RemoteInfEngine(InferenceEngine):
                 shutil.rmtree(meta.path, ignore_errors=True)
 
         fut.add_done_callback(callback)
-
         return fut
 
     def submit(
@@ -1037,8 +1046,20 @@ def _init_weights_update_group_remote(
     meta: WeightUpdateMeta,
     addresses: list[str],
     request_timeout: float,
+    xccl_group_ranks: list[int] | None = None,
 ):
-    """Helper to initialize weight update group in a separate process."""
+    """Helper to initialize weight update group in a separate process.
+
+    If xccl_group_ranks is provided, it must have the same length as addresses and will be
+    used as the per-address rank passed to the backend request builder.
+    Otherwise, ranks default to enumerate(addresses).
+    """
+
+    if xccl_group_ranks is not None and len(xccl_group_ranks) != len(addresses):
+        raise ValueError(
+            f"xccl_group_ranks must have the same length as addresses "
+            f"(got {len(xccl_group_ranks)} vs {len(addresses)})"
+        )
 
     async def _fn():
         async with aiohttp.ClientSession(
@@ -1048,7 +1069,12 @@ def _init_weights_update_group_remote(
         ) as session:
             jobs = []
             for i, addr in enumerate(addresses):
-                http_req = backend.build_init_weights_group_request(addr, i, meta)
+                xccl_group_rank = (
+                    xccl_group_ranks[i] if xccl_group_ranks is not None else i
+                )
+                http_req = backend.build_init_weights_group_request(
+                    addr, xccl_group_rank, meta
+                )
                 jobs.append(
                     arequest_with_retry(
                         session=session,

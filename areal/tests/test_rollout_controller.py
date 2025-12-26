@@ -967,7 +967,11 @@ QWEN3_PATH = get_model_path(
 @pytest.mark.ci
 def test_rollout_controller_integration(tmp_path, model_path):
     tokenizer = load_hf_tokenizer(model_path)
-    scheduler = LocalScheduler(log_dir=tmp_path)
+    scheduler = LocalScheduler(
+        log_dir=tmp_path,
+        experiment_name="test_rollout_controller_integration",
+        trial_name="trial0",
+    )
     rollout = RolloutController(
         inf_engine=RemoteSGLangEngine,
         config=InferenceEngineConfig(

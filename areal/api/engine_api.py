@@ -10,6 +10,7 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.alloc_mode import ParallelStrategy
+from areal.api.cli_args import PerfTracerConfig
 from areal.api.io_struct import (
     DeviceRuntimeInfo,
     LocalInfServerInfo,
@@ -478,6 +479,33 @@ class TrainEngine(abc.ABC):
     def get_device_stats(self) -> DeviceRuntimeInfo:
         raise NotImplementedError()
 
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        """Save performance tracer data.
+
+        Parameters
+        ----------
+        step : int, optional
+            The current training step number, by default None
+        force : bool, optional
+            If True, force save regardless of internal conditions, by default False
+        """
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        """Configure performance tracer.
+
+        Parameters
+        ----------
+        config : PerfTracerConfig
+            Configuration for the performance tracer.
+        rank : int
+            Rank of the current process within its role.
+        role : str
+            Role of this process. "master" by default or "actor",
+            "ref", "rollout", etc. in RPC workers.
+        """
+
 
 class InferenceEngine(abc.ABC):
     def initialize(self, *args, **kwargs):
@@ -555,7 +583,9 @@ class InferenceEngine(abc.ABC):
         """
         raise NotImplementedError()
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+    def init_weights_update_group(
+        self, meta: WeightUpdateMeta, rank_ids: list[int] | None = None
+    ) -> Future[None]:
         """Initialize the weight update process group for distributed weight updates.
 
         This method should be called before performing any weight updates to ensure
@@ -566,6 +596,11 @@ class InferenceEngine(abc.ABC):
         meta : WeightUpdateMeta
             Metadata containing information about the weight update, such as the
             type of communication backend and allocation mode.
+
+        rank_ids : list[int] | None, optional
+            Rank_ids per server/worker in the weight-update group. If None, the
+            implementation should default to using the server index order
+            (e.g. enumerate(addresses)).
 
         Raises
         ------
@@ -867,3 +902,30 @@ class InferenceEngine(abc.ABC):
             The recorded scalar statistics.
         """
         raise NotImplementedError()
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        """Save performance tracer data.
+
+        Parameters
+        ----------
+        step : int, optional
+            The current training step number, by default None
+        force : bool, optional
+            If True, force save regardless of internal conditions, by default False
+        """
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        """Configure performance tracer.
+
+        Parameters
+        ----------
+        config : PerfTracerConfig
+            Configuration for the performance tracer.
+        rank : int
+            Rank of the current process within its role.
+        role : str
+            Role of this process. "master" by default or "actor",
+            "ref", "rollout", etc. in RPC workers.
+        """

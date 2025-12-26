@@ -22,12 +22,11 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
 from torch import nn
-from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
 from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
-from areal.api.cli_args import MicroBatchSpec, TrainEngineConfig
+from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import (
     DeviceRuntimeInfo,
@@ -47,7 +46,7 @@ from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, stats_tracker
+from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchItem,
@@ -76,7 +75,7 @@ from areal.utils.megatron import (
 )
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
-from areal.utils.offload import is_tms_enabled
+from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
 
@@ -694,6 +693,14 @@ class MegatronEngine(TrainEngine):
 
     def get_device_stats(self) -> DeviceRuntimeInfo:
         return DeviceRuntimeInfo.get_current()
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        perf_tracer.save(step=step, force=force)
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        perf_tracer.configure(config, rank=rank, role=role)
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy

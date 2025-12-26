@@ -26,7 +26,6 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
-from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     AutoConfig,
@@ -41,7 +40,7 @@ from transformers import (
 )
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
-from areal.api.cli_args import TrainEngineConfig
+from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import (
     DeviceRuntimeInfo,
@@ -59,7 +58,14 @@ from areal.engine.core import (
 )
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, pkg_version, stats_tracker
+from areal.utils import (
+    logging,
+    name_resolve,
+    names,
+    perf_tracer,
+    pkg_version,
+    stats_tracker,
+)
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchItem,
@@ -86,7 +92,7 @@ from areal.utils.model import (
     is_qwen_vl_model,
     is_valid_vision_model,
 )
-from areal.utils.offload import is_tms_enabled
+from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
@@ -616,6 +622,14 @@ class FSDPEngine(TrainEngine):
     def get_device_stats(self) -> DeviceRuntimeInfo:
         return DeviceRuntimeInfo.get_current()
 
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        perf_tracer.save(step=step, force=force)
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        perf_tracer.configure(config, rank=rank, role=role)
+
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
     ) -> FSDPParallelStrategy:
@@ -911,6 +925,71 @@ class FSDPEngine(TrainEngine):
         fut.result()
 
         named_tensors.clear()
+
+    def _get_bucket_param_specs(
+        self, meta: WeightUpdateMeta
+    ) -> list[list[ParamSpec]] | None:
+        """
+        Build parameter bucket specs for distributed weight update.
+        All ranks must execute this function because _get_full_tensor()
+        may involve DTensor/FSDP collectives. Only DP-head returns the specs.
+        """
+        weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
+        main_rank = self.is_data_parallel_head()
+
+        buffer_size = 0
+        named_tensors: list[tuple[str, torch.Tensor]] = []
+        buckets: list[list[ParamSpec]] = []
+
+        if self.config.use_lora:
+            param_iterator = (
+                (name, param)
+                for name, param in self._get_model_name_parameters()
+                if param.requires_grad
+            )
+        else:
+            param_iterator = self._get_model_name_parameters()
+
+        for name, param in param_iterator:
+            tensor = self._get_full_tensor(param)
+
+            if not main_rank:
+                continue
+
+            tensor_size = tensor.numel() * tensor.element_size()
+
+            # If adding this tensor would exceed chunk size, flush current bucket first
+            if named_tensors and (buffer_size + tensor_size > weight_chunked_mem_size):
+                buckets.append(
+                    [
+                        ParamSpec(
+                            name=n,
+                            shape=tuple(t.shape),
+                            dtype=str(t.dtype).split("torch.")[1],
+                        )
+                        for n, t in named_tensors
+                    ]
+                )
+                named_tensors.clear()
+                buffer_size = 0
+
+            named_tensors.append((name, tensor))
+            buffer_size += tensor_size
+
+        # Flush final bucket ONCE (after loop)
+        if main_rank and named_tensors:
+            buckets.append(
+                [
+                    ParamSpec(
+                        name=n,
+                        shape=tuple(t.shape),
+                        dtype=str(t.dtype).split("torch.")[1],
+                    )
+                    for n, t in named_tensors
+                ]
+            )
+
+        return buckets if main_rank else None
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         assert meta.type == current_platform.communication_backend

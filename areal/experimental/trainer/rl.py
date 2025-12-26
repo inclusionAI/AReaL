@@ -36,7 +36,7 @@ from areal.engine.ppo.critic import (
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
-from areal.scheduler import LocalScheduler, RayScheduler
+from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
@@ -58,9 +58,6 @@ class PPOTrainer:
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
-        # Configure performance tracer
-        if config.perf_tracer is not None:
-            perf_tracer.configure(config.perf_tracer, rank=rank)
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
@@ -174,6 +171,8 @@ class PPOTrainer:
             inference_engine=self.rollout,
             weight_update_meta=self.weight_update_meta,
         )
+
+        self._config_perf_tracer()
 
     def train(
         self,
@@ -378,7 +377,7 @@ class PPOTrainer:
             # Resume rollout
             self.rollout.resume()
 
-            perf_tracer.save(step=global_step)
+            self._save_perf_tracer(step=global_step)
 
     def close(self):
         self.stats_logger.close()
@@ -391,12 +390,39 @@ class PPOTrainer:
         self.actor.destroy()
         perf_tracer.save(force=True)
 
+    def _config_perf_tracer(self):
+        rank = int(os.getenv("RANK", "0"))
+        if self.config.perf_tracer is None:
+            return
+        perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+        self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
+        if self.critic is not None:
+            self.critic.config_perf_tracer(self.config.perf_tracer, role="critic")
+        if self.ref is not None:
+            self.ref.config_perf_tracer(self.config.perf_tracer, role="ref")
+        self.rollout.config_perf_tracer(self.config.perf_tracer, role="rollout")
+        self.eval_rollout.config_perf_tracer(
+            self.config.perf_tracer, role="eval-rollout"
+        )
+
+    def _save_perf_tracer(self, step: int):
+        self.actor.save_perf_tracer(step=step)
+        if self.ref is not None:
+            self.ref.save_perf_tracer(step=step)
+        if self.critic is not None:
+            self.critic.save_perf_tracer(step=step)
+        self.eval_rollout.save_perf_tracer(step=step)
+        self.rollout.save_perf_tracer(step=step)
+        perf_tracer.save(step=step)
+
     def _init_scheduler(self) -> Scheduler:
         cfg = self.config.scheduler
         if cfg.type == "local":
             return LocalScheduler(exp_config=self.config)
         elif cfg.type == "ray":
             return RayScheduler(exp_config=self.config)
+        elif cfg.type == "slurm":
+            return SlurmScheduler(exp_config=self.config)
         raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
 
     def _create_dataloader(
