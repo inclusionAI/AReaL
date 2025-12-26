@@ -3,11 +3,13 @@ import re
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
+from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from torch import Tensor
 from torch.nn.parameter import Parameter
 
+from areal.models.mcore.hf_load import _te_fp8_to_pytorch_fp8
 from areal.utils.fp8_utils import quantize_params
 
 
@@ -482,6 +484,7 @@ def convert_to_hf(
     name: str,
     param: Parameter | Tensor,
     quantization_config: dict[str, int | str | list[str]] | None = None,
+    fp8_direct_convert: bool = False,
     **kwargs,
 ):
     """Convert Megatron parameter to HuggingFace format, optionally with FP8 quantization.
@@ -496,6 +499,8 @@ def convert_to_hf(
             - fmt: "e4m3"
             - activation_scheme: "dynamic"
             - weight_block_size: Optional tuple/list of [block_m, block_n] for blockwise quantization
+        fp8_direct_convert: If True, directly convert TE FP8 tensors to PyTorch FP8 format.
+            If False, dequantize TE FP8 to bf16 first, then quantize to PyTorch FP8.
 
     Returns:
         List of (name, tensor) tuples in HuggingFace format. For FP8 quantization,
@@ -504,10 +509,29 @@ def convert_to_hf(
     for key, conversion_fn in _CONVERSION_FN_REGISTRY.items():
         if key in model_name:
             converted_named_tensors = conversion_fn(tf_config, name, param, **kwargs)
+
             if quantization_config:
-                return quantize_params(
-                    name, converted_named_tensors, quantization_config
-                )
+                if fp8_direct_convert:
+                    converted_fp8_named_tensors = []
+                    for hf_name, hf_tensor in converted_named_tensors:
+                        if is_float8tensor(hf_tensor):
+                            # Directly convert TE FP8 to PyTorch FP8
+                            weight, scale_inv = _te_fp8_to_pytorch_fp8(hf_tensor)
+                            converted_fp8_named_tensors.append((hf_name, weight))
+                            # Add scale_inv with _scale_inv suffix
+                            scale_inv_name = f"{hf_name}_scale_inv"
+                            converted_fp8_named_tensors.append(
+                                (scale_inv_name, scale_inv)
+                            )
+                        else:
+                            # Keep non-FP8 or non-weight tensors as is
+                            converted_fp8_named_tensors.append((hf_name, hf_tensor))
+                    return converted_fp8_named_tensors
+                else:
+                    # Quantize from bf16 to PyTorch FP8
+                    return quantize_params(
+                        name, converted_named_tensors, quantization_config
+                    )
             return converted_named_tensors
 
     raise ValueError(f"Unsupported model for HF conversion: {model_name}")

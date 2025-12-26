@@ -138,6 +138,7 @@ class MegatronEngine(TrainEngine):
         self.enable_fp8: bool = self.config.megatron.fp8 is not None
         self.fp8_align_size: int = 16
         self.quantization_config: dict[str, int | str | list[str]] | None = None
+        self.fp8_direct_convert: bool = True
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -982,11 +983,13 @@ class MegatronEngine(TrainEngine):
         param = all_gather_param(name, param)
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
+        fp8_direct_convert = self.fp8_direct_convert
         if is_float8tensor(param):
             # FP8 is stored as uint8, so element_size is 1 byte
-            param_size = param.numel() * 1
-            # Convert TE FP8 to bf16 before convert_to_hf (which will convert to PyTorch FP8)
-            param = param.dequantize(dtype=self.dtype)
+            param_size = param.numel()
+            if not fp8_direct_convert:
+                # Convert TE FP8 to bf16 before convert_to_hf (which will convert to PyTorch FP8)
+                param = param.dequantize(dtype=self.dtype)
         else:
             param_size = param.numel() * param.element_size()
 
@@ -1007,6 +1010,7 @@ class MegatronEngine(TrainEngine):
                 name,
                 param,
                 quantization_config=self.quantization_config,
+                fp8_direct_convert=fp8_direct_convert,
                 **inference_ep_config,
             )
         )
@@ -1082,6 +1086,7 @@ class MegatronEngine(TrainEngine):
                     name,
                     param,
                     quantization_config=self.quantization_config,
+                    fp8_direct_convert=self.fp8_direct_convert,
                     **inference_ep_config,
                 )
             )
@@ -1102,9 +1107,12 @@ class MegatronEngine(TrainEngine):
 
         if is_float8tensor(param):
             # FP8 is stored as uint8, so element_size is 1 byte
-            param_size = param.numel() * 1
-            # Convert TE FP8 to bf16 (will be converted to PyTorch FP8 later in convert_to_hf)
-            param = param.dequantize(dtype=self.dtype)
+            param_size = param.numel()
+            # NOTE: if fp_direct_convert is True, we will convert TE FP8 to PyTorch FP8
+            # directly in convert_to_hf, the element_size keep as 1 byte
+            if not self.fp8_direct_convert:
+                # Convert TE FP8 to bf16 (will be converted to PyTorch FP8 later in convert_to_hf)
+                param = param.dequantize(dtype=self.dtype)
         else:
             param_size = param.numel() * param.element_size()
 
@@ -1265,6 +1273,7 @@ class MegatronEngine(TrainEngine):
             weights_path=path,
             max_workers=None,
             is_critic=self.config.is_critic,
+            fp8_direct_convert=self.fp8_direct_convert,
         )
 
     def _prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
