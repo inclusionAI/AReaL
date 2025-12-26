@@ -755,23 +755,25 @@ class MegatronEngine(TrainEngine):
             # fp8_param_gather is passed from make_mcore_model()
 
     def _validate_fp8_consistency(self):
-        """Validate that training and inference precision are consistent.
+        """Validate that FP8 configuration is consistent.
 
-        If FP8 training is enabled, inference must also use FP8.
-        If FP8 training is disabled, inference must not use FP8.
+        If either training uses FP8, quantization_config must exist
+        and quant_method must be "fp8" (weights must be FP8).
         """
         train_fp8 = self.mcore_config.fp8 is not None
-        inference_fp8 = (
+        weights_fp8 = (
             self.quantization_config is not None
             and self.quantization_config.get("quant_method", None) == "fp8"
         )
 
-        if train_fp8 != inference_fp8:
+        if train_fp8 and not weights_fp8:
             raise RuntimeError(
-                "Inconsistent FP8 configuration: "
-                "Training and inference must both use FP8 or both not use FP8. "
+                "FP8 configuration error: "
+                "If training uses FP8, quantization_config must exist "
+                "and quant_method must be 'fp8' (weights must be FP8). "
                 f"Training fp8={train_fp8}, "
-                f"Inference fp8={inference_fp8}"
+                f"weights fp8={weights_fp8}, "
+                f"quantization_config={self.quantization_config}"
             )
 
     def get_device_stats(self) -> DeviceRuntimeInfo:
