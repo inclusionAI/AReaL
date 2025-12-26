@@ -133,7 +133,7 @@ def _weight_to_mcore_tp(
     tp_size: int,
     dtype: torch.dtype | None = None,
     hf_scale_invs: list | None = None,
-    weight_block_size: list[int, int] | None = None,
+    weight_block_size: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     if (
         "self_attention.linear_qkv." in mcore_weights_name
@@ -175,14 +175,26 @@ def _weight_to_mcore_tp(
                     scale_inv_shape = _get_shape(q_scale_inv)
                     # TP split scale_inv along dim=0
                     slices = _get_tp_slice(scale_inv_shape, 0, tp_rank, tp_size)
-                    q_scale_inv = q_scale_inv[slices]
+                    q_scale_inv = q_scale_inv[slices].reshape(
+                        real_num_key_value_heads // tp_size,
+                        group_dim // weight_block_size,
+                        -1,
+                    )
                     scale_inv_shape = _get_shape(k_scale_inv)
                     slices = _get_tp_slice(scale_inv_shape, 0, tp_rank, tp_size)
-                    k_scale_inv = k_scale_inv[slices]
-                    v_scale_inv = v_scale_inv[slices]
+                    k_scale_inv = k_scale_inv[slices].reshape(
+                        real_num_key_value_heads // tp_size,
+                        head_dim // weight_block_size,
+                        -1,
+                    )
+                    v_scale_inv = v_scale_inv[slices].reshape(
+                        real_num_key_value_heads // tp_size,
+                        head_dim // weight_block_size,
+                        -1,
+                    )
                     # Then merge along dim=1
                     scale_inv = torch.cat(
-                        [q_scale_inv, k_scale_inv, v_scale_inv], dim=0
+                        [q_scale_inv, k_scale_inv, v_scale_inv], dim=1
                     )
                 else:
                     # Per-tensor quantization: take max
@@ -325,7 +337,9 @@ def _load_weight_with_bridge_worker(
             assert (
                 isinstance(weight_block_size, (list, tuple))
                 and len(weight_block_size) == 2
-            )
+                and weight_block_size[0] == weight_block_size[1]
+            ), f"weight_block_size must be a square matrix, got {weight_block_size}"
+            weight_block_size = weight_block_size[0]
 
         is_te_fp8_param = is_float8tensor(param)
         # Check if any HF weight is FP8 (has _scale_inv suffix)
