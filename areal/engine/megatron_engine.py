@@ -22,7 +22,6 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
 from torch import nn
-from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
@@ -79,6 +78,22 @@ from areal.utils.model import disable_dropout_in_model
 from areal.utils.offload import is_tms_enabled
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
+
+try:
+    from torch_memory_saver import torch_memory_saver
+except ImportError:
+
+    class MockTorchMemorySaver:
+        def disable(self):
+            return nullcontext()
+
+        def pause(self):
+            pass
+
+        def resume(self):
+            pass
+
+    torch_memory_saver = MockTorchMemorySaver()
 
 
 class _MegatronModelList(list):

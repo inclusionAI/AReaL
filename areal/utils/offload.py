@@ -6,11 +6,10 @@ properly with LD_PRELOAD hooks.
 
 import os
 
-import torch_memory_saver
-
 
 def get_tms_env_vars() -> dict[str, str]:
     """Get environment variables for torch_memory_saver (TMS)."""
+    import torch_memory_saver
 
     # Locate the LD_PRELOAD shared library
     dynlib_path = os.path.join(

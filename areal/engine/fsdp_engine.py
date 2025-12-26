@@ -26,7 +26,6 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
-from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     AutoConfig,
@@ -102,6 +101,22 @@ from areal.utils.ulysses import (
     ulysses_pad_and_slice_inputs,
     ulysses_prepare_inputs,
 )
+
+try:
+    from torch_memory_saver import torch_memory_saver
+except ImportError:
+
+    class MockTorchMemorySaver:
+        def disable(self):
+            return nullcontext()
+
+        def pause(self):
+            pass
+
+        def resume(self):
+            pass
+
+    torch_memory_saver = MockTorchMemorySaver()
 
 
 @dataclasses.dataclass
