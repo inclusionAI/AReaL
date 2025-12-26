@@ -58,10 +58,10 @@ def _init_engine_thread():
 
     with _engine_thread_lock:
         if _engine_thread is not None:
-            return  # Already initialized
-
-        if _engine_thread is not None and not _engine_thread.is_alive():
-            raise RuntimeError("Engine thread is dead.")
+            if _engine_thread.is_alive():
+                return  # Already initialized
+            else:
+                raise RuntimeError("Engine thread is dead.")
 
         _engine_work_queue = Queue()
 
