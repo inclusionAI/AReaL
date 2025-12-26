@@ -196,6 +196,12 @@ def _weight_to_mcore_tp(
                     scale_inv = torch.cat(
                         [q_scale_inv, k_scale_inv, v_scale_inv], dim=1
                     )
+                    out_shape = (
+                        [-1, hidden_dim // weight_block_size]
+                        if ".bias" not in mcore_weights_name
+                        else [-1]
+                    )
+                    scale_inv = scale_inv.view(*out_shape).contiguous()
                 else:
                     # Per-tensor quantization: take max
                     raise NotImplementedError(
