@@ -169,19 +169,6 @@ class TrainController:
         """Run an async task synchronously."""
         return asyncio.run(task)
 
-    def _run_async_tasks(
-        self,
-        tasks,
-        *,
-        return_exceptions: bool = False,
-    ) -> list[Any]:
-        """Run multiple async tasks concurrently, synchronously (wait for all)."""
-
-        async def _main():
-            return await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-
-        return self._run_async_task(_main())
-
     async def _async_create_engines(self, engine_path: str):
         """Create engine instances on all workers. Sets distributed env vars before creation."""
         logger.info("Creating engines on workers...")
