@@ -995,7 +995,7 @@ class SGLangConfig:
         tp_size: int,
         base_gpu_id: int,
         host: str | None = None,
-        port: str | None = None,
+        port: int | None = None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
@@ -1382,7 +1382,7 @@ class ClusterSpecConfig:
 class SchedulerConfig:
     """Configuration for worker scheduling. Used in the single-controller mode. Experimental."""
 
-    type: str = field(default="local")
+    type: str | None = field(default=None)
     endpoint: str = field(default="http://localhost:8081")
     deploy_mode: str = field(default="separation")
     functioncall_service_domain: str = field(default="http://localhost:8080")

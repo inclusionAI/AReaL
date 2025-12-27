@@ -37,9 +37,15 @@ model:
     eps: 1e-8
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 train_dataset:
   batch_size: 256
+  shuffle: true
   pin_memory: true
   num_workers: 4
   path: Anthropic/hh-rlhf
