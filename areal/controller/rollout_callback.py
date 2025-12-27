@@ -97,6 +97,23 @@ class RolloutCallback:
         """
         return _get_executor().submit(self._post, endpoint, payload)
 
+    def _post_nowait_void(
+        self, endpoint: str, payload: dict[str, Any] | None = None
+    ) -> Future[None]:
+        """Make an async POST request and return a Future that resolves to None."""
+        http_future = self._post_nowait(endpoint, payload)
+        result_future: Future[None] = Future()
+
+        def on_done(f: Future[dict]):
+            try:
+                f.result()  # Raise any exception from the HTTP request
+                result_future.set_result(None)
+            except Exception as e:
+                result_future.set_exception(e)
+
+        http_future.add_done_callback(on_done)
+        return result_future
+
     def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
         """Callback to controller to initialize weight update group on inference side.
 
@@ -115,20 +132,7 @@ class RolloutCallback:
             Future that completes when controller finishes initialization
         """
         payload = {"meta": serialize_value(meta)}
-        http_future = self._post_nowait("/callback/init_weights_group", payload)
-
-        # Wrap to return Future[None] instead of Future[dict]
-        result_future: Future[None] = Future()
-
-        def on_done(f: Future[dict]):
-            try:
-                f.result()  # Raise any exception
-                result_future.set_result(None)
-            except Exception as e:
-                result_future.set_exception(e)
-
-        http_future.add_done_callback(on_done)
-        return result_future
+        return self._post_nowait_void("/callback/init_weights_group", payload)
 
     def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
@@ -156,19 +160,7 @@ class RolloutCallback:
             "meta": serialize_value(meta),
             "param_specs": serialize_value(param_specs),
         }
-        http_future = self._post_nowait("/callback/update_weights_xccl", payload)
-
-        result_future: Future[None] = Future()
-
-        def on_done(f: Future[dict]):
-            try:
-                f.result()
-                result_future.set_result(None)
-            except Exception as e:
-                result_future.set_exception(e)
-
-        http_future.add_done_callback(on_done)
-        return result_future
+        return self._post_nowait_void("/callback/update_weights_xccl", payload)
 
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Callback to controller to load weights from disk on inference side.
@@ -187,19 +179,7 @@ class RolloutCallback:
             Future that completes when controller finishes loading weights
         """
         payload = {"meta": serialize_value(meta)}
-        http_future = self._post_nowait("/callback/update_weights_disk", payload)
-
-        result_future: Future[None] = Future()
-
-        def on_done(f: Future[dict]):
-            try:
-                f.result()
-                result_future.set_result(None)
-            except Exception as e:
-                result_future.set_exception(e)
-
-        http_future.add_done_callback(on_done)
-        return result_future
+        return self._post_nowait_void("/callback/update_weights_disk", payload)
 
     def pause_generation(self) -> None:
         """Callback to controller to pause inference generation.
