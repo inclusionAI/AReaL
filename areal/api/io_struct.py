@@ -14,7 +14,6 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GenerationHyperparameters
 from areal.platforms import current_platform
 from areal.utils import logging
-from areal.utils.network import find_free_ports, gethostip
 
 if TYPE_CHECKING:
     from transformers import AutoProcessor
@@ -126,8 +125,8 @@ class WeightUpdateMeta:
     path: str | None = None
     alloc_mode: AllocationMode | None = None
 
-    nccl_master_address: str = "127.0.0.1"
-    nccl_master_port: int = 29500
+    nccl_master_address: str | None = None
+    nccl_master_port: int | None = None
     nccl_group_name: str = "update_weight_group"
     weight_chunked_mem_mb: int = 1024
 
@@ -176,10 +175,8 @@ class WeightUpdateMeta:
         weight_chunked_mem_mb: int = 1024,
     ):
         return cls(
-            type=current_platform.communication_backend,
+            type="xccl",
             alloc_mode=allocation_mode,
-            nccl_master_address=gethostip(),
-            nccl_master_port=find_free_ports(1)[0],
             nccl_group_name=nccl_group_name,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
         )
@@ -196,10 +193,8 @@ class WeightUpdateMeta:
         base_model_name: str = "",
     ):
         return cls(
-            type=current_platform.communication_backend,
+            type="xccl",
             alloc_mode=allocation_mode,
-            nccl_master_address=gethostip(),
-            nccl_master_port=find_free_ports(1)[0],
             nccl_group_name=nccl_group_name,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
             use_lora=use_lora,

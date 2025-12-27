@@ -336,6 +336,10 @@ class SlurmScheduler(Scheduler):
                 resp.raise_for_status()
                 worker_ports += list(map(str, resp.json()["ports"]))
 
+            logger.debug(f"Discovered {worker_info.worker.id} at {addr}")
+            if worker_info.spec.gpu == 0:
+                continue
+
             # Set CUDA_VISIBLE_DEVICES
             n_workers_per_node = max(1, self.n_gpus_per_node // worker_info.spec.gpu)
             local_idx = worker_info.task_index % n_workers_per_node
@@ -360,8 +364,6 @@ class SlurmScheduler(Scheduler):
                 ),
             )
             resp.raise_for_status()
-
-            logger.debug(f"Discovered {worker_info.worker.id} at {addr}")
 
     def _prepare_worker_specs(
         self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
@@ -448,11 +450,11 @@ class SlurmScheduler(Scheduler):
             "--no-requeue",
             f"--nodes={nodes}",
             f"--ntasks-per-node={ntasks_per_node}",
-            f"--gres=gpu:{total_gpus}",
             f"--cpus-per-task={cpus_per_task}",
             f"--mem={mem_per_task * ntasks_per_node}M",
         ]
-
+        if total_gpus > 0:
+            sbatch_options.append(f"--gres=gpu:{total_gpus}")
         if nodelist:
             sbatch_options.append(f"--nodelist={nodelist}")
         if exclude:
@@ -503,17 +505,20 @@ class SlurmScheduler(Scheduler):
         else:  # native
             final_cmd = rpc_cmd
 
+        srun_flags = [
+            f"--nodes={nodes}",
+            f"--ntasks={replicas}",
+            f"--cpus-per-task={cpus_per_task}",
+            f"--mem-per-cpu={mem_per_cpu}M",
+        ]
+        if total_gpus > 0:
+            srun_flags.append(f"--gres=gpu:{total_gpus}")
         # Complete sbatch script with single srun command
         sbatch_script = f"""#!/bin/bash
 {sbatch_options_str}
 
 # Single srun command launches all workers
-srun {self.srun_additional_args} \\
-    --nodes={nodes} \\
-    --ntasks={replicas} \\
-    --gres=gpu:{total_gpus} \\
-    --cpus-per-task={cpus_per_task} \\
-    --mem-per-cpu={mem_per_cpu}M \\
+srun {self.srun_additional_args} {" ".join(srun_flags)} \\
     {final_cmd}
 """
         return sbatch_script

@@ -92,6 +92,7 @@ from areal.utils.model import (
     is_qwen_vl_model,
     is_valid_vision_model,
 )
+from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
@@ -331,10 +332,10 @@ class FSDPEngine(TrainEngine):
             rollout_engine=engine, train_engine=self
         )
 
-        if (
-            meta.type == current_platform.communication_backend
-            and not self.weight_update_group_initialized
-        ):
+        meta.nccl_master_address = gethostip()
+        meta.nccl_master_port = find_free_ports(1)[0]
+
+        if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
@@ -375,7 +376,7 @@ class FSDPEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
-        if meta.type == current_platform.communication_backend:
+        if meta.type == "xccl":
             assert self.weight_update_group_initialized
             # In offload mode, wakes up parameters as needed to perform the update.
             tms_context = (
@@ -992,7 +993,7 @@ class FSDPEngine(TrainEngine):
         return buckets if main_rank else None
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
-        assert meta.type == current_platform.communication_backend
+        assert meta.type == "xccl"
 
         # NOTE: Processes launched with torchrun will set the following env var to True,
         # which blocks creating another TCP store for weight update.

@@ -166,6 +166,9 @@ class LocalScheduler(Scheduler):
         return list(range(cnt))
 
     def _allocate_gpus(self, num_gpus: int) -> list[int]:
+        if num_gpus == 0:
+            return []
+
         if num_gpus > len(self.gpu_devices):
             raise GPUAllocationError(
                 f"Requested {num_gpus} GPUs but only {len(self.gpu_devices)} available"
@@ -210,7 +213,7 @@ class LocalScheduler(Scheduler):
                 SchedulingSpec(
                     cpu=1,
                     mem=1024,
-                    gpu=1,
+                    gpu=0,
                     port_count=2,
                     cmd="python -m areal.scheduler.rpc.rpc_server",
                 )
