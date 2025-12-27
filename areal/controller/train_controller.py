@@ -1,7 +1,4 @@
 import asyncio
-import shutil
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import torch.distributed as dist
@@ -18,11 +15,10 @@ from areal.api.io_struct import (
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
+from areal.controller.rollout_callback import RolloutCallback
 from areal.controller.rollout_controller import RolloutController
-from areal.engine.mock.mock_inference_engine import MockInferenceEngine
-from areal.platforms import current_platform
 from areal.scheduler.rpc.rtensor import RTensor
-from areal.utils import logging, name_resolve, names, stats_tracker
+from areal.utils import logging, stats_tracker
 from areal.utils.network import find_free_ports
 
 logger = logging.getLogger(__name__)
@@ -63,7 +59,6 @@ class TrainController:
         self._worker_role: str = "default"
 
         self.rollout: RolloutController = None
-        self.weight_update_group_initialized = False
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Placeholder method for process group creation.
@@ -173,19 +168,6 @@ class TrainController:
     def _run_async_task(self, task):
         """Run an async task synchronously."""
         return asyncio.run(task)
-
-    def _run_async_tasks(
-        self,
-        tasks,
-        *,
-        return_exceptions: bool = False,
-    ) -> list[Any]:
-        """Run multiple async tasks concurrently, synchronously (wait for all)."""
-
-        async def _main():
-            return await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-
-        return self._run_async_task(_main())
 
     async def _async_create_engines(self, engine_path: str):
         """Create engine instances on all workers. Sets distributed env vars before creation."""
@@ -386,6 +368,18 @@ class TrainController:
         """Merge RTensor results from DP heads using RTensor.merge()."""
         return RTensor.data_parallel_merge(results, group_indices)
 
+    def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
+        if self.rollout is not None and self.rollout != rollout:
+            logger.warning(
+                f"Connected rollout controller changed from {self.rollout} to {rollout}."
+            )
+        self.rollout = rollout
+
+        # Register a callback engine on train engines
+        # RolloutCallback is a dataclass and can be serialized
+        engine = RolloutCallback(controller_addr=rollout.callback_addr)
+        self._custom_function_call("connect_engine", engine=engine, meta=meta)
+
     def export_stats(self):
         """Export training statistics from all workers.
 
@@ -486,71 +480,9 @@ class TrainController:
         """
         self._custom_function_call("step_lr_scheduler")
 
-    def _get_bucket_param_specs(self, meta: WeightUpdateMeta):
-        """
-        Request parameter-bucket metadata from training engines.
-
-        Each training engine:
-        - Iterates over model parameters
-        - Materializes full tensors if needed (e.g., FSDP / DTensor)
-        - Groups parameters into memory-bounded buckets
-        - Returns ParamSpec metadata ONLY on DP-head ranks
-
-        The controller:
-        - Collects results
-        - Filters to DP-heads
-        - Merges into a single ordered bucket list
-
-        Notes
-        -----
-        - This call is synchronous.
-        - No tensor data is transferred here — metadata only.
-        - All ranks must execute the engine method to satisfy collectives.
-        """
-        return self._custom_function_call(
-            "_get_bucket_param_specs",
-            meta,
-        )
-
-    def _update_weights(self, meta: WeightUpdateMeta):
-        return self._async_custom_function_call(
-            "update_weights",
-            meta,
-        )
-
-    def _connect_rollout_engine(
-        self,
-        engine_path: str,
-        meta: WeightUpdateMeta,
-    ) -> None:
-        """
-        Connects mocked inference engine to all training workers.
-
-        On each worker:
-        1. The string path is resolved via `import_from_string`
-        2. The mocked infrence engine class is instantiated locally
-        """
-
-        # Dispatch RPC to all workers; engine_path stays a string over the wire
-        return self._async_custom_function_call(
-            "connect_engine",
-            engine=engine_path,
-            meta=meta,
-        )
-
-    def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
-        if self.rollout is not None and self.rollout != rollout:
-            logger.warning(
-                f"Connected rollout controller changed from {self.rollout} to {rollout}."
-            )
-        self.rollout = rollout
-
-        if (
-            meta.type == current_platform.communication_backend
-            and not self.weight_update_group_initialized
-        ):
-            self._init_weight_update_from_distributed(meta)
-            self.weight_update_group_initialized = True
+    def update_weights(self, meta: WeightUpdateMeta):
+        self._check_rollout_engine_connected()
+        self._custom_function_call("update_weights", meta=meta)
 
     def get_device_stats(self):
         return self._custom_function_call("get_device_stats")
@@ -608,85 +540,6 @@ class TrainController:
             should_accept_fn=should_accept_fn,
         )
 
-    def _init_weight_update_from_distributed(
-        self,
-        meta: WeightUpdateMeta,
-    ) -> None:
-        """
-        Synchronous API that initializes BOTH:
-        1) rollout workers' weight-update group (remote_inf_engine)
-        2) training workers' weight-update group (train engine)
-        and blocks until both are done.
-        """
-        mocked_inference_path = (
-            f"{MockInferenceEngine.__module__}.{MockInferenceEngine.__name__}"
-        )
-
-        tasks = [
-            self.rollout.init_weights_update_group(meta),
-            self._connect_rollout_engine(mocked_inference_path, meta),
-        ]
-        # Run both tasks concurrently, wait until BOTH complete
-        self._run_async_tasks(tasks)
-
-    def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:
-        """
-        Controller-coordinated distributed weight update.
-        Buckets are computed by training workers.
-        Rollout enters receive-side first (non-blocking submit).
-        Training broadcasts second.
-        Then we wait rollout completion for this bucket.
-        """
-
-        self._run_async_task(self.rollout.pause_generation())
-
-        bucket_specs = self._get_bucket_param_specs(meta)
-
-        if bucket_specs is None:
-            raise RuntimeError(
-                "Bucket parameter specs must not be None during distributed weight update."
-            )
-
-        tasks = [
-            self.rollout.update_weights_from_distributed_param_specs(
-                meta=meta, param_specs=bucket_specs
-            ),
-            self._update_weights(meta),
-        ]
-
-        self._run_async_tasks(tasks)
-        self._run_async_task(self.rollout.continue_generation())
-
-    def _update_weights_from_disk(self, meta: WeightUpdateMeta):
-        # Update all LocalInfEngine's local weight
-        self.save(
-            SaveLoadMeta(
-                path=meta.path,
-                weight_format="hf",
-                with_optim=False,
-                tokenizer=None,
-                processor=None,
-            )
-        )
-        has_model_files = any(child.is_file() for child in Path(meta.path).iterdir())
-        assert has_model_files, f"No model files found in {meta.path} after saving."
-
-        update_name = names.update_weights_from_disk(
-            self.config.experiment_name,
-            self.config.trial_name,
-            self.get_version(),
-        )
-        name_resolve.add(
-            update_name,
-            str(datetime.now().timestamp()),
-            keepalive_ttl=120,
-            replace=True,
-        )
-
-        meta.clear_checkpoint_after_load = False
-        self._run_async_task(self.rollout.update_weights_from_disk(meta))
-        shutil.rmtree(meta.path, ignore_errors=True)
-
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""
         if self.rollout is None:
@@ -694,16 +547,6 @@ class TrainController:
                 "Rollout engine not connected. Call connect_engine()"
                 " before using rollout/update_weight methods."
             )
-
-    def update_weights(self, meta: WeightUpdateMeta):
-        self._check_rollout_engine_connected()
-        if meta.type == current_platform.communication_backend:
-            assert self.weight_update_group_initialized
-            self._update_weights_from_distributed(meta)
-        elif meta.type == "disk":
-            self._update_weights_from_disk(meta)
-        else:
-            raise ValueError(f"Unknown weight update type {meta.type}")
 
     async def _async_clear_batches(self, *targets: dict[str, RTensor]):
         """Extract shard IDs and clear tensors on each worker."""

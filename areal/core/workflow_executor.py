@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, Generic, Protocol
 from collections.abc import Generator
 from collections import deque
 import torch
+import requests
 import torch.distributed as dist
 
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -295,6 +296,9 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         self._thread_exception: Exception | None = None
         self._thread_exception_lock = threading.Lock()
 
+        # Callback support: task_id -> callback_addr
+        self._task_callbacks: dict[int, str] = {}
+
     def _set_thread_exception(self, exc: Exception):
         """Store exception from background thread for fail-fast behavior."""
         with self._thread_exception_lock:
@@ -315,6 +319,29 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             and self.staleness_manager.get_capacity() > 0
             and self.runner.get_input_queue_size() < self.runner.max_queue_size
         )
+
+    def register_callback(self, task_id: int, callback_addr: str):
+        """Register a callback address for a task."""
+        self._task_callbacks[task_id] = callback_addr
+
+    def cancel_callback(self, task_id: int):
+        """Remove a registered callback for a task (e.g., on timeout)."""
+        self._task_callbacks.pop(task_id, None)
+
+    def _send_callback(self, addr: str, task_id: int, result: TResult):
+        """Send task result to callback address (fire-and-forget)."""
+
+        def post():
+            try:
+                requests.post(
+                    addr,
+                    json={"task_id": task_id},
+                    timeout=30,
+                )
+            except Exception as e:
+                self.logger.error(f"Callback to {addr} failed: {e}")
+
+        threading.Thread(target=post, daemon=True).start()
 
     def _commit_loop(self) -> None:
         """Producer thread - continuously submits tasks based on capacity."""
@@ -372,6 +399,10 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                 with self._result_cv:
                     for result in results:
                         self._pending_results[result.task_id] = result
+                        # Trigger callback if registered
+                        cb_addr = self._task_callbacks.pop(result.task_id, None)
+                        if cb_addr:
+                            self._send_callback(cb_addr, result.task_id, result.data)
                     self._result_cv.notify_all()
 
                 # Newly available capacity after result processing should wake producers
@@ -434,6 +465,9 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                 self.logger.warning(
                     "Consumer thread did not exit cleanly within timeout"
                 )
+
+        # Clear pending callbacks to prevent memory leak
+        self._task_callbacks.clear()
 
         # Shutdown the async task runner
         self.runner.destroy()

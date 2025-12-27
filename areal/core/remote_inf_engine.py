@@ -654,7 +654,7 @@ class RemoteInfEngine(InferenceEngine):
         Future[None]
             A future object representing the asynchronous initialization operation
         """
-        assert meta.type == current_platform.communication_backend
+        assert meta.type == "xccl"
         assert not self.distributed_weight_update_initialized
 
         fut = self.executor.submit(
@@ -693,7 +693,7 @@ class RemoteInfEngine(InferenceEngine):
         Future[None]
             A future object representing the asynchronous weight update operation
         """
-        assert meta.type == current_platform.communication_backend
+        assert meta.type == "xccl"
 
         fut = self.executor.submit(
             _update_weights_from_distributed,
@@ -765,6 +765,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
+        callback_addr: str | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -782,6 +783,8 @@ class RemoteInfEngine(InferenceEngine):
             The task ID to use. If None, a new task ID will be generated internally.
         """
         assert workflow is not None, "Workflow must be specified for submit."
+        if callback_addr:
+            self.workflow_executor.dispatcher.register_callback(task_id, callback_addr)
         return self.workflow_executor.submit(
             data,
             workflow=workflow,
