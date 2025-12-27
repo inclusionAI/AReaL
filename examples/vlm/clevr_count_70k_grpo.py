@@ -7,7 +7,6 @@ from areal.dataset import get_custom_dataset
 from areal.experimental.trainer import PPOTrainer
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
 from areal.utils.stats_logger import StatsLogger
-from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 
 
 def extract_answer(pred_str, data_name, use_last_number=True):
@@ -50,33 +49,34 @@ def main(args):
         processor=processor,
     )
 
+    workflow_kwargs = dict(
+        reward_fn="examples.vlm.clevr_count_70k_grpo.clevr_count_70k_reward_fn",
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        processor=config.tokenizer_path,
+        enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
+    )
+    eval_workflow_kwargs = workflow_kwargs.copy()
+    eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
+    eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
+    eval_workflow_kwargs["dump_dir"] = os.path.join(
+        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+    )
+
     with PPOTrainer(
         config,
         train_dataset=train_dataset,
         valid_dataset=valid_dataset,
     ) as trainer:
-        workflow = VisionRLVRWorkflow(
-            reward_fn=clevr_count_70k_reward_fn,
-            gconfig=config.gconfig,
-            tokenizer=trainer.tokenizer,
-            processor=trainer.processor,
-            enable_thinking=False,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
+        trainer.train(
+            workflow="areal.workflow.vision_rlvr.VisionRLVRWorkflow",
+            workflow_kwargs=workflow_kwargs,
+            eval_workflow="areal.workflow.vision_rlvr.VisionRLVRWorkflow",
+            eval_workflow_kwargs=eval_workflow_kwargs,
         )
-        eval_workflow = VisionRLVRWorkflow(
-            reward_fn=clevr_count_70k_reward_fn,
-            gconfig=config.gconfig.new(temperature=0.6),
-            tokenizer=trainer.tokenizer,
-            processor=trainer.processor,
-            enable_thinking=False,
-            rollout_stat_scope="eval-rollout",
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-            ),
-        )
-        trainer.train(workflow, eval_workflow)
 
 
 if __name__ == "__main__":

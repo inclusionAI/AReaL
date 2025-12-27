@@ -30,10 +30,14 @@ class CountDownWorkflow(RolloutWorkflow):
     def __init__(
         self,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
     ):
+        if isinstance(tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            tokenizer = load_hf_tokenizer(tokenizer)
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
@@ -145,15 +149,19 @@ def main(args):
         data_files=config.train_dataset.path,
     )
 
+    workflow_kwargs = dict(
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
+    )
+
     with PPOTrainer(config, train_dataset=train_dataset) as trainer:
-        workflow = CountDownWorkflow(
-            gconfig=config.gconfig,
-            tokenizer=trainer.tokenizer,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
+        trainer.train(
+            workflow="examples.countdown.train.CountDownWorkflow",
+            workflow_kwargs=workflow_kwargs,
         )
-        trainer.train(workflow)
 
 
 if __name__ == "__main__":
