@@ -34,9 +34,15 @@ model:
     eps: 1e-5
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 train_dataset:
   batch_size: 128
+  shuffle: true
   pin_memory: true
   num_workers: 4
   path: BUAADreamer/clevr_count_70k
