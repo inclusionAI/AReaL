@@ -395,6 +395,10 @@ class PPOTrainer:
         if self.config.perf_tracer is None:
             return
         perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+
+        if not is_single_controller():
+            return
+
         self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
         if self.critic is not None:
             self.critic.config_perf_tracer(self.config.perf_tracer, role="critic")
