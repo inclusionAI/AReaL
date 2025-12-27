@@ -56,12 +56,10 @@ class RLVRWorkflow(RolloutWorkflow):
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
-        get_input_ids_fn: Callable[
-            [Any, PreTrainedTokenizerFast, bool], list[int]
-        ] = default_get_input_ids_fn,
-        data_extract_prompt_fn: Callable[
-            [dict[str, Any]], Any
-        ] = default_data_extract_prompt_fn,
+        get_input_ids_fn: Callable[[Any, PreTrainedTokenizerFast, bool], list[int]]
+        | str = default_get_input_ids_fn,
+        data_extract_prompt_fn: Callable[[dict[str, Any]], Any]
+        | str = default_data_extract_prompt_fn,
     ):
         self.reward_fn = reward_fn
         self.tokenizer = tokenizer
@@ -76,7 +74,13 @@ class RLVRWorkflow(RolloutWorkflow):
         self.rollout_stat_scope = rollout_stat_scope
         if not isinstance(reward_fn, str):
             self.async_reward_fn = AsyncRewardWrapper(reward_fn)
+        # Support string paths for get_input_ids_fn
+        if isinstance(get_input_ids_fn, str):
+            get_input_ids_fn = import_from_string(get_input_ids_fn)
         self.get_input_ids_fn = get_input_ids_fn
+        # Support string paths for data_extract_prompt_fn
+        if isinstance(data_extract_prompt_fn, str):
+            data_extract_prompt_fn = import_from_string(data_extract_prompt_fn)
         self.data_extract_prompt_fn = data_extract_prompt_fn
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)

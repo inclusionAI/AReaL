@@ -79,12 +79,16 @@ class CamelRLVRWorkflow(RolloutWorkflow):
     def __init__(
         self,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         dump_dir: str | None = None,
         rollout_stat_scope: str = "rollout",
         n_trajs: int = 1,
         max_tokens: int = 32768,
     ):
+        if isinstance(tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            tokenizer = load_hf_tokenizer(tokenizer)
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
@@ -139,21 +143,24 @@ def main(args):
         split="train", dataset_config=config.train_dataset, tokenizer=tokenizer
     )
 
+    workflow_kwargs = dict(
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        n_trajs=config.n_trajs,
+        max_tokens=config.max_tokens_per_trajectory,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
+    )
+
     # Create trainer (no valid_dataset for this example)
     with PPOTrainer(config, train_dataset, valid_dataset=None) as trainer:
-        # Create rollout workflow
-        workflow = CamelRLVRWorkflow(
-            gconfig=config.gconfig,
-            tokenizer=trainer.tokenizer,
-            n_trajs=config.n_trajs,
-            max_tokens=config.max_tokens_per_trajectory,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
-        )
-
         # Run training
-        trainer.train(workflow, eval_workflow=None)
+        trainer.train(
+            workflow="examples.camel.train.CamelRLVRWorkflow",
+            workflow_kwargs=workflow_kwargs,
+            eval_workflow=None,
+        )
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from areal.utils import logging
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
 
-from tir_workflow import TIRGRPOConfig, TIRWorkflow  # isort: skip
+from tir_workflow import TIRGRPOConfig  # isort: skip
 
 logger = logging.getLogger("TIR Training")
 
@@ -43,34 +43,32 @@ def main(args):
         split="test", dataset_config=config.valid_dataset, tokenizer=tokenizer
     )
 
+    workflow_kwargs = dict(
+        reward_fn="examples.tir.train_tir.math_reward_fn",
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        tir_config=config.tir,
+        enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
+    )
+    eval_workflow_kwargs = workflow_kwargs.copy()
+    eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
+    eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
+    eval_workflow_kwargs["dump_dir"] = os.path.join(
+        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+    )
+
     # Create trainer
     with PPOTrainer(config, train_dataset, valid_dataset) as trainer:
-        # Create TIR workflows
-        workflow = TIRWorkflow(
-            reward_fn=math_reward_fn,
-            gconfig=config.gconfig,
-            tokenizer=trainer.tokenizer,
-            tir_config=config.tir,
-            enable_thinking=False,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
-        )
-
-        eval_workflow = TIRWorkflow(
-            reward_fn=math_reward_fn,
-            gconfig=config.gconfig.new(temperature=0.6),
-            tokenizer=trainer.tokenizer,
-            tir_config=config.tir,
-            enable_thinking=False,
-            rollout_stat_scope="eval-rollout",
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-            ),
-        )
-
         # Run training
-        trainer.train(workflow, eval_workflow)
+        trainer.train(
+            workflow="examples.tir.tir_workflow.TIRWorkflow",
+            workflow_kwargs=workflow_kwargs,
+            eval_workflow="examples.tir.tir_workflow.TIRWorkflow",
+            eval_workflow_kwargs=eval_workflow_kwargs,
+        )
 
 
 if __name__ == "__main__":

@@ -71,10 +71,14 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
         agent_builder_kwargs: dict,
         reward_fn_path: str,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         dump_dir: str | None = None,
         rollout_stat_scope: str = "rollout",
     ):
+        if isinstance(tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            tokenizer = load_hf_tokenizer(tokenizer)
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
@@ -159,32 +163,32 @@ def main(args):
         tokenizer=tokenizer,
     )
 
+    workflow_kwargs = dict(
+        agent_builder_path=config.agent_builder_path,
+        agent_builder_kwargs=config.agent_builder_kwargs,
+        reward_fn_path=config.reward_fn_path,
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
+    )
+    eval_workflow_kwargs = workflow_kwargs.copy()
+    eval_workflow_kwargs["dump_dir"] = os.path.join(
+        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+    )
+
     with PPOTrainer(
         config,
         train_dataset=train_dataset,
         valid_dataset=valid_dataset,
     ) as trainer:
-        workflow = OpenAIAgentWorkflow(
-            agent_builder_path=config.agent_builder_path,
-            agent_builder_kwargs=config.agent_builder_kwargs,
-            reward_fn_path=config.reward_fn_path,
-            gconfig=config.gconfig,
-            tokenizer=tokenizer,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
+        trainer.train(
+            workflow="examples.openai_agents.train_agents.OpenAIAgentWorkflow",
+            workflow_kwargs=workflow_kwargs,
+            eval_workflow="examples.openai_agents.train_agents.OpenAIAgentWorkflow",
+            eval_workflow_kwargs=eval_workflow_kwargs,
         )
-        eval_workflow = OpenAIAgentWorkflow(
-            agent_builder_path=config.agent_builder_path,
-            agent_builder_kwargs=config.agent_builder_kwargs,
-            reward_fn_path=config.reward_fn_path,
-            gconfig=config.gconfig,
-            tokenizer=tokenizer,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-            ),
-        )
-        trainer.train(workflow, eval_workflow)
 
 
 if __name__ == "__main__":

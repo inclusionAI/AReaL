@@ -32,7 +32,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         reward_fn: Callable[..., Any],
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast,
-        processor: AutoProcessor,
+        processor: AutoProcessor | str,
         enable_thinking: bool,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
@@ -45,6 +45,8 @@ class VisionRLVRWorkflow(RLVRWorkflow):
             rollout_stat_scope=rollout_stat_scope,
             dump_dir=dump_dir,
         )
+        if isinstance(processor, str):
+            processor = AutoProcessor.from_pretrained(processor)
         self.processor = processor
 
     @trace_session("reward")

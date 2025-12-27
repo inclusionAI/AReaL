@@ -31,7 +31,33 @@ def main(args):
         StatsLogger.get_log_path(config.stats_logger), "generated-eval"
     )
 
-    with PPOTrainer(config, train_dataset, valid_dataset) as trainer:
+    valid_dataset = get_custom_dataset(
+        split="test",
+        dataset_config=config.valid_dataset,
+        tokenizer=tokenizer,
+    )
+
+    workflow_kwargs = dict(
+        reward_fn="areal.reward.gsm8k.gsm8k_reward_fn",
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
+    )
+    eval_workflow_kwargs = workflow_kwargs.copy()
+    eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
+    eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
+    eval_workflow_kwargs["dump_dir"] = os.path.join(
+        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
+    )
+
+    with PPOTrainer(
+        config,
+        train_dataset=train_dataset,
+        valid_dataset=valid_dataset,
+    ) as trainer:
         trainer.train(
             workflow="areal.workflow.rlvr.RLVRWorkflow",
             workflow_kwargs=workflow_kwargs,

@@ -48,14 +48,18 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
     def __init__(
         self,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
         n_trajs: int = 1,
         max_tokens: int = 32768,
         max_llm_calls_per_run: int = 100,
-        judge_engine: RemoteSGLangEngine | None = None,
+        judge_engine_config: InferenceEngineConfig | None = None,
     ):
+        if isinstance(tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            tokenizer = load_hf_tokenizer(tokenizer)
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
@@ -67,7 +71,17 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
 
         # Search hyper-parameters
         self.n_trajs = n_trajs
-        self.judge_client = ArealOpenAI(engine=judge_engine, tokenizer=tokenizer)
+
+        # Initialize judge engine from config if provided
+        self._owns_judge_engine = False
+        self.judge_engine = None
+        if judge_engine_config is not None:
+            self.judge_engine = RemoteSGLangEngine(judge_engine_config)
+            self.judge_engine.config.max_head_offpolicyness = int(1e12)
+            self.judge_engine.initialize()
+            self._owns_judge_engine = True
+
+        self.judge_client = ArealOpenAI(engine=self.judge_engine, tokenizer=tokenizer)
         self.agent = MultiTurnReactAgent(
             tokenizer=self.tokenizer,
             max_tokens_per_turn=self.gconfig.max_new_tokens,
@@ -75,6 +89,10 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
             max_total_tokens=max_tokens,
             judge_client=self.judge_client,
         )
+
+    def __del__(self):
+        if self._owns_judge_engine and self.judge_engine is not None:
+            self.judge_engine.destroy()
 
     async def arun_episode(self, engine, data):
         # Get the unique identifier for this prompt
@@ -181,32 +199,26 @@ def main(args):
     # Load dataset
     train_dataset = get_search_dataset(config.train_dataset.path, tokenizer=tokenizer)
 
-    judge_engine = RemoteSGLangEngine(config.judge_engine)
-    try:
-        # NOTE: judge engine should not have off-policyness control.
-        judge_engine.config.max_head_offpolicyness = int(1e12)
-        judge_engine.initialize()
+    workflow_kwargs = dict(
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
+        n_trajs=config.n_trajs,
+        max_tokens=config.max_tokens_per_trajectory,
+        max_llm_calls_per_run=config.max_llm_calls_per_run,
+        judge_engine_config=config.judge_engine,
+    )
 
-        # Create trainer (no valid_dataset for this example)
-        with PPOTrainer(config, train_dataset, valid_dataset=None) as trainer:
-            # Create rollout workflow
-            workflow = TongyiDeepResearchReactWorkflow(
-                gconfig=config.gconfig,
-                tokenizer=trainer.tokenizer,
-                dump_dir=os.path.join(
-                    StatsLogger.get_log_path(config.stats_logger), "generated"
-                ),
-                n_trajs=config.n_trajs,
-                max_tokens=config.max_tokens_per_trajectory,
-                max_llm_calls_per_run=config.max_llm_calls_per_run,
-                judge_engine=judge_engine,
-            )
-
-            # Run training
-            trainer.train(workflow, eval_workflow=None)
-    finally:
-        # Cleanup judge engine
-        judge_engine.destroy()
+    # Create trainer (no valid_dataset for this example)
+    with PPOTrainer(config, train_dataset, valid_dataset=None) as trainer:
+        # Run training
+        trainer.train(
+            workflow="examples.search_agent.tongyi_deepresearch.train.TongyiDeepResearchReactWorkflow",
+            workflow_kwargs=workflow_kwargs,
+            eval_workflow=None,
+        )
 
 
 if __name__ == "__main__":

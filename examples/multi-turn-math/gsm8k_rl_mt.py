@@ -67,14 +67,22 @@ class MultiTurnMathAgent:
 class MultiturnRLVRWorkflow(RolloutWorkflow):
     def __init__(
         self,
-        reward_fn: Callable[[str, str], float | int],
+        reward_fn: Callable[[str, str], float | int] | str,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         dump_dir: str | None = None,
         rollout_stat_scope: str = "rollout",
         export_style: str = "concat",
         max_turns: int = 2,
     ):
+        if isinstance(tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            tokenizer = load_hf_tokenizer(tokenizer)
+        if isinstance(reward_fn, str):
+            from areal.utils.dynamic_import import import_from_string
+
+            reward_fn = import_from_string(reward_fn)
         self.n_trajs = gconfig.n_samples
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
@@ -155,32 +163,33 @@ def main(args):
         tokenizer=tokenizer,
     )
 
+    max_turns = config.agent_run_args.get("max_turns", 2)
+    log_path = StatsLogger.get_log_path(config.stats_logger)
+
+    workflow_kwargs = dict(
+        reward_fn="examples.multi_turn_math.gsm8k_rl_mt.gsm8k_reward_fn",
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        dump_dir=os.path.join(log_path, "generated"),
+        export_style=config.export_style,
+        max_turns=max_turns,
+    )
+    eval_workflow_kwargs = workflow_kwargs.copy()
+    eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6, n_samples=1)
+    eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
+    eval_workflow_kwargs["dump_dir"] = os.path.join(log_path, "generated-eval")
+
     with PPOTrainer(
         config,
         train_dataset=train_dataset,
         valid_dataset=valid_dataset,
     ) as trainer:
-        max_turns = config.agent_run_args.get("max_turns", 2)
-        log_path = StatsLogger.get_log_path(config.stats_logger)
-
-        workflow = MultiturnRLVRWorkflow(
-            reward_fn=gsm8k_reward_fn,
-            gconfig=config.gconfig,
-            tokenizer=trainer.tokenizer,
-            dump_dir=os.path.join(log_path, "generated"),
-            export_style=config.export_style,
-            max_turns=max_turns,
+        trainer.train(
+            workflow="examples.multi_turn_math.gsm8k_rl_mt.MultiturnRLVRWorkflow",
+            workflow_kwargs=workflow_kwargs,
+            eval_workflow="examples.multi_turn_math.gsm8k_rl_mt.MultiturnRLVRWorkflow",
+            eval_workflow_kwargs=eval_workflow_kwargs,
         )
-        eval_workflow = MultiturnRLVRWorkflow(
-            reward_fn=gsm8k_reward_fn,
-            gconfig=config.gconfig.new(temperature=0.6, n_samples=1),
-            tokenizer=trainer.tokenizer,
-            rollout_stat_scope="eval-rollout",
-            dump_dir=os.path.join(log_path, "generated-eval"),
-            export_style=config.export_style,
-            max_turns=max_turns,
-        )
-        trainer.train(workflow, eval_workflow)
 
 
 if __name__ == "__main__":
