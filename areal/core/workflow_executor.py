@@ -333,12 +333,13 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         def post():
             try:
-                requests.post(
+                resp = requests.post(
                     addr,
                     json={"task_id": task_id},
                     timeout=30,
                 )
-            except Exception as e:
+                resp.raise_for_status()
+            except requests.RequestException as e:
                 self.logger.error(f"Callback to {addr} failed: {e}")
 
         threading.Thread(target=post, daemon=True).start()
