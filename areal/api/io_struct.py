@@ -127,7 +127,7 @@ class WeightUpdateMeta:
 
     nccl_master_address: str | None = None
     nccl_master_port: int | None = None
-    nccl_group_name: str = "update_weight_group"
+    nccl_group_name: str | None = None
     weight_chunked_mem_mb: int = 1024
 
     use_lora: bool = False
@@ -171,13 +171,11 @@ class WeightUpdateMeta:
     def from_megatron_xccl(
         cls,
         allocation_mode: AllocationMode,
-        nccl_group_name: str = "update_weight_group",
         weight_chunked_mem_mb: int = 1024,
     ):
         return cls(
             type="xccl",
             alloc_mode=allocation_mode,
-            nccl_group_name=nccl_group_name,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
         )
 
@@ -185,7 +183,6 @@ class WeightUpdateMeta:
     def from_fsdp_xccl(
         cls,
         allocation_mode: AllocationMode,
-        nccl_group_name: str = "update_weight_group",
         weight_chunked_mem_mb: int = 1024,
         use_lora: bool = False,
         lora_name: str = "",
@@ -195,7 +192,6 @@ class WeightUpdateMeta:
         return cls(
             type="xccl",
             alloc_mode=allocation_mode,
-            nccl_group_name=nccl_group_name,
             weight_chunked_mem_mb=weight_chunked_mem_mb,
             use_lora=use_lora,
             lora_name=lora_name,
