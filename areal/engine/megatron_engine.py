@@ -857,7 +857,7 @@ class MegatronEngine(TrainEngine):
         fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
 
         handles = []
-        for _, param in converted_named_tensors:
+        for name, param in converted_named_tensors:
             handles.append(
                 dist.broadcast(
                     param.data, 0, group=self.weight_update_group, async_op=True
