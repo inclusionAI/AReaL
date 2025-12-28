@@ -1,12 +1,18 @@
 import asyncio
 from unittest.mock import Mock, patch
 
+import pytest
 import ray
 from ray.util.state import summarize_actors
 
 from areal.api.cli_args import BaseExperimentConfig
 from areal.api.scheduler_api import Job, SchedulingSpec, Worker
 from areal.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
+
+pytestmark = pytest.mark.skipif(
+    lambda: not ray.is_initialized(),
+    reason="Ray scheduler tests will only run if ray is explicitly initialized.",
+)
 
 
 class TestRaySchedulerInitialization:

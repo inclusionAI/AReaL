@@ -98,9 +98,14 @@ class RayScheduler(Scheduler):
             raise ValueError(
                 f"Current detected device is CPU but specified number of GPUs is {gpu}"
             )
+        device_resource = device
+        if device == "CPU":
+            device_resource = "num_cpus"
+        if device == "GPU":
+            device_resource = "num_gpus"
         return {
-            "CPU": cpu,
-            device: float(gpu),
+            "num_cpus": cpu,
+            device_resource: float(gpu),
             "memory": mem * 1024 * 1024,  # convert mb to bytes
         }
 
