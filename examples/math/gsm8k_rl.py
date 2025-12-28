@@ -4,53 +4,40 @@ import sys
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.experimental.trainer import PPOTrainer
-from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
-from areal.workflow.rlvr import RLVRWorkflow
 
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
-    train_dataset = get_custom_dataset(
-        split="train",
-        dataset_config=config.train_dataset,
-        tokenizer=tokenizer,
+    train_dataset = get_custom_dataset("train", config.train_dataset, tokenizer)
+    valid_dataset = get_custom_dataset("test", config.valid_dataset, tokenizer)
+
+    workflow_kwargs = dict(
+        reward_fn="areal.reward.gsm8k.gsm8k_reward_fn",
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        enable_thinking=False,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
+    )
+    eval_workflow_kwargs = workflow_kwargs.copy()
+    eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
+    eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
+    eval_workflow_kwargs["dump_dir"] = os.path.join(
+        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
     )
 
-    valid_dataset = get_custom_dataset(
-        split="test",
-        dataset_config=config.valid_dataset,
-        tokenizer=tokenizer,
-    )
-
-    with PPOTrainer(
-        config,
-        train_dataset=train_dataset,
-        valid_dataset=valid_dataset,
-    ) as trainer:
-        workflow = RLVRWorkflow(
-            reward_fn=gsm8k_reward_fn,
-            gconfig=config.gconfig,
-            tokenizer=trainer.tokenizer,
-            enable_thinking=False,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
+    with PPOTrainer(config, train_dataset, valid_dataset) as trainer:
+        trainer.train(
+            workflow="areal.workflow.rlvr.RLVRWorkflow",
+            workflow_kwargs=workflow_kwargs,
+            eval_workflow="areal.workflow.rlvr.RLVRWorkflow",
+            eval_workflow_kwargs=eval_workflow_kwargs,
         )
-        eval_workflow = RLVRWorkflow(
-            reward_fn=gsm8k_reward_fn,
-            gconfig=config.gconfig.new(temperature=0.6),
-            tokenizer=trainer.tokenizer,
-            enable_thinking=False,
-            rollout_stat_scope="eval-rollout",
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-            ),
-        )
-        trainer.train(workflow, eval_workflow)
 
 
 if __name__ == "__main__":

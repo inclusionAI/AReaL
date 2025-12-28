@@ -119,6 +119,8 @@ class MegatronEngine(TrainEngine):
         self.rollout_coordinator: DistRolloutCoordinator | None = None
         self.weight_update_group_initialized: bool = False
         self.weight_update_group_name: str
+        self.weight_update_master_addr: str
+        self.weight_update_master_port: int
         self._version: int = 0
         self.rank: int | None = None
         self.is_pp_head: bool
@@ -361,9 +363,6 @@ class MegatronEngine(TrainEngine):
         self.rollout_coordinator = DistRolloutCoordinator(
             rollout_engine=engine, train_engine=self
         )
-
-        meta.nccl_master_address = gethostip()
-        meta.nccl_master_port = find_free_ports(1)[0]
 
         if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
@@ -858,7 +857,7 @@ class MegatronEngine(TrainEngine):
         fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
 
         handles = []
-        for _, param in converted_named_tensors:
+        for name, param in converted_named_tensors:
             handles.append(
                 dist.broadcast(
                     param.data, 0, group=self.weight_update_group, async_op=True
@@ -989,6 +988,10 @@ class MegatronEngine(TrainEngine):
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta) -> None:
         assert meta.type == "xccl"
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr = gethostip()
+        meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
+        meta.nccl_group_name = self.weight_update_group_name
 
         # NOTE: Processes launched with torchrun will set the following env var to True,
         # which blocks creating another TCP store for weight update.
@@ -1016,6 +1019,11 @@ class MegatronEngine(TrainEngine):
 
     @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr
+        meta.nccl_master_port = self.weight_update_master_port
+        meta.nccl_group_name = self.weight_update_group_name
+
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
 

@@ -142,6 +142,9 @@ class FSDPEngine(TrainEngine):
         self.own_global_group = False
         self._cpu_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
+        self.weight_update_group_name: str
+        self.weight_update_master_addr: str
+        self.weight_update_master_port: int
 
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.config.path,
@@ -223,6 +226,7 @@ class FSDPEngine(TrainEngine):
 
         if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
+        self.weight_update_group_name = "update_weight_group"
 
         # Create device model
         self._create_device_model()
@@ -331,9 +335,6 @@ class FSDPEngine(TrainEngine):
         self.rollout_coordinator = DistRolloutCoordinator(
             rollout_engine=engine, train_engine=self
         )
-
-        meta.nccl_master_address = gethostip()
-        meta.nccl_master_port = find_free_ports(1)[0]
 
         if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
@@ -930,6 +931,11 @@ class FSDPEngine(TrainEngine):
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
         assert meta.type == "xccl"
 
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr = gethostip()
+        meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
+        meta.nccl_group_name = self.weight_update_group_name
+
         # NOTE: Processes launched with torchrun will set the following env var to True,
         # which blocks creating another TCP store for weight update.
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
@@ -957,6 +963,11 @@ class FSDPEngine(TrainEngine):
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
+
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr
+        meta.nccl_master_port = self.weight_update_master_port
+        meta.nccl_group_name = self.weight_update_group_name
 
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()

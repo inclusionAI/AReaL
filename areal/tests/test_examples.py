@@ -187,12 +187,8 @@ def test_gsm8k_grpo(tmp_path_factory, alloc_mode, single_controller):
     )
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
 
-    if single_controller:
-        example_file = "examples/single-controller/gsm8k_grpo.py"
-        config_name = "examples/single-controller/gsm8k_grpo.yaml"
-    else:
-        example_file = "examples/math/gsm8k_rl.py"
-        config_name = "examples/math/gsm8k_grpo.yaml"
+    example_file = "examples/math/gsm8k_rl.py"
+    config_name = "examples/math/gsm8k_grpo.yaml"
 
     additional_args = [
         f"allocation_mode={alloc_mode}",
@@ -242,12 +238,8 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode, single_controller):
     )
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
 
-    if single_controller:
-        example_file = "examples/single-controller/gsm8k_sft.py"
-        config_name = "examples/single-controller/gsm8k_sft.yaml"
-    else:
-        example_file = "examples/math/gsm8k_sft.py"
-        config_name = "examples/math/gsm8k_sft.yaml"
+    example_file = "examples/math/gsm8k_sft.py"
+    config_name = "examples/math/gsm8k_sft.yaml"
 
     additional_args = [
         f"allocation_mode={alloc_mode}",

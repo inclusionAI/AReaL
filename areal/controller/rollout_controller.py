@@ -242,11 +242,12 @@ class RolloutController:
         self._collective_rpc("destroy", http_timeout=60.0)
 
         # Delete workers via scheduler
-        try:
-            self.scheduler.delete_workers(role=self._worker_role)
-            logger.info("Workers deleted")
-        except Exception as e:
-            logger.error(f"Error deleting workers: {e}")
+        if hasattr(self, "_worker_role"):
+            try:
+                self.scheduler.delete_workers(role=self._worker_role)
+                logger.info("Workers deleted")
+            except Exception as e:
+                logger.error(f"Error deleting workers: {e}")
 
         self.workers.clear()
 
@@ -331,7 +332,7 @@ class RolloutController:
             self._callback_server.serve_forever()
 
         self._callback_server_thread = threading.Thread(
-            target=serve_forever, daemon=False
+            target=serve_forever, daemon=True
         )
         self._callback_server_thread.start()
         # Wait briefly for loop to be created

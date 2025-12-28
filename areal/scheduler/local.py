@@ -341,8 +341,7 @@ class LocalScheduler(Scheduler):
                     raise WorkerCreationError(
                         role,
                         f"SchedulingSpec.cmd is required but not set for worker {worker_id}",
-                        "Specify either 'python -m areal.scheduler.rpc.rpc_server' or "
-                        "'python -m areal.scheduler.rpc.rpc_server' in your config.",
+                        "Specify 'python -m areal.scheduler.rpc.rpc_server' in your config.",
                     )
 
                 if "--port" in scheduling.cmd:

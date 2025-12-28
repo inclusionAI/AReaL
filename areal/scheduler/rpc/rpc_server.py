@@ -371,12 +371,16 @@ def call_engine_method():
 
                     nonlocal raw_args, raw_kwargs
                     raw_args = broadcast_tensor_container(
-                        raw_args,
+                        tensor_container_to(
+                            raw_args, current_platform.current_device()
+                        ),
                         src_rank=_engine.current_data_parallel_head(),
                         group=_engine.context_and_model_parallel_group,
                     )
                     raw_kwargs = broadcast_tensor_container(
-                        raw_kwargs,
+                        tensor_container_to(
+                            raw_kwargs, current_platform.current_device()
+                        ),
                         src_rank=_engine.current_data_parallel_head(),
                         group=_engine.context_and_model_parallel_group,
                     )

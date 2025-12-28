@@ -140,8 +140,7 @@ class PPOTrainer:
             # NCCL/XCCL weight update
             if isinstance(self.actor, MegatronEngine):
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
-                    self.allocation_mode,
-                    nccl_group_name=self.actor.weight_update_group_name,
+                    self.allocation_mode
                 )
             else:
                 self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
@@ -397,6 +396,10 @@ class PPOTrainer:
         if self.config.perf_tracer is None:
             return
         perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+
+        if not is_single_controller():
+            return
+
         self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
         if self.critic is not None:
             self.critic.config_perf_tracer(self.config.perf_tracer, role="critic")

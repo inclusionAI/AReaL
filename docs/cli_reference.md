@@ -873,15 +873,15 @@ Configuration for perf tracer emission.
 
 Configuration for worker scheduling. Used in the single-controller mode. Experimental.
 
-| Parameter                     | Type   | Default                             | Description |
-| ----------------------------- | ------ | ----------------------------------- | ----------- |
-| `type`                        | string | `"local"`                           | -           |
-| `endpoint`                    | string | `"http://localhost:8081"`           | -           |
-| `deploy_mode`                 | string | `"separation"`                      | -           |
-| `functioncall_service_domain` | string | `"http://localhost:8080"`           | -           |
-| `reward_functioncall_config`  | `dict` | **Required**                        | -           |
-| `reward_model_path`           | string | `""`                                | -           |
-| `reward_model_service_url`    | string | `"http://localhost:30000/classify"` | -           |
+| Parameter                     | Type           | Default                             | Description |
+| ----------------------------- | -------------- | ----------------------------------- | ----------- |
+| `type`                        | string \| None | `None`                              | -           |
+| `endpoint`                    | string         | `"http://localhost:8081"`           | -           |
+| `deploy_mode`                 | string         | `"separation"`                      | -           |
+| `functioncall_service_domain` | string         | `"http://localhost:8080"`           | -           |
+| `reward_functioncall_config`  | `dict`         | **Required**                        | -           |
+| `reward_model_path`           | string         | `""`                                | -           |
+| `reward_model_service_url`    | string         | `"http://localhost:30000/classify"` | -           |
 
 (section-scheduling)=
 

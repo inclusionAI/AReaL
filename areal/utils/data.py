@@ -1200,7 +1200,7 @@ class Normalization:
                 if self.group_size == 1 and self.mean_leave1out:
                     dtype = torch.float64 if high_precision else torch.float32
                     group_mean = torch.zeros(
-                        (1, xx.shape[1]), dtype=dtype, device=xx.device
+                        (1, *xx.shape[1:]), dtype=dtype, device=xx.device
                     )
                 else:
                     group_mean = self._compute_mean(
@@ -1245,7 +1245,7 @@ class Normalization:
                 if self.group_size == 1 and self.std_unbiased:
                     dtype = torch.float64 if high_precision else torch.float32
                     group_std = torch.ones(
-                        (1, xx.shape[1]), dtype=dtype, device=xx.device
+                        (1, *xx.shape[1:]), dtype=dtype, device=xx.device
                     )
                 else:
                     group_std = self._compute_std(
