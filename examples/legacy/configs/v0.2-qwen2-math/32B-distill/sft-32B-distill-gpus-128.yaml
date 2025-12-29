@@ -41,6 +41,7 @@ actor:
         cpu: 4
         mem: 32
         cmd: python3 -m areal.scheduler.rpc.rpc_server
+        env_vars: {}
 allocation:
   mb_spec:
     max_tokens_per_mb: 32768

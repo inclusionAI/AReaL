@@ -75,6 +75,7 @@ actor:
       cpu: 4
       mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars: {}
 
 critic:
   is_critic: true

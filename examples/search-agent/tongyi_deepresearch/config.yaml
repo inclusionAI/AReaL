@@ -30,6 +30,7 @@ rollout:
       cpu: 4
       mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars: {}
       image: /storage/images/areal-25.08-v0.3.3-v3.sif
       slurm:
         mount: /storage:/storage
@@ -90,6 +91,7 @@ actor:
       cpu: 4
       mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars: {}
 
 ref:
   experiment_name: ${experiment_name}
