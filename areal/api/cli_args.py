@@ -493,9 +493,18 @@ class SlurmSchedulingConfig:
 
 @dataclass
 class SchedulingSpec:
-    cpu: int = field(default=4, metadata={"help": "Number of CPU cores required"})
-    gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
-    mem: int = field(default=32, metadata={"help": "Amount of memory (GB) required"})
+    cpu: int = field(
+        default=4, metadata={"help": "Number of CPU cores required per GPU"}
+    )
+    gpu: int = field(
+        default=0,
+        metadata={
+            "help": "Number of GPU units required. Used only when allocating pods."
+        },
+    )
+    mem: int = field(
+        default=32, metadata={"help": "Amount of memory (GB) required per GPU"}
+    )
     port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
     image: str = field(
         default="/storage/openpsi/images/areal-latest.sif",
