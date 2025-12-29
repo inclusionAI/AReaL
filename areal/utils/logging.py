@@ -110,6 +110,14 @@ _file_handlers: list[FileHandler] = []
 _created_loggers: dict[str, Logger] = {}
 
 
+class StreamingFileHandler(FileHandler):
+    """FileHandler that flushes after each log message for real-time streaming."""
+
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+
 class LoggerColoredFormatter(colorlog.ColoredFormatter):
     """Custom formatter that colors logs based on logger name for INFO/DEBUG levels.
 
@@ -316,7 +324,8 @@ def setup_file_logging(
     os.makedirs(log_dir, exist_ok=True)
 
     # Handler for dedicated log file (with ANSI colors, same as stdout)
-    file_handler = FileHandler(os.path.join(log_dir, filename), mode="a")
+    # Uses StreamingFileHandler to flush after each message for real-time output
+    file_handler = StreamingFileHandler(os.path.join(log_dir, filename), mode="a")
     file_handler.setLevel(level)
     file_handler.setFormatter(
         LoggerColoredFormatter(
@@ -336,7 +345,7 @@ def setup_file_logging(
     # Handler for merged.log (with fixed-width [main] prefix and ANSI colors)
     prefix = "[main]".ljust(LOG_PREFIX_WIDTH)
     merged_format = prefix + LOG_FORMAT
-    merged_handler = FileHandler(os.path.join(log_dir, "merged.log"), mode="a")
+    merged_handler = StreamingFileHandler(os.path.join(log_dir, "merged.log"), mode="a")
     merged_handler.setLevel(level)
     merged_handler.setFormatter(
         LoggerColoredFormatter(
