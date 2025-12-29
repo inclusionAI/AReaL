@@ -1,5 +1,6 @@
 import logging.config
-from logging import WARNING, Logger, Manager, RootLogger
+import os
+from logging import WARNING, FileHandler, Formatter, Logger, Manager, RootLogger
 from typing import Literal
 
 import colorlog
@@ -135,6 +136,31 @@ def getLogger(
         }
         logging.config.dictConfig(log_config)
     return logging.getLogger(name)
+
+
+def setup_file_logging(
+    log_dir: str,
+    filename: str = "main.log",
+    level: int = LOGLEVEL,
+) -> None:
+    """Set up file logging for the controller process.
+
+    Adds a FileHandler to the root logger so all loggers write to the specified
+    file in addition to stdout.
+
+    Args:
+        log_dir: Directory to write log file.
+        filename: Log file name (default: main.log).
+        level: Logging level.
+    """
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, filename)
+
+    file_handler = FileHandler(log_path, mode="a")
+    file_handler.setLevel(level)
+    file_handler.setFormatter(Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+
+    logging.getLogger().addHandler(file_handler)
 
 
 _LATEST_LOG_STEP = 0

@@ -107,6 +107,9 @@ class SFTTrainer:
         # Set up statistics logging (wandb, tensoboard, etc.)
         self.stats_logger = StatsLogger(config, ft_spec)
 
+        # Set up file logging for controller process
+        logging.setup_file_logging(StatsLogger.get_log_path(config.stats_logger))
+
         # Set up checkpointing for recover
         self.recover_info = self.recover_handler.load(
             self.actor,
