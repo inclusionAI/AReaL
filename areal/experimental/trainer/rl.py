@@ -510,7 +510,7 @@ class PPOTrainer:
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             config.max_head_offpolicyness = int(1e12)
-            # eval-rollout uses the same inference servsers as rollout
+            # eval-rollout uses the same inference servers as rollout
             for spec in config.scheduling_spec:
                 spec.gpu = 0
 

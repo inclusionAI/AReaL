@@ -146,6 +146,10 @@ class LocalScheduler(Scheduler):
         self._gpu_counter = 0
         self._allocated_ports = set()
 
+        # Colocation tracking: colocated roles reuse workers from target role
+        self._colocated_roles: dict[str, str] = {}  # colocated_role -> target_role
+        self._role_to_workers: dict[str, list[str]] = {}  # role -> list of worker_ids
+
         logger.info(
             f"LocalScheduler initialized with GPU devices: {self.gpu_devices}, "
             f"log directory: {self.log_dir}"
@@ -287,6 +291,40 @@ class LocalScheduler(Scheduler):
             f"(strategy: {strategy_type}, colocate_with: {colocate_role})"
         )
 
+        # Handle colocation: reuse existing workers from target role
+        if strategy_type == "colocation":
+            if not colocate_role:
+                raise WorkerCreationError(
+                    role,
+                    "Invalid strategy",
+                    "Colocation strategy requires target role to be specified",
+                )
+            if colocate_role not in self._workers:
+                raise WorkerNotFoundError(
+                    f"Cannot colocate with role '{colocate_role}' - role not found"
+                )
+
+            target_workers = self._workers[colocate_role]
+            if num_workers != len(target_workers):
+                raise WorkerCreationError(
+                    role,
+                    "Replica count mismatch",
+                    f"Colocated role must have same replica count as target "
+                    f"({num_workers} != {len(target_workers)})",
+                )
+
+            # Reuse existing workers - no new processes spawned
+            worker_ids = [w.worker.id for w in target_workers]
+            self._colocated_roles[role] = colocate_role
+            self._role_to_workers[role] = worker_ids
+
+            logger.info(
+                f"Role '{role}' colocated with '{colocate_role}': "
+                f"reusing workers {worker_ids}"
+            )
+            return worker_ids
+
+        # Non-colocated: spawn new worker processes
         workers = []
         worker_ids = []
         try:
@@ -295,23 +333,9 @@ class LocalScheduler(Scheduler):
                 scheduling = schedulings[idx]
 
                 try:
-                    if strategy_type == "colocation":
-                        if not colocate_role:
-                            raise WorkerCreationError(
-                                role,
-                                "Invalid strategy",
-                                "Colocation strategy requires target role to be specified",
-                            )
-                        gpu_devices = self._get_colocated_gpus(colocate_role, idx)
-                        logger.debug(
-                            f"Worker {worker_id} colocated with {colocate_role}/{idx} on GPUs {gpu_devices}"
-                        )
-                    else:  # "separation" or default
-                        gpu_devices = self._allocate_gpus(scheduling.gpu)
-                        logger.debug(
-                            f"Worker {worker_id} allocated new GPUs {gpu_devices}"
-                        )
-
+                    # Allocate GPUs and ports for this worker
+                    gpu_devices = self._allocate_gpus(scheduling.gpu)
+                    logger.debug(f"Worker {worker_id} allocated GPUs {gpu_devices}")
                     ports = self._allocate_ports(scheduling.port_count)
                 except (
                     GPUAllocationError,
@@ -471,6 +495,15 @@ class LocalScheduler(Scheduler):
         WorkerTimeoutError
             If timeout exceeded waiting for workers
         """
+        # Handle colocated roles: delegate to target role's workers
+        if role in self._colocated_roles:
+            target_role = self._colocated_roles[role]
+            logger.debug(
+                f"Role '{role}' is colocated with '{target_role}', "
+                "returning target role's workers"
+            )
+            return self.get_workers(target_role, timeout)
+
         if role not in self._workers:
             raise WorkerNotFoundError(role)
 
@@ -605,10 +638,22 @@ class LocalScheduler(Scheduler):
             Specific worker role to delete, or None to delete all
         """
         if role is None:
-            # Delete all workers
+            # Delete colocated roles first (they don't own processes)
+            colocated_roles = list(self._colocated_roles.keys())
+            for r in colocated_roles:
+                self.delete_workers(r)
+            # Then delete actual worker roles
             roles = list(self._workers.keys())
             for r in roles:
                 self.delete_workers(r)
+            return
+
+        # Handle colocated role: just remove mapping, don't kill processes
+        if role in self._colocated_roles:
+            logger.info(f"Removing colocated role '{role}' mapping")
+            del self._colocated_roles[role]
+            if role in self._role_to_workers:
+                del self._role_to_workers[role]
             return
 
         if role not in self._workers:
@@ -686,6 +731,7 @@ class LocalScheduler(Scheduler):
         self,
         worker_id: str,
         engine: str,
+        engine_name: str | None = None,
         *args,
         **kwargs,
     ) -> Any:
@@ -700,6 +746,8 @@ class LocalScheduler(Scheduler):
             Worker ID in format "role/index"
         engine : str
             Import path to the engine class (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
+        engine_name : str, optional
+            Unique name for this engine instance. Defaults to worker_id.
         *args
             Initialization arguments
         **kwargs
@@ -722,6 +770,10 @@ class LocalScheduler(Scheduler):
         # Verify worker exists and is alive
         worker_info = self._verify_worker_alive(worker_id)
 
+        # Default engine_name to worker_id for backward compatibility
+        if engine_name is None:
+            engine_name = worker_id
+
         # Validate engine is a string import path
         if not isinstance(engine, str):
             raise EngineCreationError(
@@ -732,6 +784,7 @@ class LocalScheduler(Scheduler):
         # Build JSON payload with serialized args and kwargs
         payload = {
             "engine": engine,
+            "engine_name": engine_name,
             "init_args": serialize_value(list(args)),
             "init_kwargs": serialize_value(kwargs),
         }
@@ -741,7 +794,9 @@ class LocalScheduler(Scheduler):
         url = f"http://{worker_info.worker.ip}:{port}/create_engine"
 
         try:
-            logger.debug(f"Creating engine '{engine}' on worker '{worker_id}'")
+            logger.debug(
+                f"Creating engine '{engine_name}' (class: {engine}) on worker '{worker_id}'"
+            )
 
             timeout = aiohttp.ClientTimeout(total=300.0)
             async with aiohttp.ClientSession(
@@ -757,7 +812,7 @@ class LocalScheduler(Scheduler):
                     if response.status == 200:
                         result = await response.json()
                         logger.debug(
-                            f"Engine created successfully on worker '{worker_id}'"
+                            f"Engine '{engine_name}' created successfully on worker '{worker_id}'"
                         )
                         return result.get("result")
                     elif response.status == 400:
@@ -805,6 +860,7 @@ class LocalScheduler(Scheduler):
         self,
         worker_id: str,
         method: str,
+        engine_name: str | None = None,
         *args,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
@@ -819,6 +875,8 @@ class LocalScheduler(Scheduler):
             Worker ID in format "role/index"
         method : str
             Method name to call
+        engine_name : str, optional
+            Name of the engine to call. Defaults to worker_id.
         *args
             Method arguments
         max_retries : int, optional
@@ -847,6 +905,10 @@ class LocalScheduler(Scheduler):
         if worker_info is None:
             raise WorkerNotFoundError(worker_id)
 
+        # Default engine_name to worker_id for backward compatibility
+        if engine_name is None:
+            engine_name = worker_id
+
         # Serialize args and kwargs (convert tensors to SerializedTensor dicts)
         serialized_args = serialize_value(list(args))
         serialized_kwargs = serialize_value(kwargs)
@@ -854,6 +916,7 @@ class LocalScheduler(Scheduler):
         # Build JSON payload
         payload = {
             "method": method,
+            "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
         }
@@ -921,6 +984,7 @@ class LocalScheduler(Scheduler):
         self,
         worker_id: str,
         method: str,
+        engine_name: str | None = None,
         *args,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
@@ -935,6 +999,8 @@ class LocalScheduler(Scheduler):
             Worker ID in format "role/index"
         method : str
             Method name to call
+        engine_name : str, optional
+            Name of the engine to call. Defaults to worker_id.
         *args
             Method arguments
         max_retries : int, optional
@@ -963,6 +1029,10 @@ class LocalScheduler(Scheduler):
         if worker_info is None:
             raise WorkerNotFoundError(worker_id)
 
+        # Default engine_name to worker_id for backward compatibility
+        if engine_name is None:
+            engine_name = worker_id
+
         # Route to different endpoint based on method
         port = int(worker_info.worker.worker_ports[0])
         # Standard engine method call
@@ -972,6 +1042,7 @@ class LocalScheduler(Scheduler):
         serialized_kwargs = serialize_value(kwargs)
         payload = {
             "method": method,
+            "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
         }

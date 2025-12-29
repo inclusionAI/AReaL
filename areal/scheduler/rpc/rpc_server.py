@@ -31,8 +31,8 @@ from areal.utils.network import find_free_ports, gethostip
 
 logger = logging.getLogger("SyncRPCServer")
 
-# Global engine instance - must be TrainEngine or InferenceEngine
-_engine: TrainEngine | InferenceEngine | None = None
+# Global engine instances - keyed by engine_name (e.g., "actor/0", "ref/0")
+_engines: dict[str, TrainEngine | InferenceEngine] = {}
 
 _role: str | None = None
 
@@ -108,8 +108,14 @@ def _submit_to_engine_thread(func_name: str, func: Callable, *args, **kwargs) ->
 @app.route("/health", methods=["GET"])
 def health_check():
     """Health check endpoint to verify server is alive."""
-    global _engine
-    return jsonify({"status": "healthy", "engine_initialized": _engine is not None})
+    global _engines
+    return jsonify(
+        {
+            "status": "healthy",
+            "engine_count": len(_engines),
+            "engines": list(_engines.keys()),
+        }
+    )
 
 
 @app.route("/alloc_ports", methods=["POST"])
@@ -232,17 +238,19 @@ def create_engine():
     Create and initialize a TrainEngine or InferenceEngine instance on this worker.
 
     This endpoint is routed to the engine thread for serial execution.
+    Supports multiple engines per worker, keyed by engine_name.
 
     Expected JSON payload:
     {
         "engine": "areal.engine.ppo.actor.FSDPPPOActor",  # Import path
+        "engine_name": "actor/0",  # Unique name for this engine (required)
         "init_args": [...],  # Positional arguments
         "init_kwargs": {
             "config": ...,  # Engine config
         }
     }
     """
-    global _engine
+    global _engines
 
     try:
         # Parse request in main thread (has Flask request context)
@@ -251,12 +259,24 @@ def create_engine():
             return jsonify({"error": "Invalid JSON in request body"}), 400
 
         engine_path = data.get("engine")
+        engine_name = data.get("engine_name")
         # Deserialize init_args and init_kwargs (may contain tensors or dataclasses)
         init_args = deserialize_value(data.get("init_args", []))
         init_kwargs = deserialize_value(data.get("init_kwargs", {}))
 
         if not engine_path:
             return jsonify({"error": "Missing 'engine' field in request"}), 400
+
+        if not engine_name:
+            return jsonify({"error": "Missing 'engine_name' field in request"}), 400
+
+        if engine_name in _engines:
+            return jsonify(
+                {
+                    "error": f"Engine '{engine_name}' already exists. "
+                    "Use a different name or delete the existing engine first."
+                }
+            ), 400
 
         # Dynamic import (can be done in main thread)
         try:
@@ -287,7 +307,9 @@ def create_engine():
             """Create engine in engine thread."""
             try:
                 engine = engine_class(*init_args, **init_kwargs)
-                logger.info(f"Engine '{engine_path}' instantiated successfully")
+                logger.info(
+                    f"Engine '{engine_name}' (class: {engine_path}) instantiated successfully"
+                )
                 return engine
             except Exception as e:
                 logger.error(
@@ -296,13 +318,15 @@ def create_engine():
                 raise
 
         try:
-            _engine = _submit_to_engine_thread(
+            engine = _submit_to_engine_thread(
                 "create_engine", create_engine_in_engine_thread
             )
+            _engines[engine_name] = engine
             return jsonify(
                 {
                     "status": "success",
-                    "message": f"Engine '{engine_path}' created and initialized",
+                    "message": f"Engine '{engine_name}' created and initialized",
+                    "engine_name": engine_name,
                     "result": None,
                 }
             )
@@ -319,7 +343,7 @@ def create_engine():
 @app.route("/call", methods=["POST"])
 def call_engine_method():
     """
-    Call a method on the engine instance.
+    Call a method on an engine instance.
 
     This endpoint is routed to the engine thread to ensure all engine operations
     run serially in the same thread, preventing NCCL conflicts.
@@ -327,17 +351,12 @@ def call_engine_method():
     Expected JSON payload:
     {
         "method": "train_batch",
+        "engine_name": "actor/0",  # Required: name of engine to call
         "args": [...],
         "kwargs": {...}
     }
     """
-    global _engine
-
-    if _engine is None:
-        return (
-            jsonify({"error": "Engine not initialized. Call /create_engine first."}),
-            503,
-        )
+    global _engines
 
     try:
         data = request.get_json()
@@ -345,11 +364,29 @@ def call_engine_method():
             return jsonify({"error": "Invalid JSON in request body"}), 400
 
         method_name = data.get("method")
+        engine_name = data.get("engine_name")
         raw_args = data.get("args", [])
         raw_kwargs = data.get("kwargs", {})
 
         if not method_name:
             return jsonify({"error": "Missing 'method' field in request"}), 400
+
+        if not engine_name:
+            return jsonify({"error": "Missing 'engine_name' field in request"}), 400
+
+        if engine_name not in _engines:
+            return (
+                jsonify(
+                    {
+                        "error": f"Engine '{engine_name}' not found. "
+                        f"Available engines: {list(_engines.keys())}"
+                    }
+                ),
+                404,
+            )
+
+        # Get the specific engine to call
+        engine = _engines[engine_name]
 
         # Deserialize data
         raw_args = deserialize_value(raw_args)
@@ -364,7 +401,7 @@ def call_engine_method():
 
         def execute_in_engine_thread():
             try:
-                if should_broadcast and isinstance(_engine, TrainEngine):
+                if should_broadcast and isinstance(engine, TrainEngine):
                     logger.debug(
                         f"Broadcasting data for TrainEngine method: {method_name}"
                     )
@@ -374,38 +411,38 @@ def call_engine_method():
                         tensor_container_to(
                             raw_args, current_platform.current_device()
                         ),
-                        src_rank=_engine.current_data_parallel_head(),
-                        group=_engine.context_and_model_parallel_group,
+                        src_rank=engine.current_data_parallel_head(),
+                        group=engine.context_and_model_parallel_group,
                     )
                     raw_kwargs = broadcast_tensor_container(
                         tensor_container_to(
                             raw_kwargs, current_platform.current_device()
                         ),
-                        src_rank=_engine.current_data_parallel_head(),
-                        group=_engine.context_and_model_parallel_group,
+                        src_rank=engine.current_data_parallel_head(),
+                        group=engine.context_and_model_parallel_group,
                     )
                     args_bcast = tensor_container_to(
                         args, current_platform.current_device()
                     )
                     args_bcast = broadcast_tensor_container(
                         args_bcast,
-                        src_rank=_engine.current_data_parallel_head(),
-                        group=_engine.context_and_model_parallel_group,
+                        src_rank=engine.current_data_parallel_head(),
+                        group=engine.context_and_model_parallel_group,
                     )
                     kwargs_bcast = tensor_container_to(
                         kwargs, current_platform.current_device()
                     )
                     kwargs_bcast = broadcast_tensor_container(
                         kwargs_bcast,
-                        src_rank=_engine.current_data_parallel_head(),
-                        group=_engine.context_and_model_parallel_group,
+                        src_rank=engine.current_data_parallel_head(),
+                        group=engine.context_and_model_parallel_group,
                     )
                     logger.debug("Broadcasting data done.")
                 else:
                     args_bcast = args
                     kwargs_bcast = kwargs
 
-                logger.debug(f"Calling engine method: {method_name}")
+                logger.debug(f"Calling engine '{engine_name}' method: {method_name}")
 
                 # Determine trace category based on method name
                 category = "misc"  # Default category
@@ -439,9 +476,9 @@ def call_engine_method():
                 with perf_tracer.trace_scope(
                     f"rpc.{method_name}",
                     category=category,
-                    args={"method": method_name},
+                    args={"method": method_name, "engine": engine_name},
                 ):
-                    method = getattr(_engine, method_name)
+                    method = getattr(engine, method_name)
                     result = method(*args_bcast, **kwargs_bcast)
 
                     # Handle update weights future
@@ -583,16 +620,17 @@ def clear_batch_data():
 # ==================== Cleanup ====================
 
 
-def cleanup_engine():
-    """Clean up engine on shutdown."""
-    global _engine
-    if _engine is not None:
-        try:
-            _engine.destroy()
-            logger.info("Engine destroyed successfully")
-        except Exception as e:
-            logger.error(f"Error destroying engine: {e}")
-        _engine = None
+def cleanup_engines():
+    """Clean up all engines on shutdown."""
+    global _engines
+    if _engines:
+        for engine_name, engine in list(_engines.items()):
+            try:
+                engine.destroy()
+                logger.info(f"Engine '{engine_name}' destroyed successfully")
+            except Exception as e:
+                logger.error(f"Error destroying engine '{engine_name}': {e}")
+        _engines.clear()
 
 
 def cleanup_engine_thread():
@@ -699,7 +737,7 @@ def main():
     finally:
         perf_tracer.save(force=True)
         cleanup_engine_thread()
-        cleanup_engine()
+        cleanup_engines()
         server.shutdown()
 
 

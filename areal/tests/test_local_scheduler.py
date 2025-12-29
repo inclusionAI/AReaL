@@ -601,12 +601,12 @@ class TestWorkerCreation:
     def test_create_workers_with_colocate_strategy(
         self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
     ):
-        """Should colocate workers on same GPUs as target role when colocate strategy is used."""
+        """Should reuse existing workers from target role when colocate strategy is used."""
         mock_gethostip.return_value = "127.0.0.1"
         mock_find_ports.return_value = [8000, 8001]
 
         mock_processes = []
-        for i in range(4):
+        for i in range(2):  # Only 2 processes for actors
             mock_proc = Mock()
             mock_proc.pid = 1000 + i
             mock_proc.poll.return_value = None
@@ -635,17 +635,13 @@ class TestWorkerCreation:
             ],
         )
         with patch.object(scheduler, "_configure_worker", return_value=None):
-            scheduler.create_workers(actor_job)
+            actor_ids = scheduler.create_workers(actor_job)
 
-        # Get GPU allocations for actors
-        actor_gpus_0 = scheduler._workers["actor"][0].gpu_devices
-        actor_gpus_1 = scheduler._workers["actor"][1].gpu_devices
+        # Verify actors were created
+        assert actor_ids == ["actor/0", "actor/1"]
+        initial_popen_count = mock_popen.call_count
 
-        # Reset mock
-        mock_find_ports.reset_mock()
-        mock_find_ports.return_value = [8010, 8011]
-
-        # Create colocated workers (critics)
+        # Create colocated workers (critics) - should NOT spawn new processes
         critic_job = Job(
             replicas=2,
             role="critic",
@@ -660,17 +656,18 @@ class TestWorkerCreation:
             ],
             scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
         )
-        with patch.object(scheduler, "_configure_worker", return_value=None):
-            critic_ids = scheduler.create_workers(critic_job)
+        critic_ids = scheduler.create_workers(critic_job)
 
-        assert len(critic_ids) == 2
+        # Verify colocated role returns the SAME worker IDs as target role
+        assert critic_ids == actor_ids
 
-        # Verify critics are colocated with actors
-        critic_gpus_0 = scheduler._workers["critic"][0].gpu_devices
-        critic_gpus_1 = scheduler._workers["critic"][1].gpu_devices
+        # Verify NO new processes were spawned for colocated role
+        assert mock_popen.call_count == initial_popen_count
 
-        assert critic_gpus_0 == actor_gpus_0
-        assert critic_gpus_1 == actor_gpus_1
+        # Verify colocation tracking is set up correctly
+        assert "critic" in scheduler._colocated_roles
+        assert scheduler._colocated_roles["critic"] == "actor"
+        assert scheduler._role_to_workers["critic"] == actor_ids
 
     def test_create_workers_duplicate_role_error(self, tmp_path):
         """Should raise WorkerCreationError when attempting to create workers for existing role."""
@@ -1833,3 +1830,171 @@ class TestEdgeCases:
 
         assert log_dir.exists()
         assert scheduler.log_dir == log_dir
+
+
+class TestColocationBehavior:
+    """Test colocation-specific behavior for worker reuse."""
+
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
+    @patch("areal.scheduler.local.find_free_ports")
+    def test_get_workers_for_colocated_role_delegates_to_target(
+        self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
+    ):
+        """Should return target role's workers when getting colocated role workers."""
+        mock_gethostip.return_value = "127.0.0.1"
+        mock_find_ports.return_value = [8000, 8001]
+
+        mock_proc = Mock()
+        mock_proc.pid = 1234
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
+        )
+
+        # Create target workers
+        actor_job = Job(replicas=1, role="actor")
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            scheduler.create_workers(actor_job)
+
+        # Create colocated role
+        ref_job = Job(
+            replicas=1,
+            role="ref",
+            scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+        )
+        scheduler.create_workers(ref_job)
+
+        # Get workers for colocated role should return target role's workers
+        with patch.object(scheduler, "_is_worker_ready", return_value=True):
+            workers = scheduler.get_workers("ref")
+
+        assert len(workers) == 1
+        assert workers[0].id == "actor/0"
+
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
+    @patch("areal.scheduler.local.find_free_ports")
+    def test_delete_colocated_role_does_not_kill_processes(
+        self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
+    ):
+        """Should only remove mapping when deleting colocated role, not kill processes."""
+        mock_gethostip.return_value = "127.0.0.1"
+        mock_find_ports.return_value = [8000, 8001]
+
+        mock_proc = Mock()
+        mock_proc.pid = 1234
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+
+        scheduler = LocalScheduler(
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
+        )
+
+        # Create target workers
+        actor_job = Job(replicas=1, role="actor")
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            scheduler.create_workers(actor_job)
+
+        # Create colocated role
+        ref_job = Job(
+            replicas=1,
+            role="ref",
+            scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+        )
+        scheduler.create_workers(ref_job)
+
+        # Verify colocation is set up
+        assert "ref" in scheduler._colocated_roles
+
+        # Delete colocated role
+        with patch.object(scheduler, "_cleanup_workers") as mock_cleanup:
+            scheduler.delete_workers("ref")
+
+            # _cleanup_workers should NOT be called for colocated roles
+            mock_cleanup.assert_not_called()
+
+        # Colocation mapping should be removed
+        assert "ref" not in scheduler._colocated_roles
+        assert "ref" not in scheduler._role_to_workers
+
+        # Target role's workers should still exist
+        assert "actor" in scheduler._workers
+        assert len(scheduler._workers["actor"]) == 1
+
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
+    @patch("areal.scheduler.local.find_free_ports")
+    def test_colocation_replica_mismatch_raises_error(
+        self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
+    ):
+        """Should raise error when colocated role has different replica count."""
+        mock_gethostip.return_value = "127.0.0.1"
+        mock_find_ports.return_value = [8000, 8001]
+
+        mock_processes = []
+        for i in range(2):
+            mock_proc = Mock()
+            mock_proc.pid = 1000 + i
+            mock_proc.poll.return_value = None
+            mock_processes.append(mock_proc)
+        mock_popen.side_effect = mock_processes
+
+        scheduler = LocalScheduler(
+            gpu_devices=[0, 1],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
+        )
+
+        # Create target workers with 2 replicas
+        actor_job = Job(replicas=2, role="actor")
+        with patch.object(scheduler, "_configure_worker", return_value=None):
+            scheduler.create_workers(actor_job)
+
+        # Try to create colocated role with different replica count
+        ref_job = Job(
+            replicas=1,  # Mismatch!
+            role="ref",
+            scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+        )
+        with pytest.raises(WorkerCreationError) as exc_info:
+            scheduler.create_workers(ref_job)
+
+        assert "replica count" in str(exc_info.value).lower()
+
+    @patch("areal.scheduler.local.gethostip")
+    @patch("areal.scheduler.local.subprocess.Popen")
+    @patch("areal.scheduler.local.find_free_ports")
+    def test_colocation_target_not_found_raises_error(
+        self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
+    ):
+        """Should raise error when colocation target role doesn't exist."""
+        mock_gethostip.return_value = "127.0.0.1"
+        mock_find_ports.return_value = [8000, 8001]
+
+        scheduler = LocalScheduler(
+            gpu_devices=[0],
+            log_dir=str(tmp_path),
+            experiment_name="test_exp",
+            trial_name="test_trial",
+        )
+
+        # Try to create colocated role with non-existent target
+        ref_job = Job(
+            replicas=1,
+            role="ref",
+            scheduling_strategy=SchedulingStrategy(
+                type="colocation", target="nonexistent"
+            ),
+        )
+        with pytest.raises(WorkerNotFoundError):
+            scheduler.create_workers(ref_job)

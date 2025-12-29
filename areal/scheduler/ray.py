@@ -70,6 +70,10 @@ class RayScheduler(Scheduler):
         self._worker_info_by_id: dict[str, RayWorkerInfo] = {}
         self._placement_groups: list[PlacementGroup] = []
 
+        # Colocation tracking: colocated roles reuse workers from target role
+        self._colocated_roles: dict[str, str] = {}  # colocated_role -> target_role
+        self._role_to_workers: dict[str, list[str]] = {}  # role -> list of worker_ids
+
     def _prepare_worker_specs(
         self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
     ) -> list[SchedulingSpec]:
@@ -396,7 +400,7 @@ class RayScheduler(Scheduler):
             If worker creation fails
         """
         role = job.role
-        if role in self._workers:
+        if role in self._workers or role in self._colocated_roles:
             raise WorkerCreationError(
                 role,
                 "Worker group already exists",
@@ -414,15 +418,50 @@ class RayScheduler(Scheduler):
         strategy = job.scheduling_strategy
         if strategy is None:
             strategy_type = "separation"
+            colocate_role = None
         else:
             strategy_type = strategy.type or "separation"
-            if strategy_type == "colocation":
+            colocate_role = strategy.target if strategy_type == "colocation" else None
+
+        logger.info(
+            f"Creating {num_workers} workers for role '{role}' "
+            f"(strategy: {strategy_type}, colocate_with: {colocate_role})"
+        )
+
+        # Handle colocation: reuse existing workers from target role
+        if strategy_type == "colocation":
+            if not colocate_role:
                 raise WorkerCreationError(
                     role,
-                    "Unavailable strategy type",
-                    "RayScheduler only supports separation strategy",
+                    "Invalid strategy",
+                    "Colocation strategy requires target role to be specified",
+                )
+            if colocate_role not in self._workers:
+                raise WorkerNotFoundError(
+                    f"Cannot colocate with role '{colocate_role}' - role not found"
                 )
 
+            target_workers = self._workers[colocate_role]
+            if num_workers != len(target_workers):
+                raise WorkerCreationError(
+                    role,
+                    "Replica count mismatch",
+                    f"Colocated role must have same replica count as target "
+                    f"({num_workers} != {len(target_workers)})",
+                )
+
+            # Reuse existing workers - no new actors spawned
+            worker_ids = [w.worker.id for w in target_workers]
+            self._colocated_roles[role] = colocate_role
+            self._role_to_workers[role] = worker_ids
+
+            logger.info(
+                f"Role '{role}' colocated with '{colocate_role}': "
+                f"reusing workers {worker_ids}"
+            )
+            return worker_ids
+
+        # Non-colocated: spawn new worker actors
         if "rollout" in role:
             worker_info_list, worker_ids = self._create_rollout_workers(
                 role, schedulings
@@ -453,6 +492,11 @@ class RayScheduler(Scheduler):
         return worker_ids
 
     def get_workers(self, role: str, timeout: float | None = None) -> list[Worker]:
+        # Check if this is a colocated role - delegate to target role
+        if role in self._colocated_roles:
+            target_role = self._colocated_roles[role]
+            return self.get_workers(target_role, timeout)
+
         if role not in self._workers:
             raise WorkerNotFoundError(role)
 
@@ -472,9 +516,22 @@ class RayScheduler(Scheduler):
             Specific worker role to delete, or None to delete all
         """
         if role is None:
+            # Delete colocated roles first (they're just mappings)
+            colocated_roles = list(self._colocated_roles.keys())
+            for r in colocated_roles:
+                self.delete_workers(r)
+            # Then delete actual worker roles
             roles = list(self._workers.keys())
             for r in roles:
                 self.delete_workers(r)
+            return
+
+        # Handle colocated role: just remove the mapping, don't kill actors
+        if role in self._colocated_roles:
+            logger.info(f"Removing colocated role '{role}' mapping")
+            del self._colocated_roles[role]
+            if role in self._role_to_workers:
+                del self._role_to_workers[role]
             return
 
         if role not in self._workers:
@@ -526,7 +583,14 @@ class RayScheduler(Scheduler):
         await wi.actor.set_env.remote(env)
         wi.env_vars.update(env)
 
-    async def create_engine(self, worker_id: str, engine: str, *args, **kwargs) -> Any:
+    async def create_engine(
+        self,
+        worker_id: str,
+        engine: str,
+        engine_name: str | None = None,
+        *args,
+        **kwargs,
+    ) -> Any:
         wi = self._get_worker_info_by_id(worker_id)
         if wi is None:
             raise WorkerNotFoundError(worker_id)
@@ -535,12 +599,16 @@ class RayScheduler(Scheduler):
             raise WorkerCreationError(
                 worker_id, f"Engine must be a string import path, got {type(engine)}"
             )
-        await wi.actor.create_engine.remote(engine, *args, **kwargs)
+        # Pass engine_name to support multiple engines per worker (colocation)
+        await wi.actor.create_engine.remote(
+            engine, *args, engine_name=engine_name, **kwargs
+        )
 
     def call_engine(
         self,
         worker_id: str,
         method: str,
+        engine_name: str | None = None,
         *args,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
@@ -555,7 +623,10 @@ class RayScheduler(Scheduler):
 
         for attempt in range(1, max_retries + 1):
             try:
-                ref = wi.actor.call.remote(method, *args, **kwargs)
+                # Pass engine_name to support multiple engines per worker (colocation)
+                ref = wi.actor.call.remote(
+                    method, *args, engine_name=engine_name, **kwargs
+                )
                 result = ray.get(ref, timeout=http_timeout)
                 if attempt > 1:
                     logger.info(
@@ -592,6 +663,7 @@ class RayScheduler(Scheduler):
         self,
         worker_id: str,
         method: str,
+        engine_name: str | None = None,
         *args,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
@@ -606,7 +678,10 @@ class RayScheduler(Scheduler):
 
         for attempt in range(1, max_retries + 1):
             try:
-                ref = wi.actor.call.remote(method, *args, **kwargs)
+                # Pass engine_name to support multiple engines per worker (colocation)
+                ref = wi.actor.call.remote(
+                    method, *args, engine_name=engine_name, **kwargs
+                )
                 result = await ref
                 if attempt > 1:
                     logger.info(

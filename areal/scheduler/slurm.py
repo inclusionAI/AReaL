@@ -129,6 +129,10 @@ class SlurmScheduler(Scheduler):
         ] = {}  # job_id -> (state, timestamp)
         self._status_cache_ttl = 5.0  # Cache status for 5 seconds
 
+        # Colocation tracking: colocated roles reuse workers from target role
+        self._colocated_roles: dict[str, str] = {}  # colocated_role -> target_role
+        self._role_to_workers: dict[str, list[str]] = {}  # role -> list of worker_ids
+
         logger.info(
             f"Initialized SlurmScheduler: exp={self.experiment_name}, "
             f"trial={self.trial_name}, fileroot={self.fileroot}, "
@@ -581,17 +585,45 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         schedulings = self._prepare_worker_specs(role, replicas, job.tasks)
         spec = schedulings[0]
 
-        # Determine node allocation
+        # Determine node allocation and handle colocation
         strategy = job.scheduling_strategy
         if strategy and strategy.type == "colocation":
-            nodes, nodelist = self._get_colocation_nodes(strategy.target, replicas)
-        else:
-            # Calculate nodes needed
-            total_gpus = spec.gpu * replicas
-            nodes = max(
-                1, (total_gpus + self.n_gpus_per_node - 1) // self.n_gpus_per_node
+            colocate_role = strategy.target
+            if not colocate_role:
+                raise WorkerCreationError(
+                    role,
+                    "Invalid strategy",
+                    "Colocation strategy requires target role to be specified",
+                )
+            if colocate_role not in self._workers:
+                raise WorkerNotFoundError(
+                    f"Cannot colocate with role '{colocate_role}' - role not found"
+                )
+
+            target_workers = self._workers[colocate_role]
+            if replicas != len(target_workers):
+                raise WorkerCreationError(
+                    role,
+                    "Replica count mismatch",
+                    f"Colocated role must have same replica count as target "
+                    f"({replicas} != {len(target_workers)})",
+                )
+
+            # Reuse existing workers - no new Slurm job submitted
+            worker_ids = [w.worker.id for w in target_workers]
+            self._colocated_roles[role] = colocate_role
+            self._role_to_workers[role] = worker_ids
+
+            logger.info(
+                f"Role '{role}' colocated with '{colocate_role}': "
+                f"reusing workers {worker_ids}"
             )
-            nodelist = spec.nodelist
+            return worker_ids
+
+        # Non-colocated: calculate nodes needed and submit new Slurm job
+        total_gpus = spec.gpu * replicas
+        nodes = max(1, (total_gpus + self.n_gpus_per_node - 1) // self.n_gpus_per_node)
+        nodelist = spec.nodelist
 
         # Calculate resource requirements
         n_gpus_per_node = min(
@@ -699,6 +731,15 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         WorkerFailedError
             If workers failed
         """
+        # Handle colocated roles: delegate to target role's workers
+        if role in self._colocated_roles:
+            target_role = self._colocated_roles[role]
+            logger.debug(
+                f"Role '{role}' is colocated with '{target_role}', "
+                "returning target role's workers"
+            )
+            return self.get_workers(target_role, timeout)
+
         if role not in self._workers:
             raise WorkerNotFoundError(f"Role '{role}' not found")
 
@@ -776,8 +817,21 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
             Role to delete. If None, deletes all roles.
         """
         if role is None:
+            # Delete colocated roles first (they don't own Slurm jobs)
+            colocated_roles = list(self._colocated_roles.keys())
+            for r in colocated_roles:
+                self.delete_workers(r)
+            # Then delete actual worker roles
             for r in list(self._workers.keys()):
                 self.delete_workers(r)
+            return
+
+        # Handle colocated role: just remove mapping, don't cancel Slurm job
+        if role in self._colocated_roles:
+            logger.info(f"Removing colocated role '{role}' mapping")
+            del self._colocated_roles[role]
+            if role in self._role_to_workers:
+                del self._role_to_workers[role]
             return
 
         if role not in self._workers:
@@ -859,6 +913,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         self,
         worker_id: str,
         engine: str,
+        engine_name: str | None = None,
         *args,
         **kwargs,
     ) -> Any:
@@ -870,6 +925,8 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
             Worker ID in format "role/index"
         engine : str
             Import path to engine class
+        engine_name : str, optional
+            Unique name for this engine instance. Defaults to worker_id.
         *args
             Initialization arguments
         **kwargs
@@ -891,6 +948,10 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         """
         worker_info = self._verify_worker_alive(worker_id)
 
+        # Default engine_name to worker_id for backward compatibility
+        if engine_name is None:
+            engine_name = worker_id
+
         if not isinstance(engine, str):
             raise EngineCreationError(
                 worker_id,
@@ -899,6 +960,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
 
         payload = {
             "engine": engine,
+            "engine_name": engine_name,
             "init_args": serialize_value(list(args)),
             "init_kwargs": serialize_value(kwargs),
         }
@@ -907,7 +969,9 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         url = f"http://{worker_info.worker.ip}:{port}/create_engine"
 
         try:
-            logger.debug(f"Creating engine '{engine}' on worker '{worker_id}'")
+            logger.debug(
+                f"Creating engine '{engine_name}' (class: {engine}) on worker '{worker_id}'"
+            )
 
             timeout = aiohttp.ClientTimeout(total=300.0)
             async with aiohttp.ClientSession(
@@ -961,6 +1025,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         self,
         worker_id: str,
         method: str,
+        engine_name: str | None = None,
         *args,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
@@ -975,6 +1040,8 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
             Worker ID in format "role/index"
         method : str
             Name of method to call
+        engine_name : str, optional
+            Name of the engine to call. Defaults to worker_id.
         *args
             Method arguments
         http_timeout : float, default=7200.0
@@ -1004,10 +1071,15 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         if worker_info is None:
             raise WorkerNotFoundError(worker_id)
 
+        # Default engine_name to worker_id for backward compatibility
+        if engine_name is None:
+            engine_name = worker_id
+
         serialized_args = serialize_value(list(args))
         serialized_kwargs = serialize_value(kwargs)
         payload = {
             "method": method,
+            "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
         }
@@ -1084,6 +1156,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         self,
         worker_id: str,
         method: str,
+        engine_name: str | None = None,
         *args,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
@@ -1098,6 +1171,8 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
             Worker ID in format "role/index"
         method : str
             Name of method to call
+        engine_name : str, optional
+            Name of the engine to call. Defaults to worker_id.
         *args
             Method arguments
         http_timeout : float, default=7200.0
@@ -1127,10 +1202,15 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         if worker_info is None:
             raise WorkerNotFoundError(worker_id)
 
+        # Default engine_name to worker_id for backward compatibility
+        if engine_name is None:
+            engine_name = worker_id
+
         serialized_args = serialize_value(list(args))
         serialized_kwargs = serialize_value(kwargs)
         payload = {
             "method": method,
+            "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
         }

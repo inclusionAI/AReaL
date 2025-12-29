@@ -122,7 +122,14 @@ class Scheduler(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    async def create_engine(self, worker_id: str, engine: str, *args, **kwargs) -> Any:
+    async def create_engine(
+        self,
+        worker_id: str,
+        engine: str,
+        engine_name: str | None = None,
+        *args,
+        **kwargs,
+    ) -> Any:
         """Create an engine instance on a remote worker.
 
         The engine parameter is a string import path (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
@@ -134,6 +141,10 @@ class Scheduler(abc.ABC):
             ID of the worker to create the engine on (e.g., "rollout/0")
         engine : str
             Import path to the engine class (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
+        engine_name : str, optional
+            Unique name for this engine instance (e.g., "actor/0", "ref/0").
+            Defaults to worker_id if not specified. This allows multiple engines
+            per worker when using colocation.
         *args
             Positional arguments passed to engine initialization
         **kwargs
@@ -169,7 +180,14 @@ class Scheduler(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def call_engine(self, worker_id: str, method: str, *args, **kwargs) -> Any:
+    def call_engine(
+        self,
+        worker_id: str,
+        method: str,
+        engine_name: str | None = None,
+        *args,
+        **kwargs,
+    ) -> Any:
         """Call a method on an engine instance running on a worker (data plane operation).
 
         This is the synchronous version. Use `async_call_engine` for async operations.
@@ -180,6 +198,9 @@ class Scheduler(abc.ABC):
             ID of the worker hosting the engine (e.g., "rollout/0")
         method : str
             Name of the method to call on the engine
+        engine_name : str, optional
+            Name of the engine to call (e.g., "actor/0", "ref/0").
+            Defaults to worker_id if not specified.
         *args
             Positional arguments to pass to the method
         **kwargs
@@ -203,7 +224,12 @@ class Scheduler(abc.ABC):
 
     @abc.abstractmethod
     async def async_call_engine(
-        self, worker_id: str, method: str, *args, **kwargs
+        self,
+        worker_id: str,
+        method: str,
+        engine_name: str | None = None,
+        *args,
+        **kwargs,
     ) -> Any:
         """Async version of call_engine for calling engine methods asynchronously.
 
@@ -215,6 +241,9 @@ class Scheduler(abc.ABC):
             ID of the worker hosting the engine (e.g., "rollout/0")
         method : str
             Name of the method to call on the engine
+        engine_name : str, optional
+            Name of the engine to call (e.g., "actor/0", "ref/0").
+            Defaults to worker_id if not specified.
         *args
             Positional arguments to pass to the method
         **kwargs
