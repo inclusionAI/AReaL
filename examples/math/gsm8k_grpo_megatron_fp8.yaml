@@ -72,9 +72,10 @@ actor:
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
   megatron:
-    fp8: hybrid
-    fp8_param: true
-    fp8_recipe: blockwise
+    fp8_config:
+      mode: hybrid
+      recipe: blockwise
+      param: true
     ddp:
       fp8_param_gather: true
 
