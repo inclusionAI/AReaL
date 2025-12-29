@@ -5,6 +5,8 @@ from logging import WARNING, FileHandler, Logger, Manager, RootLogger
 from typing import Literal
 
 import colorlog
+import colorlog.escape_codes
+import colorlog.formatter
 
 # ANSI color codes for the (AReaL) header
 # Using 256-color mode for a milk tea / brown-yellow color (RGB ~180, 140, 80)
@@ -26,29 +28,29 @@ LOG_PREFIX_WIDTH = 10  # Fixed width for alignment in merged.log
 # Exact matches take priority, then prefix patterns are checked in order
 #
 # Color scheme:
-#   - white: Schedulers, Launchers, RPC, Inference wrappers (infrastructure)
+#   - blue: Schedulers, Launchers (infrastructure)
+#   - white: Controllers, RPC, Inference wrappers (orchestration)
 #   - light_purple/purple: Workflows, Rewards, OpenAI (RL-specific)
-#   - blue: Controllers (orchestration)
 #   - light_green: Stats, Perf, Dataset, Trainers (data/metrics)
 #   - light_cyan/cyan: Engines, Platforms, MCore (compute backends)
 LOGGER_COLORS_EXACT = {
-    # Schedulers - white
-    "LocalScheduler": "white",
-    "RayScheduler": "white",
-    "SlurmScheduler": "white",
-    # Launchers - white
-    "LocalLauncher": "white",
-    "RayLauncher": "white",
-    "SlurmLauncher": "white",
+    # Schedulers - blue
+    "LocalScheduler": "blue",
+    "RayScheduler": "blue",
+    "SlurmScheduler": "blue",
+    # Launchers - blue
+    "LocalLauncher": "blue",
+    "RayLauncher": "blue",
+    "SlurmLauncher": "blue",
     # Workflows - purple
     "RLVRWorkflow": "light_purple",
     "VisionRLVRWorkflow": "light_purple",
     "MultiTurnWorkflow": "light_purple",
     "MultiTurnV2Workflow": "light_purple",
-    # Controllers - blue
-    "TrainController": "blue",
-    "RolloutController": "blue",
-    "WorkflowExecutor": "blue",
+    # Controllers - white
+    "TrainController": "white",
+    "RolloutController": "white",
+    "WorkflowExecutor": "white",
     # Stats/Perf - green
     "StatsLogger": "light_green",
     "StatsTracker": "light_green",
@@ -151,19 +153,22 @@ class LoggerColoredFormatter(colorlog.ColoredFormatter):
         self._logger_color_cache[name] = color
         return color
 
-    def format(self, record):
-        # For WARNING/ERROR/CRITICAL, use standard level-based colors
-        # For DEBUG/INFO, use logger-based colors
+    def formatMessage(self, record):
+        """Thread-safe formatting that uses per-logger colors for DEBUG/INFO."""
+        # Get escape codes from parent's method
+        escapes = self._escape_code_map(record.levelname)
+
+        # For DEBUG/INFO, override with logger-based color (thread-safe since
+        # we modify a local dict copy, not shared self.log_colors)
         if record.levelno < logging.WARNING:
             logger_color = self._get_logger_color(record.name)
-            # Temporarily override the log_colors for this record
-            original_log_colors = self.log_colors.copy()
-            self.log_colors["DEBUG"] = logger_color
-            self.log_colors["INFO"] = logger_color
-            result = super().format(record)
-            self.log_colors = original_log_colors
-            return result
-        return super().format(record)
+            escapes = dict(escapes)  # Make a mutable copy
+            escapes["log_color"] = colorlog.escape_codes.parse_colors(logger_color)
+
+        wrapper = colorlog.formatter.ColoredRecord(record, escapes)
+        message = super(colorlog.ColoredFormatter, self).formatMessage(wrapper)
+        message = self._append_reset(message, escapes)
+        return message
 
 
 log_config = {
@@ -415,9 +420,9 @@ if __name__ == "__main__":
     print("=" * 70)
     print("Testing per-logger color differentiation with (AReaL) prefix")
     print("Each component category should have a distinct color:")
-    print("  - white: Schedulers, Launchers, RPC, Inference (infrastructure)")
+    print("  - blue: Schedulers, Launchers (infrastructure)")
+    print("  - white: Controllers, RPC, Inference (orchestration)")
     print("  - light_purple/purple: Workflows, Rewards, OpenAI (RL-specific)")
-    print("  - blue: Controllers (orchestration)")
     print("  - light_green: Stats, Perf, Dataset, Trainers (data/metrics)")
     print("  - light_cyan/cyan: Engines, Platforms, MCore (compute backends)")
     print("  - WARNING/ERROR: yellow/red (always override)")
