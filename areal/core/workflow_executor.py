@@ -750,6 +750,19 @@ class WorkflowExecutor:
 
         self._task_id_generator = TaskIdGenerator()
 
+    def _resolve_dp_world_size(self):
+        if not dist.is_initialized():
+            return 1
+
+        try:
+            from megatron.core import parallel_state as mpu
+
+            if mpu.is_initialized():
+                return mpu.get_data_parallel_world_size()
+            return dist.get_world_size()
+        except ImportError:
+            return dist.get_world_size()
+
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start background threads.
 
@@ -780,16 +793,7 @@ class WorkflowExecutor:
             if train_data_parallel_size is not None:
                 dp_world_size = train_data_parallel_size
             else:
-                if dist.is_initialized():
-                    # Avoid cuda initialization
-                    from megatron.core import parallel_state as mpu
-
-                    if not mpu.is_initialized():
-                        dp_world_size = dist.get_world_size()
-                    else:
-                        dp_world_size = mpu.get_data_parallel_world_size()
-                else:
-                    dp_world_size = 1
+                dp_world_size = self._resolve_dp_world_size()
 
             # Apply data parallel scaling
             max_concurrent_rollouts = max(

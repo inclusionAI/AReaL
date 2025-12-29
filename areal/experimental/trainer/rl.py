@@ -26,13 +26,6 @@ from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow
 from areal.controller import RolloutController
-from areal.engine.megatron_engine import MegatronEngine
-from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor, PPOActorController
-from areal.engine.ppo.critic import (
-    FSDPPPOCritic,
-    MegatronPPOCritic,
-    PPOCriticController,
-)
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
@@ -138,7 +131,7 @@ class PPOTrainer:
             )
         elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
-            if isinstance(self.actor, MegatronEngine):
+            if self.allocation_mode.train_backend == "megatron":
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
                     self.allocation_mode
                 )
@@ -456,12 +449,14 @@ class PPOTrainer:
             spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
             spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
 
-    def _create_actor(
-        self, actor_config: PPOActorConfig
-    ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
+    def _create_actor(self, actor_config: PPOActorConfig):
         if self.allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPPPOActor
+
             actor_cls = FSDPPPOActor
         elif self.allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronPPOActor
+
             actor_cls = MegatronPPOActor
         else:
             raise ValueError(
@@ -474,12 +469,14 @@ class PPOTrainer:
         actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
-    def _create_critic(
-        self, critic_config: PPOCriticConfig
-    ) -> FSDPPPOCritic | MegatronPPOCritic | PPOCriticController:
+    def _create_critic(self, critic_config: PPOCriticConfig):
         if self.allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPPPOCritic
+
             critic_cls = FSDPPPOCritic
         elif self.allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronPPOCritic
+
             critic_cls = MegatronPPOCritic
         else:
             raise ValueError(

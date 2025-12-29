@@ -1249,3 +1249,111 @@ class MegatronEngine(TrainEngine):
         else:
             values = output.squeeze(-1)
             return values
+
+
+# =============================================================================
+# Algorithm-specific Megatron Engines
+# =============================================================================
+
+
+class MegatronPPOActor(MegatronEngine):
+    """PPO Actor implementation using Megatron backend."""
+
+    def __init__(self, config):
+        from areal.engine.ppo.actor import PPOActor
+
+        super().__init__(config)
+        self.actor = PPOActor(config, self)
+
+    @torch.no_grad()
+    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+        return self.actor.compute_logp(*args, **kwargs)
+
+    @torch.no_grad()
+    def compute_advantages(self, *args, **kwargs) -> dict[str, Any]:
+        return self.actor.compute_advantages(*args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.actor.ppo_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(cls, config, scheduler):
+        from areal.engine.ppo.actor import PPOActorController
+
+        return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class MegatronPPOCritic(MegatronEngine):
+    """PPO Critic implementation using Megatron backend."""
+
+    def __init__(self, config):
+        from areal.engine.ppo.critic import PPOCritic
+
+        super().__init__(config)
+        self.critic = PPOCritic(config, self)
+
+    @torch.no_grad()
+    def compute_values(self, *args, **kwargs) -> torch.Tensor:
+        return self.critic.compute_values(*args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.critic.ppo_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(cls, config, scheduler):
+        from areal.engine.ppo.critic import PPOCriticController
+
+        return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class MegatronLMEngine(MegatronEngine):
+    """Language model engine for SFT using Megatron backend."""
+
+    def __init__(self, config):
+        from areal.engine.sft.lm_engine import LMEngine
+
+        super().__init__(config)
+        self.lm_engine = LMEngine(self)
+
+    def train_lm(self, data):
+        return self.lm_engine.train_lm(data)
+
+    def evaluate_lm(self, data):
+        return self.lm_engine.evaluate_lm(data)
+
+    @classmethod
+    def as_controller(cls, config, scheduler):
+        from areal.engine.sft.lm_engine import LMController
+
+        return LMController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class MegatronRWEngine(MegatronEngine):
+    """Reward model engine using Megatron backend."""
+
+    def __init__(self, config):
+        from copy import deepcopy
+
+        from areal.engine.rw.rw_engine import RWEngine
+
+        super().__init__(config)
+        self.rw_engine = RWEngine(self)
+        if self.config.mb_spec.granularity != 2:
+            from areal.utils import logging
+
+            rw_logger = logging.getLogger("RW engine")
+            rw_logger.warning("mb_spec.granularity must be 2 for reward modeling")
+            self.config = deepcopy(self.config)
+            self.config.mb_spec.granularity = 2
+
+    def train_rw(self, data):
+        return self.rw_engine.train_rw(data)
+
+    def evaluate_rw(self, data):
+        return self.rw_engine.evaluate_rw(data)
+
+    @classmethod
+    def as_controller(cls, config, scheduler):
+        from areal.engine.rw.rw_engine import RWController
+
+        return RWController(train_engine=cls, config=config, scheduler=scheduler)
