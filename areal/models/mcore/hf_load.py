@@ -43,7 +43,6 @@ def _weight_to_mcore_tp(
     tp_rank: int,
     tp_size: int,
     dtype: torch.dtype | None = None,
-    weight_block_size: list[int, int] | None = None,
 ) -> torch.Tensor:
     if (
         "self_attention.linear_qkv." in mcore_weights_name

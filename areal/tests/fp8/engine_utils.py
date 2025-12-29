@@ -14,6 +14,7 @@ from megatron.core import parallel_state as mpu
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
+    FP8EngineConfig,
     MegatronEngineConfig,
     OptimizerConfig,
     TrainEngineConfig,
@@ -241,9 +242,11 @@ def create_engine(
 
     megatron_config = MegatronEngineConfig()
     if fp8_enabled:
-        megatron_config.fp8 = "e4m3"
-        megatron_config.fp8_param = fp8_param
-        megatron_config.fp8_recipe = "blockwise"
+        megatron_config.fp8_config = FP8EngineConfig(
+            mode="e4m3",
+            param=fp8_param,
+            recipe="blockwise",
+        )
         megatron_config.ddp.fp8_param_gather = True
 
     config = TrainEngineConfig(

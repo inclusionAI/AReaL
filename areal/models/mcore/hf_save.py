@@ -274,9 +274,10 @@ def save_weights_to_hf_with_mbridge_fast(
                 infer_params = all_gather_outputs[s.global_name].chunk(
                     mpu.get_tensor_model_parallel_world_size(), dim=0
                 )
+            # Convert TE FP8 -> torch bf16 -> torch FP8 and finally save the native torch FP8 model
+            # First dequantize TE FP8 tensors to bf16, then convert_to_hf will quantize to PyTorch FP8
             infer_params = [
-                p.dequantize(dtype=bridge.dtype) if is_float8tensor(p) else p
-                for p in infer_params
+                p.dequantize() if is_float8tensor(p) else p for p in infer_params
             ]
             infer_params = bridge._weight_merge_across_tp(
                 s.global_name, infer_params, param
@@ -284,7 +285,7 @@ def save_weights_to_hf_with_mbridge_fast(
         else:
             infer_params = param
             if is_float8tensor(infer_params):
-                infer_params = infer_params.dequantize(dtype=bridge.dtype)
+                infer_params = infer_params.dequantize()
         converted_names, converted_params = bridge._weight_to_hf_format(
             s.global_name, infer_params
         )
@@ -389,10 +390,7 @@ def save_weights_to_hf_with_mbridge_fast(
             else:
                 params = [param]
 
-            params = [
-                p.dequantize(dtype=bridge.dtype) if is_float8tensor(p) else p
-                for p in params
-            ]
+            params = [p.dequantize() if is_float8tensor(p) else p for p in params]
             merge_params = bridge._weight_merge_across_tp(s.global_name, params, param)
             converted_names, converted_params = bridge._weight_to_hf_format(
                 s.global_name, merge_params

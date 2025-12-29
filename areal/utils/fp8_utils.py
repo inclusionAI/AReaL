@@ -2,17 +2,6 @@ import re
 
 import torch
 
-try:
-    from sglang.srt.layers.quantization.fp8_utils import (
-        quant_weight_ue8m0,
-        transform_scale_ue8m0,
-    )
-    from sglang.srt.model_loader.utils import should_deepgemm_weight_requant_ue8m0
-except ImportError:
-    should_deepgemm_weight_requant_ue8m0 = None
-    quant_weight_ue8m0 = None
-    transform_scale_ue8m0 = None
-
 from areal.utils.fp8_kernels import blockwise_cast_to_fp8_triton, weight_dequant
 
 
@@ -38,9 +27,25 @@ def _quantize_param(
     FP8_MAX = torch.finfo(torch.float8_e4m3fn).max
 
     if weight_block_size is not None:
-        # Blockwise quantization
+        # Blockwise quantizations
+        try:
+            from sglang.srt.layers.quantization.fp8_utils import (
+                quant_weight_ue8m0,
+                transform_scale_ue8m0,
+            )
+            from sglang.srt.model_loader.utils import (
+                should_deepgemm_weight_requant_ue8m0,
+            )
+
+        except ImportError:
+            should_deepgemm_weight_requant_ue8m0 = None
+            quant_weight_ue8m0 = None
+            transform_scale_ue8m0 = None
+
         if (
             should_deepgemm_weight_requant_ue8m0 is not None
+            and quant_weight_ue8m0 is not None
+            and transform_scale_ue8m0 is not None
             and should_deepgemm_weight_requant_ue8m0(
                 weight_block_size=weight_block_size
             )
@@ -181,10 +186,15 @@ def dequantize_params(
         weight_block_size = quantization_config.get("weight_block_size", None)
         # TODO: consider (M, N) block size, now only support square block size
         if weight_block_size is not None:
-            assert (
-                len(weight_block_size) == 2
-                and weight_block_size[0] == weight_block_size[1]
-            )
+            if len(weight_block_size) != 2:
+                raise ValueError(
+                    f"weight_block_size must be a list/tuple of length 2, got {weight_block_size}"
+                )
+            if weight_block_size[0] != weight_block_size[1]:
+                raise ValueError(
+                    f"Only square block sizes are supported for FP8 dequantization. "
+                    f"Got {weight_block_size}, but both dimensions must be equal."
+                )
             block_size = weight_block_size[0]
         else:
             block_size = 128
