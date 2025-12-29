@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import functools
 import gc
@@ -6,7 +8,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import nullcontext
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import mbridge
 import torch
@@ -79,6 +81,11 @@ from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
+
+if TYPE_CHECKING:
+    from areal.engine.ppo.actor import PPOActorConfig
+    from areal.engine.ppo.critic import PPOCriticConfig
+    from areal.scheduler.scheduler import Scheduler
 
 
 class _MegatronModelList(list):
@@ -1259,7 +1266,7 @@ class MegatronEngine(TrainEngine):
 class MegatronPPOActor(MegatronEngine):
     """PPO Actor implementation using Megatron backend."""
 
-    def __init__(self, config):
+    def __init__(self, config: PPOActorConfig):
         from areal.engine.ppo.actor import PPOActor
 
         super().__init__(config)
@@ -1277,7 +1284,7 @@ class MegatronPPOActor(MegatronEngine):
         self.actor.ppo_update(*args, **kwargs)
 
     @classmethod
-    def as_controller(cls, config, scheduler):
+    def as_controller(cls, config: PPOActorConfig, scheduler: Scheduler):
         from areal.engine.ppo.actor import PPOActorController
 
         return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1286,7 +1293,7 @@ class MegatronPPOActor(MegatronEngine):
 class MegatronPPOCritic(MegatronEngine):
     """PPO Critic implementation using Megatron backend."""
 
-    def __init__(self, config):
+    def __init__(self, config: PPOCriticConfig):
         from areal.engine.ppo.critic import PPOCritic
 
         super().__init__(config)
@@ -1300,7 +1307,7 @@ class MegatronPPOCritic(MegatronEngine):
         self.critic.ppo_update(*args, **kwargs)
 
     @classmethod
-    def as_controller(cls, config, scheduler):
+    def as_controller(cls, config: PPOCriticConfig, scheduler: Scheduler):
         from areal.engine.ppo.critic import PPOCriticController
 
         return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1309,7 +1316,7 @@ class MegatronPPOCritic(MegatronEngine):
 class MegatronLMEngine(MegatronEngine):
     """Language model engine for SFT using Megatron backend."""
 
-    def __init__(self, config):
+    def __init__(self, config: TrainEngineConfig):
         from areal.engine.sft.lm_engine import LMEngine
 
         super().__init__(config)
@@ -1322,7 +1329,7 @@ class MegatronLMEngine(MegatronEngine):
         return self.lm_engine.evaluate_lm(data)
 
     @classmethod
-    def as_controller(cls, config, scheduler):
+    def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
         from areal.engine.sft.lm_engine import LMController
 
         return LMController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1331,7 +1338,7 @@ class MegatronLMEngine(MegatronEngine):
 class MegatronRWEngine(MegatronEngine):
     """Reward model engine using Megatron backend."""
 
-    def __init__(self, config):
+    def __init__(self, config: TrainEngineConfig):
         from copy import deepcopy
 
         from areal.engine.rw.rw_engine import RWEngine
@@ -1339,8 +1346,6 @@ class MegatronRWEngine(MegatronEngine):
         super().__init__(config)
         self.rw_engine = RWEngine(self)
         if self.config.mb_spec.granularity != 2:
-            from areal.utils import logging
-
             rw_logger = logging.getLogger("RW engine")
             rw_logger.warning("mb_spec.granularity must be 2 for reward modeling")
             self.config = deepcopy(self.config)
@@ -1353,7 +1358,7 @@ class MegatronRWEngine(MegatronEngine):
         return self.rw_engine.evaluate_rw(data)
 
     @classmethod
-    def as_controller(cls, config, scheduler):
+    def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
         from areal.engine.rw.rw_engine import RWController
 
         return RWController(train_engine=cls, config=config, scheduler=scheduler)
