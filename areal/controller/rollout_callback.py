@@ -1,3 +1,4 @@
+import atexit
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -25,7 +26,21 @@ def _get_executor() -> ThreadPoolExecutor:
                 _executor = ThreadPoolExecutor(
                     max_workers=4, thread_name_prefix="rollout_callback"
                 )
+                # Register cleanup on process exit
+                atexit.register(_shutdown_executor)
     return _executor
+
+
+def _shutdown_executor() -> None:
+    """Shutdown the shared thread pool executor if it exists.
+
+    Called via atexit at process exit, when no other threads should be
+    accessing the executor.
+    """
+    global _executor
+    if _executor is not None:
+        _executor.shutdown(wait=False)
+        _executor = None
 
 
 @dataclass
