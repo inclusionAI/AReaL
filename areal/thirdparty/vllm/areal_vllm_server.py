@@ -341,6 +341,7 @@ def finish_request(self, req_state: 'RequestState'):
     if req_state.lora_name is None:
         return
     lora_stats = self.lora_name_to_stats[req_state.lora_name]
+    # Simply added this if-condition
     if req_state.request_id in lora_stats.running_requests:
         lora_stats.running_requests.remove(req_state.request_id)
 
@@ -363,11 +364,16 @@ def hook():
         "areal_injected_update_weight_lora_xccl",
         areal_injected_update_weight_lora_xccl,
     )
-    setattr(
-        LoRARequestStates,
-        "finish_request",
-        finish_request,
-    )
+
+    ## Patch for LoRARequestStates management in vllm < v0.11.0
+    ## This may be removed with vllm >= 0.12.x
+    from areal.utils import pkg_version
+    if not pkg_version.is_version_higher("vllm", "0.11.1"):
+        setattr(
+            LoRARequestStates,
+            "finish_request",
+            finish_request,
+        )
 
 hook()
 
