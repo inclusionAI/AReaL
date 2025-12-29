@@ -104,6 +104,11 @@ LOGGER_PATTERNS = [
 
 DEFAULT_LOGGER_COLOR = "white"
 
+# Store file handlers that should persist across getLogger() calls
+_file_handlers: list[FileHandler] = []
+# Track all loggers created via getLogger() so we can add file handlers to them
+_created_loggers: dict[str, Logger] = {}
+
 
 class LoggerColoredFormatter(colorlog.ColoredFormatter):
     """Custom formatter that colors logs based on logger name for INFO/DEBUG levels.
@@ -274,7 +279,19 @@ def getLogger(
             "level": level,
         }
         logging.config.dictConfig(log_config)
-    return logging.getLogger(name)
+
+    logger = logging.getLogger(name)
+
+    # Track this logger and add file handlers if setup_file_logging() was called.
+    # We add handlers directly to each logger (not just root) because getLogger()
+    # resets Logger.root each time, orphaning previously created loggers from the
+    # new root logger that has the file handlers.
+    _created_loggers[name] = logger
+    for handler in _file_handlers:
+        if handler not in logger.handlers:
+            logger.addHandler(handler)
+
+    return logger
 
 
 def setup_file_logging(
@@ -284,9 +301,12 @@ def setup_file_logging(
 ) -> None:
     """Set up file logging for the controller process.
 
-    Adds FileHandlers to the root logger so all loggers write to:
+    Adds FileHandlers to all loggers so they write to:
     1. A dedicated log file (e.g., main.log)
     2. A merged log file (merged.log) with a source prefix for alignment
+
+    This function adds handlers to all loggers that were previously created via
+    getLogger(), and stores the handlers so future loggers also get them.
 
     Args:
         log_dir: Directory to write log files.
@@ -299,7 +319,7 @@ def setup_file_logging(
     file_handler = FileHandler(os.path.join(log_dir, filename), mode="a")
     file_handler.setLevel(level)
     file_handler.setFormatter(Formatter(LOG_FORMAT_PLAIN, datefmt=DATE_FORMAT))
-    logging.getLogger().addHandler(file_handler)
+    _file_handlers.append(file_handler)
 
     # Handler for merged.log (with fixed-width [main] prefix, no ANSI colors)
     prefix = "[main]".ljust(LOG_PREFIX_WIDTH)
@@ -308,7 +328,13 @@ def setup_file_logging(
     merged_handler.setFormatter(
         Formatter(prefix + LOG_FORMAT_PLAIN, datefmt=DATE_FORMAT)
     )
-    logging.getLogger().addHandler(merged_handler)
+    _file_handlers.append(merged_handler)
+
+    # Add file handlers to all previously created loggers
+    for logger in _created_loggers.values():
+        for handler in [file_handler, merged_handler]:
+            if handler not in logger.handlers:
+                logger.addHandler(handler)
 
 
 _LATEST_LOG_STEP = 0
