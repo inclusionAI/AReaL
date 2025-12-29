@@ -283,7 +283,6 @@ class RemoteInfEngine(InferenceEngine):
         self.addresses = []
         self.server_idx = 0
 
-        self.distributed_weight_update_initialized = False
         self._version = 0
 
         self.lock = Lock()
@@ -655,7 +654,6 @@ class RemoteInfEngine(InferenceEngine):
             A future object representing the asynchronous initialization operation
         """
         assert meta.type == "xccl"
-        assert not self.distributed_weight_update_initialized
 
         fut = self.executor.submit(
             _init_weights_update_group_remote,
@@ -671,7 +669,6 @@ class RemoteInfEngine(InferenceEngine):
                 f"Initialized {current_platform.communication_backend.upper()} group "
                 f"for distributed weight update for {meta.nccl_group_name}."
             )
-            self.distributed_weight_update_initialized = True
 
         fut.add_done_callback(callback)
         return fut

@@ -1096,7 +1096,7 @@ class InferenceEngineConfig:
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
     setup_timeout: float = field(
-        default=120.0,
+        default=300.0,
         metadata={
             "help": "Timeout in seconds of connecting to remote servers or launching local servers."
         },
