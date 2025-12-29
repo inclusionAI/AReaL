@@ -143,15 +143,6 @@ def _load_weight_with_bridge_worker(
             tp_size = mpu.get_tensor_model_parallel_world_size()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
-        # Get weight_block_size from quantization_config
-        weight_block_size = None
-        if quantization_config is not None:
-            weight_block_size = quantization_config.get("weight_block_size", None)
-            assert (
-                isinstance(weight_block_size, (list, tuple))
-                and len(weight_block_size) == 2
-            )
-
         # Check if any HF weight is FP8 (has _scale_inv suffix)
         # If fp8 mode is not enabled in megatron,
         # we need to dequantize FP8 weights before converting to mcore format
@@ -179,8 +170,6 @@ def _load_weight_with_bridge_worker(
                 hf_weights_safe_slice.append(dequantized_weight)
             else:
                 hf_weights_safe_slice.append(hf_slice)
-
-        # TODO: check fp type is matched between pytorch and te
 
         param_to_load = _weight_to_mcore_tp(
             hf_config=bridge.hf_config,
