@@ -4,7 +4,7 @@ trial_name: trial0
 seed: 1
 enable_offload: false
 total_train_epochs: 1
-tokenizer_path: ${model.path}
+tokenizer_path: ${actor.path}
 
 cluster:
   n_nodes: 1
@@ -19,7 +19,7 @@ allocation_mode: d8p1t1
 scheduler:
   type: null
 
-model:
+actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen3-1.7B
@@ -41,6 +41,8 @@ model:
     - task_type: worker
       port_count: 2
       gpu: 1
+      cpu: 4
+      mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 train_dataset:
@@ -90,9 +92,3 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
-
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768

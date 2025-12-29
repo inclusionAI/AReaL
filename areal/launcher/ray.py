@@ -16,7 +16,6 @@ import areal.utils.logging as logging
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
-    LauncherConfig,
     RecoverConfig,
     SGLangConfig,
     parse_cli_args,
@@ -27,9 +26,9 @@ from areal.platforms import current_platform, is_npu_available
 from areal.utils import name_resolve, names
 from areal.utils.exp_metadata import save_experiment_metadata
 from areal.utils.launcher import (
+    BASE_ENVIRONS,
     JobException,
     JobState,
-    get_env_vars,
     validate_config_for_distributed_launcher,
     wait_llm_server_addrs,
 )
@@ -341,11 +340,21 @@ def main():
 
 
 def ray_main(config, run_id: int = 0):
-    config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     is_recover_run = check_if_recover(config.recover, run_id)
     validate_config_for_distributed_launcher(config)
+
+    # Get scheduling specs from actor and rollout configs
+    # All experiment configs should have the `actor` field
+    actor_spec = config.actor.scheduling_spec[0]
+    actor_env_vars = actor_spec.env_vars
+    rollout_spec = None
+    if hasattr(config, "rollout"):
+        rollout_spec = config.rollout.scheduling_spec[0]
+    rollout_env_vars = {}
+    if rollout_spec is not None:
+        rollout_env_vars = rollout_spec.env_vars
 
     name_resolve.reconfigure(config.cluster.name_resolve)
     name_resolve.clear_subtree(
@@ -435,6 +444,10 @@ def ray_main(config, run_id: int = 0):
             return env_vars
 
         # launch a task to start all sglang servers in one node
+        # Get resource specs from rollout scheduling_spec
+        rollout_cpu = rollout_spec.cpu if rollout_spec else 4
+        rollout_mem_mb = (rollout_spec.mem * 1024) if rollout_spec else 32768
+
         launcher.submit_array(
             job_name="llm_server",
             file_path=sglang_entry_point,
@@ -443,13 +456,9 @@ def ray_main(config, run_id: int = 0):
             nodes=n_sglang_nodes,
             list_args=sglang_args_list,
             gpus_per_task=n_gpus_per_node,
-            cpus_per_task=config.launcher.inference_server_cpus_per_gpu
-            * n_gpus_per_node,
-            mem_per_task=config.launcher.inference_server_mem_per_gpu * n_gpus_per_node,
-            env_vars=get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            ),
+            cpus_per_task=rollout_cpu * n_gpus_per_node,
+            mem_per_task=rollout_mem_mb * n_gpus_per_node,
+            env_vars={**BASE_ENVIRONS, **rollout_env_vars},
             env_hook=(
                 partial(sglang_env_hook, n_sglang_nodes, node_group_size)
                 if cross_nodes
@@ -483,6 +492,10 @@ def ray_main(config, run_id: int = 0):
         vllm_entry_point = str(
             pathlib.Path(__file__).resolve().parent.joinpath("vllm_server.py")
         )
+        # Get resource specs from rollout scheduling_spec
+        rollout_cpu = rollout_spec.cpu if rollout_spec else 4
+        rollout_mem_mb = (rollout_spec.mem * 1024) if rollout_spec else 32768
+
         launcher.submit_array(
             job_name="llm_server",
             file_path=vllm_entry_point,
@@ -491,12 +504,9 @@ def ray_main(config, run_id: int = 0):
             nodes=n_vllm_nodes,
             list_args=vllm_args_list,
             gpus_per_task=vllm_tp_size,
-            cpus_per_task=config.launcher.inference_server_cpus_per_gpu * vllm_tp_size,
-            mem_per_task=config.launcher.inference_server_mem_per_gpu * vllm_tp_size,
-            env_vars=get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            ),
+            cpus_per_task=rollout_cpu * vllm_tp_size,
+            mem_per_task=rollout_mem_mb * vllm_tp_size,
+            env_vars={**BASE_ENVIRONS, **rollout_env_vars},
         )
         # Get vllm server addresses via name_resolve
         try:
@@ -564,6 +574,11 @@ def ray_main(config, run_id: int = 0):
             # Required by NCCL weight update group.
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
+
+        # Get resource specs from actor scheduling_spec
+        actor_cpu = actor_spec.cpu
+        actor_mem_mb = actor_spec.mem * 1024
+
         launcher.submit_array(
             job_name="trainer",
             file_path=trainer_entry_point,
@@ -572,17 +587,15 @@ def ray_main(config, run_id: int = 0):
             nodes=trainer_n_nodes,
             list_args=trainer_args_list,
             gpus_per_task=gpus_per_task,
-            cpus_per_task=config.launcher.trainer_cpus_per_gpu,
-            mem_per_task=config.launcher.trainer_mem_per_gpu,
-            env_vars=dict(
-                **get_env_vars(
-                    config.cluster.cluster_name,
-                    config.launcher.trainer_env_vars,
-                ),
+            cpus_per_task=actor_cpu,
+            mem_per_task=actor_mem_mb,
+            env_vars={
+                **BASE_ENVIRONS,
+                **actor_env_vars,
                 **_env_vars,
                 **tms_env_vars,
-                AREAL_SPMD_MODE=str(1),
-            ),
+                "AREAL_SPMD_MODE": "1",
+            },
             env_hook=partial(torch_env_hook, trainer_n_nodes * n_gpus_per_node),
         )
 

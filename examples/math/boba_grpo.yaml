@@ -24,6 +24,13 @@ rollout:
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 4
   enable_rollout_tracing: true
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 gconfig:
   n_samples: 16
@@ -71,6 +78,13 @@ actor:
     mean_level: batch
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 ref:
   experiment_name: ${experiment_name}
@@ -82,6 +96,7 @@ ref:
   mb_spec:
     max_tokens_per_mb: 16384
   optimizer: null
+  scheduling_spec: ${actor.scheduling_spec}
 
 sglang:
   model_path: ${actor.path}
@@ -148,12 +163,3 @@ perf_tracer:
   enabled: true
   session_tracer:
     enabled: true
-
-# Launcher
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768
-  inference_server_env_vars: 'VLLM_USE_V1=1,TASK_QUEUE_ENABLE=2,HCCL_EXEC_TIMEOUT=14400,HCCL_OP_EXPANSION_MODE=HOST,VLLM_ALLOW_LONG_MAX_MODEL_LEN=1,ACL_DEVICE_SYNC_TIMEOUT=14400,HCCL_EVENT_TIMEOUT=14500,HCCL_ASYNC_ERROR_HANDLING=0,ACL_STREAM_TIMEOUT=14500000,HCCL_CONNECT_TIMEOUT=7200'
-  trainer_env_vars: 'TASK_QUEUE_ENABLE=2,HCCL_EXEC_TIMEOUT=14400,HCCL_OP_EXPANSION_MODE=HOST,ACL_DEVICE_SYNC_TIMEOUT=14400,HCCL_EVENT_TIMEOUT=14500,HCCL_ASYNC_ERROR_HANDLING=0,ACL_STREAM_TIMEOUT=14500000,HCCL_CONNECT_TIMEOUT=7200,PYTORCH_NPU_ALLOC_CONF=expandable_segments:True'

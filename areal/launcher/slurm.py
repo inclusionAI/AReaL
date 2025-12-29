@@ -10,7 +10,6 @@ import areal.utils.logging as logging
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
-    LauncherConfig,
     RecoverConfig,
     SGLangConfig,
     parse_cli_args,
@@ -21,10 +20,10 @@ from areal.platforms import current_platform
 from areal.utils import name_resolve, names
 from areal.utils.exp_metadata import save_experiment_metadata
 from areal.utils.launcher import (
+    BASE_ENVIRONS,
     JobException,
     JobInfo,
     JobState,
-    get_env_vars,
     wait_llm_server_addrs,
 )
 from areal.utils.offload import get_tms_env_vars
@@ -403,7 +402,6 @@ def main():
 
 
 def slurm_main(config, run_id: int = 0):
-    config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     validate_config_for_slurm_launcher(config)
@@ -414,11 +412,16 @@ def slurm_main(config, run_id: int = 0):
         f"run_id={run_id}, is_recover_run={is_recover_run}"
     )
 
+    # Get scheduling specs from actor config
+    # All experiment configs should have the `actor` field.
+    actor_spec = config.actor.scheduling_spec[0]
+    actor_slurm = actor_spec.slurm
+
     launcher = SlurmLauncher(
         experiment_name=config.experiment_name,
         trial_name=config.trial_name,
         fileroot=config.cluster.fileroot,
-        container_type=config.launcher.slurm.container_type,
+        container_type=actor_slurm.container_type if actor_slurm else "apptainer",
     )
 
     name_resolve.reconfigure(config.cluster.name_resolve)
@@ -453,6 +456,14 @@ def slurm_main(config, run_id: int = 0):
             config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
             random_seed = config.vllm.seed
 
+        # Get rollout scheduling spec
+        rollout_spec = rollout_slurm = None
+        rollout_env_vars = {}
+        if hasattr(config, "rollout"):
+            rollout_spec = config.rollout.scheduling_spec[0]
+            rollout_slurm = rollout_spec.slurm
+            rollout_env_vars = rollout_spec.env_vars
+
         backend_spec = {
             "sglang": {
                 "module": "areal.launcher.sglang_server",
@@ -484,15 +495,12 @@ def slurm_main(config, run_id: int = 0):
             n_servers_per_node = max(n_backend_servers // n_backend_nodes, 1)
 
             cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
-            base_env_bars = get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            )
+            base_env_vars = {**BASE_ENVIRONS, **rollout_env_vars}
             if spec["set_device_env"]:
-                base_env_bars[current_platform.device_control_env_var] = ",".join(
+                base_env_vars[current_platform.device_control_env_var] = ",".join(
                     list(map(str, range(n_gpus_per_node)))
                 )
-            env_list = [copy.deepcopy(base_env_bars) for _ in range(n_backend_nodes)]
+            env_list = [copy.deepcopy(base_env_vars) for _ in range(n_backend_nodes)]
 
             base_seed = random_seed
             seed_arg = spec["seed_arg"]
@@ -527,18 +535,25 @@ def slurm_main(config, run_id: int = 0):
             )
         )
 
+        # Get resource specs from rollout scheduling_spec
+        rollout_cpu = rollout_spec.cpu if rollout_spec else 4
+        rollout_mem_mb = (rollout_spec.mem * 1024) if rollout_spec else 32768
+
         launcher.submit_array(
             job_name="llm_server",
             cmd=backend_cmds,
             count=n_backend_nodes,
             nodes=n_backend_nodes,
             n_gpus_per_node=n_gpus_per_node,
-            cpus_per_task=config.launcher.inference_server_cpus_per_gpu
-            * n_gpus_per_node,
-            mem_per_task=config.launcher.inference_server_mem_per_gpu * n_gpus_per_node,
-            srun_additional_args=config.launcher.slurm.srun_additional_args,
-            container_image=config.launcher.slurm.inference_server_image,
-            container_mounts=config.launcher.slurm.mount,
+            cpus_per_task=rollout_cpu * n_gpus_per_node,
+            mem_per_task=rollout_mem_mb * n_gpus_per_node,
+            srun_additional_args=rollout_slurm.srun_additional_args
+            if rollout_slurm
+            else "--unbuffered --mpi=pmi2 -K --chdir $PWD",
+            container_image=rollout_spec.image if rollout_spec else "",
+            container_mounts=rollout_slurm.mount
+            if rollout_slurm
+            else "/storage:/storage",
             env_vars=env_list,
         )
         # Get llm server addresses by name resolve
@@ -612,32 +627,36 @@ def slurm_main(config, run_id: int = 0):
             # Required by NCCL weight update group.
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
+
+        # Get resource specs from actor scheduling_spec
+        actor_cpu = actor_spec.cpu
+        actor_mem_mb = actor_spec.mem * 1024
+        actor_env_vars = actor_spec.env_vars
+
         launcher.submit_array(
             job_name="trainer",
             cmd=_build_trainer_cmds(
                 trainer_n_nodes,
                 config.cluster.n_gpus_per_node,
-                config.launcher.slurm.additional_bash_cmds,
+                actor_slurm.additional_bash_cmds if actor_slurm else None,
             ),
             count=trainer_n_nodes,
             nodes=trainer_n_nodes,
             n_gpus_per_node=gpus_per_node,
-            cpus_per_task=config.launcher.trainer_cpus_per_gpu
-            * config.cluster.n_gpus_per_node,
-            mem_per_task=config.launcher.trainer_mem_per_gpu
-            * config.cluster.n_gpus_per_node,
-            container_image=config.launcher.slurm.trainer_image,
-            srun_additional_args=config.launcher.slurm.srun_additional_args,
-            container_mounts=config.launcher.slurm.mount,
-            env_vars=dict(
-                **get_env_vars(
-                    config.cluster.cluster_name,
-                    config.launcher.trainer_env_vars,
-                ),
+            cpus_per_task=actor_cpu * config.cluster.n_gpus_per_node,
+            mem_per_task=actor_mem_mb * config.cluster.n_gpus_per_node,
+            container_image=actor_spec.image if actor_spec else "",
+            srun_additional_args=actor_slurm.srun_additional_args
+            if actor_slurm
+            else "--unbuffered --mpi=pmi2 -K --chdir $PWD",
+            container_mounts=actor_slurm.mount if actor_slurm else "/storage:/storage",
+            env_vars={
+                **BASE_ENVIRONS,
+                **actor_env_vars,
                 **_env_vars,
                 **tms_env_vars,
-                AREAL_SPMD_MODE=str(1),
-            ),
+                "AREAL_SPMD_MODE": "1",
+            },
         )
 
     try:

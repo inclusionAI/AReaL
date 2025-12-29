@@ -56,9 +56,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 ### System and Cluster Configurations
 
 - [Cluster Specification Configuration](section-cluster)
-- [Launcher Configuration](section-launcher)
 - [NameResolve Configuration](section-name-resolve)
-- [SlurmLauncher Configuration](section-slurm-launcher)
 
 ### Logging and Monitoring
 
@@ -79,6 +77,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 - [Scheduling Specification](section-scheduling)
 - [SchedulingStrategy](section-scheduling-strategy)
 - [SessionTracer Configuration](section-session-tracer)
+- [SlurmScheduling Configuration](section-slurm-scheduling)
 
 ______________________________________________________________________
 
@@ -109,7 +108,6 @@ Base configuration class for all experiment types with common settings.
 | `recover`            | [`RecoverConfig`](section-recover)                    | **Required** | -                                                                                                                                     |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)                     | **Required** | -                                                                                                                                     |
 | `vllm`               | [`vLLMConfig`](section-v-llm)                         | **Required** | -                                                                                                                                     |
-| `launcher`           | [`LauncherConfig`](section-launcher)                  | **Required** | -                                                                                                                                     |
 | `scheduler`          | [`SchedulerConfig`](section-scheduler)                | **Required** | -                                                                                                                                     |
 
 (section-grpo)=
@@ -139,7 +137,6 @@ A dummy place holder of GRPO config for backward compatibility.
 | `recover`            | [`RecoverConfig`](section-recover)                                | **Required** | -                                                                                                                                     |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)                                 | **Required** | -                                                                                                                                     |
 | `vllm`               | [`vLLMConfig`](section-v-llm)                                     | **Required** | -                                                                                                                                     |
-| `launcher`           | [`LauncherConfig`](section-launcher)                              | **Required** | -                                                                                                                                     |
 | `scheduler`          | [`SchedulerConfig`](section-scheduler)                            | **Required** | -                                                                                                                                     |
 | `gconfig`            | [`GenerationHyperparameters`](section-generation-hyperparameters) | **Required** | -                                                                                                                                     |
 | `rollout`            | [`InferenceEngineConfig`](section-inference-engine)               | **Required** | -                                                                                                                                     |
@@ -174,7 +171,6 @@ Configuration for Proximal Policy Optimization (PPO) reinforcement learning expe
 | `recover`            | [`RecoverConfig`](section-recover)                                | **Required** | -                                                                                                                                     |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)                                 | **Required** | -                                                                                                                                     |
 | `vllm`               | [`vLLMConfig`](section-v-llm)                                     | **Required** | -                                                                                                                                     |
-| `launcher`           | [`LauncherConfig`](section-launcher)                              | **Required** | -                                                                                                                                     |
 | `scheduler`          | [`SchedulerConfig`](section-scheduler)                            | **Required** | -                                                                                                                                     |
 | `gconfig`            | [`GenerationHyperparameters`](section-generation-hyperparameters) | **Required** | -                                                                                                                                     |
 | `rollout`            | [`InferenceEngineConfig`](section-inference-engine)               | **Required** | -                                                                                                                                     |
@@ -209,9 +205,8 @@ Configuration for Reward Model (RW) training experiments.
 | `recover`            | [`RecoverConfig`](section-recover)                    | **Required** | -                                                                                                                                     |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)                     | **Required** | -                                                                                                                                     |
 | `vllm`               | [`vLLMConfig`](section-v-llm)                         | **Required** | -                                                                                                                                     |
-| `launcher`           | [`LauncherConfig`](section-launcher)                  | **Required** | -                                                                                                                                     |
 | `scheduler`          | [`SchedulerConfig`](section-scheduler)                | **Required** | -                                                                                                                                     |
-| `model`              | [`TrainEngineConfig`](section-train-engine)           | **Required** | -                                                                                                                                     |
+| `actor`              | [`TrainEngineConfig`](section-train-engine)           | **Required** | -                                                                                                                                     |
 
 (section-sft)=
 
@@ -240,9 +235,8 @@ Configuration for Supervised Fine-Tuning (SFT) experiments.
 | `recover`            | [`RecoverConfig`](section-recover)                    | **Required** | -                                                                                                                                     |
 | `sglang`             | [`SGLangConfig`](section-sg-lang)                     | **Required** | -                                                                                                                                     |
 | `vllm`               | [`vLLMConfig`](section-v-llm)                         | **Required** | -                                                                                                                                     |
-| `launcher`           | [`LauncherConfig`](section-launcher)                  | **Required** | -                                                                                                                                     |
 | `scheduler`          | [`SchedulerConfig`](section-scheduler)                | **Required** | -                                                                                                                                     |
-| `model`              | [`TrainEngineConfig`](section-train-engine)           | **Required** | -                                                                                                                                     |
+| `actor`              | [`TrainEngineConfig`](section-train-engine)           | **Required** | -                                                                                                                                     |
 
 (section-fsdp-engine)=
 
@@ -649,22 +643,6 @@ Configuration for cluster specification and distributed computing setup.
 | `n_nodes`         | integer                                     | `32`            | The size of the cluster. Used to decide slurm hostname suffix.   |
 | `n_gpus_per_node` | integer                                     | `8`             | Number of GPUs per node (physical).                              |
 
-(section-launcher)=
-
-## Launcher Configuration
-
-Configuration for launching the LLM server and trainer processes.
-
-| Parameter                       | Type                                            | Default      | Description                                                                                      |
-| ------------------------------- | ----------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------ |
-| `inference_server_cpus_per_gpu` | integer                                         | `4`          | Number of CPUs allocated per GPU for inference server.                                           |
-| `inference_server_mem_per_gpu`  | integer                                         | `32768`      | Memory allocated per GPU for inference server in MB.                                             |
-| `trainer_cpus_per_gpu`          | integer                                         | `4`          | Number of CPUs allocated per GPU for training.                                                   |
-| `trainer_mem_per_gpu`           | integer                                         | `32768`      | Memory allocated per GPU for training in MB.                                                     |
-| `inference_server_env_vars`     | string                                          | `""`         | Environment variables for inference server, separated by commas. Example: 'ENV1=val1,ENV2=val2'. |
-| `trainer_env_vars`              | string                                          | `""`         | Environment variables for training, separated by commas. Example: 'ENV1=val1,ENV2=val2'.         |
-| `slurm`                         | [`SlurmLauncherConfig`](section-slurm-launcher) | **Required** | Slurm launcher configuration.                                                                    |
-
 (section-name-resolve)=
 
 ## NameResolve Configuration
@@ -677,21 +655,6 @@ Configuration for distributed name resolution and service discovery.
 | `nfs_record_root` | string | `"/tmp/areal/name_resolve"` | Record root for NFS name resolving. Should be available on all nodes.                   |
 | `etcd3_addr`      | string | `"localhost:2379"`          | Address of the ETCD3 server.                                                            |
 | `ray_actor_name`  | string | `"ray_kv_store"`            | Name of the distributed Ray KV store.                                                   |
-
-(section-slurm-launcher)=
-
-## SlurmLauncher Configuration
-
-Configuration for launching the training jobs with Slurm.
-
-| Parameter                | Type                   | Default                        | Description                                                                          |
-| ------------------------ | ---------------------- | ------------------------------ | ------------------------------------------------------------------------------------ |
-| `srun_additional_args`   | string                 | `"--mpi=pmi2 -K --chdir $PWD"` | Additional arguments to pass to the srun command.                                    |
-| `additional_bash_cmds`   | list of string \| None | `None`                         | Additional bash commands to setup the container before running the torchrun command. |
-| `container_type`         | string                 | `"apptainer"`                  | Type of containers used in slurm **Choices:** `apptainer`, `none`                    |
-| `mount`                  | string                 | `"/storage:/storage"`          | Mount path for slurm.                                                                |
-| `trainer_image`          | string \| None         | `None`                         | slurm image for trainers.                                                            |
-| `inference_server_image` | string \| None         | `None`                         | slurm image for LLM inference.                                                       |
 
 (section-evaluator)=
 
@@ -889,22 +852,23 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 
 Configuration class: SchedulingSpec
 
-| Parameter    | Type           | Default      | Description                                                              |
-| ------------ | -------------- | ------------ | ------------------------------------------------------------------------ |
-| `cpu`        | integer        | `2`          | Number of CPU cores required                                             |
-| `gpu`        | integer        | `0`          | Number of GPU units required                                             |
-| `mem`        | integer        | `1`          | Amount of memory (GB) required                                           |
-| `port_count` | integer        | `2`          | Number of ports to expose                                                |
-| `image`      | string         | `""`         | Docker/Singularity container image to use                                |
-| `task_type`  | string         | `"worker"`   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine`         |
-| `env_vars`   | `dict`         | **Required** | Environment variables for the container                                  |
-| `cmd`        | string \| None | `None`       | Command to execute inside the container. Defaults to AReaL's RPC server. |
-| `nodelist`   | string \| None | `None`       | -                                                                        |
-| `exclude`    | string \| None | `None`       | -                                                                        |
-| `partition`  | string \| None | `None`       | -                                                                        |
-| `time_limit` | string \| None | `None`       | -                                                                        |
-| `begin`      | string \| None | `None`       | -                                                                        |
-| `deadline`   | string \| None | `None`       | -                                                                        |
+| Parameter    | Type                                                        | Default                                      | Description                                                              |
+| ------------ | ----------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------ |
+| `cpu`        | integer                                                     | `4`                                          | Number of CPU cores required                                             |
+| `gpu`        | integer                                                     | `0`                                          | Number of GPU units required                                             |
+| `mem`        | integer                                                     | `32`                                         | Amount of memory (GB) required                                           |
+| `port_count` | integer                                                     | `2`                                          | Number of ports to expose                                                |
+| `image`      | string                                                      | `"/storage/openpsi/images/areal-latest.sif"` | Docker/Singularity container image to use                                |
+| `task_type`  | string                                                      | `"worker"`                                   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine`         |
+| `env_vars`   | `dict`                                                      | **Required**                                 | Environment variables for the container                                  |
+| `cmd`        | string \| None                                              | `None`                                       | Command to execute inside the container. Defaults to AReaL's RPC server. |
+| `nodelist`   | string \| None                                              | `None`                                       | -                                                                        |
+| `exclude`    | string \| None                                              | `None`                                       | -                                                                        |
+| `partition`  | string \| None                                              | `None`                                       | -                                                                        |
+| `time_limit` | string \| None                                              | `None`                                       | -                                                                        |
+| `begin`      | string \| None                                              | `None`                                       | -                                                                        |
+| `deadline`   | string \| None                                              | `None`                                       | -                                                                        |
+| `slurm`      | [`SlurmSchedulingConfig`](section-slurm-scheduling) \| None | `None`                                       | Slurm-specific scheduling configuration.                                 |
 
 (section-scheduling-strategy)=
 
@@ -927,3 +891,16 @@ Configuration for per-session lifecycle tracing.
 | ----------------- | ------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `enabled`         | boolean | `False` | Enable per-session lifecycle tracing alongside perf events. When true, session metadata is captured to sessions.jsonl. |
 | `flush_threshold` | integer | `256`   | Flush session trace records once this many entries are ready. Values \<= 0 fall back to 1.                             |
+
+(section-slurm-scheduling)=
+
+## SlurmScheduling Configuration
+
+Slurm-specific scheduling configuration.
+
+| Parameter              | Type                   | Default                                     | Description                                                                          |
+| ---------------------- | ---------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `srun_additional_args` | string                 | `"--unbuffered --mpi=pmi2 -K --chdir $PWD"` | Additional arguments to pass to the srun command.                                    |
+| `additional_bash_cmds` | list of string \| None | `None`                                      | Additional bash commands to setup the container before running the torchrun command. |
+| `container_type`       | string                 | `"apptainer"`                               | Type of containers used in slurm **Choices:** `apptainer`, `none`                    |
+| `mount`                | string                 | `"/storage:/storage"`                       | Mount path for slurm.                                                                |

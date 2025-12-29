@@ -458,13 +458,41 @@ class SchedulingStrategy:
 
 
 @dataclass
+class SlurmSchedulingConfig:
+    """Slurm-specific scheduling configuration."""
+
+    srun_additional_args: str = field(
+        default="--unbuffered --mpi=pmi2 -K --chdir $PWD",
+        metadata={"help": "Additional arguments to pass to the srun command."},
+    )
+    additional_bash_cmds: list[str] | None = field(
+        default=None,
+        metadata={
+            "help": "Additional bash commands to setup the container before running "
+            "the torchrun command."
+        },
+    )
+    container_type: str = field(
+        default="apptainer",
+        metadata={
+            "help": "Type of containers used in slurm",
+            "choices": ["apptainer", "none"],
+        },
+    )
+    mount: str = field(
+        default="/storage:/storage", metadata={"help": "Mount path for slurm."}
+    )
+
+
+@dataclass
 class SchedulingSpec:
-    cpu: int = field(default=2, metadata={"help": "Number of CPU cores required"})
+    cpu: int = field(default=4, metadata={"help": "Number of CPU cores required"})
     gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
-    mem: int = field(default=1, metadata={"help": "Amount of memory (GB) required"})
+    mem: int = field(default=32, metadata={"help": "Amount of memory (GB) required"})
     port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
     image: str = field(
-        default="", metadata={"help": "Docker/Singularity container image to use"}
+        default="/storage/openpsi/images/areal-latest.sif",
+        metadata={"help": "Docker/Singularity container image to use"},
     )
     task_type: str = field(
         default="worker",
@@ -490,6 +518,10 @@ class SchedulingSpec:
     time_limit: str | None = None  # see  "--time" option for format
     begin: str | None = None  # see "--begin" option for format
     deadline: str | None = None  # see "--deadline" option for format
+    slurm: SlurmSchedulingConfig | None = field(
+        default=None,
+        metadata={"help": "Slurm-specific scheduling configuration."},
+    )
 
 
 @dataclass
@@ -1453,79 +1485,6 @@ class ValidDatasetConfig(_DatasetConfig):
 
 
 @dataclass
-class SlurmLauncherConfig:
-    """Configuration for launching the training jobs with Slurm."""
-
-    srun_additional_args: str = field(
-        default="--mpi=pmi2 -K --chdir $PWD",
-        metadata={"help": "Additional arguments to pass to the srun command."},
-    )
-    additional_bash_cmds: list[str] | None = field(
-        default=None,
-        metadata={
-            "help": "Additional bash commands to setup the container before running "
-            "the torchrun command."
-        },
-    )
-    container_type: str = field(
-        default="apptainer",
-        metadata={
-            "help": "Type of containers used in slurm",
-            "choices": ["apptainer", "none"],
-        },
-    )
-    mount: str = field(
-        default="/storage:/storage", metadata={"help": "Mount path for slurm."}
-    )
-    trainer_image: str | None = field(
-        default=None, metadata={"help": "slurm image for trainers."}
-    )
-    inference_server_image: str | None = field(
-        default=None, metadata={"help": "slurm image for LLM inference."}
-    )
-
-
-@dataclass
-class LauncherConfig:
-    """Configuration for launching the LLM server and trainer processes."""
-
-    inference_server_cpus_per_gpu: int = field(
-        default=4,
-        metadata={"help": "Number of CPUs allocated per GPU for inference server."},
-    )
-    inference_server_mem_per_gpu: int = field(
-        default=32 * 1024,
-        metadata={"help": "Memory allocated per GPU for inference server in MB."},
-    )
-    trainer_cpus_per_gpu: int = field(
-        default=4,
-        metadata={"help": "Number of CPUs allocated per GPU for training."},
-    )
-    trainer_mem_per_gpu: int = field(
-        default=32 * 1024,
-        metadata={"help": "Memory allocated per GPU for training in MB."},
-    )
-    inference_server_env_vars: str = field(
-        default="",
-        metadata={
-            "help": "Environment variables for inference server, separated by commas. "
-            "Example: 'ENV1=val1,ENV2=val2'."
-        },
-    )
-    trainer_env_vars: str = field(
-        default="",
-        metadata={
-            "help": "Environment variables for training, separated by commas. "
-            "Example: 'ENV1=val1,ENV2=val2'."
-        },
-    )
-    slurm: SlurmLauncherConfig = field(
-        default_factory=SlurmLauncherConfig,
-        metadata={"help": "Slurm launcher configuration."},
-    )
-
-
-@dataclass
 class BaseExperimentConfig:
     """Base configuration class for all experiment types with common settings."""
 
@@ -1592,7 +1551,6 @@ class BaseExperimentConfig:
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     vllm: vLLMConfig = field(default_factory=vLLMConfig)
-    launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
@@ -1601,14 +1559,14 @@ class BaseExperimentConfig:
 class SFTConfig(BaseExperimentConfig):
     """Configuration for Supervised Fine-Tuning (SFT) experiments."""
 
-    model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+    actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
 @dataclass
 class RWConfig(BaseExperimentConfig):
     """Configuration for Reward Model (RW) training experiments."""
 
-    model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+    actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
 @dataclass

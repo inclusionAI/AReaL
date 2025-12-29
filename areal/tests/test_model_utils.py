@@ -81,8 +81,8 @@ def create_sft_config(
     config.trial_name = trial_name
     config.allocation_mode = allocation_mode
     config.cluster = _create_base_cluster_config(fileroot)
-    config.model = TrainEngineConfig()
-    config.model.weight_update_mode = weight_update_mode
+    config.actor = TrainEngineConfig()
+    config.actor.weight_update_mode = weight_update_mode
     return config
 
 
@@ -99,8 +99,8 @@ def create_rw_config(
     config.trial_name = trial_name
     config.allocation_mode = allocation_mode
     config.cluster = _create_base_cluster_config(fileroot)
-    config.model = TrainEngineConfig()
-    config.model.weight_update_mode = weight_update_mode
+    config.actor = TrainEngineConfig()
+    config.actor.weight_update_mode = weight_update_mode
     return config
 
 

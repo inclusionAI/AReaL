@@ -3,7 +3,7 @@ trial_name: trial0
 
 seed: 1
 total_train_epochs: 1
-tokenizer_path: ${model.path}
+tokenizer_path: ${actor.path}
 
 cluster:
   n_nodes: 1
@@ -18,7 +18,7 @@ allocation_mode: d8p1t1
 scheduler:
   type: null
 
-model:
+actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen3-1.7B
@@ -40,6 +40,8 @@ model:
     - task_type: worker
       port_count: 2
       gpu: 1
+      cpu: 4
+      mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 train_dataset:

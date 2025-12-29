@@ -8,7 +8,7 @@ allocation_mode: megatron:d1
 seed: 1
 total_train_epochs: 1
 total_train_steps: 16
-tokenizer_path: ${model.path}
+tokenizer_path: ${actor.path}
 train_dataset:
   type: sft
   path: openai/gsm8k
@@ -29,9 +29,8 @@ recover:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-launcher: {}
 
-model:
+actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen3-0.6B
@@ -44,3 +43,10 @@ model:
     eps: 1e-5
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server

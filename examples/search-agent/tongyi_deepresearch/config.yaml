@@ -23,6 +23,16 @@ rollout:
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 4
   enable_rollout_tracing: true
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      image: /storage/images/areal-25.08-v0.3.3-v3.sif
+      slurm:
+        mount: /storage:/storage
 
 gconfig:
   # `n_sample` is not the actual group_size.
@@ -73,6 +83,13 @@ actor:
     recompute_num_layers: 1
     distribute_saved_activations: null
     recompute_modules: null
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 ref:
   experiment_name: ${experiment_name}
@@ -83,6 +100,7 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
+  scheduling_spec: ${actor.scheduling_spec}
 
 # SGLang
 sglang:
@@ -143,18 +161,6 @@ stats_logger:
   wandb:
     mode: disabled
 
-# Launcher
-launcher:
-  inference_server_cpus_per_gpu: 8
-  inference_server_mem_per_gpu: 102400
-  trainer_cpus_per_gpu: 8
-  trainer_mem_per_gpu: 102400
-  slurm:
-    mount: /storage:/storage
-    trainer_image:  /storage/images/areal-25.08-v0.3.3-v3.sif
-    inference_server_image:  /storage/images/areal-25.08-v0.3.3-v3.sif
-
-  trainer_env_vars: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 judge_engine:
   experiment_name: llm-judge

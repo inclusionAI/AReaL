@@ -28,6 +28,7 @@ rollout:
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
   request_timeout: 3600
+  scheduling_spec: ${actor.scheduling_spec}
 
 gconfig:
   n_samples: 1
@@ -71,6 +72,13 @@ actor:
     mean_level: batch
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 ref:
   experiment_name: ${experiment_name}
@@ -82,6 +90,7 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
+  scheduling_spec: ${actor.scheduling_spec}
 
 # SGLang
 sglang:
@@ -150,9 +159,3 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
-
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768

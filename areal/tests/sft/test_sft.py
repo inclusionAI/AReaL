@@ -21,12 +21,12 @@ def test_sft(tmp_path: str, backend: str) -> None:
     config, _ = load_expr_config(["--config", config_path], SFTConfig)
 
     # Use get_model_path to check local or download from HuggingFace
-    local_model_path = config.model.path.replace("/", "__")
+    local_model_path = config.actor.path.replace("/", "__")
     model_path = get_model_path(
         os.path.join("/storage/openpsi/models", local_model_path),
-        config.model.path,
+        config.actor.path,
     )
-    config.model.path = model_path
+    config.actor.path = model_path
     config.tokenizer_path = model_path
 
     # Use get_dataset_path to check local or download from HuggingFace
