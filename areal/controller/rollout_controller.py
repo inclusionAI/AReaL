@@ -95,6 +95,7 @@ class RolloutController:
         self._callback_port: int | None = None
         self._callback_host: str | None = None
         self._callback_loop: asyncio.AbstractEventLoop | None = None
+        self._callback_loop_ready = threading.Event()
 
         # Task completion futures
         self._pending_futures: dict[int, asyncio.Future] = {}
@@ -326,6 +327,8 @@ class RolloutController:
             # Create and set event loop for this thread
             self._callback_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._callback_loop)
+            # Signal that the loop is ready
+            self._callback_loop_ready.set()
             logger.info(
                 f"Callback server started on {self._callback_host}:{self._callback_port}"
             )
@@ -335,9 +338,8 @@ class RolloutController:
             target=serve_forever, daemon=True
         )
         self._callback_server_thread.start()
-        # Wait briefly for loop to be created
-        while self._callback_loop is None:
-            threading.Event().wait(0.01)
+        # Wait for loop to be created
+        self._callback_loop_ready.wait()
 
     def _stop_callback_server(self):
         """Stop the callback server if running."""
@@ -352,6 +354,7 @@ class RolloutController:
             self._callback_port = None
             self._callback_host = None
             self._callback_loop = None
+            self._callback_loop_ready.clear()
 
     @property
     def callback_addr(self) -> str:
