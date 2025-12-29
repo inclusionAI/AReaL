@@ -1,5 +1,6 @@
 import logging.config
 import os
+import threading
 from logging import WARNING, FileHandler, Logger, Manager, RootLogger
 from typing import Literal
 
@@ -108,6 +109,8 @@ DEFAULT_LOGGER_COLOR = "white"
 _file_handlers: list[FileHandler] = []
 # Track all loggers created via getLogger() so we can add file handlers to them
 _created_loggers: dict[str, Logger] = {}
+# Lock for thread-safe access to _file_handlers and _created_loggers
+_loggers_lock = threading.Lock()
 
 
 class StreamingFileHandler(FileHandler):
@@ -294,10 +297,11 @@ def getLogger(
     # We add handlers directly to each logger (not just root) because getLogger()
     # resets Logger.root each time, orphaning previously created loggers from the
     # new root logger that has the file handlers.
-    _created_loggers[name] = logger
-    for handler in _file_handlers:
-        if handler not in logger.handlers:
-            logger.addHandler(handler)
+    with _loggers_lock:
+        _created_loggers[name] = logger
+        for handler in _file_handlers:
+            if handler not in logger.handlers:
+                logger.addHandler(handler)
 
     return logger
 
@@ -321,6 +325,10 @@ def setup_file_logging(
         filename: Log file name (default: main.log).
         level: Logging level.
     """
+    # Ensure idempotency: only set up file logging once
+    if _file_handlers:
+        return
+
     os.makedirs(log_dir, exist_ok=True)
 
     # Handler for dedicated log file (with ANSI colors, same as stdout)
@@ -363,10 +371,11 @@ def setup_file_logging(
     _file_handlers.append(merged_handler)
 
     # Add file handlers to all previously created loggers
-    for logger in _created_loggers.values():
-        for handler in [file_handler, merged_handler]:
-            if handler not in logger.handlers:
-                logger.addHandler(handler)
+    with _loggers_lock:
+        for logger in _created_loggers.values():
+            for handler in [file_handler, merged_handler]:
+                if handler not in logger.handlers:
+                    logger.addHandler(handler)
 
 
 _LATEST_LOG_STEP = 0
