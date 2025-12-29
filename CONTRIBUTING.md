@@ -186,9 +186,9 @@ logger = logging.getLogger("train_controller")  # Snake case
 
 | Color           | Category                                    | Examples                                 |
 | --------------- | ------------------------------------------- | ---------------------------------------- |
-| white           | Infrastructure (Schedulers, Launchers, RPC) | `LocalScheduler`, `SGLangWrapper`        |
+| blue            | Infrastructure (Schedulers, Launchers)      | `LocalScheduler`, `RayLauncher`          |
+| white           | Orchestration (Controllers, RPC, Inference) | `TrainController`, `SGLangWrapper`       |
 | light_purple    | RL-specific (Workflows, Rewards, OpenAI)    | `RLVRWorkflow`, `GSM8KReward`            |
-| blue            | Orchestration (Controllers)                 | `TrainController`, `RolloutController`   |
 | light_green     | Data/Metrics (Stats, Dataset, Trainers)     | `StatsLogger`, `Dataset`, `RLTrainer`    |
 | light_cyan/cyan | Compute backends (Engines, Platforms)       | `FSDPEngine`, `CUDAPlatform`, `PPOActor` |
 | yellow/red      | Warning/Error levels (always override)      | Any logger at WARNING+ level             |
