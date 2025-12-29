@@ -5,7 +5,6 @@ from areal.utils import logging
 from areal.utils.launcher import (
     JobInfo,
     JobState,
-    validate_config_for_distributed_launcher,
 )
 
 logger = logging.getLogger("Slurm Utils")
@@ -228,5 +227,3 @@ def get_slurm_host_ip(node: str, srun_addtional_args: str):
         return subprocess.check_output(cmd.split(" ")).decode("utf-8").strip()
     except subprocess.CalledProcessError:
         logger.warning(f"Get slurm host IP for node {node} failed.")
-
-

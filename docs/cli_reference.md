@@ -862,12 +862,6 @@ Configuration class: SchedulingSpec
 | `task_type`  | string                                                      | `"worker"`                                   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine`         |
 | `env_vars`   | `dict`                                                      | **Required**                                 | Environment variables for the container                                  |
 | `cmd`        | string \| None                                              | `None`                                       | Command to execute inside the container. Defaults to AReaL's RPC server. |
-| `nodelist`   | string \| None                                              | `None`                                       | -                                                                        |
-| `exclude`    | string \| None                                              | `None`                                       | -                                                                        |
-| `partition`  | string \| None                                              | `None`                                       | -                                                                        |
-| `time_limit` | string \| None                                              | `None`                                       | -                                                                        |
-| `begin`      | string \| None                                              | `None`                                       | -                                                                        |
-| `deadline`   | string \| None                                              | `None`                                       | -                                                                        |
 | `slurm`      | [`SlurmSchedulingConfig`](section-slurm-scheduling) \| None | `None`                                       | Slurm-specific scheduling configuration.                                 |
 
 (section-scheduling-strategy)=
@@ -904,3 +898,9 @@ Slurm-specific scheduling configuration.
 | `additional_bash_cmds` | list of string \| None | `None`                                      | Additional bash commands to setup the container before running the torchrun command. |
 | `container_type`       | string                 | `"apptainer"`                               | Type of containers used in slurm **Choices:** `apptainer`, `none`                    |
 | `mount`                | string                 | `"/storage:/storage"`                       | Mount path for slurm.                                                                |
+| `nodelist`             | string \| None         | `None`                                      | -                                                                                    |
+| `exclude`              | string \| None         | `None`                                      | -                                                                                    |
+| `partition`            | string \| None         | `None`                                      | -                                                                                    |
+| `time_limit`           | string \| None         | `None`                                      | -                                                                                    |
+| `begin`                | string \| None         | `None`                                      | -                                                                                    |
+| `deadline`             | string \| None         | `None`                                      | -                                                                                    |
