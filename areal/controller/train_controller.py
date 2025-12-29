@@ -203,7 +203,6 @@ class TrainController:
                 worker_id=worker.id,
                 method="create_process_group",
                 parallel_strategy=self.parallel_strategy,
-                should_broadcast=False,
             )
             for worker in self.workers
         ]
@@ -214,7 +213,6 @@ class TrainController:
                 worker_id=worker.id,
                 method="initialize",
                 ft_spec=ft_spec,
-                should_broadcast=False,
                 **kwargs,
             )
             for worker in self.workers

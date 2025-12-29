@@ -139,6 +139,18 @@ class TrainEngine(abc.ABC):
     def destroy(self):
         """Destroy the engine and release GPU memory of models."""
 
+    @property
+    @abc.abstractmethod
+    def initialized(self) -> bool:
+        """Check if the engine has been initialized.
+
+        Returns
+        -------
+        bool
+            True if initialize() has been called successfully, False otherwise
+        """
+        raise NotImplementedError()
+
     @abc.abstractmethod
     def train(self, mode: bool = True):
         """Set the engine to training mode.
@@ -525,6 +537,18 @@ class InferenceEngine(abc.ABC):
 
     def destroy(self):
         """Destroy the engine and release GPU memory for the local inference engine."""
+        raise NotImplementedError()
+
+    @property
+    @abc.abstractmethod
+    def initialized(self) -> bool:
+        """Check if the engine has been initialized.
+
+        Returns
+        -------
+        bool
+            True if initialize() has been called successfully, False otherwise
+        """
         raise NotImplementedError()
 
     @property
