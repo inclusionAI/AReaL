@@ -71,7 +71,7 @@ conda activate areal
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
 pip install uv
-uv pip install -e .[all]
+uv pip install -e ".[all]"
 ```
 
 **Note**: Directly install with `uv` and `pip` will install `flash-attn==2.8.3` since it

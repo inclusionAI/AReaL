@@ -15,7 +15,6 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.api.scheduler_api import Scheduler
-from areal.engine.sft.lm_engine import FSDPLMEngine, LMController, MegatronLMEngine
 from areal.platforms import current_platform
 from areal.scheduler import LocalScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
@@ -268,12 +267,14 @@ class SFTTrainer:
             collate_fn=pad_sequences_to_tensors,
         )
 
-    def _create_actor(
-        self, actor_config: TrainEngineConfig
-    ) -> FSDPLMEngine | MegatronLMEngine | LMController:
+    def _create_actor(self, actor_config: TrainEngineConfig):
         if self.allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPLMEngine
+
             actor_cls = FSDPLMEngine
         elif self.allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronLMEngine
+
             actor_cls = MegatronLMEngine
         else:
             raise ValueError(
