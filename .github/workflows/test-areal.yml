@@ -14,7 +14,7 @@ env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   RUNNER_LABELS: gcp-a2-highgpu-2g
   RUNNER_VERSION: '2.317.0'
-  GCP_OS_IMAGE: areal-cicd-test-202510270
+  GCP_OS_IMAGE: areal-cicd-test-202512290
   CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:${{ (github.head_ref == 'build-docker-image' || github.ref_name == 'build-docker-image') && 'dev' || 'v0.5.1' }}
 
 jobs:
