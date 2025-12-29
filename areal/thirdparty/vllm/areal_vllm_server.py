@@ -368,7 +368,7 @@ def hook():
     ## Patch for LoRARequestStates management in vllm < v0.11.0
     ## This may be removed with vllm >= 0.12.x
     from areal.utils import pkg_version
-    if not pkg_version.is_version_higher("vllm", "0.11.1"):
+    if not pkg_version.is_version_greater_or_equal("vllm", "0.12.0"):
         setattr(
             LoRARequestStates,
             "finish_request",
