@@ -123,7 +123,8 @@ class RolloutController:
         sch_spec = SchedulingSpec(**asdict(self.config.scheduling_spec[0]))
         sch_spec.cpu *= alloc_mode.gen_instance_size
         sch_spec.mem *= alloc_mode.gen_instance_size
-        sch_spec.gpu *= alloc_mode.gen_instance_size
+        if sch_spec.gpu > 0:
+            sch_spec.gpu = alloc_mode.gen_instance_size
         job = Job(
             replicas=alloc_mode.gen.dp_size,
             tasks=[sch_spec for _ in range(alloc_mode.gen.dp_size)],
