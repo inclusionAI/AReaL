@@ -190,7 +190,6 @@ def _load_weight_with_bridge_worker(
             tp_rank=tp_rank,
             tp_size=tp_size,
             dtype=bridge.dtype,
-            weight_block_size=weight_block_size,
         )
 
         # Load the parameter
