@@ -452,12 +452,15 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         version: int = -1,
         sample_idx: int = -1,
         qid: str = "unknown",
-    ) -> tuple[list[int], list[float], list[int], str]:
+    ) -> tuple[list[int], list[float], list[int], str, int, int]:
         """
         Process a parallel stage by generating paths and conclusion.
         
         Returns:
-            Tuple of (all_tokens, all_logprobs, all_versions, full_completion_str)
+            Tuple of (all_tokens, all_logprobs, all_versions, full_completion_str, 
+                      total_path_tokens, longest_path_tokens)
+            - total_path_tokens: Total number of tokens enclosed in <Path>...</Path> tags
+            - longest_path_tokens: The longest path's token count in this stage
         """
         # logger.info("Entering parallel stage")
         
@@ -480,7 +483,8 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             all_logprobs = goal_resp.output_logprobs + [0.0] * (len(goal_tokens) - len(goal_resp.output_logprobs))
             all_versions = goal_resp.output_versions + [-1] * (len(goal_tokens) - len(goal_resp.output_versions))
             full_completion_str = self.tokenizer.decode(all_tokens)
-            return all_tokens, all_logprobs, all_versions, full_completion_str
+            # No paths generated, so path tokens = 0, longest path = 0
+            return all_tokens, all_logprobs, all_versions, full_completion_str, 0, 0
         
         # Extract outline prefixes from goal
         outline_prefixes = extract_outline_prefixes(goal_str)
@@ -500,8 +504,12 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             path_resps = await asyncio.gather(*path_tasks)
         
         # Build complete context with all paths
+        # Track path token counts for metrics
         all_path_tokens = []
-        valid_path_data = []  # Track (prefix, path_resp) for valid paths
+        valid_path_data = []  # Track (prefix, path_resp, path_total_tokens) for valid paths
+        path_token_lengths = []  # Track individual path lengths for finding the longest
+        total_path_tokens_in_stage = 0  # Total tokens in all paths (including markers)
+        
         for prefix, path_resp in zip(outline_prefixes, path_resps):
             if path_resp is None:
                 # Skip this path if generation was not possible (exceeded MAX_POS_ENCODING)
@@ -518,8 +526,16 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
                 path_close_ids = self.tokenizer.encode("</Path>", add_special_tokens=False)
                 path_content_ids = path_content_ids + path_close_ids
             
+            # Calculate total tokens for this path (including markers)
+            this_path_total_tokens = len(path_open_ids) + len(path_content_ids)
+            path_token_lengths.append(this_path_total_tokens)
+            total_path_tokens_in_stage += this_path_total_tokens
+            
             all_path_tokens.extend(path_open_ids + path_content_ids)
             valid_path_data.append((prefix, path_resp))
+        
+        # Find the longest path in this stage
+        longest_path_tokens = max(path_token_lengths) if path_token_lengths else 0
         
         context_with_paths_ids = context_ids + all_path_tokens
         
@@ -593,7 +609,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         full_completion_str = self.tokenizer.decode(all_tokens)
         # logger.info(f"Parallel stage complete: {num_paths} paths, {len(all_tokens)} tokens")
         
-        return all_tokens, all_logprobs, all_versions, full_completion_str
+        return all_tokens, all_logprobs, all_versions, full_completion_str, total_path_tokens_in_stage, longest_path_tokens
     
     async def _generate_single_trajectory(
         self,
@@ -632,6 +648,10 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         all_output_versions = []
         all_completion_strs = []
         
+        # Initialize tracking for parallel metrics
+        total_path_tokens = 0  # Total tokens in all <Path>...</Path> across all stages
+        sum_longest_path_per_stage = 0  # Sum of longest path tokens per stage (for latency calculation)
+        
         # Current context starts with the initial prompt
         current_context_ids = input_ids
         
@@ -659,9 +679,13 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             if current_context_ids[-1] == 151645 or "".join(all_completion_strs).endswith("<|im_end|>") or "**Final Answer**" in "".join(all_completion_strs) or "</think>" in "".join(all_completion_strs):
                 break
             # Step 2: Process parallel stage (paths + conclusion)
-            turn_output_tokens, turn_output_logprobs, turn_output_versions, turn_completion_str = await self._process_parallel_stage(
+            turn_output_tokens, turn_output_logprobs, turn_output_versions, turn_completion_str, stage_path_tokens, stage_longest_path = await self._process_parallel_stage(
                 engine, current_context_ids, goal_resp, data, version, sample_idx, qid
             )
+            
+            # Accumulate parallel metrics
+            total_path_tokens += stage_path_tokens
+            sum_longest_path_per_stage += stage_longest_path
             
             # Accumulate outputs from this turn
             all_output_tokens.extend(turn_output_tokens)
@@ -704,6 +728,17 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             loss_mask = loss_mask[:MAX_POS_ENCODING]
             versions = versions[:MAX_POS_ENCODING]
         
+        # Calculate parallel metrics
+        # Total sequence length of the generation (output tokens only, excluding prompt)
+        total_gen_tokens = len(all_output_tokens)
+        
+        # Parallel ratio: total path tokens / total generation tokens
+        parallel_ratio = total_path_tokens / total_gen_tokens if total_gen_tokens > 0 else 0.0
+        
+        # Total latency = total_gen_tokens - total_path_tokens + sum_longest_path_per_stage
+        # This represents the effective sequential tokens (non-parallel + one path per stage)
+        total_latency = total_gen_tokens - total_path_tokens + sum_longest_path_per_stage
+        
         return {
             "full_sequence": full_sequence,
             "logprobs": logprobs,
@@ -711,6 +746,11 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             "versions": versions,
             "reward": reward,
             "completion_str": completion_str,
+            # Parallel metrics
+            "total_gen_tokens": total_gen_tokens,
+            "total_path_tokens": total_path_tokens,
+            "parallel_ratio": parallel_ratio,
+            "total_latency": total_latency,
         }
     
     async def arun_episode(
@@ -765,10 +805,27 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         # Collect rewards for stats
         rewards = [t["reward"] for t in trajectories]
         avg_reward = sum(rewards) / len(rewards)
+        
+        # Collect parallel metrics for stats
+        total_gen_tokens_list = [t["total_gen_tokens"] for t in trajectories]
+        total_path_tokens_list = [t["total_path_tokens"] for t in trajectories]
+        parallel_ratio_list = [t["parallel_ratio"] for t in trajectories]
+        total_latency_list = [t["total_latency"] for t in trajectories]
+        
+        avg_total_gen_tokens = sum(total_gen_tokens_list) / len(total_gen_tokens_list)
+        avg_total_path_tokens = sum(total_path_tokens_list) / len(total_path_tokens_list)
+        avg_parallel_ratio = sum(parallel_ratio_list) / len(parallel_ratio_list)
+        avg_total_latency = sum(total_latency_list) / len(total_latency_list)
+        
         stats_tracker.get(self.rollout_stat_scope).scalar(
             reward=avg_reward,
             reward_std=torch.tensor(rewards, dtype=torch.float32).std().item() if len(rewards) > 1 else 0.0,
             n_samples=n_samples,
+            # Parallel metrics
+            total_gen_tokens=avg_total_gen_tokens,
+            total_path_tokens=avg_total_path_tokens,
+            parallel_ratio=avg_parallel_ratio,
+            total_latency=avg_total_latency,
         )
         
         # Concatenate all trajectories into batch format
