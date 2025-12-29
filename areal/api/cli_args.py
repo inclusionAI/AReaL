@@ -482,6 +482,13 @@ class SlurmSchedulingConfig:
     mount: str = field(
         default="/storage:/storage", metadata={"help": "Mount path for slurm."}
     )
+    # slurm configurations from "https://slurm.schedmd.com/sbatch.html"
+    nodelist: str | None = None
+    exclude: str | None = None
+    partition: str | None = None
+    time_limit: str | None = None  # see  "--time" option for format
+    begin: str | None = None  # see "--begin" option for format
+    deadline: str | None = None  # see "--deadline" option for format
 
 
 @dataclass
@@ -511,13 +518,6 @@ class SchedulingSpec:
             "help": "Command to execute inside the container. Defaults to AReaL's RPC server."
         },
     )
-    # slurm configurations from "https://slurm.schedmd.com/sbatch.html"
-    nodelist: str | None = None
-    exclude: str | None = None
-    partition: str | None = None
-    time_limit: str | None = None  # see  "--time" option for format
-    begin: str | None = None  # see "--begin" option for format
-    deadline: str | None = None  # see "--deadline" option for format
     slurm: SlurmSchedulingConfig | None = field(
         default=None,
         metadata={"help": "Slurm-specific scheduling configuration."},

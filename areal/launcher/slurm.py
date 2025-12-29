@@ -15,6 +15,7 @@ from areal.api.cli_args import (
     parse_cli_args,
     to_structured_cfg,
     vLLMConfig,
+    SlurmSchedulingConfig,
 )
 from areal.platforms import current_platform
 from areal.utils import name_resolve, names
@@ -34,7 +35,6 @@ from areal.utils.slurm import (
     SRUN_CMD_TEMPLATE,
     cancel_jobs,
     query_jobs,
-    validate_config_for_slurm_launcher,
 )
 
 logger = logging.getLogger("SlurmLauncher")
@@ -404,7 +404,6 @@ def main():
 def slurm_main(config, run_id: int = 0):
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
-    validate_config_for_slurm_launcher(config)
     is_recover_run = check_if_recover(config.recover, run_id)
     logger.info(
         f"SlurmLauncher: experiment_name={config.experiment_name}, "
@@ -415,7 +414,7 @@ def slurm_main(config, run_id: int = 0):
     # Get scheduling specs from actor config
     # All experiment configs should have the `actor` field.
     actor_spec = config.actor.scheduling_spec[0]
-    actor_slurm = actor_spec.slurm
+    actor_slurm = getattr(actor_spec, 'slurm', SlurmSchedulingConfig())
 
     launcher = SlurmLauncher(
         experiment_name=config.experiment_name,
@@ -461,7 +460,7 @@ def slurm_main(config, run_id: int = 0):
         rollout_env_vars = {}
         if hasattr(config, "rollout"):
             rollout_spec = config.rollout.scheduling_spec[0]
-            rollout_slurm = rollout_spec.slurm
+            rollout_slurm = getattr(rollout_spec,'slurm', SlurmSchedulingConfig())
             rollout_env_vars = rollout_spec.env_vars
 
         backend_spec = {
@@ -550,7 +549,7 @@ def slurm_main(config, run_id: int = 0):
             srun_additional_args=rollout_slurm.srun_additional_args
             if rollout_slurm
             else "--unbuffered --mpi=pmi2 -K --chdir $PWD",
-            container_image=rollout_spec.image if rollout_spec else "",
+            container_image=getattr(rollout_spec,'image',"/storage/openpsi/images/areal-latest.sif"),
             container_mounts=rollout_slurm.mount
             if rollout_slurm
             else "/storage:/storage",
@@ -645,7 +644,7 @@ def slurm_main(config, run_id: int = 0):
             n_gpus_per_node=gpus_per_node,
             cpus_per_task=actor_cpu * config.cluster.n_gpus_per_node,
             mem_per_task=actor_mem_mb * config.cluster.n_gpus_per_node,
-            container_image=actor_spec.image if actor_spec else "",
+            container_image=getattr(actor_spec,'image',"/storage/openpsi/images/areal-latest.sif"),
             srun_additional_args=actor_slurm.srun_additional_args
             if actor_slurm
             else "--unbuffered --mpi=pmi2 -K --chdir $PWD",
