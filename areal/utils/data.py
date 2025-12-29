@@ -336,7 +336,9 @@ def pad_and_stack_tensors_along_first_dim(tensor_list: list[torch.Tensor]):
 
 
 def tensor_container_to(
-    d: dict[str, Any] | torch.Tensor | list[torch.Tensor], *args, **kwargs
+    d: dict[str, Any] | torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...],
+    *args,
+    **kwargs,
 ):
     """Apply `t.to(*args, **kwargs)` to all tensors in the dictionary.
     Support nested dictionaries.
@@ -344,7 +346,7 @@ def tensor_container_to(
     if torch.is_tensor(d):
         return d.to(*args, **kwargs)
 
-    if isinstance(d, list):
+    if isinstance(d, list) or isinstance(d, tuple):
         return [tensor_container_to(v, *args, **kwargs) for v in d]
 
     if isinstance(d, dict):
@@ -1198,7 +1200,7 @@ class Normalization:
                 if self.group_size == 1 and self.mean_leave1out:
                     dtype = torch.float64 if high_precision else torch.float32
                     group_mean = torch.zeros(
-                        (1, xx.shape[1]), dtype=dtype, device=xx.device
+                        (1, *xx.shape[1:]), dtype=dtype, device=xx.device
                     )
                 else:
                     group_mean = self._compute_mean(
@@ -1243,7 +1245,7 @@ class Normalization:
                 if self.group_size == 1 and self.std_unbiased:
                     dtype = torch.float64 if high_precision else torch.float32
                     group_std = torch.ones(
-                        (1, xx.shape[1]), dtype=dtype, device=xx.device
+                        (1, *xx.shape[1:]), dtype=dtype, device=xx.device
                     )
                 else:
                     group_std = self._compute_std(

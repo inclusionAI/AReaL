@@ -8,7 +8,7 @@ from typing import Any
 
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import InferenceEngineConfig, SGLangConfig
+from areal.api.cli_args import InferenceEngineConfig, PerfTracerConfig, SGLangConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     HttpGenerationResult,
@@ -26,7 +26,7 @@ from areal.controller import RolloutController
 from areal.core import RemoteInfEngine
 from areal.core.workflow_executor import WorkflowExecutor
 from areal.platforms import current_platform
-from areal.utils import stats_tracker
+from areal.utils import perf_tracer, stats_tracker
 from areal.utils.launcher import TRITON_CACHE_PATH
 
 
@@ -265,9 +265,13 @@ class RemoteSGLangEngine(InferenceEngine):
         """Asynchronously generate a response for the given request."""
         return await self._engine.agenerate(req)
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+    def init_weights_update_group(
+        self, meta: WeightUpdateMeta, xccl_group_ranks: list[int] | None = None
+    ) -> Future[None]:
         """Initialize the weight update process group."""
-        return self._engine.init_weights_update_group(meta)
+        return self._engine.init_weights_update_group(
+            meta, xccl_group_ranks=xccl_group_ranks
+        )
 
     def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
@@ -286,10 +290,11 @@ class RemoteSGLangEngine(InferenceEngine):
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
+        callback_addr: str | None = None,
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
-            data, workflow, workflow_kwargs, should_accept_fn, task_id
+            data, workflow, workflow_kwargs, should_accept_fn, task_id, callback_addr
         )
 
     def wait(
@@ -364,3 +369,11 @@ class RemoteSGLangEngine(InferenceEngine):
 
     def clear_batches(self, *args):
         """Placeholder method of single-controller API."""
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        perf_tracer.save(step=step, force=force)
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        perf_tracer.configure(config, rank=rank, role=role)

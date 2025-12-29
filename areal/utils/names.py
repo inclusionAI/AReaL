@@ -26,3 +26,7 @@ def gen_servers(experiment_name, trial_name):
 
 def update_weights_from_disk(experiment_name, trial_name, model_version):
     return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/update_weights_from_disk/{model_version}"
+
+
+def worker_discovery(experiment_name, trial_name, role, task_id):
+    return f"{USER_NAMESPACE}/{experiment_name}/{trial_name}/workers/{role}/{task_id}"

@@ -26,7 +26,6 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
-from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     AutoConfig,
@@ -41,7 +40,7 @@ from transformers import (
 )
 
 from areal.api.alloc_mode import FSDPParallelStrategy, ParallelStrategy
-from areal.api.cli_args import TrainEngineConfig
+from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import (
     DeviceRuntimeInfo,
@@ -59,7 +58,14 @@ from areal.engine.core import (
 )
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
-from areal.utils import logging, name_resolve, names, pkg_version, stats_tracker
+from areal.utils import (
+    logging,
+    name_resolve,
+    names,
+    perf_tracer,
+    pkg_version,
+    stats_tracker,
+)
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchItem,
@@ -86,7 +92,8 @@ from areal.utils.model import (
     is_qwen_vl_model,
     is_valid_vision_model,
 )
-from areal.utils.offload import is_tms_enabled
+from areal.utils.network import find_free_ports, gethostip
+from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
@@ -135,6 +142,9 @@ class FSDPEngine(TrainEngine):
         self.own_global_group = False
         self._cpu_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
+        self.weight_update_group_name: str
+        self.weight_update_master_addr: str
+        self.weight_update_master_port: int
 
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.config.path,
@@ -216,6 +226,7 @@ class FSDPEngine(TrainEngine):
 
         if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
+        self.weight_update_group_name = "update_weight_group"
 
         # Create device model
         self._create_device_model()
@@ -325,10 +336,7 @@ class FSDPEngine(TrainEngine):
             rollout_engine=engine, train_engine=self
         )
 
-        if (
-            meta.type == current_platform.communication_backend
-            and not self.weight_update_group_initialized
-        ):
+        if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
@@ -369,7 +377,7 @@ class FSDPEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
-        if meta.type == current_platform.communication_backend:
+        if meta.type == "xccl":
             assert self.weight_update_group_initialized
             # In offload mode, wakes up parameters as needed to perform the update.
             tms_context = (
@@ -615,6 +623,14 @@ class FSDPEngine(TrainEngine):
 
     def get_device_stats(self) -> DeviceRuntimeInfo:
         return DeviceRuntimeInfo.get_current()
+
+    def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
+        perf_tracer.save(step=step, force=force)
+
+    def config_perf_tracer(
+        self, config: PerfTracerConfig, rank: int, role: str
+    ) -> None:
+        perf_tracer.configure(config, rank=rank, role=role)
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
@@ -913,7 +929,12 @@ class FSDPEngine(TrainEngine):
         named_tensors.clear()
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
-        assert meta.type == current_platform.communication_backend
+        assert meta.type == "xccl"
+
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr = gethostip()
+        meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
+        meta.nccl_group_name = self.weight_update_group_name
 
         # NOTE: Processes launched with torchrun will set the following env var to True,
         # which blocks creating another TCP store for weight update.
@@ -942,6 +963,11 @@ class FSDPEngine(TrainEngine):
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
+
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr
+        meta.nccl_master_port = self.weight_update_master_port
+        meta.nccl_group_name = self.weight_update_group_name
 
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()

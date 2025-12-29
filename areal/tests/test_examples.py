@@ -28,6 +28,7 @@ async def run_example(
     *additional_args,
     timeout: int = 300,
     success_pattern=SUCCESS_PATTERN,
+    single_controller: bool = False,
 ) -> bool:
     """
     Run a single example and return the result.
@@ -38,19 +39,30 @@ async def run_example(
         additional_args: Additional command line arguments
         timeout: Timeout in seconds
         success_pattern: Regex pattern to identify successful completion
+        single_controller: If True, run directly without launcher (single-controller mode)
 
     Returns:
         Tuple of (success, stdout, stderr)
     """
     # Construct the command
-    cmd = [
-        "python3",
-        "-m",
-        "areal.launcher.local",
-        example_file,
-        "--config",
-        config_name,
-    ]
+    if single_controller:
+        # Single-controller mode: run script directly
+        cmd = [
+            "python3",
+            example_file,
+            "--config",
+            config_name,
+        ]
+    else:
+        # SPMD mode: use launcher
+        cmd = [
+            "python3",
+            "-m",
+            "areal.launcher.local",
+            example_file,
+            "--config",
+            config_name,
+        ]
     cmd += list(additional_args)
 
     logger.info(f"Running: {' '.join(cmd)}")
@@ -158,10 +170,16 @@ def test_countdown_example(tmp_path_factory):
 # vLLM is too slow to launch up in CI environments
 # We have tests for vLLM in test_inference_engines.py,
 # so we can skip the integration test of vLLM here.
-@pytest.mark.parametrize("alloc_mode", ["sglang:d1+megatron:d1"])
+@pytest.mark.parametrize(
+    "alloc_mode,single_controller",
+    [
+        ("sglang:d1+megatron:d1", False),
+        ("sglang:d1+megatron:d1", True),
+    ],
+)
 @pytest.mark.multi_gpu
 @pytest.mark.ci
-def test_gsm8k_grpo(tmp_path_factory, alloc_mode):
+def test_gsm8k_grpo(tmp_path_factory, alloc_mode, single_controller):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = get_model_path(
@@ -171,33 +189,48 @@ def test_gsm8k_grpo(tmp_path_factory, alloc_mode):
 
     example_file = "examples/math/gsm8k_rl.py"
     config_name = "examples/math/gsm8k_grpo.yaml"
+
+    additional_args = [
+        f"allocation_mode={alloc_mode}",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=256",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=2",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+    ]
+    if single_controller:
+        additional_args.append("scheduler.type=local")
+
     loop = asyncio.get_event_loop()
     success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
-            f"allocation_mode={alloc_mode}",
-            "gconfig.n_samples=2",
-            "gconfig.max_new_tokens=256",
-            "actor.mb_spec.max_tokens_per_mb=1024",
-            "train_dataset.batch_size=16",
-            "valid_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=2",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"actor.path={model_path}",
+            *additional_args,
             timeout=900,
+            single_controller=single_controller,
         )
     )
-    assert success, "GSM8K GRPO example failed"
+    assert success, f"GSM8K GRPO example failed (single_controller={single_controller})"
 
 
-@pytest.mark.parametrize("alloc_mode", ["fsdp:d1", "megatron:d1"])
+@pytest.mark.parametrize(
+    "alloc_mode,single_controller",
+    [
+        ("fsdp:d1", False),
+        ("megatron:d1", False),
+        ("fsdp:d1", True),
+    ],
+)
 @pytest.mark.gpu
 @pytest.mark.ci
-def test_gsm8k_sft(tmp_path_factory, alloc_mode):
+def test_gsm8k_sft(tmp_path_factory, alloc_mode, single_controller):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = get_model_path(
@@ -207,24 +240,32 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode):
 
     example_file = "examples/math/gsm8k_sft.py"
     config_name = "examples/math/gsm8k_sft.yaml"
+
+    additional_args = [
+        f"allocation_mode={alloc_mode}",
+        "model.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=1",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"model.path={model_path}",
+    ]
+    if single_controller:
+        additional_args.append("scheduler.type=local")
+
     loop = asyncio.get_event_loop()
     success = loop.run_until_complete(
         run_example(
             example_file,
             config_name,
-            f"allocation_mode={alloc_mode}",
-            "model.mb_spec.max_tokens_per_mb=1024",
-            "train_dataset.batch_size=16",
-            "valid_dataset.batch_size=16",
-            f"train_dataset.path={dataset_path}",
-            f"valid_dataset.path={dataset_path}",
-            "cluster.n_gpus_per_node=1",
-            f"cluster.fileroot={str(experiments_path)}",
-            f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"model.path={model_path}",
+            *additional_args,
+            single_controller=single_controller,
         )
     )
-    assert success, "GSM8K SFT example failed"
+    assert success, f"GSM8K SFT example failed (single_controller={single_controller})"
 
 
 @pytest.mark.gpu

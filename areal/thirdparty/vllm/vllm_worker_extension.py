@@ -1,6 +1,7 @@
 import traceback
 
 import torch
+import torch.distributed as dist
 from vllm.logger import init_logger
 from vllm.lora.models import LoRAModel
 from vllm.lora.peft_helper import PEFTHelper
@@ -72,12 +73,17 @@ class VLLMWorkerExtension:
             return False, error_msg
 
     def set_weight_meta(
-        self, names: list[str], dtypes: list[str], shapes: list[list[int]]
+        self,
+        names: list[str],
+        dtypes: list[str],
+        shapes: list[list[int]],
+        group_name: str,
     ):
         logger.info("start set weights meta")
         self.areal_weight_meta_names = names
         self.areal_weight_meta_dtypes = dtypes
         self.areal_weight_meta_shapes = shapes
+        self.areal_weight_meta_group_name = group_name
         return True, "Success"
 
     def set_weight_meta_lora(
@@ -85,6 +91,7 @@ class VLLMWorkerExtension:
         names: list[str],
         dtypes: list[str],
         shapes: list[list[int]],
+        group_name: str,
         lora_name: str,
         lora_int_id: int,
         lora_target_modules: list[str] | str,
@@ -99,6 +106,7 @@ class VLLMWorkerExtension:
         self.areal_lora_weight_meta_names = names
         self.areal_lora_weight_meta_dtypes = dtypes
         self.areal_lora_weight_meta_shapes = shapes
+        self.areal_weight_meta_group_name = group_name
         self.areal_lora_name = lora_name
         self.areal_lora_int_id = lora_int_id
         self.areal_lora_target_modules = lora_target_modules
@@ -114,6 +122,12 @@ class VLLMWorkerExtension:
         dtypes = self.areal_weight_meta_dtypes
         shapes = self.areal_weight_meta_shapes
         try:
+            group = self.weight_update_groups[self.areal_weight_meta_group_name]
+        except KeyError:
+            raise KeyError(
+                f"Weight update group named `{self.areal_weight_meta_group_name}` not found"
+            )
+        try:
             for name, dtype, shape in zip(names, dtypes, shapes):
                 target_dtype = (
                     dtype if isinstance(dtype, torch.dtype) else getattr(torch, dtype)
@@ -124,7 +138,7 @@ class VLLMWorkerExtension:
                 torch.distributed.broadcast(
                     tensor,
                     src=0,
-                    group=self.weight_update_group,
+                    group=group,
                     async_op=False,
                 )
                 self.model_runner.model.load_weights(weights=[(name, tensor)])
@@ -146,6 +160,12 @@ class VLLMWorkerExtension:
         names = self.areal_lora_weight_meta_names
         dtypes = self.areal_lora_weight_meta_dtypes
         shapes = self.areal_lora_weight_meta_shapes
+        try:
+            group = self.weight_update_groups[self.areal_weight_meta_group_name]
+        except KeyError:
+            raise KeyError(
+                f"Weight update group named `{self.areal_weight_meta_group_name}` not found"
+            )
         lora_int_id = self.areal_lora_int_id
 
         try:
@@ -183,7 +203,7 @@ class VLLMWorkerExtension:
                 torch.distributed.broadcast(
                     tensor,
                     src=0,
-                    group=self.weight_update_group,
+                    group=group,
                     async_op=False,
                 )
 
@@ -246,10 +266,10 @@ class VLLMWorkerExtension:
         backend: str,
         group_name: str,
     ):
-        if getattr(self, "weight_update_group", None) is not None:
-            return True, "Success"
+        if not hasattr(self, "weight_update_groups"):
+            self.weight_update_groups: dict[str, dist.ProcessGroup] = {}
         try:
-            self.weight_update_group = init_custom_process_group(
+            group = init_custom_process_group(
                 backend=backend,
                 world_size=world_size,
                 init_method=f"tcp://{master_address}:{master_port}",
@@ -257,6 +277,7 @@ class VLLMWorkerExtension:
                 group_name=group_name,
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
+            self.weight_update_groups[group_name] = group
             return True, "Success"
         except Exception as e:
             error_msg = f"Failed to init group! {e}."

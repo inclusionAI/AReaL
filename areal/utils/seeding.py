@@ -27,10 +27,11 @@ def set_random_seed(base_seed: int, key: str) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if current_platform.is_available():
-        # NOTE: Here we does not call `manual_seed_all`.
-        # Because when launching with torchrun `manual_seed_all` will set seed for all GPUs.
+    # FIXME: seeding initializes CUDA
+    try:
         current_platform.manual_seed(seed)
+    except AttributeError:
+        pass
 
 
 def get_seed() -> int:

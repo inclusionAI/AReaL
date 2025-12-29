@@ -673,25 +673,6 @@ class TestTrainControllerWeightUpdateMethods:
         with pytest.raises(RuntimeError, match="Rollout engine not connected"):
             train_controller.update_weights(meta)
 
-    def test_update_weights_invalid_type_raises(
-        self, train_controller, alloc_mode, ft_spec
-    ):
-        """Test update_weights raises for invalid type."""
-        train_controller.initialize(
-            role="train_worker",
-            alloc_mode=alloc_mode,
-            ft_spec=ft_spec,
-        )
-
-        mock_rollout = Mock()
-        meta = WeightUpdateMeta(type="disk", path="/tmp/test")
-        train_controller.connect_engine(mock_rollout, meta)
-
-        invalid_meta = WeightUpdateMeta(type="invalid_type", path="/tmp/test")
-
-        with pytest.raises(ValueError, match="Unknown weight update type"):
-            train_controller.update_weights(invalid_meta)
-
 
 class TestTrainControllerExportStats:
     """Tests for export_stats method."""

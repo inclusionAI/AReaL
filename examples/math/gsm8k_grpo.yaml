@@ -16,6 +16,9 @@ cluster:
 
 allocation_mode: sglang:d4p1t1+d4p1t1
 
+scheduler:
+  type: null
+
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -24,6 +27,7 @@ rollout:
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
 
 gconfig:
   n_samples: 4
@@ -70,7 +74,13 @@ actor:
   adv_norm:
     mean_level: batch
     std_level: batch
+  weight_update_mode: xccl
   max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 ref:
   experiment_name: ${experiment_name}
@@ -82,6 +92,10 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
 
 # SGLang
 sglang:
@@ -104,6 +118,7 @@ vllm:
 # datasets
 train_dataset:
   batch_size: 256
+  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
@@ -149,6 +164,14 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
+
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: false
+  session_tracer:
+    enabled: false
 
 launcher:
   inference_server_cpus_per_gpu: 4

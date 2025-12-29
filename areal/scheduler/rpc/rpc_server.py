@@ -1,7 +1,6 @@
 import argparse
 import logging as stdlib_logging
 import os
-import socket
 import traceback
 from collections.abc import Callable
 from concurrent.futures import Future
@@ -11,8 +10,9 @@ from typing import Any
 
 import orjson
 from flask import Flask, Response, jsonify, request
+from werkzeug.serving import make_server
 
-from areal.api.cli_args import BaseExperimentConfig
+from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.platforms import current_platform
 from areal.scheduler.rpc import rtensor
@@ -21,18 +21,20 @@ from areal.scheduler.rpc.serialization import (
     deserialize_value,
     serialize_value,
 )
-from areal.utils import logging, name_resolve, seeding
+from areal.utils import logging, name_resolve, names, perf_tracer, seeding
 from areal.utils.data import (
     broadcast_tensor_container,
     tensor_container_to,
 )
 from areal.utils.dynamic_import import import_from_string
+from areal.utils.network import find_free_ports, gethostip
 
 logger = logging.getLogger("SyncRPCServer")
 
 # Global engine instance - must be TrainEngine or InferenceEngine
 _engine: TrainEngine | InferenceEngine | None = None
 
+_role: str | None = None
 
 # Engine thread for executing all engine-related endpoints serially
 # This ensures NCCL compatibility by running engine operations in a single thread,
@@ -45,6 +47,8 @@ _engine_thread_lock = Lock()
 _server_host: str = "0.0.0.0"
 _server_port: int = 8000
 
+_allocated_ports: set[int] = set()
+
 # Create Flask app
 app = Flask(__name__)
 
@@ -53,8 +57,11 @@ def _init_engine_thread():
     global _engine_thread, _engine_work_queue
 
     with _engine_thread_lock:
-        if _engine_thread is not None and _engine_thread.is_alive():
-            return  # Already initialized
+        if _engine_thread is not None:
+            if _engine_thread.is_alive():
+                return  # Already initialized
+            else:
+                raise RuntimeError("Engine thread is dead.")
 
         _engine_work_queue = Queue()
 
@@ -67,7 +74,7 @@ def _init_engine_thread():
                         logger.info("Engine thread shutting down")
                         break
 
-                    func, args, kwargs, future = work_item
+                    func, args, kwargs, future, func_name = work_item
                     try:
                         result = func(*args, **kwargs)
                         future.set_result(result)
@@ -76,7 +83,10 @@ def _init_engine_thread():
                     finally:
                         _engine_work_queue.task_done()
                 except Exception as e:
-                    logger.error(f"Error in engine thread: {e}")
+                    logger.error(
+                        f"Error in engine thread when "
+                        f"running {func_name}: {e}\n{traceback.format_exc()}"
+                    )
                     if work_item and len(work_item) > 3:
                         work_item[3].set_exception(e)
 
@@ -85,13 +95,13 @@ def _init_engine_thread():
         logger.info("Engine thread initialized")
 
 
-def _submit_to_engine_thread(func: Callable, *args, **kwargs) -> Any:
+def _submit_to_engine_thread(func_name: str, func: Callable, *args, **kwargs) -> Any:
     global _engine_work_queue
 
     _init_engine_thread()
 
     future = Future()
-    _engine_work_queue.put((func, args, kwargs, future))
+    _engine_work_queue.put((func, args, kwargs, future, func_name))
     return future.result()  # Block until result is available
 
 
@@ -100,6 +110,38 @@ def health_check():
     """Health check endpoint to verify server is alive."""
     global _engine
     return jsonify({"status": "healthy", "engine_initialized": _engine is not None})
+
+
+@app.route("/alloc_ports", methods=["POST"])
+def alloc_ports():
+    """Allocate multiple free ports.
+
+    Expected JSON payload:
+    {
+        "count": 5  # Number of ports to allocate
+    }
+    """
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON in request body"}), 400
+
+        count = data.get("count")
+        if count is None:
+            return jsonify({"error": "Missing 'count' field in request"}), 400
+
+        if not isinstance(count, int) or count <= 0:
+            return jsonify({"error": "'count' must be a positive integer"}), 400
+
+        global _allocated_ports
+        ports = find_free_ports(count, exclude_ports=_allocated_ports)
+        _allocated_ports.update(ports)
+
+        return jsonify({"status": "success", "ports": ports, "host": _server_host})
+
+    except Exception as e:
+        logger.error(f"Error in alloc_ports: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
 @app.route("/configure", methods=["POST"])
@@ -117,10 +159,6 @@ def configure():
         if config is None:
             return jsonify({"detail": "Missing 'config' field in request"}), 400
 
-        role = data.get("role")
-        if role is None:
-            return jsonify({"detail": "Missing 'role' field in request"}), 400
-
         rank = data.get("rank")
         if rank is None:
             return jsonify({"detail": "Missing 'rank' field in request"}), 400
@@ -129,15 +167,15 @@ def configure():
         config: BaseExperimentConfig
 
         def execute_configure():
-            name_resolve.reconfigure(config.cluster.name_resolve)
-            seeding.set_random_seed(config.seed, key=f"{role}{rank}")
+            global _role
+            seeding.set_random_seed(config.seed, key=f"{_role}{rank}")
             return {
                 "status": "success",
                 "message": "Worker configured successful.",
                 "result": None,
             }
 
-        result = _submit_to_engine_thread(execute_configure)
+        result = _submit_to_engine_thread("configure", execute_configure)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Unexpected error in configure: {e}\n{traceback.format_exc()}")
@@ -180,7 +218,7 @@ def set_env():
                 logger.info(f"Set {key}={value}")
             return {"status": "success"}
 
-        result = _submit_to_engine_thread(execute_set_env)
+        result = _submit_to_engine_thread("set_env", execute_set_env)
         return jsonify(result)
 
     except Exception as e:
@@ -258,7 +296,9 @@ def create_engine():
                 raise
 
         try:
-            _engine = _submit_to_engine_thread(create_engine_in_engine_thread)
+            _engine = _submit_to_engine_thread(
+                "create_engine", create_engine_in_engine_thread
+            )
             return jsonify(
                 {
                     "status": "success",
@@ -329,6 +369,21 @@ def call_engine_method():
                         f"Broadcasting data for TrainEngine method: {method_name}"
                     )
 
+                    nonlocal raw_args, raw_kwargs
+                    raw_args = broadcast_tensor_container(
+                        tensor_container_to(
+                            raw_args, current_platform.current_device()
+                        ),
+                        src_rank=_engine.current_data_parallel_head(),
+                        group=_engine.context_and_model_parallel_group,
+                    )
+                    raw_kwargs = broadcast_tensor_container(
+                        tensor_container_to(
+                            raw_kwargs, current_platform.current_device()
+                        ),
+                        src_rank=_engine.current_data_parallel_head(),
+                        group=_engine.context_and_model_parallel_group,
+                    )
                     args_bcast = tensor_container_to(
                         args, current_platform.current_device()
                     )
@@ -351,14 +406,49 @@ def call_engine_method():
                     kwargs_bcast = kwargs
 
                 logger.debug(f"Calling engine method: {method_name}")
-                method = getattr(_engine, method_name)
-                result = method(*args_bcast, **kwargs_bcast)
 
-                # Handle update weights future
-                if isinstance(result, Future):
-                    logger.debug("Waiting for update weights future")
-                    result = result.result()
-                    logger.debug("Update weights future done")
+                # Determine trace category based on method name
+                category = "misc"  # Default category
+                method_lower = method_name.lower()
+                if any(keyword in method_lower for keyword in ["submit", "wait"]):
+                    category = "scheduler"
+                elif any(
+                    keyword in method_lower
+                    for keyword in ["update_weights", "broadcast"]
+                ):
+                    category = "comm"
+                elif any(keyword in method_lower for keyword in ["save", "load"]):
+                    category = "io"
+                elif any(
+                    keyword in method_lower
+                    for keyword in [
+                        "train",
+                        "eval",
+                        "forward",
+                        "compute",
+                        "step",
+                        "update",
+                        "optimizer",
+                        "zero_grad",
+                        "lr_scheduler",
+                    ]
+                ):
+                    category = "compute"
+
+                # Wrap engine method call with perf_tracer
+                with perf_tracer.trace_scope(
+                    f"rpc.{method_name}",
+                    category=category,
+                    args={"method": method_name},
+                ):
+                    method = getattr(_engine, method_name)
+                    result = method(*args_bcast, **kwargs_bcast)
+
+                    # Handle update weights future
+                    if isinstance(result, Future):
+                        logger.debug("Waiting for update weights future")
+                        result = result.result()
+                        logger.debug("Update weights future done")
 
                 return result
             except AttributeError as e:
@@ -372,7 +462,9 @@ def call_engine_method():
 
         # Submit to engine thread
         try:
-            result = _submit_to_engine_thread(execute_in_engine_thread)
+            result = _submit_to_engine_thread(
+                f"call_{method_name}", execute_in_engine_thread
+            )
         except Exception as e:
             error_msg = str(e)
             if "Engine does not have method" in error_msg:
@@ -526,7 +618,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="AReaL Sync RPC Server for TrainEngine/InferenceEngine"
     )
-    parser.add_argument("--port", type=int, required=True, help="Port to serve on")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="Port to serve on (default: 0 = auto-assign)",
+    )
     parser.add_argument(
         "--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
     )
@@ -537,6 +634,16 @@ def main():
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Log level for Werkzeug (Flask's WSGI server). Default: WARNING",
     )
+    # name_resolve config
+    parser.add_argument("--experiment-name", type=str, required=True)
+    parser.add_argument("--trial-name", type=str, required=True)
+    parser.add_argument("--role", type=str, required=True)
+    parser.add_argument("--worker-index", type=int, default=-1)
+    parser.add_argument("--name-resolve-type", type=str, default="nfs")
+    parser.add_argument(
+        "--nfs-record-root", type=str, default="/tmp/areal/name_resolve"
+    )
+    parser.add_argument("--etcd3-addr", type=str, default="localhost:2379")
 
     args, _ = parser.parse_known_args()
 
@@ -545,29 +652,55 @@ def main():
     werkzeug_logger.setLevel(getattr(stdlib_logging, args.werkzeug_log_level))
 
     # Set global server address variables
-    global _server_host, _server_port
+    global _server_host, _server_port, _role
     _server_host = args.host
     if _server_host == "0.0.0.0":
-        _server_host = socket.gethostbyname(socket.gethostname())
-    _server_port = args.port
+        _server_host = gethostip()
+    _role = args.role
 
-    logger.info(f"Starting sync RPC server on {args.host}:{args.port}")
+    # Get worker identity
+    worker_role = args.role
+    worker_index = args.worker_index
+    if "SLURM_PROCID" in os.environ:
+        # Overwriting with slurm task id
+        worker_index = os.environ["SLURM_PROCID"]
+    if worker_index == -1:
+        raise ValueError("Invalid worker index. Not found from SLURM environ or args.")
+    worker_id = f"{worker_role}/{worker_index}"
+
+    # Make a flask server
+    server = make_server(args.host, args.port, app, threaded=True)
+    _server_port = server.socket.getsockname()[1]
+
+    name_resolve.reconfigure(
+        NameResolveConfig(
+            type=args.name_resolve_type,
+            nfs_record_root=args.nfs_record_root,
+            etcd3_addr=args.etcd3_addr,
+        )
+    )
+    key = names.worker_discovery(
+        args.experiment_name, args.trial_name, args.role, worker_index
+    )
+    name_resolve.add(key, f"{_server_host}:{_server_port}", replace=True)
+
+    global _allocated_ports
+    _allocated_ports.add(_server_port)
+
+    logger.info(
+        f"Starting sync RPC server on {_server_host}:{_server_port} for worker {worker_id}"
+    )
     logger.info(f"Werkzeug log level: {args.werkzeug_log_level}")
 
     try:
-        app.run(
-            host=args.host,
-            port=args.port,
-            threaded=True,  # Multi-threaded for concurrent /data/ request handling
-            processes=1,  # Single process
-            debug=False,
-            use_reloader=False,
-        )
+        server.serve_forever()
     except KeyboardInterrupt:
         logger.info("Shutting down sync RPC server")
     finally:
+        perf_tracer.save(force=True)
         cleanup_engine_thread()
         cleanup_engine()
+        server.shutdown()
 
 
 if __name__ == "__main__":

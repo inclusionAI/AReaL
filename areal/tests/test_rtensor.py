@@ -29,9 +29,17 @@ def rpc_server():
             "localhost",
             "--port",
             str(RPC_SERVER_PORT),
+            "--experiment-name",
+            "test-rtensor",
+            "--trial-name",
+            "trial0",
+            "--role",
+            "master",
+            "--worker-index",
+            "0",
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stdout=sys.stdout,
+        stderr=sys.stdout,
     )
 
     # Wait for server to be ready

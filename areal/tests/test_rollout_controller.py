@@ -2,6 +2,7 @@ import asyncio
 from unittest.mock import Mock
 
 import pytest
+import requests
 import torch
 
 from areal.api.alloc_mode import AllocationMode
@@ -90,6 +91,10 @@ class MockScheduler:
                 "rewards": torch.randn(1),
             }
             self._pending_results[worker_id][task_id] = result
+            # Immediately fire callback
+            callback_addr = kwargs["callback_addr"]
+            resp = requests.post(callback_addr, json=dict(task_id=task_id))
+            resp.raise_for_status()
             return task_id
         # Handle wait_for_task method
         elif method == "wait_for_task":
@@ -431,8 +436,9 @@ class TestRolloutControllerSubmitAndWait:
         scheduler = MockScheduler()
 
         async def async_mock(*args, **kwargs):
+            res = await MockScheduler.async_call_engine(scheduler, *args, **kwargs)
             await asyncio.sleep(0.1)
-            return None
+            return res
 
         # Mock the `wait` call.
         scheduler.async_call_engine = async_mock
@@ -558,6 +564,7 @@ class TestRolloutControllerVersionManagement:
         )
 
         assert controller.get_version() == 0
+        controller.destroy()
 
     def test_set_version_updates_controller_version(self):
         config = create_test_config(consumer_batch_size=16)
@@ -616,6 +623,7 @@ class TestRolloutControllerVersionManagement:
         controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
 
         controller.set_version(5)
+        controller.destroy()
 
 
 class TestRolloutControllerWeightUpdates:
@@ -967,7 +975,11 @@ QWEN3_PATH = get_model_path(
 @pytest.mark.ci
 def test_rollout_controller_integration(tmp_path, model_path):
     tokenizer = load_hf_tokenizer(model_path)
-    scheduler = LocalScheduler(log_dir=tmp_path)
+    scheduler = LocalScheduler(
+        log_dir=tmp_path,
+        experiment_name="test_rollout_controller_integration",
+        trial_name="trial0",
+    )
     rollout = RolloutController(
         inf_engine=RemoteSGLangEngine,
         config=InferenceEngineConfig(
@@ -978,6 +990,11 @@ def test_rollout_controller_integration(tmp_path, model_path):
             max_concurrent_rollouts=5,
             setup_timeout=300,
             enable_rollout_tracing=True,
+            scheduling_spec=(
+                SchedulingSpec(
+                    cpu=4, gpu=1, cmd="python -m areal.scheduler.rpc.rpc_server"
+                ),
+            ),
         ),
         scheduler=scheduler,
     )

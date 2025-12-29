@@ -2,62 +2,77 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any
+from typing import Any, ClassVar
 
 import aiohttp
 import numpy as np
 import orjson
+import ray
 import torch
 
 from areal.utils.datapack import ffd_allocate, flat2d
 
 
 @dataclass
-class TensorShardInfo:
-    """Metadata for a single shard of an RTensor."""
-
-    shard_id: str
-    node_addr: str
+class BaseTensorShardInfo(ABC):
     size: int  # Batch size (shape[0]) of this shard
     seqlens: list[int]  # Sequence lengths of this shard (from attention_mask)
+    shard_id: str
+    node_addr: str
+
+    @classmethod
+    @abstractmethod
+    def fetch(cls: type[BaseTensorShardInfo], shards: BaseTensorShardInfo):
+        pass
+
+    @classmethod
+    @abstractmethod
+    def store(cls: type[BaseTensorShardInfo], shard_id: str, tensor: torch.Tensor):
+        pass
+
+    @classmethod
+    @abstractmethod
+    def create(
+        cls: type[BaseTensorShardInfo],
+        *,
+        size: int,
+        seqlens: list[int],
+        **kwargs,
+    ) -> BaseTensorShardInfo:
+        pass
+
+    @classmethod
+    @abstractmethod
+    async def delete_by_shard_id(cls, node_addr, shard_ids):
+        pass
 
 
 @dataclass
-class RTensor:
-    """Single tensor distributed as CPU shards across nodes."""
+class TensorShardInfo(BaseTensorShardInfo):
+    """Metadata for a single shard of an RTensor."""
 
-    shards: list[TensorShardInfo]
-    data: torch.Tensor
-
-    def to_local(self) -> torch.Tensor:
-        """Fetch all shards via HTTP, concatenate along dim 0."""
-        if not self.data.is_meta:
-            return self.data
-        # Fetch all shards first
-        tensors = self._fetch()
-        self.data = _pad_cat_dim0(tensors)
-        return self.data
-
-    def _fetch(self):
+    @classmethod
+    def fetch(cls, shards):
         """Fetch all shards synchronously."""
 
         async def _fetch_all():
             async with aiohttp.ClientSession() as session:
                 return await asyncio.gather(
                     *[
-                        RTensor._fetch_tensor(session, s.shard_id, s.node_addr)
-                        for s in self.shards
+                        cls._fetch_tensor(session, s.shard_id, s.node_addr)
+                        for s in shards
                     ]
                 )
 
         return asyncio.run(_fetch_all())
 
-    @staticmethod
+    @classmethod
     async def _fetch_tensor(
-        session: aiohttp.ClientSession, shard_id: str, node_addr: str
+        cls, session: aiohttp.ClientSession, shard_id: str, node_addr: str
     ) -> torch.Tensor:
         # Avoid circular import
         from areal.scheduler.rpc.serialization import deserialize_value
@@ -69,6 +84,85 @@ class RTensor:
             data_bytes = await resp.read()
             serialized_data = orjson.loads(data_bytes)
             return deserialize_value(serialized_data)
+
+    @classmethod
+    def store(cls, shard_id: str, tensor: torch.Tensor):
+        store(shard_id, tensor)
+        return shard_id
+
+    @classmethod
+    def create(cls, *, size, seqlens, shard_id: str, node_addr: str, **_):
+        return cls(
+            shard_id=shard_id,
+            node_addr=node_addr,
+            size=size,
+            seqlens=seqlens,
+        )
+
+    @classmethod
+    async def delete_by_shard_id(cls, node_addr, shard_ids):
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(
+                f"http://{node_addr}/data/clear", json={"shard_ids": shard_ids}
+            ) as resp:
+                if resp.status == 200:
+                    await resp.json()
+
+
+@dataclass
+class RayTensorShardInfo(BaseTensorShardInfo):
+    shard_id: ray.ObjectRef
+
+    @classmethod
+    def fetch(cls, shards: RayTensorShardInfo) -> list[torch.Tensor]:
+        return ray.get([s.shard_id for s in shards])
+
+    @classmethod
+    def store(cls, shard_id: str, tensor: torch.Tensor):
+        return ray.put(tensor)
+
+    @classmethod
+    def create(cls, *, size, seqlens, shard_id=None, **_):
+        return cls(
+            shard_id=shard_id,
+            size=size,
+            seqlens=seqlens,
+            node_addr="",
+        )
+
+    @classmethod
+    async def delete_by_shard_id(cls, node_addr, shard_ids):
+        ray.internal.free(shard_ids)
+
+
+@dataclass
+class RTensor:
+    """Single tensor distributed as CPU shards across nodes."""
+
+    shards: list[BaseTensorShardInfo]
+    data: torch.Tensor
+    _tensor_info_cls: ClassVar[type[BaseTensorShardInfo]] = None
+
+    @classmethod
+    def tensor_info_cls(cls) -> type[BaseTensorShardInfo]:
+        if cls._tensor_info_cls is None:
+            if ray.is_initialized():
+                cls._tensor_info_cls = RayTensorShardInfo
+            else:
+                cls._tensor_info_cls = TensorShardInfo
+        return cls._tensor_info_cls
+
+    def to_local(self) -> torch.Tensor:
+        """Fetch all shards via HTTP, concatenate along dim 0."""
+        if not self.data.is_meta:
+            return self.data
+        # Fetch all shards first
+        tensors = self._fetch()
+        self.data = _pad_cat_dim0(tensors)
+        return self.data
+
+    def _fetch(self):
+        return RTensor.tensor_info_cls().fetch(self.shards)
 
     @staticmethod
     def split_tensor(batch_tensor: torch.Tensor, layout: RTensor) -> list[torch.Tensor]:
@@ -94,20 +188,19 @@ class RTensor:
         shards = []
         for tensor, shard_info in zip(tensors, layout.shards):
             sid = str(uuid.uuid4())
-            info = TensorShardInfo(
-                shard_id=sid,
-                node_addr=node_addr,
-                size=shard_info.size,
-                seqlens=shard_info.seqlens.copy(),
-            )
-            shards.append(info)
-
             # Truncate at the maximum sequence length
             # to prevent over-padding
             if tensor.ndim > 1:
                 tensor = tensor[:, : max(shard_info.seqlens)]
             # Store locally
-            store(sid, tensor)
+            shard_id = RTensor.tensor_info_cls().store(sid, tensor)
+            info = RTensor.tensor_info_cls().create(
+                size=shard_info.size,
+                seqlens=shard_info.seqlens.copy(),
+                shard_id=shard_id,
+                node_addr=node_addr,
+            )
+            shards.append(info)
 
         return cls(shards=shards, data=batch_tensor.to("meta"))
 
@@ -162,15 +255,15 @@ class RTensor:
             if attn_mask is None:
                 raise RuntimeError("`attention_mask` is not found")
             assert node_addr is not None
+            shard = RTensor.tensor_info_cls().create(
+                size=attn_mask.shape[0],
+                seqlens=[int(am.sum()) for am in attn_mask],
+                shard_id="",
+                node_addr=node_addr,
+            )
+
             layout_rtensor = RTensor(
-                shards=[
-                    TensorShardInfo(
-                        shard_id="",
-                        node_addr=node_addr,
-                        size=attn_mask.shape[0],
-                        seqlens=[int(am.sum()) for am in attn_mask],
-                    )
-                ],
+                shards=[shard],
                 data=torch.empty_like(attn_mask, device="meta"),
             )
         return layout_rtensor
@@ -360,6 +453,9 @@ class RTensor:
 
         _collect(obj)
         return shards_by_node
+
+    async def clear_node(node_addr, shard_ids):
+        await RTensor.tensor_info_cls().delete_by_shard_id(node_addr, shard_ids)
 
     @property
     def shape(self):

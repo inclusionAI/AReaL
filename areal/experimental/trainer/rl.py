@@ -36,7 +36,7 @@ from areal.engine.ppo.critic import (
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
-from areal.scheduler import LocalScheduler
+from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
@@ -58,9 +58,6 @@ class PPOTrainer:
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
-        # Configure performance tracer
-        if config.perf_tracer is not None:
-            perf_tracer.configure(config.perf_tracer, rank=rank)
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
@@ -75,6 +72,8 @@ class PPOTrainer:
 
         # Parse allocation mode.
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
+
+        self._amend_xccl_weight_update_envvar()
 
         # Create models: actor, critic, etc.
         self.actor = self._create_actor(config.actor)
@@ -141,8 +140,7 @@ class PPOTrainer:
             # NCCL/XCCL weight update
             if isinstance(self.actor, MegatronEngine):
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
-                    self.allocation_mode,
-                    nccl_group_name=self.actor.weight_update_group_name,
+                    self.allocation_mode
                 )
             else:
                 self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
@@ -174,6 +172,8 @@ class PPOTrainer:
             inference_engine=self.rollout,
             weight_update_meta=self.weight_update_meta,
         )
+
+        self._config_perf_tracer()
 
     def train(
         self,
@@ -378,7 +378,7 @@ class PPOTrainer:
             # Resume rollout
             self.rollout.resume()
 
-            perf_tracer.save(step=global_step)
+            self._save_perf_tracer(step=global_step)
 
     def close(self):
         self.stats_logger.close()
@@ -391,10 +391,43 @@ class PPOTrainer:
         self.actor.destroy()
         perf_tracer.save(force=True)
 
+    def _config_perf_tracer(self):
+        rank = int(os.getenv("RANK", "0"))
+        if self.config.perf_tracer is None:
+            return
+        perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+
+        if not is_single_controller():
+            return
+
+        self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
+        if self.critic is not None:
+            self.critic.config_perf_tracer(self.config.perf_tracer, role="critic")
+        if self.ref is not None:
+            self.ref.config_perf_tracer(self.config.perf_tracer, role="ref")
+        self.rollout.config_perf_tracer(self.config.perf_tracer, role="rollout")
+        self.eval_rollout.config_perf_tracer(
+            self.config.perf_tracer, role="eval-rollout"
+        )
+
+    def _save_perf_tracer(self, step: int):
+        self.actor.save_perf_tracer(step=step)
+        if self.ref is not None:
+            self.ref.save_perf_tracer(step=step)
+        if self.critic is not None:
+            self.critic.save_perf_tracer(step=step)
+        self.eval_rollout.save_perf_tracer(step=step)
+        self.rollout.save_perf_tracer(step=step)
+        perf_tracer.save(step=step)
+
     def _init_scheduler(self) -> Scheduler:
         cfg = self.config.scheduler
         if cfg.type == "local":
             return LocalScheduler(exp_config=self.config)
+        elif cfg.type == "ray":
+            return RayScheduler(exp_config=self.config)
+        elif cfg.type == "slurm":
+            return SlurmScheduler(exp_config=self.config)
         raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
 
     def _create_dataloader(
@@ -411,6 +444,18 @@ class PPOTrainer:
             dataset_config=dataset_config,
         )
 
+    def _amend_xccl_weight_update_envvar(self):
+        if not is_single_controller():
+            # These environs are set by the launcher in the SPMD mode.
+            return
+        if self.allocation_mode.gen_backend != "sglang":
+            return
+
+        # Disable some environ for NCCL weight update.
+        for spec in self.config.actor.scheduling_spec:
+            spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
+            spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
+
     def _create_actor(
         self, actor_config: PPOActorConfig
     ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
@@ -423,12 +468,6 @@ class PPOTrainer:
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
         if is_single_controller():
-            if self.allocation_mode.gen_backend == "sglang":
-                # Disable some environ for NCCL weight update.
-                # These environs are set by the launcher in the SPMD mode.
-                for spec in actor_config.scheduling_spec:
-                    spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
-                    spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
             actor = actor_cls.as_controller(actor_config, self.scheduler)
         else:
             actor = actor_cls(config=actor_config)
@@ -461,6 +500,9 @@ class PPOTrainer:
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             config.max_head_offpolicyness = int(1e12)
+            # eval-rollout uses the same inference servsers as rollout
+            for spec in config.scheduling_spec:
+                spec.gpu = 0
 
         # Determine engine class and server args based on backend
         if self.allocation_mode.gen_backend == "sglang":

@@ -5,16 +5,32 @@ properly with LD_PRELOAD hooks.
 """
 
 import os
+from contextlib import nullcontext
 
-import torch_memory_saver
+try:
+    from torch_memory_saver import torch_memory_saver
+except ImportError:
+
+    class MockTorchMemorySaver:
+        def disable(self):
+            return nullcontext()
+
+        def pause(self):
+            pass
+
+        def resume(self):
+            pass
+
+    torch_memory_saver = MockTorchMemorySaver()
 
 
 def get_tms_env_vars() -> dict[str, str]:
     """Get environment variables for torch_memory_saver (TMS)."""
+    import torch_memory_saver as tms_pkg
 
     # Locate the LD_PRELOAD shared library
     dynlib_path = os.path.join(
-        os.path.dirname(os.path.dirname(torch_memory_saver.__file__)),
+        os.path.dirname(os.path.dirname(tms_pkg.__file__)),
         "torch_memory_saver_hook_mode_preload.abi3.so",
     )
 

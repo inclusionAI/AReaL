@@ -15,6 +15,9 @@ cluster:
 
 allocation_mode: d8p1t1
 
+scheduler:
+  type: null
+
 model:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
