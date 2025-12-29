@@ -22,7 +22,7 @@ from areal.utils import logging, timeutil
 if TYPE_CHECKING:
     from areal.api.cli_args import NameResolveConfig
 
-logger = logging.getLogger("name-resolve")
+logger = logging.getLogger("NameResolve")
 
 
 class ArgumentError(Exception):

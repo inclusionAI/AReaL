@@ -18,7 +18,7 @@ from areal.utils import logging
 if TYPE_CHECKING:
     from transformers import AutoProcessor
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger("IOStruct")
 
 
 @dataclass

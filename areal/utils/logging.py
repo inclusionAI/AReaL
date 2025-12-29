@@ -5,18 +5,156 @@ from typing import Literal
 
 import colorlog
 
-LOG_FORMAT = "%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s"
+# ANSI color codes for the [AReaL] header
+# Using 256-color mode for a milk tea / brown-yellow color (RGB ~180, 140, 80)
+AREAL_HEADER = "\033[1;38;2;180;140;80m[AReaL]\033[0m"  # Bold milk tea color
+AREAL_HEADER_PLAIN = "[AReaL]"  # For file logging (no colors)
+
+LOG_FORMAT = f"{AREAL_HEADER} %(log_color)s%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s"
+LOG_FORMAT_PLAIN = (
+    f"{AREAL_HEADER_PLAIN} %(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s"
+)
 DATE_FORMAT = "%Y%m%d-%H:%M:%S"
 LOGLEVEL = logging.INFO
 LOG_PREFIX_WIDTH = 10  # Fixed width for alignment in merged.log
 
 # NOTE: To use colorlog we should not call colorama.init() anywhere.
 # The available color names are black, red, green, yellow, blue, purple, cyan and white
+
+# Logger color mappings by component category
+# Exact matches take priority, then prefix patterns are checked in order
+#
+# Color scheme:
+#   - white: Schedulers, Launchers, RPC, Inference wrappers (infrastructure)
+#   - light_purple/purple: Workflows, Rewards, OpenAI (RL-specific)
+#   - blue: Controllers (orchestration)
+#   - light_green: Stats, Perf, Dataset, Trainers (data/metrics)
+#   - light_cyan/cyan: Engines, Platforms, MCore (compute backends)
+LOGGER_COLORS_EXACT = {
+    # Schedulers - white
+    "LocalScheduler": "white",
+    "RayScheduler": "white",
+    "SlurmScheduler": "white",
+    # Launchers - white
+    "LocalLauncher": "white",
+    "RayLauncher": "white",
+    "SlurmLauncher": "white",
+    # Workflows - purple
+    "RLVRWorkflow": "light_purple",
+    "VisionRLVRWorkflow": "light_purple",
+    "MultiTurnWorkflow": "light_purple",
+    "MultiTurnV2Workflow": "light_purple",
+    # Controllers - blue
+    "TrainController": "blue",
+    "RolloutController": "blue",
+    "WorkflowExecutor": "blue",
+    # Stats/Perf - green
+    "StatsLogger": "light_green",
+    "StatsTracker": "light_green",
+    "PerfTracer": "light_green",
+    # RPC servers - white
+    "SyncRPCServer": "white",
+    "RayRPCServer": "white",
+    "RPCSerialization": "white",
+    # Inference wrappers - white
+    "SGLangWrapper": "white",
+    "VLLMWrapper": "white",
+    "RemoteInfEngine": "white",
+    # Dataset - green
+    "Dataset": "light_green",
+    "CLEVR70KDataset": "light_green",
+    # Trainers - green
+    "RLTrainer": "light_green",
+    "SFTTrainer": "light_green",
+    # Algorithm-specific - cyan
+    "PPOActor": "cyan",
+    # Rewards - purple
+    "GSM8KReward": "purple",
+    "Geometry3KReward": "purple",
+    "RewardUtils": "purple",
+    "RewardAPI": "purple",
+    # Platforms - cyan
+    "Platform": "light_cyan",
+    "PlatformInit": "light_cyan",
+    "CUDAPlatform": "light_cyan",
+    "NPUPlatform": "light_cyan",
+    "UnknownPlatform": "light_cyan",
+    # OpenAI - purple
+    "OpenAIClient": "light_purple",
+    "OpenAICache": "light_purple",
+    "OpenAIProxy": "light_purple",
+    "ToolCallParser": "light_purple",
+    "TokenLogpReward": "light_purple",
+    "ProxyUtils": "light_purple",
+}
+
+# Prefix patterns checked in order (first match wins)
+# Used for dynamic logger names like "[FSDPEngine Rank 0]"
+LOGGER_PATTERNS = [
+    # Engines - cyan
+    ("FSDPEngine", "light_cyan"),
+    ("MegatronEngine", "light_cyan"),
+    ("RemoteInfEngine", "light_cyan"),
+    ("MCore", "light_cyan"),
+    # HF utilities - white
+    ("HF", "white"),
+    # Tests - white
+    ("Test", "white"),
+]
+
+DEFAULT_LOGGER_COLOR = "white"
+
+
+class LoggerColoredFormatter(colorlog.ColoredFormatter):
+    """Custom formatter that colors logs based on logger name for INFO/DEBUG levels.
+
+    WARNING, ERROR, and CRITICAL levels keep their standard colors (yellow, red)
+    to ensure they always stand out regardless of the source component.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._logger_color_cache: dict[str, str] = {}
+
+    def _get_logger_color(self, name: str) -> str:
+        """Get the color for a logger name, using cache for performance."""
+        if name in self._logger_color_cache:
+            return self._logger_color_cache[name]
+
+        # Check exact matches first
+        if name in LOGGER_COLORS_EXACT:
+            color = LOGGER_COLORS_EXACT[name]
+        else:
+            # Check prefix patterns
+            color = DEFAULT_LOGGER_COLOR
+            for pattern, pattern_color in LOGGER_PATTERNS:
+                if name.startswith(pattern) or pattern in name:
+                    color = pattern_color
+                    break
+
+        self._logger_color_cache[name] = color
+        return color
+
+    def format(self, record):
+        # For WARNING/ERROR/CRITICAL, use standard level-based colors
+        # For DEBUG/INFO, use logger-based colors
+        if record.levelno < logging.WARNING:
+            logger_color = self._get_logger_color(record.name)
+            # Temporarily override the log_colors for this record
+            original_log_colors = self.log_colors.copy()
+            self.log_colors["DEBUG"] = logger_color
+            self.log_colors["INFO"] = logger_color
+            result = super().format(record)
+            self.log_colors = original_log_colors
+            return result
+        return super().format(record)
+
+
 log_config = {
     "version": 1,
     "formatters": {
         "plain": {
-            "()": colorlog.ColoredFormatter,
+            "()": LoggerColoredFormatter,
             "format": "%(log_color)s" + LOG_FORMAT,
             "datefmt": DATE_FORMAT,
             "log_colors": {
@@ -28,7 +166,7 @@ log_config = {
             },
         },
         "colored": {
-            "()": colorlog.ColoredFormatter,
+            "()": LoggerColoredFormatter,
             "format": "%(log_color)s" + LOG_FORMAT,
             "datefmt": DATE_FORMAT,
             "log_colors": {
@@ -40,7 +178,7 @@ log_config = {
             },
         },
         "colored_system": {
-            "()": colorlog.ColoredFormatter,
+            "()": LoggerColoredFormatter,
             "format": "%(log_color)s" + LOG_FORMAT,
             "datefmt": DATE_FORMAT,
             "log_colors": {
@@ -52,7 +190,7 @@ log_config = {
             },
         },
         "colored_benchmark": {
-            "()": colorlog.ColoredFormatter,
+            "()": LoggerColoredFormatter,
             "format": "%(log_color)s" + LOG_FORMAT,
             "datefmt": DATE_FORMAT,
             "log_colors": {
@@ -157,17 +295,19 @@ def setup_file_logging(
     """
     os.makedirs(log_dir, exist_ok=True)
 
-    # Handler for dedicated log file (standard format)
+    # Handler for dedicated log file (standard format, no ANSI colors)
     file_handler = FileHandler(os.path.join(log_dir, filename), mode="a")
     file_handler.setLevel(level)
-    file_handler.setFormatter(Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+    file_handler.setFormatter(Formatter(LOG_FORMAT_PLAIN, datefmt=DATE_FORMAT))
     logging.getLogger().addHandler(file_handler)
 
-    # Handler for merged.log (with fixed-width [main] prefix)
+    # Handler for merged.log (with fixed-width [main] prefix, no ANSI colors)
     prefix = "[main]".ljust(LOG_PREFIX_WIDTH)
     merged_handler = FileHandler(os.path.join(log_dir, "merged.log"), mode="a")
     merged_handler.setLevel(level)
-    merged_handler.setFormatter(Formatter(prefix + LOG_FORMAT, datefmt=DATE_FORMAT))
+    merged_handler.setFormatter(
+        Formatter(prefix + LOG_FORMAT_PLAIN, datefmt=DATE_FORMAT)
+    )
     logging.getLogger().addHandler(merged_handler)
 
 
@@ -203,42 +343,45 @@ def log_swanlab_wandb_tensorboard(data, step=None, summary_writer=None):
 
 
 if __name__ == "__main__":
-    # The following serves as a color visualization test.
-    # The available color names are black, red, green, yellow, blue, purple, cyan and white
-    log_config = {
-        "version": 1,
-        "formatters": {
-            "colored": {
-                "()": colorlog.ColoredFormatter,
-                "format": "%(log_color)s" + LOG_FORMAT,
-                "datefmt": DATE_FORMAT,
-                "log_colors": {
-                    "DEBUG": "purple",
-                    "INFO": "light_purple",
-                    "WARNING": "yellow",
-                    "ERROR": "red",
-                    "CRITICAL": "bold_white,bg_red",
-                },
-            },
-        },
-        "handlers": {
-            "coloredHandler": {
-                "class": "logging.StreamHandler",
-                "level": "DEBUG",
-                "formatter": "colored",
-                "stream": "ext://sys.stdout",
-            },
-        },
-        "loggers": {
-            "": {
-                "handlers": ["coloredHandler"],
-                "level": "DEBUG",
-            },
-        },
-    }
-    logging.config.dictConfig(log_config)
-    logging.debug("This is a debug message")
-    logging.info("This is an info message")
-    logging.warning("This is a warning message")
-    logging.error("This is an error message")
-    logging.critical("This is a critical message")
+    # Test per-logger color differentiation
+    # Run with: python -m areal.utils.logging
+    print("=" * 70)
+    print("Testing per-logger color differentiation with [AReaL] prefix")
+    print("Each component category should have a distinct color:")
+    print("  - white: Schedulers, Launchers, RPC, Inference (infrastructure)")
+    print("  - light_purple/purple: Workflows, Rewards, OpenAI (RL-specific)")
+    print("  - blue: Controllers (orchestration)")
+    print("  - light_green: Stats, Perf, Dataset, Trainers (data/metrics)")
+    print("  - light_cyan/cyan: Engines, Platforms, MCore (compute backends)")
+    print("  - WARNING/ERROR: yellow/red (always override)")
+    print("=" * 70)
+
+    # Create loggers for different components
+    test_loggers = [
+        ("LocalScheduler", "Scheduler starting up..."),
+        ("LocalLauncher", "Launcher initializing..."),
+        ("[FSDPEngine Rank 0]", "Initializing FSDP..."),
+        ("[MegatronEngine Rank 1]", "Loading model weights..."),
+        ("RLVRWorkflow", "Starting episode 1..."),
+        ("MultiTurnWorkflow", "Processing turn 3..."),
+        ("TrainController", "Creating workers..."),
+        ("RolloutController", "Starting rollout..."),
+        ("SGLangWrapper", "Server ready on port 8000"),
+        ("StatsLogger", "Logging metrics..."),
+        ("Dataset", "Loading training data..."),
+        ("GSM8KReward", "Computing rewards..."),
+        ("PPOActor", "Running PPO forward pass..."),
+        ("CUDAPlatform", "Detected 8 GPUs"),
+        ("OpenAIClient", "Connecting to API..."),
+        ("UnknownLogger", "This uses default white color"),
+    ]
+
+    for logger_name, message in test_loggers:
+        logger = getLogger(logger_name)
+        logger.info(message)
+
+    print()
+    print("Testing WARNING/ERROR override (should be yellow/red):")
+    getLogger("LocalScheduler").warning("This warning should be yellow")
+    getLogger("[FSDPEngine Rank 0]").error("This error should be red")
+    getLogger("RLVRWorkflow").critical("This critical should be red bg")

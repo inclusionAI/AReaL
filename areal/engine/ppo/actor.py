@@ -33,7 +33,7 @@ from areal.utils.functional import (
 )
 from areal.utils.perf_tracer import trace_perf
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("PPOActor")
 
 
 class PPOActor:

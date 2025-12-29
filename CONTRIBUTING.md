@@ -151,6 +151,53 @@ When opening a PR:
 - List the testing you performed
 - Let AI review first before requesting human reviewers
 
+### 📝 Logging Convention
+
+AReaL uses colored logging to help distinguish log messages from different components.
+When adding new loggers, please follow these conventions:
+
+**Logger Naming:**
+
+- Use **PascalCase** with no spaces or hyphens (e.g., `TrainController`, not
+  `train_controller` or `Train Controller`)
+- Use descriptive names that indicate the component type
+- Use category suffixes: `Scheduler`, `Launcher`, `Workflow`, `Controller`, `Engine`,
+  etc.
+- For per-rank loggers, use the format `[{Component} Rank {N}]` (e.g.,
+  `[FSDPEngine Rank 0]`)
+
+**Example:**
+
+```python
+import logging
+
+# Good - PascalCase, descriptive
+logger = logging.getLogger("TrainController")
+logger = logging.getLogger("RLVRWorkflow")
+logger = logging.getLogger("[FSDPEngine Rank 0]")
+
+# Bad - avoid these patterns
+logger = logging.getLogger(__name__)  # Not descriptive in logs
+logger = logging.getLogger("train controller")  # Has spaces
+logger = logging.getLogger("train_controller")  # Snake case
+```
+
+**Color Scheme by Category:**
+
+| Color           | Category                                    | Examples                                 |
+| --------------- | ------------------------------------------- | ---------------------------------------- |
+| white           | Infrastructure (Schedulers, Launchers, RPC) | `LocalScheduler`, `SGLangWrapper`        |
+| light_purple    | RL-specific (Workflows, Rewards, OpenAI)    | `RLVRWorkflow`, `GSM8KReward`            |
+| blue            | Orchestration (Controllers)                 | `TrainController`, `RolloutController`   |
+| light_green     | Data/Metrics (Stats, Dataset, Trainers)     | `StatsLogger`, `Dataset`, `RLTrainer`    |
+| light_cyan/cyan | Compute backends (Engines, Platforms)       | `FSDPEngine`, `CUDAPlatform`, `PPOActor` |
+| yellow/red      | Warning/Error levels (always override)      | Any logger at WARNING+ level             |
+
+When adding a new logger, register it in `areal/utils/logging.py` under
+`LOGGER_COLORS_EXACT` or `LOGGER_PATTERNS` to ensure consistent coloring.
+
+Test your logger colors with: `python -m areal.utils.logging`
+
 ## Tips for Using AI-Assisted Coding
 
 - [AGENTS.md](AGENTS.md) is a reference guide for AI coding agents working on AReaL.

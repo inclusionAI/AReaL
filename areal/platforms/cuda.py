@@ -6,7 +6,7 @@ import areal.utils.logging as logging
 
 from .platform import Platform
 
-logger = logging.getLogger("CUDA Platform")
+logger = logging.getLogger("CUDAPlatform")
 
 
 class CudaPlatform(Platform):

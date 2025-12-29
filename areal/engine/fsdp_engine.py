@@ -191,7 +191,7 @@ class FSDPEngine(TrainEngine):
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
 
-        self.logger = logging.getLogger(f"[FSDP Engine Rank {dist.get_rank()}]")
+        self.logger = logging.getLogger(f"[FSDPEngine Rank {dist.get_rank()}]")
 
         parallel_strategy = self._make_parallel_strategy(parallel_strategy)
 

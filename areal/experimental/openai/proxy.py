@@ -372,7 +372,7 @@ class ProxyServer:
         self.name = name
         self.session_cache = session_cache if session_cache is not None else {}
         self.session_ids_queue = asyncio.Queue(maxsize=buffer_size or 0)
-        self.logger = getLogger("ArealOpenAI Proxy", level=server_log_level)
+        self.logger = getLogger("OpenAIProxy", level=server_log_level)
         self.app = build_app(
             client=client,
             session_cache=self.session_cache,

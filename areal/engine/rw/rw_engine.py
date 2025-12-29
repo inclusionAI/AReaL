@@ -13,7 +13,7 @@ from areal.platforms import current_platform
 from areal.utils import logging, stats_tracker
 from areal.utils.perf_tracer import trace_perf
 
-logger = logging.getLogger("RW engine")
+logger = logging.getLogger("RWEngine")
 
 
 class RWEngine:

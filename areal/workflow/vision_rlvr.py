@@ -23,7 +23,7 @@ from areal.utils.perf_tracer import (
 )
 from areal.workflow.rlvr import RLVRWorkflow
 
-logger = logging.getLogger("RLVR workflow")
+logger = logging.getLogger("VisionRLVRWorkflow")
 
 
 class VisionRLVRWorkflow(RLVRWorkflow):

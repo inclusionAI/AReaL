@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 uvloop.install()
 
-logger = logging.getLogger("CLI args")
+logger = logging.getLogger("CLIArgs")
 
 ConfigT = TypeVar("ConfigT")
 

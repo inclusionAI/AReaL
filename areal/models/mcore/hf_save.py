@@ -17,7 +17,7 @@ from areal.models.mcore.registry import unwrap_to_gpt_model
 from areal.platforms import current_platform
 from areal.utils import logging
 
-logger = logging.getLogger("HF WeightsSaver")
+logger = logging.getLogger("HFSaver")
 
 HF_MODEL_CONFIG_FILES = [
     "generation_config.json",

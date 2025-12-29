@@ -8,7 +8,7 @@ from areal.utils.launcher import (
     validate_config_for_distributed_launcher,
 )
 
-logger = logging.getLogger("Slurm Utils")
+logger = logging.getLogger("SlurmUtils")
 
 
 SQUEUE_FIELDS = [

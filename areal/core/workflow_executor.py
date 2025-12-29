@@ -140,7 +140,7 @@ def check_trajectory_format(
         ``check_trajectory_format`` is enabled
     """
     if logger is None:
-        logger = logging.getLogger(__name__)
+        logger = logging.getLogger("WorkflowExecutor")
     if data is None:
         return True
 

@@ -11,7 +11,7 @@ from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.datapack import flat2d
 
-logger = logging.getLogger("stats_tracker")
+logger = logging.getLogger("StatsTracker")
 
 
 class ReduceType(Enum):

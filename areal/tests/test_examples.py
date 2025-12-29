@@ -15,7 +15,7 @@ from areal.tests.utils import get_dataset_path, get_model_path
 from areal.utils import logging
 from areal.utils.proc import kill_process_tree
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TestExamples")
 
 SUCCESS_PATTERN = re.compile(r"Epoch 1/\d+ Step 1/\d+ Train step 1/\d+ done\.")
 

@@ -47,7 +47,7 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("RLTrainer")
 
 
 class PPOTrainer:

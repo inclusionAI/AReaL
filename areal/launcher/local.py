@@ -33,7 +33,7 @@ from areal.utils.network import find_free_ports
 from areal.utils.offload import get_tms_env_vars
 from areal.utils.recover import check_if_recover
 
-logger = logging.getLogger("Local Scheduler")
+logger = logging.getLogger("LocalLauncher")
 JOB_STATE_TO_PROCESS_STATUS = {
     JobState.NOT_FOUND: [],
     JobState.PENDING: [psutil.STATUS_PARKED],

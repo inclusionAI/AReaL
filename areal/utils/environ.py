@@ -2,7 +2,7 @@ import os
 
 from areal.utils import logging
 
-logger = logging.getLogger("areal.tests.utils")
+logger = logging.getLogger("EnvironUtils")
 
 _warned_bool_env_var_keys = set()
 

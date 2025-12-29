@@ -11,7 +11,7 @@ from .npu import NPUPlatform
 from .platform import Platform
 from .unknown import UnknownPlatform
 
-logger = logging.getLogger("Platform init")
+logger = logging.getLogger("PlatformInit")
 
 
 is_npu_available = is_torch_npu_available()
