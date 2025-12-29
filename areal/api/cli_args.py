@@ -1027,7 +1027,7 @@ class SGLangConfig:
         tp_size: int,
         base_gpu_id: int,
         host: str | None = None,
-        port: str | None = None,
+        port: int | None = None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,

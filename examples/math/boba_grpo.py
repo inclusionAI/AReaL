@@ -8,7 +8,6 @@ from areal.experimental.trainer import PPOTrainer
 from areal.reward import get_math_verify_worker
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.stats_logger import StatsLogger
-from areal.workflow.rlvr import RLVRWorkflow
 
 
 def get_input_ids_fn(data, tokenizer, enable_thinking):
@@ -68,23 +67,28 @@ def main(args):
 
     train_dataset = get_boba_math_dataset(config.train_dataset.path, tokenizer)
 
+    workflow_kwargs = dict(
+        reward_fn="examples.math.boba_grpo.boba_reward_fn",
+        gconfig=config.gconfig,
+        tokenizer=config.tokenizer_path,
+        enable_thinking=True,
+        dump_dir=os.path.join(
+            StatsLogger.get_log_path(config.stats_logger), "generated"
+        ),
+        get_input_ids_fn="examples.math.boba_grpo.get_input_ids_fn",
+        data_extract_prompt_fn="examples.math.boba_grpo.data_extract_prompt_fn",
+    )
+
     with PPOTrainer(
         config,
         train_dataset=train_dataset,
         valid_dataset=None,
     ) as trainer:
-        workflow = RLVRWorkflow(
-            reward_fn=boba_reward_fn,
-            gconfig=config.gconfig,
-            tokenizer=trainer.tokenizer,
-            enable_thinking=True,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
-            get_input_ids_fn=get_input_ids_fn,
-            data_extract_prompt_fn=data_extract_prompt_fn,
+        trainer.train(
+            workflow="areal.workflow.rlvr.RLVRWorkflow",
+            workflow_kwargs=workflow_kwargs,
+            eval_workflow=None,
         )
-        trainer.train(workflow, eval_workflow=None)
 
 
 if __name__ == "__main__":

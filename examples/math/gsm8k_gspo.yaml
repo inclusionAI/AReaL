@@ -16,6 +16,9 @@ cluster:
 
 allocation_mode: sglang:d4p1t1+d4p1t1
 
+scheduler:
+  type: null
+
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -93,6 +96,9 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
   scheduling_spec: ${actor.scheduling_spec}
 
 # SGLang
@@ -116,6 +122,7 @@ vllm:
 # datasets
 train_dataset:
   batch_size: 256
+  shuffle: true
   pin_memory: true
   num_workers: 4
   path: openai/gsm8k
@@ -161,3 +168,11 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
+
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: false
+  session_tracer:
+    enabled: false
