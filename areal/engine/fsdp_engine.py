@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import gc
 import math
@@ -7,7 +9,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import nullcontext
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
@@ -102,6 +104,11 @@ from areal.utils.ulysses import (
     ulysses_pad_and_slice_inputs,
     ulysses_prepare_inputs,
 )
+
+if TYPE_CHECKING:
+    from areal.engine.ppo.actor import PPOActorConfig
+    from areal.engine.ppo.critic import PPOCriticConfig
+    from areal.scheduler.scheduler import Scheduler
 
 
 @dataclasses.dataclass
@@ -1447,7 +1454,7 @@ class FSDPEngine(TrainEngine):
 class FSDPPPOActor(FSDPEngine):
     """PPO Actor implementation using FSDP backend."""
 
-    def __init__(self, config):
+    def __init__(self, config: PPOActorConfig):
         from areal.engine.ppo.actor import PPOActor
 
         super().__init__(config)
@@ -1465,7 +1472,7 @@ class FSDPPPOActor(FSDPEngine):
         self.actor.ppo_update(*args, **kwargs)
 
     @classmethod
-    def as_controller(cls, config, scheduler):
+    def as_controller(cls, config: PPOActorConfig, scheduler: Scheduler):
         from areal.engine.ppo.actor import PPOActorController
 
         return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1474,7 +1481,7 @@ class FSDPPPOActor(FSDPEngine):
 class FSDPPPOCritic(FSDPEngine):
     """PPO Critic implementation using FSDP backend."""
 
-    def __init__(self, config):
+    def __init__(self, config: PPOCriticConfig):
         from areal.engine.ppo.critic import PPOCritic
 
         super().__init__(config)
@@ -1488,7 +1495,7 @@ class FSDPPPOCritic(FSDPEngine):
         self.critic.ppo_update(*args, **kwargs)
 
     @classmethod
-    def as_controller(cls, config, scheduler):
+    def as_controller(cls, config: PPOCriticConfig, scheduler: Scheduler):
         from areal.engine.ppo.critic import PPOCriticController
 
         return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1497,7 +1504,7 @@ class FSDPPPOCritic(FSDPEngine):
 class FSDPLMEngine(FSDPEngine):
     """Language model engine for SFT using FSDP backend."""
 
-    def __init__(self, config):
+    def __init__(self, config: TrainEngineConfig):
         from areal.engine.sft.lm_engine import LMEngine
 
         super().__init__(config)
@@ -1510,7 +1517,7 @@ class FSDPLMEngine(FSDPEngine):
         return self.lm_engine.evaluate_lm(data)
 
     @classmethod
-    def as_controller(cls, config, scheduler):
+    def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
         from areal.engine.sft.lm_engine import LMController
 
         return LMController(train_engine=cls, config=config, scheduler=scheduler)
@@ -1519,7 +1526,7 @@ class FSDPLMEngine(FSDPEngine):
 class FSDPRWEngine(FSDPEngine):
     """Reward model engine using FSDP backend."""
 
-    def __init__(self, config):
+    def __init__(self, config: TrainEngineConfig):
         from copy import deepcopy
 
         from areal.engine.rw.rw_engine import RWEngine
@@ -1527,8 +1534,6 @@ class FSDPRWEngine(FSDPEngine):
         super().__init__(config)
         self.rw_engine = RWEngine(self)
         if self.config.mb_spec.granularity != 2:
-            from areal.utils import logging
-
             logger = logging.getLogger("RW engine")
             logger.warning("mb_spec.granularity must be 2 for reward modeling")
             self.config = deepcopy(self.config)
@@ -1541,7 +1546,7 @@ class FSDPRWEngine(FSDPEngine):
         return self.rw_engine.evaluate_rw(data)
 
     @classmethod
-    def as_controller(cls, config, scheduler):
+    def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
         from areal.engine.rw.rw_engine import RWController
 
         return RWController(train_engine=cls, config=config, scheduler=scheduler)
