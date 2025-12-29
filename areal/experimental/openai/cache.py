@@ -79,7 +79,7 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                     if i == 0:
                         logger.warning(
                             "The most recent interaction does not have a reward set. "
-                            "All interactions will have None reward."
+                            "All interactions will have Zero reward."
                         )
                     interaction.reward = 0.0
 
@@ -200,9 +200,14 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
 
         for id, interaction in self.items():
             if interaction.interaction_id != id:
-                raise ValueError(
-                    f"Interaction ID mismatch: {interaction.interaction_id} != {id}"
+                logger.warning(
+                    f"Interaction ID mismatch: {interaction.interaction_id} != {id}. It is possibly due to generation failure during trajectory generation."
                 )
+        cache = {
+            id: interaction
+            for id, interaction in cache.items()
+            if id == interaction.interaction_id
+        }
 
         if style == "concat":
             for interaction in self.values():

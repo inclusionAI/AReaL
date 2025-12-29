@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from collections.abc import Awaitable, Callable
 
@@ -228,3 +229,20 @@ async def run_and_submit_rewards(
                 url=pathname,
             )
         return info
+
+
+async def parse_request(request: Request, cls):
+    # Parse the raw JSON
+    raw_body = await request.body()
+    data = json.loads(raw_body)
+
+    # Extract known fields for validation
+    known_fields = {k: v for k, v in data.items() if k in cls.__annotations__.keys()}
+
+    # Extract extra fields
+    extra_body = {k: v for k, v in data.items() if k not in cls.__annotations__.keys()}
+
+    # Validate the known fields
+    params = cls(**known_fields)
+
+    return params, extra_body

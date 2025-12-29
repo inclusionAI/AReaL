@@ -58,6 +58,22 @@ os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 logger = logging.getLogger("AReaLOpenAI Client")
 
 
+def _ensure_dict(
+    name: str,
+    item: Any,
+) -> Any:
+    _item = None
+    if isinstance(item, dict):
+        _item = {k: _ensure_dict(name, v) for k, v in item.items() if v is not None}
+    elif isinstance(item, BaseModel):
+        _item = item.model_dump(exclude_none=True, mode="json")
+    elif type(item).__name__ == "ValidatorIterator" or isinstance(item, list):
+        _item = [_ensure_dict(name, i) for i in item]
+    else:
+        _item = item
+    return _item
+
+
 def _ensure_message_dict_list(
     name: str,
     value: list[Any],
@@ -190,7 +206,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         messages_list_raw = list(messages)
         if not messages_list_raw:
             raise ValueError("messages cannot be empty")
-        messages_list = _ensure_message_dict_list(
+        messages_list = _ensure_dict(
             "messages",
             messages_list_raw,
         )
@@ -216,23 +232,37 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # Convert messages to prompt format
         tools = tools if not is_omitted(tools) else None
+        if tools is not None:
+            tools = _ensure_dict("tools", tools)
+        prompt_text = self.tokenizer.apply_chat_template(
+            messages_list,
+            tools=deepcopy(tools),
+            add_generation_prompt=True,
+            tokenize=False,
+            **extra_body.get("chat_template_kwargs", {}),
+        )
         if self.chat_template_type == "hf":
-            prompt_token_ids = self.tokenizer.apply_chat_template(
-                messages_list,
-                tools=tools,
-                add_generation_prompt=True,
-                tokenize=True,
-                **extra_body.get("chat_template_kwargs", {}),
+            prompt_token_ids = self.tokenizer.encode(
+                prompt_text, add_special_tokens=False
             )
         elif self.chat_template_type == "concat":
-            messages_list = interaction.remaining_messages
-            prompt_token_ids = concat_prompt_token_ids_with_parent(
-                messages_list,
-                interaction.parent if interaction is not None else None,
-                self.tokenizer,
-                self.messages_delimiter_start,
-                self.messages_delimiter_end,
-            )
+            if interaction is not None and interaction.parent is None:
+                prompt_token_ids = self.tokenizer.encode(
+                    prompt_text, add_special_tokens=False
+                )
+            else:
+                messages_list = interaction.remaining_messages
+                prompt_token_ids = concat_prompt_token_ids_with_parent(
+                    messages_list,
+                    interaction.parent if interaction is not None else None,
+                    self.tokenizer,
+                    self.messages_delimiter_start,
+                    self.messages_delimiter_end,
+                )
+            if tools is not None:
+                logger.warning(
+                    "'concat' mode is not compatible with tool call scenarios. Unexpected behavior may occur"
+                )
         else:
             raise ValueError(
                 f"Unsupported chat_template_type {self.chat_template_type}"
@@ -252,7 +282,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         max_new_tokens = None
         if not is_omitted(max_total_tokens):
-            max_new_tokens = max_total_tokens - len(prompt_token_ids)
+            max_new_tokens = max_total_tokens - len(prompt_token_ids) - 1
             if max_new_tokens <= 0:
                 raise RuntimeError(
                     "max_total_tokens must be greater than the number of prompt tokens"
@@ -485,7 +515,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         if isinstance(input, str):
             input = [{"role": "user", "content": input}]
         if isinstance(input, list):
-            normalized_input = _ensure_message_dict_list(
+            normalized_input = _ensure_dict(
                 "input",
                 input,
             )

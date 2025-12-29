@@ -95,7 +95,7 @@ class Tau2Workflow(RolloutWorkflow):
         agent_module_path: str,
         agent_run_args: dict | None = None,
         rollout_stat_scope: str = "rollout",
-        export_style: str = "concat",
+        export_style: str = "individual",
         max_tokens_per_mb: int = 32768,
         dump_dir: str | None = None,
     ):
@@ -123,6 +123,7 @@ class Tau2Workflow(RolloutWorkflow):
             "agent_run_args": self.agent_run_args,
             **data,
         }
+
         async with ProxySession(base_url=self.base_url, task_id=task_id) as session:
             extra_envs = {
                 "OPENAI_BASE_URL": session.session_url,
@@ -175,26 +176,36 @@ class Tau2Workflow(RolloutWorkflow):
             add_to_stats("user", info.user_time)
 
         # Dump info to file
+        version = engine.get_version()
+        if self.dump_dir is not None:
+            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
+
         if "task_id" in data:
             real_task_id = data["task_id"][:120] + "-" + task_id
         else:
             real_task_id = task_id
+
+        assert len(run_infos) == len(rewards), (
+            len(run_infos),
+            len(rewards),
+            self.group_size,
+        )
+
         for i, info in enumerate(run_infos):
             try:
-                json_path = os.path.join(self.dump_dir, f"{real_task_id}-{i}.json")
+                json_path = os.path.join(
+                    self.dump_dir, str(version), f"{real_task_id}-{i}.json"
+                )
                 async with aiofiles.open(json_path, "w") as f:
                     await f.write(info.model_dump_json())
 
-                file_path = os.path.join(self.dump_dir, f"{real_task_id}-{i}.txt")
+                file_path = os.path.join(
+                    self.dump_dir, str(version), f"{real_task_id}-{i}.txt"
+                )
                 async with aiofiles.open(file_path, "a") as f:
                     await f.write(str(info))
             except Exception as e:
                 logger.error(f"Error dumping rollout to file: {e}")
-
-        if len(completions) != self.group_size:
-            raise RuntimeError(
-                f"Expected {self.group_size} completions, but got {len(completions)}"
-            )
 
         return completions
 
@@ -207,7 +218,7 @@ class Tau2PPOConfig(PPOConfig):
         metadata={"help": "Tool call parser that used by ArealOpenAI client."},
     )
     export_style: str = field(
-        default="concat",
+        default="individual",
         metadata={
             "help": "Style for exporting completion results from the proxy server."
         },
@@ -261,12 +272,8 @@ def main(args):
         num_processes = config.rollout.max_concurrent_rollouts or cpu_count
 
         def _get_server_and_workflow(rollout: InferenceEngine, is_eval: bool = False):
-            gconfig = (
-                config.gconfig.new(temperature=0.6, n_samples=1)
-                if is_eval
-                else config.gconfig
-            )
             name = "train" if not is_eval else "eval"
+            temperature = 0.6 if is_eval else 1.0
             rollout_stat_scope = "rollout" if not is_eval else "eval-rollout"
             dump_dir = "generated" if not is_eval else "generated-eval"
 
@@ -276,11 +283,12 @@ def main(args):
                 tool_call_parser=config.tool_call_parser,
                 chat_template_type=chat_template_type,
                 name=f"{name} proxy server",
+                max_total_tokens=config.gconfig.max_tokens,
             )
             server.start(wait_until_ready=True)
             workflow = Tau2Workflow(
                 proxy_server=server,
-                gconfig=gconfig,
+                gconfig=config.gconfig.new(temperature=temperature),
                 econfig=config.econfig,
                 base_url=f"{server.public_addr}/v1",
                 max_concurrent_processes=num_processes // world_size,
@@ -307,7 +315,7 @@ def main(args):
         else:
             eval_proxy_server, eval_workflow = None, None
 
-        trainer.train(workflow, eval_workflow)
+        trainer.train(workflow, eval_workflow, granularity=1)
         proxy_server.close()
         if eval_proxy_server is not None:
             eval_proxy_server.close()
