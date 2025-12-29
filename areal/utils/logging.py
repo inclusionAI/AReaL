@@ -8,6 +8,7 @@ import colorlog
 LOG_FORMAT = "%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s"
 DATE_FORMAT = "%Y%m%d-%H:%M:%S"
 LOGLEVEL = logging.INFO
+LOG_PREFIX_WIDTH = 10  # Fixed width for alignment in merged.log
 
 # NOTE: To use colorlog we should not call colorama.init() anywhere.
 # The available color names are black, red, green, yellow, blue, purple, cyan and white
@@ -145,22 +146,29 @@ def setup_file_logging(
 ) -> None:
     """Set up file logging for the controller process.
 
-    Adds a FileHandler to the root logger so all loggers write to the specified
-    file in addition to stdout.
+    Adds FileHandlers to the root logger so all loggers write to:
+    1. A dedicated log file (e.g., main.log)
+    2. A merged log file (merged.log) with a source prefix for alignment
 
     Args:
-        log_dir: Directory to write log file.
+        log_dir: Directory to write log files.
         filename: Log file name (default: main.log).
         level: Logging level.
     """
     os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, filename)
 
-    file_handler = FileHandler(log_path, mode="a")
+    # Handler for dedicated log file (standard format)
+    file_handler = FileHandler(os.path.join(log_dir, filename), mode="a")
     file_handler.setLevel(level)
     file_handler.setFormatter(Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
-
     logging.getLogger().addHandler(file_handler)
+
+    # Handler for merged.log (with fixed-width [main] prefix)
+    prefix = "[main]".ljust(LOG_PREFIX_WIDTH)
+    merged_handler = FileHandler(os.path.join(log_dir, "merged.log"), mode="a")
+    merged_handler.setLevel(level)
+    merged_handler.setFormatter(Formatter(prefix + LOG_FORMAT, datefmt=DATE_FORMAT))
+    logging.getLogger().addHandler(merged_handler)
 
 
 _LATEST_LOG_STEP = 0
