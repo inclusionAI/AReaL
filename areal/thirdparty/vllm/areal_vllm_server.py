@@ -186,6 +186,7 @@ async def set_weight_meta_xccl(
             request.names,
             request.dtypes,
             request.shapes,
+            request.group_name,
         ),
     )
     return build_response(ret_list)
@@ -205,6 +206,7 @@ async def set_weight_meta_xccl_lora(
             request.names,
             request.dtypes,
             request.shapes,
+            request.group_name,
             request.lora_name,
             request.lora_int_id,
             request.lora_target_modules,

@@ -1096,7 +1096,7 @@ class InferenceEngineConfig:
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
     setup_timeout: float = field(
-        default=120.0,
+        default=300.0,
         metadata={
             "help": "Timeout in seconds of connecting to remote servers or launching local servers."
         },
@@ -1382,7 +1382,7 @@ class ClusterSpecConfig:
 class SchedulerConfig:
     """Configuration for worker scheduling. Used in the single-controller mode. Experimental."""
 
-    type: str = field(default="local")
+    type: str | None = field(default=None)
     endpoint: str = field(default="http://localhost:8081")
     deploy_mode: str = field(default="separation")
     functioncall_service_domain: str = field(default="http://localhost:8080")

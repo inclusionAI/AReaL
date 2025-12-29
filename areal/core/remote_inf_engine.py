@@ -283,7 +283,6 @@ class RemoteInfEngine(InferenceEngine):
         self.addresses = []
         self.server_idx = 0
 
-        self.distributed_weight_update_initialized = False
         self._version = 0
 
         self.lock = Lock()
@@ -654,8 +653,7 @@ class RemoteInfEngine(InferenceEngine):
         Future[None]
             A future object representing the asynchronous initialization operation
         """
-        assert meta.type == current_platform.communication_backend
-        assert not self.distributed_weight_update_initialized
+        assert meta.type == "xccl"
 
         fut = self.executor.submit(
             _init_weights_update_group_remote,
@@ -671,7 +669,6 @@ class RemoteInfEngine(InferenceEngine):
                 f"Initialized {current_platform.communication_backend.upper()} group "
                 f"for distributed weight update for {meta.nccl_group_name}."
             )
-            self.distributed_weight_update_initialized = True
 
         fut.add_done_callback(callback)
         return fut
@@ -693,7 +690,7 @@ class RemoteInfEngine(InferenceEngine):
         Future[None]
             A future object representing the asynchronous weight update operation
         """
-        assert meta.type == current_platform.communication_backend
+        assert meta.type == "xccl"
 
         fut = self.executor.submit(
             _update_weights_from_distributed,
@@ -765,6 +762,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
+        callback_addr: str | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -782,6 +780,8 @@ class RemoteInfEngine(InferenceEngine):
             The task ID to use. If None, a new task ID will be generated internally.
         """
         assert workflow is not None, "Workflow must be specified for submit."
+        if callback_addr:
+            self.workflow_executor.dispatcher.register_callback(task_id, callback_addr)
         return self.workflow_executor.submit(
             data,
             workflow=workflow,

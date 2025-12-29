@@ -73,6 +73,8 @@ class PPOTrainer:
         # Parse allocation mode.
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
 
+        self._amend_xccl_weight_update_envvar()
+
         # Create models: actor, critic, etc.
         self.actor = self._create_actor(config.actor)
         self.critic = None
@@ -138,8 +140,7 @@ class PPOTrainer:
             # NCCL/XCCL weight update
             if isinstance(self.actor, MegatronEngine):
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
-                    self.allocation_mode,
-                    nccl_group_name=self.actor.weight_update_group_name,
+                    self.allocation_mode
                 )
             else:
                 self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
@@ -395,6 +396,10 @@ class PPOTrainer:
         if self.config.perf_tracer is None:
             return
         perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+
+        if not is_single_controller():
+            return
+
         self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
         if self.critic is not None:
             self.critic.config_perf_tracer(self.config.perf_tracer, role="critic")
@@ -439,6 +444,18 @@ class PPOTrainer:
             dataset_config=dataset_config,
         )
 
+    def _amend_xccl_weight_update_envvar(self):
+        if not is_single_controller():
+            # These environs are set by the launcher in the SPMD mode.
+            return
+        if self.allocation_mode.gen_backend != "sglang":
+            return
+
+        # Disable some environ for NCCL weight update.
+        for spec in self.config.actor.scheduling_spec:
+            spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
+            spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
+
     def _create_actor(
         self, actor_config: PPOActorConfig
     ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
@@ -451,12 +468,6 @@ class PPOTrainer:
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
         if is_single_controller():
-            if self.allocation_mode.gen_backend == "sglang":
-                # Disable some environ for NCCL weight update.
-                # These environs are set by the launcher in the SPMD mode.
-                for spec in actor_config.scheduling_spec:
-                    spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
-                    spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
             actor = actor_cls.as_controller(actor_config, self.scheduler)
         else:
             actor = actor_cls(config=actor_config)
@@ -489,6 +500,9 @@ class PPOTrainer:
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             config.max_head_offpolicyness = int(1e12)
+            # eval-rollout uses the same inference servsers as rollout
+            for spec in config.scheduling_spec:
+                spec.gpu = 0
 
         # Determine engine class and server args based on backend
         if self.allocation_mode.gen_backend == "sglang":

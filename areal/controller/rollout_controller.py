@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import time
+import shutil
+import threading
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from threading import Lock
 from typing import Any
 
+from flask import Flask, jsonify, request
 from torchdata.stateful_dataloader import StatefulDataLoader
+from werkzeug.serving import make_server
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import InferenceEngineConfig, PerfTracerConfig, SchedulingSpec
@@ -24,9 +27,11 @@ from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher, TaskIdGenerator
+from areal.scheduler.rpc.serialization import deserialize_value
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
+from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
 
 logger = logging.getLogger(__name__)
@@ -83,6 +88,19 @@ class RolloutController:
             BatchTaskDispatcher[_RemoteRolloutTaskInput, _RemoteRolloutResult] | None
         ) = None
 
+        # HTTP callback server
+        self._callback_app: Flask | None = None
+        self._callback_server = None
+        self._callback_server_thread: threading.Thread | None = None
+        self._callback_port: int | None = None
+        self._callback_host: str | None = None
+        self._callback_loop: asyncio.AbstractEventLoop | None = None
+        self._callback_loop_ready = threading.Event()
+
+        # Task completion futures
+        self._pending_futures: dict[int, asyncio.Future] = {}
+        self._futures_lock = threading.Lock()
+
     def initialize(
         self,
         role: str,
@@ -105,7 +123,8 @@ class RolloutController:
         sch_spec = SchedulingSpec(**asdict(self.config.scheduling_spec[0]))
         sch_spec.cpu *= alloc_mode.gen_instance_size
         sch_spec.mem *= alloc_mode.gen_instance_size
-        sch_spec.gpu = alloc_mode.gen_instance_size
+        if sch_spec.gpu > 0:
+            sch_spec.gpu = alloc_mode.gen_instance_size
         job = Job(
             replicas=alloc_mode.gen.dp_size,
             tasks=[sch_spec for _ in range(alloc_mode.gen.dp_size)],
@@ -148,6 +167,9 @@ class RolloutController:
         )
         # Initialize the dispatcher's async task runner
         self._dispatcher.initialize(logger=logger)
+
+        # Start callback server for weight sync coordination
+        self._start_callback_server()
 
     async def _async_initialize(
         self,
@@ -212,6 +234,9 @@ class RolloutController:
         logger.info("All engines are initialized...")
 
     def destroy(self):
+        # Stop callback server first
+        self._stop_callback_server()
+
         # Stop background threads and shutdown the async task runner
         if self._dispatcher is not None:
             self._dispatcher.destroy()
@@ -219,13 +244,132 @@ class RolloutController:
         self._collective_rpc("destroy", http_timeout=60.0)
 
         # Delete workers via scheduler
-        try:
-            self.scheduler.delete_workers(role=self._worker_role)
-            logger.info("Workers deleted")
-        except Exception as e:
-            logger.error(f"Error deleting workers: {e}")
+        if hasattr(self, "_worker_role"):
+            try:
+                self.scheduler.delete_workers(role=self._worker_role)
+                logger.info("Workers deleted")
+            except Exception as e:
+                logger.error(f"Error deleting workers: {e}")
 
         self.workers.clear()
+
+    def _start_callback_server(self):
+        """Start Flask HTTP server to receive callbacks from RolloutCallback."""
+        if self._callback_server is not None:
+            logger.warning("Callback server already running")
+            return
+
+        app = Flask(__name__)
+        app.logger.disabled = True
+
+        @app.route("/callback/init_weights_group", methods=["POST"])
+        def init_weights_group():
+            payload = request.get_json() or {}
+            meta = deserialize_value(payload.get("meta"))
+            self._callback_loop.run_until_complete(self.init_weights_update_group(meta))
+            return jsonify({"status": "ok"})
+
+        @app.route("/callback/update_weights_xccl", methods=["POST"])
+        def update_weights():
+            payload = request.get_json() or {}
+            meta = deserialize_value(payload.get("meta"))
+            param_specs = deserialize_value(payload.get("param_specs"))
+            self._callback_loop.run_until_complete(
+                self.update_weights_from_distributed(meta, param_specs)
+            )
+            return jsonify({"status": "ok"})
+
+        @app.route("/callback/update_weights_disk", methods=["POST"])
+        def update_weights_disk():
+            payload = request.get_json() or {}
+            meta = deserialize_value(payload.get("meta"))
+            self._callback_loop.run_until_complete(self.update_weights_from_disk(meta))
+            return jsonify({"status": "ok"})
+
+        @app.route("/callback/pause_generation", methods=["POST"])
+        def pause_generation():
+            self._callback_loop.run_until_complete(self.pause_generation())
+            return jsonify({"status": "ok"})
+
+        @app.route("/callback/continue_generation", methods=["POST"])
+        def continue_generation():
+            self._callback_loop.run_until_complete(self.continue_generation())
+            return jsonify({"status": "ok"})
+
+        @app.route("/callback/rollout_complete", methods=["POST"])
+        def rollout_complete():
+            payload = request.get_json() or {}
+            task_id = payload.get("task_id")
+            try:
+                self._resolve_task_future(task_id)
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @app.errorhandler(Exception)
+        def handle_error(e):
+            logger.error(f"Callback handler error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+        # Configure Werkzeug logging
+        import logging as stdlib_logging
+
+        werkzeug_logger = stdlib_logging.getLogger("werkzeug")
+        werkzeug_logger.setLevel(stdlib_logging.WARNING)
+
+        self._callback_port = find_free_ports(1)[0]
+        self._callback_host = gethostip()
+        self._callback_app = app
+        self._callback_server = make_server(
+            self._callback_host, self._callback_port, app, threaded=False
+        )
+
+        def serve_forever():
+            # Create and set event loop for this thread
+            self._callback_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._callback_loop)
+            # Signal that the loop is ready
+            self._callback_loop_ready.set()
+            logger.info(
+                f"Callback server started on {self._callback_host}:{self._callback_port}"
+            )
+            self._callback_server.serve_forever()
+
+        self._callback_server_thread = threading.Thread(
+            target=serve_forever, daemon=True
+        )
+        self._callback_server_thread.start()
+        # Wait for loop to be created
+        self._callback_loop_ready.wait()
+
+    def _stop_callback_server(self):
+        """Stop the callback server if running."""
+        if self._callback_server is not None:
+            logger.info("Stopping callback server...")
+            self._callback_server.shutdown()
+            if self._callback_loop is not None:
+                self._callback_loop.close()
+            self._callback_server = None
+            self._callback_app = None
+            self._callback_server_thread = None
+            self._callback_port = None
+            self._callback_host = None
+            self._callback_loop = None
+            self._callback_loop_ready.clear()
+
+    @property
+    def callback_addr(self) -> str:
+        """Return callback server address as 'host:port'."""
+        if self._callback_host is None or self._callback_port is None:
+            raise RuntimeError("Callback server not started")
+        return f"{self._callback_host}:{self._callback_port}"
+
+    def _resolve_task_future(self, task_id: int):
+        """Resolve a pending future with the task result."""
+        with self._futures_lock:
+            future = self._pending_futures.pop(task_id, None)
+        if future:
+            future.get_loop().call_soon_threadsafe(future.set_result, None)
 
     def _collective_rpc(self, method: str, *args, **kwargs) -> list[Any]:
         return asyncio.run(self._collective_rpc_async(method, *args, **kwargs))
@@ -302,61 +446,67 @@ class RolloutController:
             # This function will be passed to `BatchTaskDispather` where
             # `on_rollout_submitted` will be called upon dispatching
             task_id = pending_task.task_id
-            engine_task_id = await self.scheduler.async_call_engine(
-                worker.id,
-                "submit",
-                data=pending_task.data,
-                workflow=pending_task.workflow,
-                workflow_kwargs=pending_task.workflow_kwargs,
-                should_accept_fn=pending_task.should_accept_fn,
-                http_timeout=self.config.request_timeout,
-                task_id=task_id,
-            )
 
-            assert task_id == engine_task_id, (task_id, engine_task_id)
             manager = self.staleness_manager
-            traj: dict[str, Any] | None = None
 
             try:
-                result = None
-                tik = time.time()
-                while (
-                    result is None and time.time() - tik < self.config.request_timeout
-                ):
-                    result = await self.scheduler.async_call_engine(
-                        worker.id,
-                        "wait_for_task",
-                        task_id=engine_task_id,
-                        timeout=0.1,  # A short time to prevent blocking other requests
-                        raise_timeout=False,
-                        http_timeout=self.config.request_timeout,
-                    )
+                # Set future for this task
+                future = asyncio.get_event_loop().create_future()
+                with self._futures_lock:
+                    self._pending_futures[task_id] = future
 
-                # TimeourError will be catched below
-                if result is None:
-                    raise TimeoutError(
-                        f"Rollout request timed out after {self.config.request_timeout}"
-                    )
+                engine_task_id = await self.scheduler.async_call_engine(
+                    worker.id,
+                    "submit",
+                    data=pending_task.data,
+                    workflow=pending_task.workflow,
+                    workflow_kwargs=pending_task.workflow_kwargs,
+                    should_accept_fn=pending_task.should_accept_fn,
+                    http_timeout=self.config.request_timeout,
+                    task_id=task_id,
+                    callback_addr=f"http://{self.callback_addr}/callback/rollout_complete",
+                )
+
+                assert task_id == engine_task_id, (task_id, engine_task_id)
+
+                # Wait for callback to resolve the future
+                await asyncio.wait_for(future, timeout=self.config.request_timeout)
+
+                # Fetch the result
+                result = await self.scheduler.async_call_engine(
+                    worker.id,
+                    "wait_for_task",
+                    task_id=engine_task_id,
+                    timeout=0.1,  # A short time to prevent blocking other requests
+                    raise_timeout=False,
+                    http_timeout=self.config.request_timeout,
+                )
 
                 traj = result
-                should_accept_traj = traj is not None
-                if should_accept_traj:
+                if traj is not None:
                     manager.on_rollout_accepted()
                     if self.config.enable_rollout_tracing:
                         logger.info(
-                            f"Finish and accept rollout. {self._rollout_stats()}",
+                            f"Finish and accept rollout. {self._rollout_stats()}"
                         )
-                    assert traj is not None
                     return _RemoteRolloutResult(task_id=task_id, trajectory=traj)
 
                 manager.on_rollout_rejected()
                 if self.config.enable_rollout_tracing:
-                    logger.info(
-                        f"Finish but reject rollout. {self._rollout_stats()}",
-                    )
+                    logger.info(f"Finish but reject rollout. {self._rollout_stats()}")
                 return None
 
-            except Exception as exc:  # pragma: no cover - workflow execution errors
+            except asyncio.TimeoutError:
+                if task_id is not None:
+                    with self._futures_lock:
+                        self._pending_futures.pop(task_id, None)
+                manager.on_rollout_rejected()
+                logger.error(f"Rollout timed out after {self.config.request_timeout}s")
+                return None
+            except Exception as exc:
+                if task_id is not None:
+                    with self._futures_lock:
+                        self._pending_futures.pop(task_id, None)
                 manager.on_rollout_rejected()
                 logger.error("Workflow execution failed: %s", exc, exc_info=True)
                 return None
@@ -520,20 +670,10 @@ class RolloutController:
             "update_weights_from_distributed", meta=meta, param_specs=param_specs
         )
 
-    async def update_weights_from_distributed_param_specs(
-        self,
-        meta: WeightUpdateMeta,
-        param_specs: list[list[ParamSpec]],
-    ):
-        for param_spec in param_specs:
-            # Wait for the current update to finish before moving on
-            await self.update_weights_from_distributed(
-                meta=meta,
-                param_specs=param_spec,
-            )
-
     async def update_weights_from_disk(self, meta: WeightUpdateMeta):
+        meta.clear_checkpoint_after_load = False
         await self._collective_rpc_async("update_weights_from_disk", meta=meta)
+        shutil.rmtree(meta.path, ignore_errors=True)
 
     async def pause_generation(self):
         await self._collective_rpc_async("pause_generation")

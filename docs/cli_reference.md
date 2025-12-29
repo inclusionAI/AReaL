@@ -492,7 +492,7 @@ Configuration for inference servers, including offpolicyness control.
 | `enable_rollout_tracing`  | boolean                                             | `False`         | Whether to output verbose tracing messages for each generation request.                                                                                                                                                                                                              |
 | `check_trajectory_format` | boolean                                             | `False`         | Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training.                                                                                                                  |
 | `schedule_policy`         | string                                              | `"round_robin"` | Request scheduling policy **Choices:** `round_robin`                                                                                                                                                                                                                                 |
-| `setup_timeout`           | float                                               | `120.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                                                                                                                                       |
+| `setup_timeout`           | float                                               | `300.0`         | Timeout in seconds of connecting to remote servers or launching local servers.                                                                                                                                                                                                       |
 | `request_timeout`         | float                                               | `3600`          | Timeout for HTTP requests.                                                                                                                                                                                                                                                           |
 | `request_retries`         | integer                                             | `3`             | Number of retries for failed requests.                                                                                                                                                                                                                                               |
 | `pause_grace_period`      | float                                               | `0.0`           | The grace period after calling /pause_generation. Wait until all requests have been dropped.                                                                                                                                                                                         |
@@ -873,15 +873,15 @@ Configuration for perf tracer emission.
 
 Configuration for worker scheduling. Used in the single-controller mode. Experimental.
 
-| Parameter                     | Type   | Default                             | Description |
-| ----------------------------- | ------ | ----------------------------------- | ----------- |
-| `type`                        | string | `"local"`                           | -           |
-| `endpoint`                    | string | `"http://localhost:8081"`           | -           |
-| `deploy_mode`                 | string | `"separation"`                      | -           |
-| `functioncall_service_domain` | string | `"http://localhost:8080"`           | -           |
-| `reward_functioncall_config`  | `dict` | **Required**                        | -           |
-| `reward_model_path`           | string | `""`                                | -           |
-| `reward_model_service_url`    | string | `"http://localhost:30000/classify"` | -           |
+| Parameter                     | Type           | Default                             | Description |
+| ----------------------------- | -------------- | ----------------------------------- | ----------- |
+| `type`                        | string \| None | `None`                              | -           |
+| `endpoint`                    | string         | `"http://localhost:8081"`           | -           |
+| `deploy_mode`                 | string         | `"separation"`                      | -           |
+| `functioncall_service_domain` | string         | `"http://localhost:8080"`           | -           |
+| `reward_functioncall_config`  | `dict`         | **Required**                        | -           |
+| `reward_model_path`           | string         | `""`                                | -           |
+| `reward_model_service_url`    | string         | `"http://localhost:30000/classify"` | -           |
 
 (section-scheduling)=
 

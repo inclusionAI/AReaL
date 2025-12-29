@@ -17,7 +17,7 @@ cluster:
 allocation_mode: sglang:d4p1t1+d4p1t1
 
 scheduler:
-  type: local
+  type: null
 
 rollout:
   experiment_name: ${experiment_name}

@@ -75,6 +75,7 @@ from areal.utils.megatron import (
 )
 from areal.utils.megatron_checkpointer import MegatronCheckpointManager
 from areal.utils.model import disable_dropout_in_model
+from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
@@ -118,6 +119,8 @@ class MegatronEngine(TrainEngine):
         self.rollout_coordinator: DistRolloutCoordinator | None = None
         self.weight_update_group_initialized: bool = False
         self.weight_update_group_name: str
+        self.weight_update_master_addr: str
+        self.weight_update_master_port: int
         self._version: int = 0
         self.rank: int | None = None
         self.is_pp_head: bool
@@ -361,10 +364,7 @@ class MegatronEngine(TrainEngine):
             rollout_engine=engine, train_engine=self
         )
 
-        if (
-            meta.type == current_platform.communication_backend
-            and not self.weight_update_group_initialized
-        ):
+        if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
@@ -405,7 +405,7 @@ class MegatronEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
-        if meta.type == current_platform.communication_backend:
+        if meta.type == "xccl":
             assert self.weight_update_group_initialized
             # In offload mode, wakes up parameters as needed to perform the update.
             tms_context = (
@@ -987,7 +987,11 @@ class MegatronEngine(TrainEngine):
         return buffer_size
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta) -> None:
-        assert meta.type == current_platform.communication_backend
+        assert meta.type == "xccl"
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr = gethostip()
+        meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
+        meta.nccl_group_name = self.weight_update_group_name
 
         # NOTE: Processes launched with torchrun will set the following env var to True,
         # which blocks creating another TCP store for weight update.
@@ -1015,6 +1019,11 @@ class MegatronEngine(TrainEngine):
 
     @trace_perf("megatron_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta) -> None:
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr
+        meta.nccl_master_port = self.weight_update_master_port
+        meta.nccl_group_name = self.weight_update_group_name
+
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
 
