@@ -1,6 +1,6 @@
 import logging.config
 import os
-from logging import WARNING, FileHandler, Formatter, Logger, Manager, RootLogger
+from logging import WARNING, FileHandler, Logger, Manager, RootLogger
 from typing import Literal
 
 import colorlog
@@ -302,8 +302,8 @@ def setup_file_logging(
     """Set up file logging for the controller process.
 
     Adds FileHandlers to all loggers so they write to:
-    1. A dedicated log file (e.g., main.log)
-    2. A merged log file (merged.log) with a source prefix for alignment
+    1. A dedicated log file (e.g., main.log) with ANSI colors
+    2. A merged log file (merged.log) with a source prefix and ANSI colors
 
     This function adds handlers to all loggers that were previously created via
     getLogger(), and stores the handlers so future loggers also get them.
@@ -315,18 +315,41 @@ def setup_file_logging(
     """
     os.makedirs(log_dir, exist_ok=True)
 
-    # Handler for dedicated log file (standard format, no ANSI colors)
+    # Handler for dedicated log file (with ANSI colors, same as stdout)
     file_handler = FileHandler(os.path.join(log_dir, filename), mode="a")
     file_handler.setLevel(level)
-    file_handler.setFormatter(Formatter(LOG_FORMAT_PLAIN, datefmt=DATE_FORMAT))
+    file_handler.setFormatter(
+        LoggerColoredFormatter(
+            LOG_FORMAT,
+            datefmt=DATE_FORMAT,
+            log_colors={
+                "DEBUG": "white",
+                "INFO": "white",
+                "WARNING": "yellow",
+                "ERROR": "red",
+                "CRITICAL": "bold_white,bg_red",
+            },
+        )
+    )
     _file_handlers.append(file_handler)
 
-    # Handler for merged.log (with fixed-width [main] prefix, no ANSI colors)
+    # Handler for merged.log (with fixed-width [main] prefix and ANSI colors)
     prefix = "[main]".ljust(LOG_PREFIX_WIDTH)
+    merged_format = prefix + LOG_FORMAT
     merged_handler = FileHandler(os.path.join(log_dir, "merged.log"), mode="a")
     merged_handler.setLevel(level)
     merged_handler.setFormatter(
-        Formatter(prefix + LOG_FORMAT_PLAIN, datefmt=DATE_FORMAT)
+        LoggerColoredFormatter(
+            merged_format,
+            datefmt=DATE_FORMAT,
+            log_colors={
+                "DEBUG": "white",
+                "INFO": "white",
+                "WARNING": "yellow",
+                "ERROR": "red",
+                "CRITICAL": "bold_white,bg_red",
+            },
+        )
     )
     _file_handlers.append(merged_handler)
 
