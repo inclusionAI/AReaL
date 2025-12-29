@@ -5,10 +5,10 @@ from typing import Literal
 
 import colorlog
 
-# ANSI color codes for the [AReaL] header
+# ANSI color codes for the (AReaL) header
 # Using 256-color mode for a milk tea / brown-yellow color (RGB ~180, 140, 80)
-AREAL_HEADER = "\033[1;38;2;180;140;80m[AReaL]\033[0m"  # Bold milk tea color
-AREAL_HEADER_PLAIN = "[AReaL]"  # For file logging (no colors)
+AREAL_HEADER = "\033[1;38;2;180;140;80m(AReaL)\033[0m"  # Bold milk tea color
+AREAL_HEADER_PLAIN = "(AReaL)"  # For file logging (no colors)
 
 LOG_FORMAT = f"{AREAL_HEADER} %(log_color)s%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s"
 LOG_FORMAT_PLAIN = (
@@ -404,7 +404,7 @@ if __name__ == "__main__":
     # Test per-logger color differentiation
     # Run with: python -m areal.utils.logging
     print("=" * 70)
-    print("Testing per-logger color differentiation with [AReaL] prefix")
+    print("Testing per-logger color differentiation with (AReaL) prefix")
     print("Each component category should have a distinct color:")
     print("  - white: Schedulers, Launchers, RPC, Inference (infrastructure)")
     print("  - light_purple/purple: Workflows, Rewards, OpenAI (RL-specific)")

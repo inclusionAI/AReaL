@@ -58,6 +58,9 @@ class PPOTrainer:
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
+        if is_single_controller():
+            # Set up file logging for controller process
+            logging.setup_file_logging(StatsLogger.get_log_path(config.stats_logger))
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
@@ -161,9 +164,6 @@ class PPOTrainer:
 
         # Set up statistics logging (wandb, tensoboard, etc.)
         self.stats_logger = StatsLogger(config, ft_spec)
-
-        # Set up file logging for controller process
-        logging.setup_file_logging(StatsLogger.get_log_path(config.stats_logger))
 
         # Set up checkpointing for recover
         self.recover_info = self.recover_handler.load(
