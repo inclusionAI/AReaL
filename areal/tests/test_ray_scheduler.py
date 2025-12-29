@@ -10,7 +10,7 @@ from areal.api.scheduler_api import Job, SchedulingSpec, Worker
 from areal.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
 
 pytestmark = pytest.mark.skipif(
-    lambda: not ray.is_initialized(),
+    not ray.is_initialized(),
     reason="Ray scheduler tests will only run if ray is explicitly initialized.",
 )
 
