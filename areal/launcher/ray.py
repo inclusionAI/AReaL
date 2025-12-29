@@ -17,6 +17,7 @@ from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
     RecoverConfig,
+    SchedulingSpec,
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
@@ -446,7 +447,11 @@ def ray_main(config, run_id: int = 0):
         # launch a task to start all sglang servers in one node
         # Get resource specs from rollout scheduling_spec
         rollout_cpu = rollout_spec.cpu if rollout_spec else SchedulingSpec.cpu.default
-        rollout_mem_mb = (rollout_spec.mem * 1024) if rollout_spec else (SchedulingSpec.mem.default * 1024)
+        rollout_mem_mb = (
+            (rollout_spec.mem * 1024)
+            if rollout_spec
+            else (SchedulingSpec.mem.default * 1024)
+        )
 
         launcher.submit_array(
             job_name="llm_server",
