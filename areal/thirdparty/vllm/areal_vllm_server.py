@@ -24,8 +24,8 @@ from vllm.logger import init_logger
 from vllm.utils import FlexibleArgumentParser
 from vllm.v1.engine import EngineCoreOutput, EngineCoreOutputs, FinishReason
 from vllm.v1.engine.core import EngineCore
-from vllm.v1.request import RequestStatus
 from vllm.v1.metrics.stats import LoRARequestStates
+from vllm.v1.request import RequestStatus
 
 logger = init_logger("areal_vllm_server")
 logger.setLevel(logging.INFO)
@@ -339,7 +339,7 @@ def areal_injected_update_weight_lora_xccl(self):
     return self.collective_rpc("update_weight_lora_xccl")
 
 
-def finish_request(self, req_state: 'RequestState'):
+def finish_request(self, req_state):
     if req_state.lora_name is None:
         return
     lora_stats = self.lora_name_to_stats[req_state.lora_name]
@@ -367,15 +367,17 @@ def hook():
         areal_injected_update_weight_lora_xccl,
     )
 
-    ## Patch for LoRARequestStates management in vllm < v0.11.0
-    ## This may be removed with vllm >= 0.12.x
+    # Patch for LoRARequestStates management in vllm < v0.11.0
+    # This may be removed with vllm >= 0.12.x
     from areal.utils import pkg_version
+
     if not pkg_version.is_version_greater_or_equal("vllm", "0.12.0"):
         setattr(
             LoRARequestStates,
             "finish_request",
             finish_request,
         )
+
 
 hook()
 
