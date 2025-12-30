@@ -723,35 +723,36 @@ class MegatronEngine(TrainEngine):
         """Placeholder method of single-controller API."""
 
     def _check_and_apply_fp8_config(self):
-        if self.mcore_config.fp8_config is not None:
-            fp8_config = self.mcore_config.fp8_config
-            special_mappings = {"mode": "fp8"}
-            # Fields that use the same name in both configs (no prefix needed)
-            same_fields = {
-                "tp_only_amax_red",
-                "first_last_layers_bf16",
-                "num_layers_at_start_in_bf16",
-                "num_layers_at_end_in_bf16",
-            }
-            # All other fields get the `fp8_` prefix
-            for field in dataclasses.fields(fp8_config):
-                fp8_field = field.name
-                if fp8_field in special_mappings:
-                    tf_field = special_mappings[fp8_field]
-                elif fp8_field in same_fields:
-                    tf_field = fp8_field
-                else:
-                    tf_field = f"fp8_{fp8_field}"
-                if hasattr(self.tf_config, tf_field):
-                    setattr(self.tf_config, tf_field, getattr(fp8_config, fp8_field))
-                else:
-                    raise ValueError(f"Unknown FP8 field: {fp8_field}")
-            self.logger.info(
-                f"FP8 training enabled: mode={fp8_config.mode}, "
-                f"recipe={fp8_config.recipe}, "
-                f"param={fp8_config.param}"
-            )
-            # fp8_param_gather is passed from make_mcore_model()
+        if not self.enable_fp8:
+            return
+        fp8_config = self.mcore_config.fp8_config
+        special_mappings = {"mode": "fp8"}
+        # Fields that use the same name in both configs (no prefix needed)
+        same_fields = {
+            "tp_only_amax_red",
+            "first_last_layers_bf16",
+            "num_layers_at_start_in_bf16",
+            "num_layers_at_end_in_bf16",
+        }
+        # All other fields get the `fp8_` prefix
+        for field in dataclasses.fields(fp8_config):
+            fp8_field = field.name
+            if fp8_field in special_mappings:
+                tf_field = special_mappings[fp8_field]
+            elif fp8_field in same_fields:
+                tf_field = fp8_field
+            else:
+                tf_field = f"fp8_{fp8_field}"
+            if hasattr(self.tf_config, tf_field):
+                setattr(self.tf_config, tf_field, getattr(fp8_config, fp8_field))
+            else:
+                raise ValueError(f"Unknown FP8 field: {fp8_field}")
+        self.logger.info(
+            f"FP8 training enabled: mode={fp8_config.mode}, "
+            f"recipe={fp8_config.recipe}, "
+            f"param={fp8_config.param}"
+        )
+        # fp8_param_gather is passed from make_mcore_model()
 
     def _validate_fp8_consistency(self):
         """Validate that FP8 configuration is consistent.
@@ -759,7 +760,7 @@ class MegatronEngine(TrainEngine):
         If either training uses FP8, quantization_config must exist
         and quant_method must be "fp8" (weights must be FP8).
         """
-        train_fp8 = self.mcore_config.fp8_config is not None
+        train_fp8 = self.enable_fp8
         weights_fp8 = (
             self.quantization_config is not None
             and self.quantization_config.get("quant_method", None) == "fp8"
