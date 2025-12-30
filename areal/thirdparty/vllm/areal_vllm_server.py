@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from http import HTTPStatus
+from typing import TYPE_CHECKING
 
 import uvloop
 from fastapi import Depends, Request
@@ -26,6 +27,9 @@ from vllm.v1.engine import EngineCoreOutput, EngineCoreOutputs, FinishReason
 from vllm.v1.engine.core import EngineCore
 from vllm.v1.metrics.stats import LoRARequestStates
 from vllm.v1.request import RequestStatus
+
+if TYPE_CHECKING:
+    from vllm.v1.engine.output_processor import RequestState
 
 logger = init_logger("areal_vllm_server")
 logger.setLevel(logging.INFO)
@@ -339,7 +343,7 @@ def areal_injected_update_weight_lora_xccl(self):
     return self.collective_rpc("update_weight_lora_xccl")
 
 
-def finish_request(self, req_state):
+def finish_request(self, req_state: "RequestState"):
     if req_state.lora_name is None:
         return
     lora_stats = self.lora_name_to_stats[req_state.lora_name]
