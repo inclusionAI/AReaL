@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from areal.engine.megatron_engine import MegatronPPOActor, MegatronPPOCritic
     from areal.engine.ppo.actor import PPOActorController
     from areal.engine.ppo.critic import PPOCriticController
+
 logger = logging.getLogger("RLTrainer")
 
 
