@@ -85,4 +85,4 @@ COPY . /AReaL
 # Install AReaL from local source
 # Avoid overwriting flash-attn by omitting the `[fa]` extra
 RUN cd /AReaL \
-    && uv pip install -e ".[dev,docs,vllm,sglang]" --system
+    && uv pip install -e ".[dev,docs,vllm,sglang,megatron]" --system

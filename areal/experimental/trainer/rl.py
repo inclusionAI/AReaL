@@ -4,7 +4,7 @@ import functools
 import os
 from collections.abc import Callable
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
 from datasets import Dataset
@@ -26,13 +26,6 @@ from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow
 from areal.controller import RolloutController
-from areal.engine.megatron_engine import MegatronEngine
-from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor, PPOActorController
-from areal.engine.ppo.critic import (
-    FSDPPPOCritic,
-    MegatronPPOCritic,
-    PPOCriticController,
-)
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
@@ -46,6 +39,12 @@ from areal.utils.perf_tracer import Category
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+
+if TYPE_CHECKING:
+    from areal.engine.fsdp_engine import FSDPPPOActor, FSDPPPOCritic
+    from areal.engine.megatron_engine import MegatronPPOActor, MegatronPPOCritic
+    from areal.engine.ppo.actor import PPOActorController
+    from areal.engine.ppo.critic import PPOCriticController
 
 logger = logging.getLogger("RLTrainer")
 
@@ -141,7 +140,7 @@ class PPOTrainer:
             )
         elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
-            if isinstance(self.actor, MegatronEngine):
+            if self.allocation_mode.train_backend == "megatron":
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
                     self.allocation_mode
                 )
@@ -463,8 +462,12 @@ class PPOTrainer:
         self, actor_config: PPOActorConfig
     ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
         if self.allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPPPOActor
+
             actor_cls = FSDPPPOActor
         elif self.allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronPPOActor
+
             actor_cls = MegatronPPOActor
         else:
             raise ValueError(
@@ -481,8 +484,12 @@ class PPOTrainer:
         self, critic_config: PPOCriticConfig
     ) -> FSDPPPOCritic | MegatronPPOCritic | PPOCriticController:
         if self.allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPPPOCritic
+
             critic_cls = FSDPPPOCritic
         elif self.allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronPPOCritic
+
             critic_cls = MegatronPPOCritic
         else:
             raise ValueError(

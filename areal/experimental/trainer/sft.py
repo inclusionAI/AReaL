@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import torch.distributed as dist
 from datasets import Dataset
@@ -15,7 +16,6 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.api.scheduler_api import Scheduler
-from areal.engine.sft.lm_engine import FSDPLMEngine, LMController, MegatronLMEngine
 from areal.platforms import current_platform
 from areal.scheduler import LocalScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
@@ -33,6 +33,11 @@ from areal.utils.perf_tracer import Category
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+
+if TYPE_CHECKING:
+    from areal.engine.fsdp_engine import FSDPLMEngine
+    from areal.engine.megatron_engine import MegatronLMEngine
+    from areal.engine.sft.lm_engine import LMController
 
 logger = logging.getLogger("SFTTrainer")
 
@@ -272,8 +277,12 @@ class SFTTrainer:
         self, actor_config: TrainEngineConfig
     ) -> FSDPLMEngine | MegatronLMEngine | LMController:
         if self.allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPLMEngine
+
             actor_cls = FSDPLMEngine
         elif self.allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronLMEngine
+
             actor_cls = MegatronLMEngine
         else:
             raise ValueError(
