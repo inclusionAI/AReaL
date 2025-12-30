@@ -66,7 +66,7 @@ class MockScheduler:
     def get_workers(self, role, timeout=None):
         return self.workers
 
-    async def create_engine(self, worker_id, engine, config):
+    async def create_engine(self, worker_id, engine, engine_name, config):
         pass
 
     async def async_call_engine(self, worker_id, method, *args, **kwargs):
