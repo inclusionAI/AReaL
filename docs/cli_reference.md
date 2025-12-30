@@ -77,7 +77,6 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 - [Scheduling Specification](section-scheduling)
 - [SchedulingStrategy](section-scheduling-strategy)
 - [SessionTracer Configuration](section-session-tracer)
-- [SlurmScheduling Configuration](section-slurm-scheduling)
 
 ______________________________________________________________________
 
@@ -888,16 +887,3 @@ Configuration for per-session lifecycle tracing.
 | ----------------- | ------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `enabled`         | boolean | `False` | Enable per-session lifecycle tracing alongside perf events. When true, session metadata is captured to sessions.jsonl. |
 | `flush_threshold` | integer | `256`   | Flush session trace records once this many entries are ready. Values \<= 0 fall back to 1.                             |
-
-(section-slurm-scheduling)=
-
-## SlurmScheduling Configuration
-
-Slurm-specific scheduling configuration.
-
-| Parameter              | Type                   | Default                                     | Description                                                                          |
-| ---------------------- | ---------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `srun_additional_args` | string                 | `"--unbuffered --mpi=pmi2 -K --chdir $PWD"` | Additional arguments to pass to the srun command.                                    |
-| `additional_bash_cmds` | list of string \| None | `None`                                      | Additional bash commands to setup the container before running the torchrun command. |
-| `container_type`       | string                 | `"apptainer"`                               | Type of containers used in slurm **Choices:** `apptainer`, `none`                    |
-| `mount`                | string                 | `"/storage:/storage"`                       | Mount path for slurm.                                                                |

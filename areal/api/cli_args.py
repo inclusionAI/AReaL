@@ -458,33 +458,6 @@ class SchedulingStrategy:
 
 
 @dataclass
-class SlurmSchedulingConfig:
-    """Slurm-specific scheduling configuration."""
-
-    srun_additional_args: str = field(
-        default="--unbuffered --mpi=pmi2 -K --chdir $PWD",
-        metadata={"help": "Additional arguments to pass to the srun command."},
-    )
-    additional_bash_cmds: list[str] | None = field(
-        default=None,
-        metadata={
-            "help": "Additional bash commands to setup the container before running "
-            "the torchrun command."
-        },
-    )
-    container_type: str = field(
-        default="apptainer",
-        metadata={
-            "help": "Type of containers used in slurm",
-            "choices": ["apptainer", "none"],
-        },
-    )
-    mount: str = field(
-        default="/storage:/storage", metadata={"help": "Mount path for slurm."}
-    )
-
-
-@dataclass
 class SchedulingSpec:
     cpu: int = field(
         default=4, metadata={"help": "Number of CPU cores required per GPU"}
