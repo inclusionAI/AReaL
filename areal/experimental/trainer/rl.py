@@ -31,7 +31,6 @@ from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
 from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
-from areal.utils.constants import ProxLogpMethod
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
@@ -242,15 +241,7 @@ class PPOTrainer:
                     rollout_batch["values"] = self.critic.compute_values(rollout_batch)
                     self.critic.get_device_stats().log("critic values")
 
-            # Determine if forward pass is needed for proximal log-probabilities
-            method = ProxLogpMethod(config.actor.prox_logp_method)
-            should_compute_prox_logp = (
-                config.actor.use_decoupled_loss and not method.skips_forward_pass()
-            ) or (
-                not config.actor.use_decoupled_loss and config.actor.recompute_logprob
-            )
-
-            if should_compute_prox_logp:
+            if config.actor.should_compute_prox_logp():
                 with (
                     stats_tracker.record_timing("recompute_logp"),
                     perf_tracer.trace_scope(

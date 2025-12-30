@@ -17,7 +17,6 @@ from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils import seeding, stats_tracker
-from areal.utils.constants import ProxLogpMethod
 from areal.utils.data import (
     broadcast_tensor_container,
     tensor_container_to,
@@ -180,13 +179,7 @@ def main(args):
         current_platform.synchronize()
         dist.barrier(group=actor.cpu_group)
 
-        # Determine if forward pass is needed for proximal log-probabilities
-        method = ProxLogpMethod(config.actor.prox_logp_method)
-        should_compute_prox_logp = (
-            config.actor.use_decoupled_loss and not method.skips_forward_pass()
-        ) or (not config.actor.use_decoupled_loss and config.actor.recompute_logprob)
-
-        if should_compute_prox_logp:
+        if config.actor.should_compute_prox_logp():
             with stats_tracker.record_timing("recompute_logp"):
                 batch["prox_logp"] = actor.compute_logp(batch)
                 actor.get_device_stats().log("recompute logp")
