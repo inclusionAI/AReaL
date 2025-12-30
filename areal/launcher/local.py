@@ -12,7 +12,6 @@ import psutil
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
-    LauncherConfig,
     RecoverConfig,
     SGLangConfig,
     parse_cli_args,
@@ -23,10 +22,11 @@ from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.exp_metadata import save_experiment_metadata
 from areal.utils.launcher import (
+    BASE_ENVIRONS,
     JobException,
     JobInfo,
     JobState,
-    get_env_vars,
+    validate_config_for_launcher,
     wait_llm_server_addrs,
 )
 from areal.utils.network import find_free_ports
@@ -262,10 +262,10 @@ def main():
 
 
 def local_main(config, run_id: int = 0):
-    config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     is_recover_run = check_if_recover(config.recover, run_id)
+    validate_config_for_launcher(config)
     launcher = LocalLauncher(
         config.experiment_name, config.trial_name, config.cluster.fileroot
     )
@@ -325,6 +325,11 @@ def local_main(config, run_id: int = 0):
         )
 
         # Launch inference servers.
+        try:
+            rollout_env_vars = config.rollout.scheduling_spec[0].env_vars
+        except AttributeError:
+            # In case `scheduling_spec` or `env_vars` is missing
+            rollout_env_vars = {}
         launcher.submit_array(
             job_name="llm_server",
             cmd=server_cmd,
@@ -332,10 +337,7 @@ def local_main(config, run_id: int = 0):
             gpu=alloc_mode.gen.pp_size
             * alloc_mode.gen.tp_size
             * alloc_mode.gen.dp_size,
-            env_vars=get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            ),
+            env_vars={**BASE_ENVIRONS, **rollout_env_vars},
         )
 
         # Get llm server addresses by name resolve
@@ -371,19 +373,23 @@ def local_main(config, run_id: int = 0):
             # Required by NCCL weight update group.
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
+        # All experiment configs should have the `actor` field.
+        try:
+            actor_env_vars = config.actor.scheduling_spec[0].env_vars
+        except AttributeError:
+            # in case `scheduling_spec` or `env_vars` is missing
+            actor_env_vars = {}
         launcher.submit(
             job_name="trainer",
             cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",
             gpu=gpu,
-            env_vars=dict(
-                **get_env_vars(
-                    config.cluster.cluster_name,
-                    config.launcher.trainer_env_vars,
-                ),
+            env_vars={
+                **BASE_ENVIRONS,
+                **actor_env_vars,
                 **_env_vars,
                 **tms_env_vars,
-                AREAL_SPMD_MODE=str(1),
-            ),
+                "AREAL_SPMD_MODE": "1",
+            },
         )
 
     try:

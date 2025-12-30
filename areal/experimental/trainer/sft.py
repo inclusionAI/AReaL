@@ -61,7 +61,7 @@ class SFTTrainer:
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
 
         # Create models.
-        self.actor = self._create_actor(config.model)
+        self.actor = self._create_actor(config.actor)
 
         # Create dataloaders
         self.train_dataset = train_dataset
