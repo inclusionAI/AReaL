@@ -470,7 +470,7 @@ class SlurmScheduler(Scheduler):
             f"--mem={mem_per_task * ntasks_per_node}M",
         ]
         if total_gpus > 0:
-            sbatch_options.append(f"--gres=gpu:{total_gpus}")
+            sbatch_options.append(f"--gres=gpu:{self.n_gpus_per_node}")
         if nodelist:
             sbatch_options.append(f"--nodelist={nodelist}")
         if exclude:
@@ -528,7 +528,7 @@ class SlurmScheduler(Scheduler):
             f"--mem-per-cpu={mem_per_cpu}M",
         ]
         if total_gpus > 0:
-            srun_flags.append(f"--gres=gpu:{total_gpus}")
+            srun_flags.append(f"--gres=gpu:{self.n_gpus_per_node}")
 
         # Log files and prefix for merged log
         role_log = self._log_path_of(role)

@@ -16,6 +16,7 @@ from areal.api.cli_args import (
     PPOActorConfig,
     PPOConfig,
     PPOCriticConfig,
+    SchedulingStrategy,
     SGLangConfig,
     TrainDatasetConfig,
     ValidDatasetConfig,
@@ -511,6 +512,9 @@ class PPOTrainer:
             # NOTE: eval does not have any offpolicyness control
             config.max_head_offpolicyness = int(1e12)
             # eval-rollout uses the same inference servers as rollout
+            config.scheduling_strategy = SchedulingStrategy(
+                type="colocation", target="rollout"
+            )
             for spec in config.scheduling_spec:
                 spec.gpu = 0
 

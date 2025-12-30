@@ -57,6 +57,7 @@ class TrainController:
         self.parallel_strategy: ParallelStrategy | None = None
 
         self._worker_role: str = "default"
+        self._own_process_group = False
 
         self.rollout: RolloutController = None
 
@@ -72,10 +73,15 @@ class TrainController:
         parallel_strategy : ParallelStrategy | None, optional
             Parallel strategy configuration (currently unused), by default None
         """
-        port = find_free_ports(1)[0]
-        dist.init_process_group(
-            backend="gloo", init_method=f"tcp://localhost:{port}", rank=0, world_size=1
-        )
+        if not dist.is_initialized():
+            port = find_free_ports(1)[0]
+            dist.init_process_group(
+                backend="gloo",
+                init_method=f"tcp://localhost:{port}",
+                rank=0,
+                world_size=1,
+            )
+            self._own_process_group = True
 
     @property
     def data_parallel_rank(self) -> int:
@@ -264,8 +270,8 @@ class TrainController:
                 async def _destroy_all_engines():
                     tasks = [
                         self.scheduler.async_call_engine(
-                            worker.id,
-                            "destroy",
+                            worker_id=worker.id,
+                            method="destroy",
                             engine_name=self._engine_name(rank),
                         )
                         for rank, worker in enumerate(self.workers)
@@ -289,7 +295,7 @@ class TrainController:
         self.workers.clear()
         self.workers_is_dp_head.clear()
 
-        if dist.is_initialized():
+        if dist.is_initialized() and self._own_process_group:
             dist.destroy_process_group()
         logger.info("TrainController destroyed")
 
@@ -374,7 +380,7 @@ class TrainController:
                 self.scheduler.async_call_engine(
                     worker.id,
                     method,
-                    engine_name=self._engine_name(idx),
+                    self._engine_name(idx),
                     *worker_args,
                     **worker_kwargs,
                 )
