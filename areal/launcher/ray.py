@@ -570,10 +570,6 @@ def ray_main(config, run_id: int = 0):
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
 
-        # Get resource specs from actor scheduling_spec
-        actor_cpu = actor_spec.cpu
-        actor_mem_mb = actor_spec.mem * 1024
-
         launcher.submit_array(
             job_name="trainer",
             file_path=trainer_entry_point,
@@ -582,8 +578,8 @@ def ray_main(config, run_id: int = 0):
             nodes=trainer_n_nodes,
             list_args=trainer_args_list,
             gpus_per_task=gpus_per_task,
-            cpus_per_task=actor_cpu,
-            mem_per_task=actor_mem_mb,
+            cpus_per_task=actor_spec.cpu,
+            mem_per_task=actor_spec.mem * 1024,
             env_vars={
                 **BASE_ENVIRONS,
                 **actor_spec.env_vars,
