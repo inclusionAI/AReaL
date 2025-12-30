@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import torch.distributed as dist
 from datasets import Dataset
@@ -32,6 +33,11 @@ from areal.utils.perf_tracer import Category
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
+
+if TYPE_CHECKING:
+    from areal.engine.fsdp_engine import FSDPLMEngine
+    from areal.engine.megatron_engine import MegatronLMEngine
+    from areal.engine.sft.lm_engine import LMController
 
 logger = logging.getLogger("SFTTrainer")
 
@@ -267,7 +273,9 @@ class SFTTrainer:
             collate_fn=pad_sequences_to_tensors,
         )
 
-    def _create_actor(self, actor_config: TrainEngineConfig):
+    def _create_actor(
+        self, actor_config: TrainEngineConfig
+    ) -> FSDPLMEngine | MegatronLMEngine | LMController:
         if self.allocation_mode.train_backend == "fsdp":
             from areal.engine.fsdp_engine import FSDPLMEngine
 

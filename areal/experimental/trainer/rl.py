@@ -4,7 +4,7 @@ import functools
 import os
 from collections.abc import Callable
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
 from datasets import Dataset
@@ -40,6 +40,11 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
+if TYPE_CHECKING:
+    from areal.engine.fsdp_engine import FSDPPPOActor, FSDPPPOCritic
+    from areal.engine.megatron_engine import MegatronPPOActor, MegatronPPOCritic
+    from areal.engine.ppo.actor import PPOActorController
+    from areal.engine.ppo.critic import PPOCriticController
 logger = logging.getLogger("RLTrainer")
 
 
@@ -452,7 +457,9 @@ class PPOTrainer:
             spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
             spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
 
-    def _create_actor(self, actor_config: PPOActorConfig):
+    def _create_actor(
+        self, actor_config: PPOActorConfig
+    ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
         if self.allocation_mode.train_backend == "fsdp":
             from areal.engine.fsdp_engine import FSDPPPOActor
 
@@ -472,7 +479,9 @@ class PPOTrainer:
         actor.create_process_group(parallel_strategy=self.allocation_mode.train)
         return actor
 
-    def _create_critic(self, critic_config: PPOCriticConfig):
+    def _create_critic(
+        self, critic_config: PPOCriticConfig
+    ) -> FSDPPPOCritic | MegatronPPOCritic | PPOCriticController:
         if self.allocation_mode.train_backend == "fsdp":
             from areal.engine.fsdp_engine import FSDPPPOCritic
 
