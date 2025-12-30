@@ -367,6 +367,8 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
+                # Since all RTensor objects are affliated IPs,
+                # calling `clear_batches` once should be sufficient.
                 self.actor.clear_batches(rollout_batch, adv_batch)
 
             with perf_tracer.trace_scope(

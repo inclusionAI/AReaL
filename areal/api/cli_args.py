@@ -520,6 +520,12 @@ class SchedulingSpec:
     mount: str = field(
         default="/storage:/storage", metadata={"help": "Mount path for slurm."}
     )
+    nodelist: str | None = field(
+        default=None, metadata={"help": "sbatch/srun's `--nodelist` option for slurm."}
+    )
+    exclude: str | None = field(
+        default=None, metadata={"help": "sbatch/srun's `--exclude` option for slurm."}
+    )
 
 
 @dataclass

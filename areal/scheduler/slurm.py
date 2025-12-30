@@ -475,10 +475,6 @@ class SlurmScheduler(Scheduler):
             sbatch_options.append(f"--nodelist={nodelist}")
         if exclude:
             sbatch_options.append(f"--exclude={exclude}")
-        if spec.partition:
-            sbatch_options.append(f"--partition={spec.partition}")
-        if spec.time_limit:
-            sbatch_options.append(f"--time={spec.time_limit}")
 
         sbatch_options_str = "\n".join([f"#SBATCH {opt}" for opt in sbatch_options])
 

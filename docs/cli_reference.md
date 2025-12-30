@@ -865,6 +865,8 @@ Configuration class: SchedulingSpec
 | `additional_bash_cmds` | list of string \| None | `None`                                       | Additional bash commands to setup the container before running the torchrun command. Only used by slurm.                       |
 | `container_type`       | string                 | `"apptainer"`                                | Type of containers used in slurm **Choices:** `apptainer`, `none`                                                              |
 | `mount`                | string                 | `"/storage:/storage"`                        | Mount path for slurm.                                                                                                          |
+| `nodelist`             | string \| None         | `None`                                       | sbatch/srun's `--nodelist` option for slurm.                                                                                   |
+| `exclude`              | string \| None         | `None`                                       | sbatch/srun's `--exclude` option for slurm.                                                                                    |
 
 (section-scheduling-strategy)=
 
