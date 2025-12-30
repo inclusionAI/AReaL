@@ -13,6 +13,8 @@ from areal.utils.constants import (
     PROX_APPROX_METHODS_ALL,
     PROX_LOGP_METHOD_RECOMPUTE,
     PROX_LOGP_METHODS_ALL,
+    ProxApproxMethod,
+    ProxLogpMethod,
 )
 
 
@@ -273,47 +275,74 @@ def test_import_success():
     assert callable(compute_prox_logp_approximations)
 
 
+class TestProxLogpMethodEnum:
+    """Test suite for ProxLogpMethod enum."""
+
+    def test_enum_values(self):
+        """Test that enum values match expected strings."""
+        assert ProxLogpMethod.RECOMPUTE.value == "recompute"
+        assert ProxLogpMethod.LOGLINEAR.value == "loglinear"
+        assert ProxLogpMethod.METRICS.value == "metrics"
+
+    def test_enum_from_string(self):
+        """Test enum construction from string."""
+        assert ProxLogpMethod("recompute") == ProxLogpMethod.RECOMPUTE
+        assert ProxLogpMethod("loglinear") == ProxLogpMethod.LOGLINEAR
+        assert ProxLogpMethod("metrics") == ProxLogpMethod.METRICS
+
+    def test_skips_forward_pass(self):
+        """Test the skips_forward_pass() helper method."""
+        assert not ProxLogpMethod.RECOMPUTE.skips_forward_pass()
+        assert ProxLogpMethod.LOGLINEAR.skips_forward_pass()
+        assert not ProxLogpMethod.METRICS.skips_forward_pass()
+
+    def test_string_equality(self):
+        """Test that enum compares equal to its string value (str, Enum behavior)."""
+        assert ProxLogpMethod.RECOMPUTE == "recompute"
+        assert ProxLogpMethod.LOGLINEAR == "loglinear"
+        assert ProxLogpMethod.METRICS == "metrics"
+
+    def test_backward_compat_constants(self):
+        """Test backward compatibility with old string constants."""
+        assert PROX_LOGP_METHOD_RECOMPUTE == ProxLogpMethod.RECOMPUTE.value
+        assert "loglinear" == ProxLogpMethod.LOGLINEAR.value
+        assert "metrics" == ProxLogpMethod.METRICS.value
+
+
+class TestProxApproxMethodEnum:
+    """Test suite for ProxApproxMethod enum."""
+
+    def test_enum_values(self):
+        """Test that enum values match expected strings."""
+        assert ProxApproxMethod.LOGLINEAR.value == "loglinear"
+        assert ProxApproxMethod.LINEAR.value == "linear"
+        assert ProxApproxMethod.ROLLOUT.value == "rollout"
+
+    def test_enum_from_string(self):
+        """Test enum construction from string."""
+        assert ProxApproxMethod("loglinear") == ProxApproxMethod.LOGLINEAR
+        assert ProxApproxMethod("linear") == ProxApproxMethod.LINEAR
+        assert ProxApproxMethod("rollout") == ProxApproxMethod.ROLLOUT
+
+
 class TestComputeLogpOptimization:
-    """Test suite for compute_logp() None return optimization."""
+    """Test suite for compute_logp() forward pass behavior.
 
-    def test_compute_logp_returns_none_when_optimized(self):
-        """Test that compute_logp() returns None when using loglinear method."""
+    Note: compute_logp() now always performs forward pass and returns tensor.
+    The caller is responsible for checking ProxLogpMethod.skips_forward_pass()
+    to determine whether to call compute_logp().
+    """
+
+    def test_compute_logp_always_returns_tensor(self):
+        """Test that compute_logp() always returns a tensor (no longer returns None)."""
         from unittest.mock import MagicMock
 
         from areal.engine.ppo.actor import PPOActor, PPOActorConfig
 
-        # Create config with loglinear method (skips forward pass)
+        # Create config with any method - compute_logp should always return tensor
         config = PPOActorConfig(
             use_decoupled_loss=True,
-            prox_logp_method="loglinear",
-        )
-
-        # Mock the engine
-        mock_engine = MagicMock()
-        actor = PPOActor(config, mock_engine)
-
-        # Create dummy batch data
-        batch = {
-            "input_ids": torch.tensor([[1, 2, 3, 4]], dtype=torch.long),
-            "attention_mask": torch.ones(1, 4, dtype=torch.bool),
-        }
-
-        # Call compute_logp - should return None without calling engine.forward
-        result = actor.compute_logp(batch)
-
-        assert result is None
-        mock_engine.forward.assert_not_called()  # Should NOT call forward
-
-    def test_compute_logp_returns_tensor_when_recomputation_enabled(self):
-        """Test that compute_logp() returns tensor when using recompute or metrics method."""
-        from unittest.mock import MagicMock
-
-        from areal.engine.ppo.actor import PPOActor, PPOActorConfig
-
-        # Create config with recompute method (does forward pass)
-        config = PPOActorConfig(
-            use_decoupled_loss=True,
-            prox_logp_method="recompute",  # Should compute
+            prox_logp_method="recompute",
         )
 
         # Mock the engine
@@ -322,7 +351,6 @@ class TestComputeLogpOptimization:
             [[-1.0, -2.0, -3.0, -4.0]], dtype=torch.float32
         )
         actor = PPOActor(config, mock_engine)
-        actor.temperature = 1.0
 
         # Create dummy batch data
         batch = {
@@ -330,12 +358,60 @@ class TestComputeLogpOptimization:
             "attention_mask": torch.ones(1, 4, dtype=torch.bool),
         }
 
-        # Call compute_logp - should return tensor
+        # Call compute_logp - should always return tensor
         result = actor.compute_logp(batch)
 
         assert result is not None
         assert isinstance(result, torch.Tensor)
-        mock_engine.forward.assert_called_once()  # Should call forward
+        mock_engine.forward.assert_called_once()
+
+    def test_skips_forward_pass_determines_call_decision(self):
+        """Test that ProxLogpMethod.skips_forward_pass() determines whether to call compute_logp."""
+        # This test verifies the caller pattern, not compute_logp itself
+
+        # loglinear method skips forward pass
+        method_loglinear = ProxLogpMethod("loglinear")
+        assert method_loglinear.skips_forward_pass() is True
+
+        # recompute method does forward pass
+        method_recompute = ProxLogpMethod("recompute")
+        assert method_recompute.skips_forward_pass() is False
+
+        # metrics method does forward pass
+        method_metrics = ProxLogpMethod("metrics")
+        assert method_metrics.skips_forward_pass() is False
+
+    def test_caller_pattern_for_decoupled_loss(self):
+        """Test the expected caller pattern for decoupled loss scenarios."""
+        from areal.api.cli_args import PPOActorConfig
+
+        # Test various configurations and verify expected call decision
+        test_cases = [
+            # (use_decoupled_loss, prox_logp_method, recompute_logprob, should_compute)
+            (True, "loglinear", False, False),  # loglinear skips
+            (True, "recompute", False, True),  # recompute computes
+            (True, "metrics", False, True),  # metrics computes
+            (False, "recompute", True, True),  # standard PPO with recompute
+            (False, "recompute", False, False),  # standard PPO without recompute
+        ]
+
+        for use_decoupled, method_str, recompute_logprob, expected in test_cases:
+            config = PPOActorConfig(
+                use_decoupled_loss=use_decoupled,
+                prox_logp_method=method_str,
+                recompute_logprob=recompute_logprob,
+            )
+
+            method = ProxLogpMethod(config.prox_logp_method)
+            should_compute = (
+                config.use_decoupled_loss and not method.skips_forward_pass()
+            ) or (not config.use_decoupled_loss and config.recompute_logprob)
+
+            assert should_compute == expected, (
+                f"Failed for use_decoupled={use_decoupled}, "
+                f"method={method_str}, recompute={recompute_logprob}: "
+                f"got {should_compute}, expected {expected}"
+            )
 
 
 class TestGrpoLossFnNoneHandling:
@@ -511,81 +587,97 @@ class TestGrpoLossFnNoneHandling:
 
 
 class TestEndToEndOptimization:
-    """Integration tests for the full optimization flow."""
+    """Integration tests for the full optimization flow.
 
-    def test_user_script_flow_with_none_return(self):
-        """Test the full flow as it would happen in user scripts."""
+    Note: The new pattern places the decision logic at the caller site:
+    - The caller uses ProxLogpMethod.skips_forward_pass() to decide whether to call compute_logp()
+    - compute_logp() itself always returns a tensor (no longer returns None)
+    """
+
+    def test_user_script_flow_with_enum_check(self):
+        """Test the full flow as it would happen in user scripts (new pattern)."""
         from unittest.mock import MagicMock
 
         from areal.engine.ppo.actor import PPOActor, PPOActorConfig
 
-        # Setup: user configuration with optimization enabled
+        # Setup: user configuration with optimization enabled (loglinear skips forward)
         config = PPOActorConfig(
             use_decoupled_loss=True,
             prox_logp_method="loglinear",
-            recompute_logprob=False,  # Optimization active
+            recompute_logprob=False,
         )
 
         mock_engine = MagicMock()
+        mock_engine.forward.return_value = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
         actor = PPOActor(config, mock_engine)
 
-        # Simulate user script behavior
+        # Simulate user script behavior with the new pattern
         batch = {
             "input_ids": torch.tensor([[1, 2, 3, 4]], dtype=torch.long),
             "attention_mask": torch.ones(1, 4, dtype=torch.bool),
         }
 
-        # User script calls compute_logp
-        logp = actor.compute_logp(batch)
+        # New pattern: caller checks if forward pass should be skipped
+        method = ProxLogpMethod(config.prox_logp_method)
+        should_compute = (
+            config.use_decoupled_loss and not method.skips_forward_pass()
+        ) or (not config.use_decoupled_loss and config.recompute_logprob)
 
-        # User script assigns to batch
-        batch["prox_logp"] = logp
+        if should_compute:
+            batch["prox_logp"] = actor.compute_logp(batch)
+        else:
+            batch["prox_logp"] = None  # Caller sets to None when skipping
 
         # Verify the flow
-        assert batch["prox_logp"] is None, "batch['prox_logp'] should be None"
+        assert batch["prox_logp"] is None, "batch['prox_logp'] should be None (skipped)"
         mock_engine.forward.assert_not_called()  # Forward pass was skipped!
 
-    def test_configuration_matrix(self):
-        """Test all combinations of prox_logp_method values."""
+    def test_configuration_matrix_with_caller_decision(self):
+        """Test all combinations of prox_logp_method values with caller decision pattern."""
         from unittest.mock import MagicMock
 
         from areal.engine.ppo.actor import PPOActor, PPOActorConfig
 
         test_cases = [
-            # (prox_logp_method, should_return_none, should_call_forward, description)
-            ("loglinear", True, False, "loglinear -> None (skip forward)"),
-            ("recompute", False, True, "recompute -> Tensor (do forward)"),
-            ("metrics", False, True, "metrics -> Tensor (do forward)"),
+            # (prox_logp_method, should_call_compute_logp, description)
+            ("loglinear", False, "loglinear -> skip forward (caller skips)"),
+            ("recompute", True, "recompute -> do forward (caller calls)"),
+            ("metrics", True, "metrics -> do forward (caller calls)"),
         ]
 
-        for method, should_be_none, should_call_forward, desc in test_cases:
+        for method_str, should_call, desc in test_cases:
             config = PPOActorConfig(
                 use_decoupled_loss=True,
-                prox_logp_method=method,
+                prox_logp_method=method_str,
             )
 
             mock_engine = MagicMock()
             mock_engine.forward.return_value = torch.randn(1, 4)
             actor = PPOActor(config, mock_engine)
-            actor.temperature = 1.0
 
             batch = {
                 "input_ids": torch.tensor([[1, 2, 3, 4]], dtype=torch.long),
                 "attention_mask": torch.ones(1, 4, dtype=torch.bool),
             }
 
-            result = actor.compute_logp(batch)
+            # New pattern: caller uses enum to decide
+            method = ProxLogpMethod(config.prox_logp_method)
+            should_compute = (
+                config.use_decoupled_loss and not method.skips_forward_pass()
+            ) or (not config.use_decoupled_loss and config.recompute_logprob)
 
-            if should_be_none:
-                assert result is None, f"Failed: {desc}"
-            else:
+            if should_compute:
+                result = actor.compute_logp(batch)
                 assert result is not None, f"Failed: {desc}"
                 assert isinstance(result, torch.Tensor), f"Failed: {desc}"
-
-            if should_call_forward:
                 mock_engine.forward.assert_called_once()
             else:
+                # Caller skips, no call to compute_logp
                 mock_engine.forward.assert_not_called()
+
+            assert should_compute == should_call, (
+                f"Failed: {desc} - expected should_call={should_call}, got should_compute={should_compute}"
+            )
 
             # Reset mock for next test
             mock_engine.reset_mock()
