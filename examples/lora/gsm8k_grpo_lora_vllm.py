@@ -9,7 +9,7 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
-from areal.engine.ppo.actor import FSDPPPOActor
+from areal.engine.fsdp_engine import FSDPPPOActor
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
 from areal.reward.gsm8k import gsm8k_reward_fn
