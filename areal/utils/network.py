@@ -7,6 +7,22 @@ def gethostname():
 
 
 def gethostip(probe_host: str = "8.8.8.8", probe_port: int = 80) -> str:
+    """
+    Find the local IPv4 address for outbound route to `probe_host:probe_port` (typically
+    a LAN/private IP). Use hostname resolution first; if it fails or returns loopback (127.*),
+    fall back to a UDP connect.
+
+    Args:
+        probe_host: Remote IPv4 address used to trigger route selection, default to Google
+                    Public DNS IP.
+        probe_port: Remote port used for the UDP probe.
+
+    Returns:
+        The selected local IPv4 address as a string
+
+    Raises:
+        RuntimeError: If no suitable IPv4 address can be determined
+    """
     try:
         ip = socket.gethostbyname(socket.gethostname())
         if ip and not ip.startswith("127."):
