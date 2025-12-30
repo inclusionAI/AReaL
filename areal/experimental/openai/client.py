@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "none")
 os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 
-logger = logging.getLogger("AReaLOpenAI Client")
+logger = logging.getLogger("OpenAIClient")
 
 
 def _ensure_message_dict_list(

@@ -12,7 +12,7 @@ from pathlib import Path
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names, pkg_version
 
-logger = logging.getLogger("Launcher Utils")
+logger = logging.getLogger("LauncherUtils")
 
 LOCAL_CACHE_DIR = os.getenv("AREAL_CACHE_DIR", f"/tmp/areal-{getpass.getuser()}")
 PYTORCH_KERNEL_CACHE_PATH = (

@@ -13,7 +13,7 @@ from areal.utils.ulysses import (
     slice_input_tensor,
 )
 
-logger = logging.getLogger("Ulysses Monkey Patch")
+logger = logging.getLogger("UlyssesPatch")
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:

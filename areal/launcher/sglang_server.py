@@ -22,7 +22,7 @@ from areal.utils.launcher import TRITON_CACHE_PATH, apply_sglang_patch
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.proc import kill_process_tree
 
-logger = logging.getLogger("SGLangServer Wrapper")
+logger = logging.getLogger("SGLangWrapper")
 
 
 def launch_server_cmd(command: list[str]) -> subprocess.Popen:

@@ -23,7 +23,7 @@ from areal.utils.launcher import TRITON_CACHE_PATH
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.proc import kill_process_tree
 
-logger = logging.getLogger("vLLMServer Wrapper")
+logger = logging.getLogger("VLLMWrapper")
 
 
 def launch_server_cmd(

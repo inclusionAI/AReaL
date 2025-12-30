@@ -32,7 +32,7 @@ TOKENIZER_ARCHIVE_INLINE_THRESHOLD = 512 * 1024
 TOKENIZER_ZSTD_THRESHOLD = 20 * 1024 * 1024
 TokenizerCompression = Literal["zip", "zstd"]
 
-logger = logging.getLogger("SyncRPCServer")
+logger = logging.getLogger("RPCSerialization")
 
 
 class SerializedTensor(BaseModel):

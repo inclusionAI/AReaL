@@ -34,7 +34,7 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("SFTTrainer")
 
 
 class SFTTrainer:
@@ -45,6 +45,9 @@ class SFTTrainer:
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
+        if is_single_controller():
+            # Set up file logging for controller process
+            logging.setup_file_logging(StatsLogger.get_log_path(config.stats_logger))
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(

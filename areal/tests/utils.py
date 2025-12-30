@@ -11,7 +11,7 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
 
-logger = logging.getLogger("areal.tests.utils")
+logger = logging.getLogger("TestUtils")
 
 
 def get_model_path(local_path: str, hf_id: str) -> str:

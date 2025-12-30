@@ -7,7 +7,7 @@ from areal.utils.launcher import (
     JobState,
 )
 
-logger = logging.getLogger("Slurm Utils")
+logger = logging.getLogger("SlurmUtils")
 
 
 SQUEUE_FIELDS = [

@@ -9,7 +9,7 @@ from PIL.Image import Image as ImageObject
 
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("CLEVR70KDataset")
 
 DATASET_NUM_PROC = 16
 

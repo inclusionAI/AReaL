@@ -24,7 +24,7 @@ from areal.utils.perf_tracer import (
     trace_session,
 )
 
-logger = logging.getLogger("RLVR workflow")
+logger = logging.getLogger("RLVRWorkflow")
 
 
 def default_get_input_ids_fn(

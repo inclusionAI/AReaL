@@ -9,7 +9,7 @@ from transformers import PretrainedConfig
 from areal.api.alloc_mode import MegatronParallelStrategy
 from areal.utils import logging
 
-logger = logging.getLogger("MCore PipelineParallel")
+logger = logging.getLogger("MCoreParallel")
 
 
 def configure_pipeline_layer_splits(

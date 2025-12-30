@@ -163,7 +163,7 @@ class MegatronEngine(TrainEngine):
             # Set megatron model parallel seed
             tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
             self.own_global_group = True
-        self.logger = logging.getLogger(f"[Megatron Engine Rank {dist.get_rank()}]")
+        self.logger = logging.getLogger(f"[MegatronEngine Rank {dist.get_rank()}]")
         self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
         # This is needed for barrier synchronization when models are moved to CPU

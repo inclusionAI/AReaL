@@ -4,7 +4,7 @@ import torch
 
 from areal.utils import logging
 
-logger = logging.getLogger("MCore Deterministic")
+logger = logging.getLogger("MCoreDeterm")
 
 
 def set_deterministic_algorithms(model_config):

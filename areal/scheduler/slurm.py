@@ -33,6 +33,7 @@ from areal.utils.launcher import (
     JobState,
     get_env_vars,
 )
+from areal.utils.logging import LOG_PREFIX_WIDTH
 from areal.utils.offload import get_tms_env_vars
 from areal.utils.slurm import (
     cancel_jobs,
@@ -147,6 +148,17 @@ class SlurmScheduler(Scheduler):
         )
         log_path.mkdir(parents=True, exist_ok=True)
         return str(log_path / f"{role}.log")
+
+    def _merged_log_path(self) -> str:
+        log_path = (
+            Path(self.fileroot)
+            / "logs"
+            / getpass.getuser()
+            / self.experiment_name
+            / self.trial_name
+        )
+        log_path.mkdir(parents=True, exist_ok=True)
+        return str(log_path / "merged.log")
 
     def _sbatch_path_of(self, role: str) -> str:
         sbatch_path = (
@@ -445,8 +457,8 @@ class SlurmScheduler(Scheduler):
         # Build SBATCH directives
         sbatch_options = [
             f"--job-name={self._slurm_name(role)}",
-            f"--output={self._log_path_of(role)}",  # Shared log!
-            "--open-mode=append",
+            # Note: output handled via tee in script for merged log support
+            "--output=/dev/null",
             "--no-requeue",
             f"--nodes={nodes}",
             f"--ntasks-per-node={ntasks_per_node}",
@@ -513,13 +525,23 @@ class SlurmScheduler(Scheduler):
         ]
         if total_gpus > 0:
             srun_flags.append(f"--gres=gpu:{total_gpus}")
+
+        # Log files and prefix for merged log
+        role_log = self._log_path_of(role)
+        merged_log = self._merged_log_path()
+        prefix = f"[{role}]".ljust(LOG_PREFIX_WIDTH)
+
         # Complete sbatch script with single srun command
+        # Output is piped through tee to role log and sed+append to merged log
+        # Uses process substitution with stdbuf -oL for line-buffered streaming
         sbatch_script = f"""#!/bin/bash
 {sbatch_options_str}
 
 # Single srun command launches all workers
+# Output goes to role log (no prefix) and merged log (with prefix)
+# stdbuf -oL ensures line-buffered streaming for both outputs
 srun {self.srun_additional_args} {" ".join(srun_flags)} \\
-    {final_cmd}
+    stdbuf -oL {final_cmd} 2>&1 | tee -a {role_log} >(stdbuf -oL sed 's/^/{prefix}/' >> {merged_log})
 """
         return sbatch_script
 
