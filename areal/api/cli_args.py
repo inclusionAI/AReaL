@@ -482,13 +482,6 @@ class SlurmSchedulingConfig:
     mount: str = field(
         default="/storage:/storage", metadata={"help": "Mount path for slurm."}
     )
-    # slurm configurations from "https://slurm.schedmd.com/sbatch.html"
-    nodelist: str | None = None
-    exclude: str | None = None
-    partition: str | None = None
-    time_limit: str | None = None  # see  "--time" option for format
-    begin: str | None = None  # see "--begin" option for format
-    deadline: str | None = None  # see "--deadline" option for format
 
 
 @dataclass
@@ -508,7 +501,10 @@ class SchedulingSpec:
     port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
     image: str = field(
         default="/storage/openpsi/images/areal-latest.sif",
-        metadata={"help": "Docker/Singularity container image to use"},
+        metadata={
+            "help": "Docker/Singularity container image to use. "
+            "Currently only used by Slurm. Will be potentially used by Kubernetes in the future."
+        },
     )
     task_type: str = field(
         default="worker",
@@ -527,9 +523,29 @@ class SchedulingSpec:
             "help": "Command to execute inside the container. Defaults to AReaL's RPC server."
         },
     )
-    slurm: SlurmSchedulingConfig | None = field(
+    # Slurm specific options
+    srun_additional_args: str = field(
+        default="--unbuffered --mpi=pmi2 -K --chdir $PWD",
+        metadata={
+            "help": "Additional arguments to pass to the srun command. Only used by slurm."
+        },
+    )
+    additional_bash_cmds: list[str] | None = field(
         default=None,
-        metadata={"help": "Slurm-specific scheduling configuration."},
+        metadata={
+            "help": "Additional bash commands to setup the container before running "
+            "the torchrun command. Only used by slurm."
+        },
+    )
+    container_type: str = field(
+        default="apptainer",
+        metadata={
+            "help": "Type of containers used in slurm",
+            "choices": ["apptainer", "none"],
+        },
+    )
+    mount: str = field(
+        default="/storage:/storage", metadata={"help": "Mount path for slurm."}
     )
 
 

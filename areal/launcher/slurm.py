@@ -13,7 +13,6 @@ from areal.api.cli_args import (
     RecoverConfig,
     SchedulingSpec,
     SGLangConfig,
-    SlurmSchedulingConfig,
     parse_cli_args,
     to_structured_cfg,
     vLLMConfig,
@@ -26,6 +25,7 @@ from areal.utils.launcher import (
     JobException,
     JobInfo,
     JobState,
+    validate_config_for_distributed_launcher,
     wait_llm_server_addrs,
 )
 from areal.utils.offload import get_tms_env_vars
@@ -406,6 +406,7 @@ def slurm_main(config, run_id: int = 0):
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     is_recover_run = check_if_recover(config.recover, run_id)
+    validate_config_for_distributed_launcher(config)
     logger.info(
         f"SlurmLauncher: experiment_name={config.experiment_name}, "
         f"trial_name={config.trial_name}, fileroot={config.cluster.fileroot}, "
@@ -413,15 +414,16 @@ def slurm_main(config, run_id: int = 0):
     )
 
     # Get scheduling specs from actor config
-    # All experiment configs should have the `actor` field.
-    actor_spec = config.actor.scheduling_spec[0]
-    actor_slurm = getattr(actor_spec, "slurm", SlurmSchedulingConfig())
+    try:
+        actor_spec = to_structured_cfg(config.actor.scheduling_spec[0], SchedulingSpec)
+    except AttributeError:
+        actor_spec = SchedulingSpec()
 
     launcher = SlurmLauncher(
         experiment_name=config.experiment_name,
         trial_name=config.trial_name,
         fileroot=config.cluster.fileroot,
-        container_type=actor_slurm.container_type if actor_slurm else "apptainer",
+        container_type=actor_spec.container_type,
     )
 
     name_resolve.reconfigure(config.cluster.name_resolve)
@@ -457,12 +459,12 @@ def slurm_main(config, run_id: int = 0):
             random_seed = config.vllm.seed
 
         # Get rollout scheduling spec
-        rollout_spec = rollout_slurm = None
-        rollout_env_vars = {}
-        if hasattr(config, "rollout"):
-            rollout_spec = config.rollout.scheduling_spec[0]
-            rollout_slurm = getattr(rollout_spec, "slurm", SlurmSchedulingConfig())
-            rollout_env_vars = rollout_spec.env_vars
+        try:
+            rollout_spec = to_structured_cfg(
+                config.rollout.scheduling_spec[0], SchedulingSpec
+            )
+        except AttributeError:
+            rollout_spec = SchedulingSpec()
 
         backend_spec = {
             "sglang": {
@@ -495,7 +497,7 @@ def slurm_main(config, run_id: int = 0):
             n_servers_per_node = max(n_backend_servers // n_backend_nodes, 1)
 
             cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
-            base_env_vars = {**BASE_ENVIRONS, **rollout_env_vars}
+            base_env_vars = {**BASE_ENVIRONS, **rollout_spec.env_vars}
             if spec["set_device_env"]:
                 base_env_vars[current_platform.device_control_env_var] = ",".join(
                     list(map(str, range(n_gpus_per_node)))
@@ -536,12 +538,8 @@ def slurm_main(config, run_id: int = 0):
         )
 
         # Get resource specs from rollout scheduling_spec
-        rollout_cpu = rollout_spec.cpu if rollout_spec else SchedulingSpec.cpu.default
-        rollout_mem_mb = (
-            (rollout_spec.mem * 1024)
-            if rollout_spec
-            else (SchedulingSpec.mem.default * 1024)
-        )
+        rollout_cpu = rollout_spec.cpu
+        rollout_mem_mb = rollout_spec.mem * 1024
 
         launcher.submit_array(
             job_name="llm_server",
@@ -551,15 +549,9 @@ def slurm_main(config, run_id: int = 0):
             n_gpus_per_node=n_gpus_per_node,
             cpus_per_task=rollout_cpu * n_gpus_per_node,
             mem_per_task=rollout_mem_mb * n_gpus_per_node,
-            srun_additional_args=rollout_slurm.srun_additional_args
-            if rollout_slurm
-            else "--unbuffered --mpi=pmi2 -K --chdir $PWD",
-            container_image=getattr(
-                rollout_spec, "image", "/storage/openpsi/images/areal-latest.sif"
-            ),
-            container_mounts=rollout_slurm.mount
-            if rollout_slurm
-            else "/storage:/storage",
+            srun_additional_args=rollout_spec.srun_additional_args,
+            container_image=rollout_spec.image,
+            container_mounts=rollout_spec.mount,
             env_vars=env_list,
         )
         # Get llm server addresses by name resolve
@@ -634,33 +626,24 @@ def slurm_main(config, run_id: int = 0):
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
 
-        # Get resource specs from actor scheduling_spec
-        actor_cpu = actor_spec.cpu
-        actor_mem_mb = actor_spec.mem * 1024
-        actor_env_vars = actor_spec.env_vars
-
         launcher.submit_array(
             job_name="trainer",
             cmd=_build_trainer_cmds(
                 trainer_n_nodes,
                 config.cluster.n_gpus_per_node,
-                actor_slurm.additional_bash_cmds if actor_slurm else None,
+                actor_spec.additional_bash_cmds,
             ),
             count=trainer_n_nodes,
             nodes=trainer_n_nodes,
             n_gpus_per_node=gpus_per_node,
-            cpus_per_task=actor_cpu * config.cluster.n_gpus_per_node,
-            mem_per_task=actor_mem_mb * config.cluster.n_gpus_per_node,
-            container_image=getattr(
-                actor_spec, "image", "/storage/openpsi/images/areal-latest.sif"
-            ),
-            srun_additional_args=actor_slurm.srun_additional_args
-            if actor_slurm
-            else "--unbuffered --mpi=pmi2 -K --chdir $PWD",
-            container_mounts=actor_slurm.mount if actor_slurm else "/storage:/storage",
+            cpus_per_task=actor_spec.cpu * config.cluster.n_gpus_per_node,
+            mem_per_task=actor_spec.mem * 1024 * config.cluster.n_gpus_per_node,
+            container_image=actor_spec.image,
+            srun_additional_args=actor_spec.srun_additional_args,
+            container_mounts=actor_spec.mount,
             env_vars={
                 **BASE_ENVIRONS,
-                **actor_env_vars,
+                **actor_spec.env_vars,
                 **_env_vars,
                 **tms_env_vars,
                 "AREAL_SPMD_MODE": "1",

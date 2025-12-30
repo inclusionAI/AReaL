@@ -1,7 +1,7 @@
 # This is a reference yaml file for setting device-specific environment variables.
 # ***IT IS NOT INTENDED TO BE USED DIRECTLY AS AN EXPERIMENT CONFIGURATION***
 
-# To use this file, copy and paste the `env_vars` field under `actor.scheduling_sepc` in
+# To use this file, copy and paste the `env_vars` field under `actor.scheduling_spec` in
 # an actual experiment yaml configuration with proper indentation.
 
 # NVIDIA GPU

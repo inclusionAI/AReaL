@@ -852,17 +852,20 @@ Configuration for worker scheduling. Used in the single-controller mode. Experim
 
 Configuration class: SchedulingSpec
 
-| Parameter    | Type                                                        | Default                                      | Description                                                              |
-| ------------ | ----------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------ |
-| `cpu`        | integer                                                     | `4`                                          | Number of CPU cores required per GPU                                     |
-| `gpu`        | integer                                                     | `0`                                          | Number of GPU units required. Used only when allocating pods.            |
-| `mem`        | integer                                                     | `32`                                         | Amount of memory (GB) required per GPU                                   |
-| `port_count` | integer                                                     | `2`                                          | Number of ports to expose                                                |
-| `image`      | string                                                      | `"/storage/openpsi/images/areal-latest.sif"` | Docker/Singularity container image to use                                |
-| `task_type`  | string                                                      | `"worker"`                                   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine`         |
-| `env_vars`   | `dict`                                                      | **Required**                                 | Environment variables for the container                                  |
-| `cmd`        | string \| None                                              | `None`                                       | Command to execute inside the container. Defaults to AReaL's RPC server. |
-| `slurm`      | [`SlurmSchedulingConfig`](section-slurm-scheduling) \| None | `None`                                       | Slurm-specific scheduling configuration.                                 |
+| Parameter              | Type                   | Default                                      | Description                                                                                                                    |
+| ---------------------- | ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `cpu`                  | integer                | `4`                                          | Number of CPU cores required per GPU                                                                                           |
+| `gpu`                  | integer                | `0`                                          | Number of GPU units required. Used only when allocating pods.                                                                  |
+| `mem`                  | integer                | `32`                                         | Amount of memory (GB) required per GPU                                                                                         |
+| `port_count`           | integer                | `2`                                          | Number of ports to expose                                                                                                      |
+| `image`                | string                 | `"/storage/openpsi/images/areal-latest.sif"` | Docker/Singularity container image to use. Currently only used by Slurm. Will be potentially used by Kubernetes in the future. |
+| `task_type`            | string                 | `"worker"`                                   | Task type (e.g., worker, engine) **Choices:** `worker`, `engine`                                                               |
+| `env_vars`             | `dict`                 | **Required**                                 | Environment variables for the container                                                                                        |
+| `cmd`                  | string \| None         | `None`                                       | Command to execute inside the container. Defaults to AReaL's RPC server.                                                       |
+| `srun_additional_args` | string                 | `"--unbuffered --mpi=pmi2 -K --chdir $PWD"`  | Additional arguments to pass to the srun command. Only used by slurm.                                                          |
+| `additional_bash_cmds` | list of string \| None | `None`                                       | Additional bash commands to setup the container before running the torchrun command. Only used by slurm.                       |
+| `container_type`       | string                 | `"apptainer"`                                | Type of containers used in slurm **Choices:** `apptainer`, `none`                                                              |
+| `mount`                | string                 | `"/storage:/storage"`                        | Mount path for slurm.                                                                                                          |
 
 (section-scheduling-strategy)=
 
@@ -898,9 +901,3 @@ Slurm-specific scheduling configuration.
 | `additional_bash_cmds` | list of string \| None | `None`                                      | Additional bash commands to setup the container before running the torchrun command. |
 | `container_type`       | string                 | `"apptainer"`                               | Type of containers used in slurm **Choices:** `apptainer`, `none`                    |
 | `mount`                | string                 | `"/storage:/storage"`                       | Mount path for slurm.                                                                |
-| `nodelist`             | string \| None         | `None`                                      | -                                                                                    |
-| `exclude`              | string \| None         | `None`                                      | -                                                                                    |
-| `partition`            | string \| None         | `None`                                      | -                                                                                    |
-| `time_limit`           | string \| None         | `None`                                      | -                                                                                    |
-| `begin`                | string \| None         | `None`                                      | -                                                                                    |
-| `deadline`             | string \| None         | `None`                                      | -                                                                                    |

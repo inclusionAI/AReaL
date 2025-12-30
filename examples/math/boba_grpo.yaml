@@ -82,7 +82,18 @@ actor:
       cpu: 4
       mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
-      env_vars: {}
+      env_vars:
+        VLLM_USE_V1: "1"
+        VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+        TASK_QUEUE_ENABLE: "2"
+        HCCL_EXEC_TIMEOUT: "14400"
+        HCCL_OP_EXPANSION_MODE: "HOST"
+        ACL_DEVICE_SYNC_TIMEOUT: "14400"
+        HCCL_EVENT_TIMEOUT: "14500"
+        HCCL_ASYNC_ERROR_HANDLING: "0"
+        ACL_STREAM_TIMEOUT: "14500000"
+        HCCL_CONNECT_TIMEOUT: "7200"
+        PYTORCH_NPU_ALLOC_CONF: "expandable_segments:True"
 
 ref:
   experiment_name: ${experiment_name}

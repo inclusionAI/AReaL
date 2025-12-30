@@ -346,17 +346,6 @@ def ray_main(config, run_id: int = 0):
     is_recover_run = check_if_recover(config.recover, run_id)
     validate_config_for_distributed_launcher(config)
 
-    # Get scheduling specs from actor and rollout configs
-    # All experiment configs should have the `actor` field
-    actor_spec = config.actor.scheduling_spec[0]
-    actor_env_vars = actor_spec.env_vars
-    rollout_spec = None
-    if hasattr(config, "rollout"):
-        rollout_spec = config.rollout.scheduling_spec[0]
-    rollout_env_vars = {}
-    if rollout_spec is not None:
-        rollout_env_vars = rollout_spec.env_vars
-
     name_resolve.reconfigure(config.cluster.name_resolve)
     name_resolve.clear_subtree(
         names.trial_root(
@@ -382,6 +371,19 @@ def ray_main(config, run_id: int = 0):
 
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
+
+    try:
+        actor_spec = to_structured_cfg(config.actor.scheduling_spec[0], SchedulingSpec)
+    except AttributeError:
+        actor_spec = SchedulingSpec()
+
+    if allocation_mode.gen_backend in ("sglang", "vllm"):
+        try:
+            rollout_spec = to_structured_cfg(
+                config.rollout.scheduling_spec[0], SchedulingSpec
+            )
+        except AttributeError:
+            rollout_spec = SchedulingSpec()
 
     if not is_recover_run:
         metadata_file = save_experiment_metadata(
@@ -445,14 +447,6 @@ def ray_main(config, run_id: int = 0):
             return env_vars
 
         # launch a task to start all sglang servers in one node
-        # Get resource specs from rollout scheduling_spec
-        rollout_cpu = rollout_spec.cpu if rollout_spec else SchedulingSpec.cpu.default
-        rollout_mem_mb = (
-            (rollout_spec.mem * 1024)
-            if rollout_spec
-            else (SchedulingSpec.mem.default * 1024)
-        )
-
         launcher.submit_array(
             job_name="llm_server",
             file_path=sglang_entry_point,
@@ -461,9 +455,9 @@ def ray_main(config, run_id: int = 0):
             nodes=n_sglang_nodes,
             list_args=sglang_args_list,
             gpus_per_task=n_gpus_per_node,
-            cpus_per_task=rollout_cpu * n_gpus_per_node,
-            mem_per_task=rollout_mem_mb * n_gpus_per_node,
-            env_vars={**BASE_ENVIRONS, **rollout_env_vars},
+            cpus_per_task=rollout_spec.cpu * n_gpus_per_node,
+            mem_per_task=rollout_spec.mem * 1024 * n_gpus_per_node,
+            env_vars={**BASE_ENVIRONS, **rollout_spec.env_vars},
             env_hook=(
                 partial(sglang_env_hook, n_sglang_nodes, node_group_size)
                 if cross_nodes
@@ -497,10 +491,6 @@ def ray_main(config, run_id: int = 0):
         vllm_entry_point = str(
             pathlib.Path(__file__).resolve().parent.joinpath("vllm_server.py")
         )
-        # Get resource specs from rollout scheduling_spec
-        rollout_cpu = rollout_spec.cpu if rollout_spec else 4
-        rollout_mem_mb = (rollout_spec.mem * 1024) if rollout_spec else 32768
-
         launcher.submit_array(
             job_name="llm_server",
             file_path=vllm_entry_point,
@@ -509,9 +499,9 @@ def ray_main(config, run_id: int = 0):
             nodes=n_vllm_nodes,
             list_args=vllm_args_list,
             gpus_per_task=vllm_tp_size,
-            cpus_per_task=rollout_cpu * vllm_tp_size,
-            mem_per_task=rollout_mem_mb * vllm_tp_size,
-            env_vars={**BASE_ENVIRONS, **rollout_env_vars},
+            cpus_per_task=rollout_spec.cpu * vllm_tp_size,
+            mem_per_task=rollout_spec.mem * 1024 * vllm_tp_size,
+            env_vars={**BASE_ENVIRONS, **rollout_spec.env_vars},
         )
         # Get vllm server addresses via name_resolve
         try:
@@ -596,7 +586,7 @@ def ray_main(config, run_id: int = 0):
             mem_per_task=actor_mem_mb,
             env_vars={
                 **BASE_ENVIRONS,
-                **actor_env_vars,
+                **actor_spec.env_vars,
                 **_env_vars,
                 **tms_env_vars,
                 "AREAL_SPMD_MODE": "1",

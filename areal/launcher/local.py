@@ -26,6 +26,7 @@ from areal.utils.launcher import (
     JobException,
     JobInfo,
     JobState,
+    validate_config_for_launcher,
     wait_llm_server_addrs,
 )
 from areal.utils.network import find_free_ports
@@ -264,6 +265,7 @@ def local_main(config, run_id: int = 0):
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     is_recover_run = check_if_recover(config.recover, run_id)
+    validate_config_for_launcher(config)
     launcher = LocalLauncher(
         config.experiment_name, config.trial_name, config.cluster.fileroot
     )
@@ -323,9 +325,11 @@ def local_main(config, run_id: int = 0):
         )
 
         # Launch inference servers.
-        rollout_env_vars = {}
-        if hasattr(config, "rollout"):
+        try:
             rollout_env_vars = config.rollout.scheduling_spec[0].env_vars
+        except AttributeError:
+            # In case `scheduling_spec` or `env_vars` is missing
+            rollout_env_vars = {}
         launcher.submit_array(
             job_name="llm_server",
             cmd=server_cmd,
@@ -370,7 +374,11 @@ def local_main(config, run_id: int = 0):
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
         # All experiment configs should have the `actor` field.
-        actor_env_vars = config.actor.scheduling_spec[0].env_vars
+        try:
+            actor_env_vars = config.actor.scheduling_spec[0].env_vars
+        except AttributeError:
+            # in case `scheduling_spec` or `env_vars` is missing
+            actor_env_vars = {}
         launcher.submit(
             job_name="trainer",
             cmd=f"torchrun --nnodes 1 --nproc-per-node {nprocs} --master-addr localhost --master-port {find_free_ports(1, (10000, 50000))[0]} {' '.join(sys.argv[1:])}",
