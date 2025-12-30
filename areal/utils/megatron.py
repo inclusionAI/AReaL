@@ -62,7 +62,7 @@ def remove_padding(name: str, param: Parameter | Tensor, vocab_size: int):
 
 # Adapted from slime
 def convert_qwen3moe_to_hf(
-    tf_config: TransformerConfig, name: str, param: Parameter | Tensor, **kwargs
+    tf_config: TransformerConfig, name: str, param: Parameter | Tensor
 ):
     if name == "module.module.embedding.word_embeddings.weight":
         return [("model.embed_tokens.weight", param)]
@@ -217,7 +217,7 @@ def convert_qwen3moe_to_hf(
 
 # Adapted from slime
 def convert_qwen2_to_hf(
-    tf_config: TransformerConfig, name: str, param: Parameter | Tensor, **kwargs
+    tf_config: TransformerConfig, name: str, param: Parameter | Tensor
 ):
     if name == "module.module.embedding.word_embeddings.weight":
         return [("model.embed_tokens.weight", param)]
@@ -305,7 +305,7 @@ def convert_qwen2_to_hf(
 
 # Adapted from slime
 def convert_deepseekv3_to_hf(
-    tf_config: TransformerConfig, name: str, param: Parameter | Tensor, **kwargs
+    tf_config: TransformerConfig, name: str, param: Parameter | Tensor
 ):
     if name == "module.module.embedding.word_embeddings.weight":
         return [("model.embed_tokens.weight", param)]
@@ -354,17 +354,6 @@ def convert_deepseekv3_to_hf(
                         param,
                     ),
                 ]
-                if kwargs.get("inference_enable_ep_moe", False):
-                    outputs += [
-                        (
-                            f"model.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.input_scale",
-                            torch.tensor(1.0, dtype=torch.float32, device=param.device),
-                        ),
-                        (
-                            f"model.layers.{layer_idx}.mlp.experts.{expert_idx}.down_proj.weight_scale",
-                            torch.tensor(1.0, dtype=torch.float32, device=param.device),
-                        ),
-                    ]
                 return outputs
             else:
                 raise ValueError(f"Unknown expert parameter name: {name}")
@@ -482,7 +471,6 @@ def convert_to_hf(
     name: str,
     param: Parameter | Tensor,
     quantization_config: dict[str, int | str | list[str]] | None = None,
-    **kwargs,
 ):
     """Convert Megatron parameter to HuggingFace format, optionally with FP8 quantization.
 
@@ -503,7 +491,7 @@ def convert_to_hf(
     """
     for key, conversion_fn in _CONVERSION_FN_REGISTRY.items():
         if key in model_name:
-            converted_named_tensors = conversion_fn(tf_config, name, param, **kwargs)
+            converted_named_tensors = conversion_fn(tf_config, name, param)
             if quantization_config:
                 return quantize_params(
                     name, converted_named_tensors, quantization_config

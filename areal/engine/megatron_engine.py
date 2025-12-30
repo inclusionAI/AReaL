@@ -916,18 +916,6 @@ class MegatronEngine(TrainEngine):
                 " before using rollout/update_weight methods."
             )
 
-    def _get_inference_ep_config(self) -> dict[str, bool]:
-        inference_enable_ep_moe = False
-
-        if self.alloc_mode is not None:
-            gen_parallel = self.alloc_mode.gen
-            if gen_parallel is not None:
-                inference_enable_ep_moe = gen_parallel.ep_size > 1
-
-        return {
-            "inference_enable_ep_moe": inference_enable_ep_moe,
-        }
-
     def _ensure_ready(self) -> None:
         if self.is_offload:
             self.onload()
@@ -1020,9 +1008,6 @@ class MegatronEngine(TrainEngine):
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             buffer_size = 0
 
-        # Get inference EP configuration
-        inference_ep_config = self._get_inference_ep_config()
-
         converted_named_tensors.extend(
             convert_to_hf(
                 self.tf_config,
@@ -1030,7 +1015,6 @@ class MegatronEngine(TrainEngine):
                 name,
                 param,
                 quantization_config=self.quantization_config,
-                **inference_ep_config,
             )
         )
         buffer_size += param_size
@@ -1093,9 +1077,6 @@ class MegatronEngine(TrainEngine):
 
         gathered_params = sum(gathered_params, [])
 
-        # Get inference EP configuration
-        inference_ep_config = self._get_inference_ep_config()
-
         converted_hf_tensors = []
         for name, param in gathered_params:
             converted_hf_tensors.extend(
@@ -1105,7 +1086,6 @@ class MegatronEngine(TrainEngine):
                     name,
                     param,
                     quantization_config=self.quantization_config,
-                    **inference_ep_config,
                 )
             )
 
