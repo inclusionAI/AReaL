@@ -17,7 +17,7 @@ from tenacity import (
 
 from areal.utils import logging
 
-logger = logging.getLogger("ArealOpenAI Proxy Utils")
+logger = logging.getLogger("ProxyUtils")
 
 
 def ensure_end_with_slash(url: str) -> str:

@@ -7,7 +7,7 @@ from lark import Lark, Transformer
 
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("AllocMode")
 
 
 class AllocationType(enum.Enum):

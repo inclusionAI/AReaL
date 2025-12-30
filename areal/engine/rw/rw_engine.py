@@ -1,19 +1,14 @@
-from copy import deepcopy
 from typing import Any
 
 import torch
 
-from areal.api.cli_args import TrainEngineConfig
 from areal.api.engine_api import TrainEngine
-from areal.api.scheduler_api import Scheduler
 from areal.controller.train_controller import TrainController
-from areal.engine.fsdp_engine import FSDPEngine
-from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
 from areal.utils import logging, stats_tracker
 from areal.utils.perf_tracer import trace_perf
 
-logger = logging.getLogger("RW engine")
+logger = logging.getLogger("RWEngine")
 
 
 class RWEngine:
@@ -56,50 +51,6 @@ class RWController(TrainController):
 
     def evaluate_rw(self, *args, **kwargs):
         self._custom_function_call("evaluate_rw", *args, **kwargs)
-
-
-class FSDPRWEngine(FSDPEngine):
-    def __init__(self, config: TrainEngineConfig):
-        super().__init__(config)
-        self.rw_engine = RWEngine(self)
-        if self.config.mb_spec.granularity != 2:
-            logger.warning("mb_spec.granularity must be 2 for reward modeling")
-            self.config = deepcopy(self.config)
-            self.config.mb_spec.granularity = 2
-
-    def train_rw(self, data):
-        return self.rw_engine.train_rw(data)
-
-    def evaluate_rw(self, data):
-        return self.rw_engine.evaluate_rw(data)
-
-    @classmethod
-    def as_controller(
-        cls, config: TrainEngineConfig, scheduler: Scheduler
-    ) -> RWController:
-        return RWController(train_engine=cls, config=config, scheduler=scheduler)
-
-
-class MegatronRWEngine(MegatronEngine):
-    def __init__(self, config: TrainEngineConfig):
-        super().__init__(config)
-        self.rw_engine = RWEngine(self)
-        if self.config.mb_spec.granularity != 2:
-            logger.warning("mb_spec.granularity must be 2 for reward modeling")
-            self.config = deepcopy(self.config)
-            self.config.mb_spec.granularity = 2
-
-    def train_rw(self, data):
-        return self.rw_engine.train_rw(data)
-
-    def evaluate_rw(self, data):
-        return self.rw_engine.evaluate_rw(data)
-
-    @classmethod
-    def as_controller(
-        cls, config: TrainEngineConfig, scheduler: Scheduler
-    ) -> RWController:
-        return RWController(train_engine=cls, config=config, scheduler=scheduler)
 
 
 def compute_rw_loss(scores: torch.Tensor, input_: dict[str, Any]) -> torch.Tensor:

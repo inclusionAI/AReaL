@@ -5,7 +5,7 @@ from typing import Any
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging
 
-logger = logging.getLogger("AReaLOpenAI Interaction Cache")
+logger = logging.getLogger("OpenAICache")
 
 
 class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):

@@ -21,7 +21,7 @@ from areal.scheduler.rpc.rtensor import RTensor
 from areal.utils import logging, stats_tracker
 from areal.utils.network import find_free_ports
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TrainController")
 
 
 class TrainController:

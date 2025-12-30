@@ -16,8 +16,8 @@ import areal.utils.logging as logging
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
-    LauncherConfig,
     RecoverConfig,
+    SchedulingSpec,
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
@@ -27,9 +27,9 @@ from areal.platforms import current_platform, is_npu_available
 from areal.utils import name_resolve, names
 from areal.utils.exp_metadata import save_experiment_metadata
 from areal.utils.launcher import (
+    BASE_ENVIRONS,
     JobException,
     JobState,
-    get_env_vars,
     validate_config_for_distributed_launcher,
     wait_llm_server_addrs,
 )
@@ -341,7 +341,6 @@ def main():
 
 
 def ray_main(config, run_id: int = 0):
-    config.launcher = to_structured_cfg(config.launcher, LauncherConfig)
     config.recover = to_structured_cfg(config.recover, RecoverConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
     is_recover_run = check_if_recover(config.recover, run_id)
@@ -372,6 +371,19 @@ def ray_main(config, run_id: int = 0):
 
     allocation_mode = config.allocation_mode
     allocation_mode = AllocationMode.from_str(allocation_mode)
+
+    try:
+        actor_spec = to_structured_cfg(config.actor.scheduling_spec[0], SchedulingSpec)
+    except AttributeError:
+        actor_spec = SchedulingSpec()
+
+    if allocation_mode.gen_backend in ("sglang", "vllm"):
+        try:
+            rollout_spec = to_structured_cfg(
+                config.rollout.scheduling_spec[0], SchedulingSpec
+            )
+        except AttributeError:
+            rollout_spec = SchedulingSpec()
 
     if not is_recover_run:
         metadata_file = save_experiment_metadata(
@@ -443,13 +455,9 @@ def ray_main(config, run_id: int = 0):
             nodes=n_sglang_nodes,
             list_args=sglang_args_list,
             gpus_per_task=n_gpus_per_node,
-            cpus_per_task=config.launcher.inference_server_cpus_per_gpu
-            * n_gpus_per_node,
-            mem_per_task=config.launcher.inference_server_mem_per_gpu * n_gpus_per_node,
-            env_vars=get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            ),
+            cpus_per_task=rollout_spec.cpu * n_gpus_per_node,
+            mem_per_task=rollout_spec.mem * 1024 * n_gpus_per_node,
+            env_vars={**BASE_ENVIRONS, **rollout_spec.env_vars},
             env_hook=(
                 partial(sglang_env_hook, n_sglang_nodes, node_group_size)
                 if cross_nodes
@@ -491,12 +499,9 @@ def ray_main(config, run_id: int = 0):
             nodes=n_vllm_nodes,
             list_args=vllm_args_list,
             gpus_per_task=vllm_tp_size,
-            cpus_per_task=config.launcher.inference_server_cpus_per_gpu * vllm_tp_size,
-            mem_per_task=config.launcher.inference_server_mem_per_gpu * vllm_tp_size,
-            env_vars=get_env_vars(
-                config.cluster.cluster_name,
-                config.launcher.inference_server_env_vars,
-            ),
+            cpus_per_task=rollout_spec.cpu * vllm_tp_size,
+            mem_per_task=rollout_spec.mem * 1024 * vllm_tp_size,
+            env_vars={**BASE_ENVIRONS, **rollout_spec.env_vars},
         )
         # Get vllm server addresses via name_resolve
         try:
@@ -564,6 +569,7 @@ def ray_main(config, run_id: int = 0):
             # Required by NCCL weight update group.
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
+
         launcher.submit_array(
             job_name="trainer",
             file_path=trainer_entry_point,
@@ -572,17 +578,15 @@ def ray_main(config, run_id: int = 0):
             nodes=trainer_n_nodes,
             list_args=trainer_args_list,
             gpus_per_task=gpus_per_task,
-            cpus_per_task=config.launcher.trainer_cpus_per_gpu,
-            mem_per_task=config.launcher.trainer_mem_per_gpu,
-            env_vars=dict(
-                **get_env_vars(
-                    config.cluster.cluster_name,
-                    config.launcher.trainer_env_vars,
-                ),
+            cpus_per_task=actor_spec.cpu,
+            mem_per_task=actor_spec.mem * 1024,
+            env_vars={
+                **BASE_ENVIRONS,
+                **actor_spec.env_vars,
                 **_env_vars,
                 **tms_env_vars,
-                AREAL_SPMD_MODE=str(1),
-            ),
+                "AREAL_SPMD_MODE": "1",
+            },
             env_hook=partial(torch_env_hook, trainer_n_nodes * n_gpus_per_node),
         )
 

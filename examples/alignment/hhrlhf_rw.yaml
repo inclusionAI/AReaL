@@ -4,7 +4,7 @@ trial_name: trial0
 seed: 1
 enable_offload: false
 total_train_epochs: 1
-tokenizer_path: ${model.path}
+tokenizer_path: ${actor.path}
 
 cluster:
   n_nodes: 1
@@ -16,7 +16,7 @@ cluster:
 
 allocation_mode: d8p1t1
 
-model:
+actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: Qwen/Qwen2.5-7B
@@ -37,9 +37,18 @@ model:
     eps: 1e-8
     lr_scheduler_type: cosine
     gradient_clipping: 1.0
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars: {}
 
 train_dataset:
   batch_size: 256
+  shuffle: true
   pin_memory: true
   num_workers: 4
   path: Anthropic/hh-rlhf
@@ -84,9 +93,3 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
-
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768

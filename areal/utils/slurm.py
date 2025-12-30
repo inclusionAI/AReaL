@@ -5,10 +5,9 @@ from areal.utils import logging
 from areal.utils.launcher import (
     JobInfo,
     JobState,
-    validate_config_for_distributed_launcher,
 )
 
-logger = logging.getLogger("Slurm Utils")
+logger = logging.getLogger("SlurmUtils")
 
 
 SQUEUE_FIELDS = [
@@ -228,15 +227,3 @@ def get_slurm_host_ip(node: str, srun_addtional_args: str):
         return subprocess.check_output(cmd.split(" ")).decode("utf-8").strip()
     except subprocess.CalledProcessError:
         logger.warning(f"Get slurm host IP for node {node} failed.")
-
-
-def validate_config_for_slurm_launcher(config):
-    validate_config_for_distributed_launcher(config)
-    if config.launcher.slurm.container_type == "apptainer":
-        assert (
-            config.launcher.slurm.inference_server_image is not None
-            and config.launcher.slurm.trainer_image is not None
-        ), (
-            "`launcher.slurm.inference_server_image` and `launcher.slurm.trainer_image` "
-            "must be specified for SLURM with apptainer such as singularity."
-        )

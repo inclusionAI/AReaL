@@ -17,7 +17,7 @@ from areal.api.cli_args import MicroBatchSpec, NormConfig
 from areal.platforms import current_platform
 from areal.utils import datapack, logging
 
-logger = logging.getLogger("data utils")
+logger = logging.getLogger("DataUtils")
 
 
 def get_batch_size(data: dict[str, Any]) -> int:

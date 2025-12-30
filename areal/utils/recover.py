@@ -19,7 +19,7 @@ from areal.utils.saver import Saver
 if TYPE_CHECKING:
     from areal.utils.stats_logger import StatsLogger
 
-logger = logging.getLogger("recover")
+logger = logging.getLogger("Recover")
 
 
 class InValidRecoverInfo(Exception):

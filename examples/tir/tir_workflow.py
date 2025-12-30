@@ -48,13 +48,21 @@ class TIRWorkflow(RolloutWorkflow):
         self,
         reward_fn,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         tir_config: TIRConfig,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
         dump_dir: str | None = None,
     ):
         super().__init__()
+        if isinstance(tokenizer, str):
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            tokenizer = load_hf_tokenizer(tokenizer)
+        if isinstance(reward_fn, str):
+            from areal.utils.dynamic_import import import_from_string
+
+            reward_fn = import_from_string(reward_fn)
         self.reward_fn = reward_fn
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer

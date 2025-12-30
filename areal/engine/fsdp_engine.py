@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import gc
 import math
@@ -7,7 +9,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import nullcontext
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
@@ -103,6 +105,11 @@ from areal.utils.ulysses import (
     ulysses_prepare_inputs,
 )
 
+if TYPE_CHECKING:
+    from areal.engine.ppo.actor import PPOActorConfig
+    from areal.engine.ppo.critic import PPOCriticConfig
+    from areal.scheduler.scheduler import Scheduler
+
 
 @dataclasses.dataclass
 class FSDPTrainContext:
@@ -191,7 +198,7 @@ class FSDPEngine(TrainEngine):
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
 
-        self.logger = logging.getLogger(f"[FSDP Engine Rank {dist.get_rank()}]")
+        self.logger = logging.getLogger(f"[FSDPEngine Rank {dist.get_rank()}]")
 
         parallel_strategy = self._make_parallel_strategy(parallel_strategy)
 
@@ -1437,3 +1444,109 @@ class FSDPEngine(TrainEngine):
         if ctx.pad_length > 0:
             result = result[: -ctx.pad_length]
         return result
+
+
+# =============================================================================
+# Algorithm-specific FSDP Engines
+# =============================================================================
+
+
+class FSDPPPOActor(FSDPEngine):
+    """PPO Actor implementation using FSDP backend."""
+
+    def __init__(self, config: PPOActorConfig):
+        from areal.engine.ppo.actor import PPOActor
+
+        super().__init__(config)
+        self.actor = PPOActor(config, self)
+
+    @torch.no_grad()
+    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+        return self.actor.compute_logp(*args, **kwargs)
+
+    @torch.no_grad()
+    def compute_advantages(self, *args, **kwargs) -> dict[str, Any]:
+        return self.actor.compute_advantages(*args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.actor.ppo_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(cls, config: PPOActorConfig, scheduler: Scheduler):
+        from areal.engine.ppo.actor import PPOActorController
+
+        return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class FSDPPPOCritic(FSDPEngine):
+    """PPO Critic implementation using FSDP backend."""
+
+    def __init__(self, config: PPOCriticConfig):
+        from areal.engine.ppo.critic import PPOCritic
+
+        super().__init__(config)
+        self.critic = PPOCritic(config, self)
+
+    @torch.no_grad()
+    def compute_values(self, *args, **kwargs) -> torch.Tensor:
+        return self.critic.compute_values(*args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.critic.ppo_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(cls, config: PPOCriticConfig, scheduler: Scheduler):
+        from areal.engine.ppo.critic import PPOCriticController
+
+        return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class FSDPLMEngine(FSDPEngine):
+    """Language model engine for SFT using FSDP backend."""
+
+    def __init__(self, config: TrainEngineConfig):
+        from areal.engine.sft.lm_engine import LMEngine
+
+        super().__init__(config)
+        self.lm_engine = LMEngine(self)
+
+    def train_lm(self, data):
+        return self.lm_engine.train_lm(data)
+
+    def evaluate_lm(self, data):
+        return self.lm_engine.evaluate_lm(data)
+
+    @classmethod
+    def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
+        from areal.engine.sft.lm_engine import LMController
+
+        return LMController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class FSDPRWEngine(FSDPEngine):
+    """Reward model engine using FSDP backend."""
+
+    def __init__(self, config: TrainEngineConfig):
+        from copy import deepcopy
+
+        from areal.engine.rw.rw_engine import RWEngine
+
+        super().__init__(config)
+        self.rw_engine = RWEngine(self)
+        if self.config.mb_spec.granularity != 2:
+            logger = logging.getLogger("RW engine")
+            logger.warning("mb_spec.granularity must be 2 for reward modeling")
+            self.config = deepcopy(self.config)
+            self.config.mb_spec.granularity = 2
+
+    def train_rw(self, data):
+        return self.rw_engine.train_rw(data)
+
+    def evaluate_rw(self, data):
+        return self.rw_engine.evaluate_rw(data)
+
+    @classmethod
+    def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
+        from areal.engine.rw.rw_engine import RWController
+
+        return RWController(train_engine=cls, config=config, scheduler=scheduler)

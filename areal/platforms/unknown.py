@@ -6,7 +6,7 @@ import areal.utils.logging as logging
 
 from .platform import Platform
 
-logger = logging.getLogger("Unknown Platform")
+logger = logging.getLogger("UnknownPlatform")
 
 
 class UnknownPlatform(Platform):

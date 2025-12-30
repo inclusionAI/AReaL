@@ -45,7 +45,7 @@ from .workflow_executor import WorkflowExecutor
 
 RID_CACHE_SIZE = 128
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("RemoteInfEngine")
 
 _session_storage = ContextVar("aiohttp.ClientSession")
 
@@ -380,7 +380,7 @@ class RemoteInfEngine(InferenceEngine):
             else:
                 engine_id = uuid.uuid4().hex
         self.engine_id = engine_id
-        self.logger = logging.getLogger(f"[Remote Inference Engine Rank {engine_id}]")
+        self.logger = logging.getLogger(f"[RemoteInfEngine Rank {engine_id}]")
 
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]

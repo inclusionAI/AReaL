@@ -15,7 +15,7 @@ from areal.tests.utils import get_dataset_path, get_model_path
 from areal.utils import logging
 from areal.utils.proc import kill_process_tree
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TestExamples")
 
 SUCCESS_PATTERN = re.compile(r"Epoch 1/\d+ Step 1/\d+ Train step 1/\d+ done\.")
 
@@ -243,7 +243,7 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode, single_controller):
 
     additional_args = [
         f"allocation_mode={alloc_mode}",
-        "model.mb_spec.max_tokens_per_mb=1024",
+        "actor.mb_spec.max_tokens_per_mb=1024",
         "train_dataset.batch_size=16",
         "valid_dataset.batch_size=16",
         f"train_dataset.path={dataset_path}",
@@ -251,7 +251,7 @@ def test_gsm8k_sft(tmp_path_factory, alloc_mode, single_controller):
         "cluster.n_gpus_per_node=1",
         f"cluster.fileroot={str(experiments_path)}",
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-        f"model.path={model_path}",
+        f"actor.path={model_path}",
     ]
     if single_controller:
         additional_args.append("scheduler.type=local")
@@ -360,7 +360,7 @@ def test_vlm_sft(tmp_path_factory):
             example_file,
             config_name,
             "allocation_mode=d1",
-            "model.mb_spec.max_tokens_per_mb=1024",
+            "actor.mb_spec.max_tokens_per_mb=1024",
             "train_dataset.batch_size=16",
             "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
@@ -368,7 +368,7 @@ def test_vlm_sft(tmp_path_factory):
             "cluster.n_gpus_per_node=1",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"model.path={model_path}",
+            f"actor.path={model_path}",
             timeout=600,  # tokenizing the VLM dataset for SFT takes a long time
         )
     )
@@ -494,7 +494,7 @@ def test_hhrlhf_rw(tmp_path_factory):
             example_file,
             config_name,
             "allocation_mode=d1",
-            "model.mb_spec.max_tokens_per_mb=1024",
+            "actor.mb_spec.max_tokens_per_mb=1024",
             "train_dataset.batch_size=16",
             "valid_dataset.batch_size=16",
             f"train_dataset.path={dataset_path}",
@@ -502,7 +502,7 @@ def test_hhrlhf_rw(tmp_path_factory):
             "cluster.n_gpus_per_node=1",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
-            f"model.path={model_path}",
+            f"actor.path={model_path}",
             timeout=1800,
         ),
     )

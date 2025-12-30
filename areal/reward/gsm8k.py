@@ -1,7 +1,7 @@
 from areal.reward import get_math_verify_worker
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("GSM8KReward")
 
 
 def gsm8k_reward_fn(

@@ -14,7 +14,7 @@ from safetensors import safe_open
 from areal.models.mcore.registry import unwrap_to_gpt_model
 from areal.utils import logging
 
-logger = logging.getLogger("HF WeightsLoader")
+logger = logging.getLogger("HFLoader")
 
 
 def _get_tp_slice(shape, dim, tp_rank, tp_size) -> tuple:

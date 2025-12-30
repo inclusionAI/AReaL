@@ -7,7 +7,7 @@ import psutil
 
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ProcUtils")
 
 
 def kill_process_tree(

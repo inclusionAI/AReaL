@@ -6,7 +6,7 @@ import areal.utils.logging as logging
 
 from .platform import Platform
 
-logger = logging.getLogger("NPU Platform")
+logger = logging.getLogger("NPUPlatform")
 
 
 class NPUPlatform(Platform):

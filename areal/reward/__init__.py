@@ -3,7 +3,7 @@ from math_verify.parser import ExprExtractionConfig, LatexExtractionConfig
 
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("RewardUtils")
 
 VALID_REWARD_FN = ["clevr_count_70k", "geometry3k"]
 

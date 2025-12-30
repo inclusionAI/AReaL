@@ -80,7 +80,10 @@ actor:
     - task_type: worker
       port_count: 2
       gpu: 1
+      cpu: 4
+      mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars: {}
 
 ref:
   experiment_name: ${experiment_name}
@@ -172,9 +175,3 @@ perf_tracer:
   enabled: false
   session_tracer:
     enabled: false
-
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768

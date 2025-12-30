@@ -34,7 +34,7 @@ from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.perf_tracer import trace_perf
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("RolloutController")
 
 
 # NOTE: remote task input has a slightly different

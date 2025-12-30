@@ -10,7 +10,7 @@ from openai.types.responses.response_function_tool_call import ResponseFunctionT
 
 from areal.utils import logging
 
-logger = logging.getLogger("Tool Call Parser")
+logger = logging.getLogger("ToolCallParser")
 
 
 def _detect_think_and_return_ori_think(

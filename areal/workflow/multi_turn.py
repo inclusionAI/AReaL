@@ -18,7 +18,7 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 
-logger = logging.getLogger("Multi-Turn workflow")
+logger = logging.getLogger("MultiTurnWorkflow")
 
 
 class MultiTurnWorkflow(RolloutWorkflow):
