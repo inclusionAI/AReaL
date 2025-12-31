@@ -241,7 +241,7 @@ class PPOTrainer:
                     rollout_batch["values"] = self.critic.compute_values(rollout_batch)
                     self.critic.get_device_stats().log("critic values")
 
-            if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
+            if config.actor.should_compute_prox_logp():
                 with (
                     stats_tracker.record_timing("recompute_logp"),
                     perf_tracer.trace_scope(

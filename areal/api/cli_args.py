@@ -782,6 +782,19 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={"help": "Maximum number of new tokens to generate"},
     )
 
+    def should_compute_prox_logp(self) -> bool:
+        """Determine if forward pass is needed for proximal log-probabilities.
+
+        Returns:
+            True if compute_logp() should be called, False to skip.
+        """
+        from areal.utils.constants import ProxLogpMethod
+
+        method = ProxLogpMethod(self.prox_logp_method)
+        return (self.use_decoupled_loss and not method.skips_forward_pass()) or (
+            not self.use_decoupled_loss and self.recompute_logprob
+        )
+
 
 @dataclass
 class PPOCriticConfig(TrainEngineConfig):
