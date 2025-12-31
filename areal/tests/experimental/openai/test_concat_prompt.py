@@ -13,9 +13,11 @@ from areal.experimental.openai.client import (
     concat_prompt_token_ids_with_parent,
 )
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.tests.utils import get_model_path
 from areal.utils.hf_utils import load_hf_tokenizer
 
 MODEL_PATH = "Qwen/Qwen3-0.6B"
+LOCAL_MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B"
 
 # Fixed fake response content for testing
 FAKE_RESPONSE_CONTENT = "<think>\na\n</think>\n\n111"
@@ -26,7 +28,7 @@ FAKE_TOOL_CALL_CONTENT = '<tool_call>\n{"name": "get_weather", "arguments": {"lo
 
 @pytest.fixture(scope="module")
 def tokenizer():
-    return load_hf_tokenizer(MODEL_PATH)
+    return load_hf_tokenizer(get_model_path(LOCAL_MODEL_PATH, MODEL_PATH))
 
 
 def create_fake_model_response(
