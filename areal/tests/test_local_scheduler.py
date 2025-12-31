@@ -8,11 +8,13 @@ import psutil
 import pytest
 import requests
 
-from areal.api.scheduler_api import (
-    Job,
+from areal.api.cli_args import (
     SchedulingSpec,
     SchedulingStrategy,
     SchedulingStrategyType,
+)
+from areal.api.scheduler_api import (
+    Job,
     Worker,
 )
 from areal.scheduler.exceptions import (
