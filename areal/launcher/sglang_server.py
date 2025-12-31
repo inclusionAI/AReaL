@@ -102,12 +102,6 @@ class SGLangServerWrapper:
                     break
 
             if not all_alive:
-                for i, process in enumerate(self.server_processes):
-                    if process.poll() is None:
-                        kill_process_tree(process.pid, graceful=True)
-                        logger.info(
-                            f"SGLang server process {server_addresses[i]} terminated."
-                        )
                 sys.exit(1)
 
             time.sleep(1)
@@ -193,8 +187,8 @@ class SGLangServerWrapper:
             # Monitor server processes
             self._monitor_server_processes(server_addresses)
 
-        except Exception:
-            logger.error(f"Traceback:\n{traceback.format_exc()}")
+        except:  # noqa: E722
+            logger.error(traceback.format_exc())
             raise
 
     def launch_one_server(self, cmd, host_ip, server_port, node_rank):
