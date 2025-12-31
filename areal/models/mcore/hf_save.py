@@ -10,12 +10,14 @@ import torch.distributed as dist
 from mbridge.core import Bridge
 from mbridge.core.util import unwrap_model
 from megatron.core import parallel_state as mpu
+from megatron.core.fp8_utils import is_float8tensor
 from safetensors.torch import save_file
 from torch.distributed._functional_collectives import all_gather_into_tensor_coalesced
 
 from areal.models.mcore.registry import unwrap_to_gpt_model
 from areal.platforms import current_platform
 from areal.utils import logging
+from areal.utils.fp8 import quantize_params
 
 logger = logging.getLogger("HFSaver")
 
@@ -250,6 +252,7 @@ def save_weights_to_hf_with_mbridge_fast(
     non_expert_sd = {}
     _all_gather_specs = []
     all_gather_outputs = {}
+    quantization_config = getattr(bridge.hf_config, "quantization_config", None)
     for s in non_expert_specs:
         if s.tensor_model_parallel and mpu.get_tensor_model_parallel_world_size() > 1:
             _all_gather_specs.append(s)
@@ -262,6 +265,7 @@ def save_weights_to_hf_with_mbridge_fast(
             all_gather_outputs[s.global_name] = gathered_param
     for s in non_expert_specs:
         param = s.param
+
         if s.tensor_model_parallel:
             # allocate a new tensor with proper size
             if mpu.get_tensor_model_parallel_world_size() <= 1:
@@ -270,14 +274,29 @@ def save_weights_to_hf_with_mbridge_fast(
                 infer_params = all_gather_outputs[s.global_name].chunk(
                     mpu.get_tensor_model_parallel_world_size(), dim=0
                 )
+            # Convert TE FP8 -> torch bf16 -> torch FP8 and finally save the native torch FP8 model
+            # First dequantize TE FP8 tensors to bf16, then convert_to_hf will quantize to PyTorch FP8
+            infer_params = [
+                p.dequantize() if is_float8tensor(p) else p for p in infer_params
+            ]
             infer_params = bridge._weight_merge_across_tp(
                 s.global_name, infer_params, param
             )
         else:
             infer_params = param
+            if is_float8tensor(infer_params):
+                infer_params = infer_params.dequantize()
         converted_names, converted_params = bridge._weight_to_hf_format(
             s.global_name, infer_params
         )
+        # Apply quantization if quantization_config is present
+        if quantization_config is not None:
+            converted_named_params = list(zip(converted_names, converted_params))
+            quantized_named_params = quantize_params(
+                s.global_name, converted_named_params, quantization_config
+            )
+            converted_names = [name for name, _ in quantized_named_params]
+            converted_params = [param for _, param in quantized_named_params]
         for n, p in zip(converted_names, converted_params):
             assert n not in non_expert_sd, n
             non_expert_sd[n] = p
@@ -370,10 +389,20 @@ def save_weights_to_hf_with_mbridge_fast(
                 params = all_gather_outputs[s.global_name].chunk(etp_size, dim=0)
             else:
                 params = [param]
+
+            params = [p.dequantize() if is_float8tensor(p) else p for p in params]
             merge_params = bridge._weight_merge_across_tp(s.global_name, params, param)
             converted_names, converted_params = bridge._weight_to_hf_format(
                 s.global_name, merge_params
             )
+            # Apply quantization if quantization_config is present
+            if quantization_config is not None:
+                converted_named_params = list(zip(converted_names, converted_params))
+                quantized_named_params = quantize_params(
+                    s.global_name, converted_named_params, quantization_config
+                )
+                converted_names = [name for name, _ in quantized_named_params]
+                converted_params = [param for _, param in quantized_named_params]
             for n, p in zip(converted_names, converted_params):
                 assert n not in expert_sd, n
                 expert_sd[n] = p

@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import gc
+import math
 import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
@@ -17,6 +18,7 @@ from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import finalize_model_grads
+from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -27,7 +29,11 @@ from torch import nn
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
 
-from areal.api.alloc_mode import MegatronParallelStrategy, ParallelStrategy
+from areal.api.alloc_mode import (
+    AllocationMode,
+    MegatronParallelStrategy,
+    ParallelStrategy,
+)
 from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import (
@@ -49,7 +55,10 @@ from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
-from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
+from areal.utils.constants import (
+    DEFAULT_VECTORIZED_ALIGNMENT_BYTES,
+    DIST_GROUP_DEFAULT_TIMEOUT,
+)
 from areal.utils.data import (
     MicroBatchItem,
     MicroBatchList,
@@ -138,6 +147,8 @@ class MegatronEngine(TrainEngine):
         self.seed: int = 0
         self.own_global_group: bool = False
         self.is_offload: bool = False
+        self.enable_fp8: bool = self.config.megatron.fp8_config is not None
+        self.quantization_config: dict[str, int | str | list[str]] | None = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -203,6 +214,7 @@ class MegatronEngine(TrainEngine):
             f"update_weight_group_{mpu.get_pipeline_model_parallel_rank()}"
         )
         self.engine_lock = DistributedLock("train_engine_lock")
+        self.alloc_mode: AllocationMode | None = kwargs.get("alloc_mode", None)
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
         self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
@@ -228,6 +240,12 @@ class MegatronEngine(TrainEngine):
             self.parallel_strategy, self.hf_config, self.tf_config
         )
 
+        # Get quantization_config from hf_config if available (for FP8 weight updates)
+        self.quantization_config = getattr(self.hf_config, "quantization_config", None)
+
+        self._check_and_apply_fp8_config()
+        self._validate_fp8_consistency()
+
         # initialize mcore (DDP Wrapped) GPTModel
         with self.device:
             models = make_mcore_model(
@@ -242,6 +260,30 @@ class MegatronEngine(TrainEngine):
 
         with self.device:
             self._load_model_from_hf(self.config.path)
+
+        # NOTE: Clear high_precision_init_val for FP8 parameters.
+        #
+        # Background: When using distributed optimizer, Megatron uses
+        # high_precision_init_val to initialize optimizer's main parameters.
+        # TransformerEngine (TE) provides this via get_high_precision_init_val().
+        #
+        # Problem with publicly available HF FP8 models:
+        # - Megatron sets preserve_high_precision_init_val=True when loading FP8 models
+        # - This causes TE (transformer_engine/pytorch/module/base.py) to use the
+        #   init_method's random initialization as high_precision_init_val
+        # - But for pre-trained HF models, we load actual weights AFTER initialization,
+        #   so high_precision_init_val still holds the random init values, not the
+        #   loaded weights
+        #
+        # Solution: Clear high_precision_init_val here after loading HF weights.
+        # The optimizer will then use the actual FP8 weights (upcast to high precision)
+        # instead of stale random initialization values.
+        for model in self.model:
+            for _, param in model.named_parameters():
+                if hasattr(param, "get_high_precision_init_val"):
+                    param.clear_high_precision_init_val()
+                    delattr(param, "get_high_precision_init_val")
+                    delattr(param, "clear_high_precision_init_val")
 
         assert self.model, "Megatron models failed to initialize."
         modules = [m.module if isinstance(m, DDP) else m for m in self.model]
@@ -698,6 +740,60 @@ class MegatronEngine(TrainEngine):
     def clear_batches(self, *args):
         """Placeholder method of single-controller API."""
 
+    def _check_and_apply_fp8_config(self):
+        if not self.enable_fp8:
+            return
+        fp8_config = self.mcore_config.fp8_config
+        special_mappings = {"mode": "fp8"}
+        # Fields that use the same name in both configs (no prefix needed)
+        same_fields = {
+            "tp_only_amax_red",
+            "first_last_layers_bf16",
+            "num_layers_at_start_in_bf16",
+            "num_layers_at_end_in_bf16",
+        }
+        # All other fields get the `fp8_` prefix
+        for field in dataclasses.fields(fp8_config):
+            fp8_field = field.name
+            if fp8_field in special_mappings:
+                tf_field = special_mappings[fp8_field]
+            elif fp8_field in same_fields:
+                tf_field = fp8_field
+            else:
+                tf_field = f"fp8_{fp8_field}"
+            if hasattr(self.tf_config, tf_field):
+                setattr(self.tf_config, tf_field, getattr(fp8_config, fp8_field))
+            else:
+                raise ValueError(f"Unknown FP8 field: {fp8_field}")
+        self.logger.info(
+            f"FP8 training enabled: mode={fp8_config.mode}, "
+            f"recipe={fp8_config.recipe}, "
+            f"param={fp8_config.param}"
+        )
+        # fp8_param_gather is passed from make_mcore_model()
+
+    def _validate_fp8_consistency(self):
+        """Validate that FP8 configuration is consistent.
+
+        If either training uses FP8, quantization_config must exist
+        and quant_method must be "fp8" (weights must be FP8).
+        """
+        train_fp8 = self.enable_fp8
+        weights_fp8 = (
+            self.quantization_config is not None
+            and self.quantization_config.get("quant_method", None) == "fp8"
+        )
+
+        if train_fp8 and not weights_fp8:
+            raise RuntimeError(
+                "FP8 configuration error: "
+                "If training uses FP8, quantization_config must exist "
+                "and quant_method must be 'fp8' (weights must be FP8). "
+                f"Training fp8={train_fp8}, "
+                f"weights fp8={weights_fp8}, "
+                f"quantization_config={self.quantization_config}"
+            )
+
     def get_device_stats(self) -> DeviceRuntimeInfo:
         return DeviceRuntimeInfo.get_current()
 
@@ -772,6 +868,11 @@ class MegatronEngine(TrainEngine):
             use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
             params_dtype=self.dtype,
             clip_grad=self.optimizer_config.gradient_clipping,
+            fp8_recipe=(
+                self.mcore_config.fp8_config.recipe
+                if self.mcore_config.fp8_config is not None
+                else None
+            ),
         )
         mcore_opt_config.overlap_param_gather_with_optimizer_step = (
             self.mcore_config.overlap_param_gather_with_optimizer_step
@@ -879,6 +980,35 @@ class MegatronEngine(TrainEngine):
 
         self.engine_lock.release()
 
+    def _collect_param(
+        self,
+        name: str,
+        param: nn.Parameter | torch.Tensor,
+    ) -> tuple[nn.Parameter | torch.Tensor, int]:
+        """Collect and prepare a parameter for conversion.
+
+        This method handles:
+        - All-gathering the parameter across tensor parallel ranks
+        - Removing padding for vocabulary-related parameters
+        - Dequantizing FP8 parameters to bf16s
+        - Calculating the parameter size in bytes
+
+        Returns:
+            Tuple of (prepared_param, param_size_in_bytes)
+        """
+        param = all_gather_param(name, param)
+        param = remove_padding(name, param, self.hf_config.vocab_size)
+
+        if is_float8tensor(param):
+            # FP8 is stored as uint8, so element_size is 1 byte
+            param_size = param.numel()
+            # Convert TE FP8 to bf16 before convert_to_hf (which will convert to PyTorch FP8)
+            param = param.dequantize()
+        else:
+            param_size = param.numel() * param.element_size()
+
+        return param, param_size
+
     def _impl_update_weight_from_distributed(
         self,
         meta: WeightUpdateMeta,
@@ -888,19 +1018,23 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
-        param = all_gather_param(name, param)
-        param = remove_padding(name, param, self.hf_config.vocab_size)
+        param, param_size = self._collect_param(name, param)
 
         if not self.is_pipeline_parallel_head():
             return buffer_size
 
-        param_size = param.numel() * param.element_size()
         if buffer_size + param_size > weight_chunked_mem_size:
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             buffer_size = 0
 
         converted_named_tensors.extend(
-            convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
+            convert_to_hf(
+                self.tf_config,
+                self.hf_config.model_type,
+                name,
+                param,
+                quantization_config=self.quantization_config,
+            )
         )
         buffer_size += param_size
         return buffer_size
@@ -965,7 +1099,13 @@ class MegatronEngine(TrainEngine):
         converted_hf_tensors = []
         for name, param in gathered_params:
             converted_hf_tensors.extend(
-                convert_to_hf(self.tf_config, self.hf_config.model_type, name, param)
+                convert_to_hf(
+                    self.tf_config,
+                    self.hf_config.model_type,
+                    name,
+                    param,
+                    quantization_config=self.quantization_config,
+                )
             )
 
         self._update_bucket_weights_from_distributed(meta, converted_hf_tensors)
@@ -979,10 +1119,8 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
-        param = all_gather_param(name, param)
-        param = remove_padding(name, param, self.hf_config.vocab_size)
+        param, param_size = self._collect_param(name, param)
 
-        param_size = param.numel() * param.element_size()
         if (
             buffer_size + param_size
         ) * mpu.get_expert_model_parallel_world_size() > weight_chunked_mem_size:
@@ -1186,6 +1324,11 @@ class MegatronEngine(TrainEngine):
         # 2. Align sequence lengths to integer multiples of `align_to_multiple_of=tp_size*cp_size*2`
         #    to satisfy the requirement of Megatron parallelism.
         align_to_multiple_of = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+        align_to_multiple_of = (
+            math.lcm(align_to_multiple_of, DEFAULT_VECTORIZED_ALIGNMENT_BYTES)
+            if self.enable_fp8
+            else align_to_multiple_of
+        )
         mb_list = pad_mb_list(
             mb_list,
             pad_value=0.0,

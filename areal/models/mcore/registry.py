@@ -1,6 +1,7 @@
 import dataclasses
 
 import torch
+from mbridge.core.bridge import Bridge
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDDPConfig
@@ -131,7 +132,7 @@ def make_mcore_model(
     hf_config: PretrainedConfig,
     tf_config: TransformerConfig,
     mcore_config: MegatronEngineConfig | None = None,
-    bridge=None,
+    bridge: Bridge | None = None,
     is_critic: bool = False,
 ) -> list[GPTModel | DDP]:
     if bridge is not None:
