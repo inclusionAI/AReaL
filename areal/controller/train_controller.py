@@ -1,10 +1,6 @@
 import asyncio
-import shutil
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-import aiohttp
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -19,13 +15,13 @@ from areal.api.io_struct import (
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
 from areal.api.workflow_api import RolloutWorkflow
+from areal.controller.rollout_callback import RolloutCallback
 from areal.controller.rollout_controller import RolloutController
-from areal.platforms import current_platform
 from areal.scheduler.rpc.rtensor import RTensor
-from areal.utils import logging, name_resolve, names, stats_tracker
+from areal.utils import logging, stats_tracker
 from areal.utils.network import find_free_ports
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TrainController")
 
 
 class TrainController:
@@ -63,7 +59,6 @@ class TrainController:
         self._worker_role: str = "default"
 
         self.rollout: RolloutController = None
-        self.weight_update_group_initialized = False
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         """Placeholder method for process group creation.
@@ -373,6 +368,18 @@ class TrainController:
         """Merge RTensor results from DP heads using RTensor.merge()."""
         return RTensor.data_parallel_merge(results, group_indices)
 
+    def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
+        if self.rollout is not None and self.rollout != rollout:
+            logger.warning(
+                f"Connected rollout controller changed from {self.rollout} to {rollout}."
+            )
+        self.rollout = rollout
+
+        # Register a callback engine on train engines
+        # RolloutCallback is a dataclass and can be serialized
+        engine = RolloutCallback(controller_addr=rollout.callback_addr)
+        self._custom_function_call("connect_engine", engine=engine, meta=meta)
+
     def export_stats(self):
         """Export training statistics from all workers.
 
@@ -473,19 +480,9 @@ class TrainController:
         """
         self._custom_function_call("step_lr_scheduler")
 
-    def connect_engine(self, rollout: RolloutController, meta: WeightUpdateMeta):
-        if self.rollout is not None and self.rollout != rollout:
-            logger.warning(
-                f"Connected rollout controller changed from {self.rollout} to {rollout}."
-            )
-        self.rollout = rollout
-
-        if (
-            meta.type == current_platform.communication_backend
-            and not self.weight_update_group_initialized
-        ):
-            self._init_weight_update_from_distributed(meta)
-            self.weight_update_group_initialized = True
+    def update_weights(self, meta: WeightUpdateMeta):
+        self._check_rollout_engine_connected()
+        self._custom_function_call("update_weights", meta=meta)
 
     def get_device_stats(self):
         return self._custom_function_call("get_device_stats")
@@ -543,42 +540,6 @@ class TrainController:
             should_accept_fn=should_accept_fn,
         )
 
-    def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
-        raise NotImplementedError()
-
-    def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
-        raise NotImplementedError()
-
-    def _update_weights_from_disk(self, meta: WeightUpdateMeta):
-        # Update all LocalInfEngine's local weight
-        self.save(
-            SaveLoadMeta(
-                path=meta.path,
-                weight_format="hf",
-                with_optim=False,
-                tokenizer=None,
-                processor=None,
-            )
-        )
-        has_model_files = any(child.is_file() for child in Path(meta.path).iterdir())
-        assert has_model_files, f"No model files found in {meta.path} after saving."
-
-        update_name = names.update_weights_from_disk(
-            self.config.experiment_name,
-            self.config.trial_name,
-            self.get_version(),
-        )
-        name_resolve.add(
-            update_name,
-            str(datetime.now().timestamp()),
-            keepalive_ttl=120,
-            replace=True,
-        )
-
-        meta.clear_checkpoint_after_load = False
-        self._run_async_task(self.rollout.update_weights_from_disk(meta))
-        shutil.rmtree(meta.path, ignore_errors=True)
-
     def _check_rollout_engine_connected(self):
         """Validate that rollout engine has been connected via connect_engine()."""
         if self.rollout is None:
@@ -587,36 +548,15 @@ class TrainController:
                 " before using rollout/update_weight methods."
             )
 
-    def update_weights(self, meta: WeightUpdateMeta):
-        self._check_rollout_engine_connected()
-        if meta.type == current_platform.communication_backend:
-            assert self.weight_update_group_initialized
-            self._update_weights_from_distributed(meta)
-        elif meta.type == "disk":
-            self._update_weights_from_disk(meta)
-        else:
-            raise ValueError(f"Unknown weight update type {meta.type}")
-
     async def _async_clear_batches(self, *targets: dict[str, RTensor]):
-        """Extract shard IDs and call /data/clear on each worker."""
+        """Extract shard IDs and clear tensors on each worker."""
         shards_by_node = RTensor.collect_shards(targets)
 
         if not shards_by_node:
             return
 
-        async def clear_node(node_addr, shard_ids):
-            async with aiohttp.ClientSession() as session:
-                async with session.delete(
-                    f"http://{node_addr}/data/clear", json={"shard_ids": shard_ids}
-                ) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        logger.info(
-                            f"Cleared {result.get('cleared_count', 0)} shards on {node_addr}"
-                        )
-
         await asyncio.gather(
-            *[clear_node(addr, sids) for addr, sids in shards_by_node.items()],
+            *[RTensor.clear_node(addr, sids) for addr, sids in shards_by_node.items()],
             return_exceptions=True,
         )
 

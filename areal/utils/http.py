@@ -10,7 +10,7 @@ DEFAULT_RETRIES = 1
 DEFAULT_REQUEST_TIMEOUT = 3600
 
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger("HTTPUtils")
 
 
 def get_default_connector():

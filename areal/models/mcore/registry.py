@@ -16,7 +16,7 @@ from areal.models.mcore.qwen3 import (
 )
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("MCoreRegistry")
 
 
 class ValueHead(torch.nn.Linear):

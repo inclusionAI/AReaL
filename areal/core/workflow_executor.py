@@ -4,13 +4,15 @@ import random
 import threading
 import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, Generic, Protocol
 from collections.abc import Generator
 from collections import deque
 import torch
+import requests
 import torch.distributed as dist
-from megatron.core import parallel_state as mpu
+
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
@@ -138,7 +140,7 @@ def check_trajectory_format(
         ``check_trajectory_format`` is enabled
     """
     if logger is None:
-        logger = logging.getLogger(__name__)
+        logger = logging.getLogger("WorkflowExecutor")
     if data is None:
         return True
 
@@ -295,6 +297,11 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         self._thread_exception: Exception | None = None
         self._thread_exception_lock = threading.Lock()
 
+        # Callback support: task_id -> callback_addr
+        self._task_callbacks: dict[int, str] = {}
+        # Thread pool for sending callbacks (avoids creating threads per callback)
+        self._callback_executor: ThreadPoolExecutor | None = None
+
     def _set_thread_exception(self, exc: Exception):
         """Store exception from background thread for fail-fast behavior."""
         with self._thread_exception_lock:
@@ -315,6 +322,30 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             and self.staleness_manager.get_capacity() > 0
             and self.runner.get_input_queue_size() < self.runner.max_queue_size
         )
+
+    def register_callback(self, task_id: int, callback_addr: str):
+        """Register a callback address for a task."""
+        self._task_callbacks[task_id] = callback_addr
+
+    def cancel_callback(self, task_id: int):
+        """Remove a registered callback for a task (e.g., on timeout)."""
+        self._task_callbacks.pop(task_id, None)
+
+    def _send_callback(self, addr: str, task_id: int, result: TResult):
+        """Send task result to callback address (fire-and-forget)."""
+
+        def post():
+            try:
+                resp = requests.post(
+                    addr,
+                    json={"task_id": task_id},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+            except requests.RequestException as e:
+                self.logger.error(f"Callback to {addr} failed: {e}")
+
+        self._callback_executor.submit(post)
 
     def _commit_loop(self) -> None:
         """Producer thread - continuously submits tasks based on capacity."""
@@ -372,6 +403,10 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                 with self._result_cv:
                     for result in results:
                         self._pending_results[result.task_id] = result
+                        # Trigger callback if registered
+                        cb_addr = self._task_callbacks.pop(result.task_id, None)
+                        if cb_addr:
+                            self._send_callback(cb_addr, result.task_id, result.data)
                     self._result_cv.notify_all()
 
                 # Newly available capacity after result processing should wake producers
@@ -407,6 +442,9 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         self.runner.initialize(logger=logger)
 
         self._shutdown_event.clear()
+        self._callback_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="callback"
+        )
 
         self._commit_thread = threading.Thread(target=self._commit_loop, daemon=True)
         self._commit_thread.start()
@@ -434,6 +472,14 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                 self.logger.warning(
                     "Consumer thread did not exit cleanly within timeout"
                 )
+
+        # Clear pending callbacks to prevent memory leak
+        self._task_callbacks.clear()
+
+        # Shutdown callback thread pool
+        if self._callback_executor is not None:
+            self._callback_executor.shutdown(wait=False)
+            self._callback_executor = None
 
         # Shutdown the async task runner
         self.runner.destroy()
@@ -704,6 +750,19 @@ class WorkflowExecutor:
 
         self._task_id_generator = TaskIdGenerator()
 
+    def _resolve_dp_world_size(self):
+        if not dist.is_initialized():
+            return 1
+
+        try:
+            from megatron.core import parallel_state as mpu
+
+            if mpu.is_initialized():
+                return mpu.get_data_parallel_world_size()
+            return dist.get_world_size()
+        except ImportError:
+            return dist.get_world_size()
+
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start background threads.
 
@@ -734,13 +793,7 @@ class WorkflowExecutor:
             if train_data_parallel_size is not None:
                 dp_world_size = train_data_parallel_size
             else:
-                if dist.is_initialized():
-                    if not mpu.is_initialized():
-                        dp_world_size = dist.get_world_size()
-                    else:
-                        dp_world_size = mpu.get_data_parallel_world_size()
-                else:
-                    dp_world_size = 1
+                dp_world_size = self._resolve_dp_world_size()
 
             # Apply data parallel scaling
             max_concurrent_rollouts = max(

@@ -19,7 +19,7 @@ from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.fp8_utils import quantize_params
 
-logger = logging.getLogger("HF WeightsSaver")
+logger = logging.getLogger("HFSaver")
 
 HF_MODEL_CONFIG_FILES = [
     "generation_config.json",

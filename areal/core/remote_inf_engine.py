@@ -14,6 +14,7 @@ from threading import Lock
 from typing import Any, Protocol
 
 import aiohttp
+import ray
 import requests
 import torch.distributed as dist
 import uvloop
@@ -44,7 +45,7 @@ from .workflow_executor import WorkflowExecutor
 
 RID_CACHE_SIZE = 128
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("RemoteInfEngine")
 
 _session_storage = ContextVar("aiohttp.ClientSession")
 
@@ -282,7 +283,6 @@ class RemoteInfEngine(InferenceEngine):
         self.addresses = []
         self.server_idx = 0
 
-        self.distributed_weight_update_initialized = False
         self._version = 0
 
         self.lock = Lock()
@@ -380,7 +380,7 @@ class RemoteInfEngine(InferenceEngine):
             else:
                 engine_id = uuid.uuid4().hex
         self.engine_id = engine_id
-        self.logger = logging.getLogger(f"[Remote Inference Engine Rank {engine_id}]")
+        self.logger = logging.getLogger(f"[RemoteInfEngine Rank {engine_id}]")
 
         if addr:
             self.addresses = addr if isinstance(addr, list) else [addr]
@@ -630,21 +630,30 @@ class RemoteInfEngine(InferenceEngine):
         )
         return response
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+    def init_weights_update_group(
+        self, meta: WeightUpdateMeta, xccl_group_ranks: list[int] | None = None
+    ) -> Future[None]:
         """Initialize the weight update process group for distributed weight updates.
 
         Parameters
         ----------
         meta : WeightUpdateMeta
             Metadata containing information about the weight update
+        xccl_group_ranks : list[int] | None, optional
+            Explicit rank assignment for each remote inference worker, aligned with
+            ``self.addresses`` (same length, same order).
+
+            - If provided, worker at ``self.addresses[i]`` will initialize the
+            communication group using rank ``xccl_group_ranks[i]``.
+            - If None, ranks are assigned by address order: rank ``i`` for
+            ``self.addresses[i]``.
 
         Returns
         -------
         Future[None]
             A future object representing the asynchronous initialization operation
         """
-        assert meta.type == current_platform.communication_backend
-        assert not self.distributed_weight_update_initialized
+        assert meta.type == "xccl"
 
         fut = self.executor.submit(
             _init_weights_update_group_remote,
@@ -652,6 +661,7 @@ class RemoteInfEngine(InferenceEngine):
             meta,
             self.addresses,
             self.config.request_timeout,
+            xccl_group_ranks,
         )
 
         def callback(fut):
@@ -659,10 +669,8 @@ class RemoteInfEngine(InferenceEngine):
                 f"Initialized {current_platform.communication_backend.upper()} group "
                 f"for distributed weight update for {meta.nccl_group_name}."
             )
-            self.distributed_weight_update_initialized = True
 
         fut.add_done_callback(callback)
-
         return fut
 
     def update_weights_from_distributed(
@@ -682,7 +690,7 @@ class RemoteInfEngine(InferenceEngine):
         Future[None]
             A future object representing the asynchronous weight update operation
         """
-        assert meta.type == current_platform.communication_backend
+        assert meta.type == "xccl"
 
         fut = self.executor.submit(
             _update_weights_from_distributed,
@@ -745,7 +753,6 @@ class RemoteInfEngine(InferenceEngine):
                 shutil.rmtree(meta.path, ignore_errors=True)
 
         fut.add_done_callback(callback)
-
         return fut
 
     def submit(
@@ -755,6 +762,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
+        callback_addr: str | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -772,6 +780,8 @@ class RemoteInfEngine(InferenceEngine):
             The task ID to use. If None, a new task ID will be generated internally.
         """
         assert workflow is not None, "Workflow must be specified for submit."
+        if callback_addr:
+            self.workflow_executor.dispatcher.register_callback(task_id, callback_addr)
         return self.workflow_executor.submit(
             data,
             workflow=workflow,
@@ -949,6 +959,13 @@ class RemoteInfEngine(InferenceEngine):
         try:
             self._wait_for_server(address)
             self.local_server_processes.append(server_info)
+            if ray.is_initialized():
+                # do not return with process for ray as it is not picklable
+                return LocalInfServerInfo(
+                    host=server_args["host"],
+                    port=server_args["port"],
+                    process=None,
+                )
             return server_info
         except TimeoutError:
             logger.warning(
@@ -1029,8 +1046,20 @@ def _init_weights_update_group_remote(
     meta: WeightUpdateMeta,
     addresses: list[str],
     request_timeout: float,
+    xccl_group_ranks: list[int] | None = None,
 ):
-    """Helper to initialize weight update group in a separate process."""
+    """Helper to initialize weight update group in a separate process.
+
+    If xccl_group_ranks is provided, it must have the same length as addresses and will be
+    used as the per-address rank passed to the backend request builder.
+    Otherwise, ranks default to enumerate(addresses).
+    """
+
+    if xccl_group_ranks is not None and len(xccl_group_ranks) != len(addresses):
+        raise ValueError(
+            f"xccl_group_ranks must have the same length as addresses "
+            f"(got {len(xccl_group_ranks)} vs {len(addresses)})"
+        )
 
     async def _fn():
         async with aiohttp.ClientSession(
@@ -1040,7 +1069,12 @@ def _init_weights_update_group_remote(
         ) as session:
             jobs = []
             for i, addr in enumerate(addresses):
-                http_req = backend.build_init_weights_group_request(addr, i, meta)
+                xccl_group_rank = (
+                    xccl_group_ranks[i] if xccl_group_ranks is not None else i
+                )
+                http_req = backend.build_init_weights_group_request(
+                    addr, xccl_group_rank, meta
+                )
                 jobs.append(
                     arequest_with_retry(
                         session=session,

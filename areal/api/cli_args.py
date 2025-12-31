@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 uvloop.install()
 
-logger = logging.getLogger("CLI args")
+logger = logging.getLogger("CLIArgs")
 
 ConfigT = TypeVar("ConfigT")
 
@@ -579,12 +579,25 @@ class SchedulingStrategy:
 
 @dataclass
 class SchedulingSpec:
-    cpu: int = field(default=0, metadata={"help": "Number of CPU cores required"})
-    gpu: int = field(default=0, metadata={"help": "Number of GPU units required"})
-    mem: int = field(default=0, metadata={"help": "Amount of memory (GB) required"})
+    cpu: int = field(
+        default=4, metadata={"help": "Number of CPU cores required per GPU"}
+    )
+    gpu: int = field(
+        default=0,
+        metadata={
+            "help": "Number of GPU units required. Used only when allocating pods."
+        },
+    )
+    mem: int = field(
+        default=32, metadata={"help": "Amount of memory (GB) required per GPU"}
+    )
     port_count: int = field(default=2, metadata={"help": "Number of ports to expose"})
     image: str = field(
-        default="", metadata={"help": "Docker/Singularity container image to use"}
+        default="/storage/openpsi/images/areal-latest.sif",
+        metadata={
+            "help": "Docker/Singularity container image to use. "
+            "Currently only used by Slurm. Will be potentially used by Kubernetes in the future."
+        },
     )
     task_type: str = field(
         default="worker",
@@ -603,13 +616,30 @@ class SchedulingSpec:
             "help": "Command to execute inside the container. Defaults to AReaL's RPC server."
         },
     )
-    # slurm configurations from "https://slurm.schedmd.com/sbatch.html"
-    nodelist: str | None = None
-    exclude: str | None = None
-    partition: str | None = None
-    time_limit: str | None = None  # see  "--time" option for format
-    begin: str | None = None  # see "--begin" option for format
-    deadline: str | None = None  # see "--deadline" option for format
+    # Slurm specific options
+    srun_additional_args: str = field(
+        default="--unbuffered --mpi=pmi2 -K --chdir $PWD",
+        metadata={
+            "help": "Additional arguments to pass to the srun command. Only used by slurm."
+        },
+    )
+    additional_bash_cmds: list[str] | None = field(
+        default=None,
+        metadata={
+            "help": "Additional bash commands to setup the container before running "
+            "the torchrun command. Only used by slurm."
+        },
+    )
+    container_type: str = field(
+        default="apptainer",
+        metadata={
+            "help": "Type of containers used in slurm",
+            "choices": ["apptainer", "none"],
+        },
+    )
+    mount: str = field(
+        default="/storage:/storage", metadata={"help": "Mount path for slurm."}
+    )
 
 
 @dataclass
@@ -872,6 +902,19 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={"help": "Maximum number of new tokens to generate"},
     )
 
+    def should_compute_prox_logp(self) -> bool:
+        """Determine if forward pass is needed for proximal log-probabilities.
+
+        Returns:
+            True if compute_logp() should be called, False to skip.
+        """
+        from areal.utils.constants import ProxLogpMethod
+
+        method = ProxLogpMethod(self.prox_logp_method)
+        return (self.use_decoupled_loss and not method.skips_forward_pass()) or (
+            not self.use_decoupled_loss and self.recompute_logprob
+        )
+
 
 @dataclass
 class PPOCriticConfig(TrainEngineConfig):
@@ -1115,7 +1158,7 @@ class SGLangConfig:
         tp_size: int,
         base_gpu_id: int,
         host: str | None = None,
-        port: str | None = None,
+        port: int | None = None,
         dist_init_addr: str | None = None,
         n_nodes: int = 1,
         node_rank: int = 0,
@@ -1141,7 +1184,6 @@ class SGLangConfig:
             args["lora_target_modules"] = [
                 x.replace("-linear", "") for x in args["lora_target_modules"]
             ]
-        from areal.platforms import current_platform
 
         args = dict(
             # Model and tokenizer
@@ -1149,7 +1191,6 @@ class SGLangConfig:
             tokenizer_mode="auto",
             load_format="auto",
             trust_remote_code=True,
-            device=current_platform.device_type,
             is_embedding=False,
             # Other runtime options
             tp_size=tp_size,
@@ -1218,7 +1259,7 @@ class InferenceEngineConfig:
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
     setup_timeout: float = field(
-        default=120.0,
+        default=300.0,
         metadata={
             "help": "Timeout in seconds of connecting to remote servers or launching local servers."
         },
@@ -1504,7 +1545,7 @@ class ClusterSpecConfig:
 class SchedulerConfig:
     """Configuration for worker scheduling. Used in the single-controller mode. Experimental."""
 
-    type: str = field(default="local")
+    type: str | None = field(default=None)
     endpoint: str = field(default="http://localhost:8081")
     deploy_mode: str = field(default="separation")
     functioncall_service_domain: str = field(default="http://localhost:8080")
@@ -1575,79 +1616,6 @@ class ValidDatasetConfig(_DatasetConfig):
 
 
 @dataclass
-class SlurmLauncherConfig:
-    """Configuration for launching the training jobs with Slurm."""
-
-    srun_additional_args: str = field(
-        default="--mpi=pmi2 -K --chdir $PWD",
-        metadata={"help": "Additional arguments to pass to the srun command."},
-    )
-    additional_bash_cmds: list[str] | None = field(
-        default=None,
-        metadata={
-            "help": "Additional bash commands to setup the container before running "
-            "the torchrun command."
-        },
-    )
-    container_type: str = field(
-        default="apptainer",
-        metadata={
-            "help": "Type of containers used in slurm",
-            "choices": ["apptainer", "none"],
-        },
-    )
-    mount: str = field(
-        default="/storage:/storage", metadata={"help": "Mount path for slurm."}
-    )
-    trainer_image: str | None = field(
-        default=None, metadata={"help": "slurm image for trainers."}
-    )
-    inference_server_image: str | None = field(
-        default=None, metadata={"help": "slurm image for LLM inference."}
-    )
-
-
-@dataclass
-class LauncherConfig:
-    """Configuration for launching the LLM server and trainer processes."""
-
-    inference_server_cpus_per_gpu: int = field(
-        default=4,
-        metadata={"help": "Number of CPUs allocated per GPU for inference server."},
-    )
-    inference_server_mem_per_gpu: int = field(
-        default=32 * 1024,
-        metadata={"help": "Memory allocated per GPU for inference server in MB."},
-    )
-    trainer_cpus_per_gpu: int = field(
-        default=4,
-        metadata={"help": "Number of CPUs allocated per GPU for training."},
-    )
-    trainer_mem_per_gpu: int = field(
-        default=32 * 1024,
-        metadata={"help": "Memory allocated per GPU for training in MB."},
-    )
-    inference_server_env_vars: str = field(
-        default="",
-        metadata={
-            "help": "Environment variables for inference server, separated by commas. "
-            "Example: 'ENV1=val1,ENV2=val2'."
-        },
-    )
-    trainer_env_vars: str = field(
-        default="",
-        metadata={
-            "help": "Environment variables for training, separated by commas. "
-            "Example: 'ENV1=val1,ENV2=val2'."
-        },
-    )
-    slurm: SlurmLauncherConfig = field(
-        default_factory=SlurmLauncherConfig,
-        metadata={"help": "Slurm launcher configuration."},
-    )
-
-
-@dataclass
 class BaseExperimentConfig:
     """Base configuration class for all experiment types with common settings."""
 
@@ -1714,7 +1682,6 @@ class BaseExperimentConfig:
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
     vllm: vLLMConfig = field(default_factory=vLLMConfig)
-    launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
@@ -1723,14 +1690,14 @@ class BaseExperimentConfig:
 class SFTConfig(BaseExperimentConfig):
     """Configuration for Supervised Fine-Tuning (SFT) experiments."""
 
-    model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+    actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
 @dataclass
 class RWConfig(BaseExperimentConfig):
     """Configuration for Reward Model (RW) training experiments."""
 
-    model: TrainEngineConfig = field(default_factory=TrainEngineConfig)
+    actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
 
 
 @dataclass

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import torch.distributed as dist
 from datasets import Dataset
@@ -15,9 +16,8 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.api.scheduler_api import Scheduler
-from areal.engine.sft.lm_engine import FSDPLMEngine, LMController, MegatronLMEngine
 from areal.platforms import current_platform
-from areal.scheduler import LocalScheduler
+from areal.scheduler import LocalScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -34,7 +34,12 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from areal.engine.fsdp_engine import FSDPLMEngine
+    from areal.engine.megatron_engine import MegatronLMEngine
+    from areal.engine.sft.lm_engine import LMController
+
+logger = logging.getLogger("SFTTrainer")
 
 
 class SFTTrainer:
@@ -45,6 +50,9 @@ class SFTTrainer:
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
+        if is_single_controller():
+            # Set up file logging for controller process
+            logging.setup_file_logging(StatsLogger.get_log_path(config.stats_logger))
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
@@ -61,7 +69,7 @@ class SFTTrainer:
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
 
         # Create models.
-        self.actor = self._create_actor(config.model)
+        self.actor = self._create_actor(config.actor)
 
         # Create dataloaders
         self.train_dataset = train_dataset
@@ -232,6 +240,8 @@ class SFTTrainer:
         if self.config.perf_tracer is None:
             return
         perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+        if not is_single_controller():
+            return
         self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
 
     def _save_perf_tracer(self, step: int):
@@ -244,6 +254,8 @@ class SFTTrainer:
         cfg = self.config.scheduler
         if cfg.type == "local":
             return LocalScheduler(exp_config=self.config)
+        elif cfg.type == "slurm":
+            return SlurmScheduler(exp_config=self.config)
         raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
 
     def _create_dataloader(
@@ -265,8 +277,12 @@ class SFTTrainer:
         self, actor_config: TrainEngineConfig
     ) -> FSDPLMEngine | MegatronLMEngine | LMController:
         if self.allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPLMEngine
+
             actor_cls = FSDPLMEngine
         elif self.allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronLMEngine
+
             actor_cls = MegatronLMEngine
         else:
             raise ValueError(

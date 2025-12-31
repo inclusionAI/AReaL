@@ -16,6 +16,9 @@ cluster:
 
 allocation_mode: sglang:d1p1t1+d7p1t1
 
+scheduler:
+  type: null
+
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -24,6 +27,7 @@ rollout:
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 4
   enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
 
 gconfig:
   n_samples: 4
@@ -71,6 +75,14 @@ actor:
     mean_level: batch
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars: {}
 
 ref:
   experiment_name: ${experiment_name}
@@ -82,6 +94,10 @@ ref:
   mb_spec:
     max_tokens_per_mb: 4096
   optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
 
 # SGLang
 sglang:
@@ -105,6 +121,7 @@ vllm:
 # datasets
 train_dataset:
   batch_size: 28
+  shuffle: true
   pin_memory: true
   num_workers: 4
   path: BUAADreamer/clevr_count_70k
@@ -150,8 +167,10 @@ stats_logger:
   wandb:
     mode: disabled
 
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: false
+  session_tracer:
+    enabled: false

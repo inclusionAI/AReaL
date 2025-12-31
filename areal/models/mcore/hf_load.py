@@ -16,7 +16,7 @@ from areal.platforms import current_platform
 from areal.utils import logging
 from areal.utils.fp8_utils import dequantize_params
 
-logger = logging.getLogger("HF WeightsLoader")
+logger = logging.getLogger("HFLoader")
 
 
 def _get_tp_slice(shape, dim, tp_rank, tp_size) -> tuple:

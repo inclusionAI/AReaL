@@ -7,7 +7,7 @@ from transformers import PretrainedConfig
 
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("MCoreCommon")
 
 
 T = TypeVar("T", bound=TransformerConfig)

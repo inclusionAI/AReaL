@@ -10,7 +10,7 @@ from functools import partial
 
 from areal.utils import logging
 
-logger = logging.getLogger("Reward API")
+logger = logging.getLogger("RewardAPI")
 
 
 def _get_device_count_safely() -> int:

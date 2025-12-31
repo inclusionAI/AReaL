@@ -36,6 +36,7 @@ from areal.utils.http import get_default_connector
 from areal.utils.launcher import (
     get_env_vars,
 )
+from areal.utils.logging import LOG_PREFIX_WIDTH
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.proc import kill_process_tree
 
@@ -166,6 +167,9 @@ class LocalScheduler(Scheduler):
         return list(range(cnt))
 
     def _allocate_gpus(self, num_gpus: int) -> list[int]:
+        if num_gpus == 0:
+            return []
+
         if num_gpus > len(self.gpu_devices):
             raise GPUAllocationError(
                 f"Requested {num_gpus} GPUs but only {len(self.gpu_devices)} available"
@@ -210,7 +214,7 @@ class LocalScheduler(Scheduler):
                 SchedulingSpec(
                     cpu=1,
                     mem=1024,
-                    gpu=1,
+                    gpu=0,
                     port_count=2,
                     cmd="python -m areal.scheduler.rpc.rpc_server",
                 )
@@ -332,14 +336,14 @@ class LocalScheduler(Scheduler):
                     env.update(scheduling.env_vars)
 
                 log_file = self.log_dir / f"{role}.log"
+                merged_log = self.log_dir / "merged.log"
 
                 if not scheduling.cmd:
                     self._cleanup_workers(workers)
                     raise WorkerCreationError(
                         role,
                         f"SchedulingSpec.cmd is required but not set for worker {worker_id}",
-                        "Specify either 'python -m areal.scheduler.rpc.rpc_server' or "
-                        "'python -m areal.scheduler.rpc.rpc_server' in your config.",
+                        "Specify 'python -m areal.scheduler.rpc.rpc_server' in your config.",
                     )
 
                 if "--port" in scheduling.cmd:
@@ -370,11 +374,16 @@ class LocalScheduler(Scheduler):
                     + " stdbuf -oL "
                     + " ".join(cmd)
                 )
-                cmd = f"{cmd} 2>&1 | tee -a {log_file}"
+                # Tee to role log file (no prefix) and merged log (with prefix)
+                # Uses process substitution to add prefix only for merged.log
+                # stdbuf -oL ensures line-buffered streaming for both outputs
+                prefix = f"[{role}]".ljust(LOG_PREFIX_WIDTH)
+                cmd = f"{cmd} 2>&1 | tee -a {log_file} >(stdbuf -oL sed 's/^/{prefix}/' >> {merged_log})"
                 try:
                     process = subprocess.Popen(
                         cmd,
-                        shell=isinstance(cmd, str),
+                        shell=True,
+                        executable="/bin/bash",  # Required for process substitution >(...)
                         stdout=sys.stdout,
                         stderr=sys.stdout,
                     )

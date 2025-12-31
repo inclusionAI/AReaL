@@ -15,6 +15,9 @@ total_train_steps: null
 tokenizer_path: ${actor.path}
 allocation_mode: sglang:d4p1t1+megatron:d2p2t1
 
+scheduler:
+  type: null
+
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -23,6 +26,7 @@ rollout:
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 4
   enable_rollout_tracing: true
+  scheduling_spec: ${actor.scheduling_spec}
 
 gconfig:
   # `n_sample` is not the actual group_size.
@@ -73,6 +77,14 @@ actor:
     recompute_num_layers: 1
     distribute_saved_activations: null
     recompute_modules: null
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars: {}
 
 ref:
   experiment_name: ${experiment_name}
@@ -83,6 +95,10 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
 
 # SGLang
 sglang:
@@ -106,6 +122,7 @@ vllm:
 # datasets
 train_dataset:
   batch_size: 128
+  shuffle: true
   pin_memory: true
   type: rl
   path: inclusionAI__Asearcher-train-data/ASearcher-LRM-35k.jsonl
@@ -143,18 +160,13 @@ stats_logger:
   wandb:
     mode: disabled
 
-# Launcher
-launcher:
-  inference_server_cpus_per_gpu: 8
-  inference_server_mem_per_gpu: 102400
-  trainer_cpus_per_gpu: 8
-  trainer_mem_per_gpu: 102400
-  slurm:
-    mount: /storage:/storage
-    trainer_image:  /storage/images/areal-25.08-v0.3.3-v3.sif
-    inference_server_image:  /storage/images/areal-25.08-v0.3.3-v3.sif
-
-  trainer_env_vars: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: false
+  session_tracer:
+    enabled: false
 
 judge_engine:
   experiment_name: llm-judge

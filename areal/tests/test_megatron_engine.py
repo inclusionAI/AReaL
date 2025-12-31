@@ -20,7 +20,7 @@ from areal.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils import logging
 
-logger = logging.getLogger("MegatronEngine Test")
+logger = logging.getLogger("TestMegatronEngine")
 
 VOCAB_SIZE = 100
 MODEL_PATH = get_model_path(

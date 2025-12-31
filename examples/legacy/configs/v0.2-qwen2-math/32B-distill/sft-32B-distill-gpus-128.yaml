@@ -19,7 +19,7 @@ dataset:
   max_seqlen: 32768
   train_bs_n_seqs: 64
   valid_bs_n_seqs: 64
-model:
+actor:
     type:
       _class: qwen2
     path: /storage/models/DeepSeek-R1-Distill-Qwen-32B
@@ -34,6 +34,14 @@ model:
       weight_decay: 0.1
       eps: 1e-5
     bf16: true
+    scheduling_spec:
+      - task_type: worker
+        port_count: 2
+        gpu: 1
+        cpu: 4
+        mem: 32
+        cmd: python3 -m areal.scheduler.rpc.rpc_server
+        env_vars: {}
 allocation:
   mb_spec:
     max_tokens_per_mb: 32768

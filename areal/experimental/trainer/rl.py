@@ -4,7 +4,7 @@ import functools
 import os
 from collections.abc import Callable
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
 from datasets import Dataset
@@ -26,17 +26,10 @@ from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.scheduler_api import Scheduler
 from areal.api.workflow_api import RolloutWorkflow
 from areal.controller import RolloutController
-from areal.engine.megatron_engine import MegatronEngine
-from areal.engine.ppo.actor import FSDPPPOActor, MegatronPPOActor, PPOActorController
-from areal.engine.ppo.critic import (
-    FSDPPPOCritic,
-    MegatronPPOCritic,
-    PPOCriticController,
-)
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
-from areal.scheduler import LocalScheduler
+from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
@@ -47,7 +40,13 @@ from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from areal.engine.fsdp_engine import FSDPPPOActor, FSDPPPOCritic
+    from areal.engine.megatron_engine import MegatronPPOActor, MegatronPPOCritic
+    from areal.engine.ppo.actor import PPOActorController
+    from areal.engine.ppo.critic import PPOCriticController
+
+logger = logging.getLogger("RLTrainer")
 
 
 class PPOTrainer:
@@ -58,6 +57,9 @@ class PPOTrainer:
         valid_dataset: Dataset | None = None,
     ):
         rank = int(os.getenv("RANK", "0"))
+        if is_single_controller():
+            # Set up file logging for controller process
+            logging.setup_file_logging(StatsLogger.get_log_path(config.stats_logger))
 
         self.config = config
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
@@ -72,6 +74,8 @@ class PPOTrainer:
 
         # Parse allocation mode.
         self.allocation_mode = AllocationMode.from_str(config.allocation_mode)
+
+        self._amend_xccl_weight_update_envvar()
 
         # Create models: actor, critic, etc.
         self.actor = self._create_actor(config.actor)
@@ -136,10 +140,9 @@ class PPOTrainer:
             )
         elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
-            if isinstance(self.actor, MegatronEngine):
+            if self.allocation_mode.train_backend == "megatron":
                 self.weight_update_meta = WeightUpdateMeta.from_megatron_xccl(
-                    self.allocation_mode,
-                    nccl_group_name=self.actor.weight_update_group_name,
+                    self.allocation_mode
                 )
             else:
                 self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
@@ -238,7 +241,7 @@ class PPOTrainer:
                     rollout_batch["values"] = self.critic.compute_values(rollout_batch)
                     self.critic.get_device_stats().log("critic values")
 
-            if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
+            if config.actor.should_compute_prox_logp():
                 with (
                     stats_tracker.record_timing("recompute_logp"),
                     perf_tracer.trace_scope(
@@ -395,6 +398,10 @@ class PPOTrainer:
         if self.config.perf_tracer is None:
             return
         perf_tracer.configure(self.config.perf_tracer, rank=rank, role="master")
+
+        if not is_single_controller():
+            return
+
         self.actor.config_perf_tracer(self.config.perf_tracer, role="actor")
         if self.critic is not None:
             self.critic.config_perf_tracer(self.config.perf_tracer, role="critic")
@@ -419,6 +426,10 @@ class PPOTrainer:
         cfg = self.config.scheduler
         if cfg.type == "local":
             return LocalScheduler(exp_config=self.config)
+        elif cfg.type == "ray":
+            return RayScheduler(exp_config=self.config)
+        elif cfg.type == "slurm":
+            return SlurmScheduler(exp_config=self.config)
         raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
 
     def _create_dataloader(
@@ -435,24 +446,34 @@ class PPOTrainer:
             dataset_config=dataset_config,
         )
 
+    def _amend_xccl_weight_update_envvar(self):
+        if not is_single_controller():
+            # These environs are set by the launcher in the SPMD mode.
+            return
+        if self.allocation_mode.gen_backend != "sglang":
+            return
+
+        # Disable some environ for NCCL weight update.
+        for spec in self.config.actor.scheduling_spec:
+            spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
+            spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
+
     def _create_actor(
         self, actor_config: PPOActorConfig
     ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
         if self.allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPPPOActor
+
             actor_cls = FSDPPPOActor
         elif self.allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronPPOActor
+
             actor_cls = MegatronPPOActor
         else:
             raise ValueError(
                 f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
             )
         if is_single_controller():
-            if self.allocation_mode.gen_backend == "sglang":
-                # Disable some environ for NCCL weight update.
-                # These environs are set by the launcher in the SPMD mode.
-                for spec in actor_config.scheduling_spec:
-                    spec.env_vars["NCCL_CUMEM_ENABLE"] = "0"
-                    spec.env_vars["NCCL_NVLS_ENABLE"] = "0"
             actor = actor_cls.as_controller(actor_config, self.scheduler)
         else:
             actor = actor_cls(config=actor_config)
@@ -463,8 +484,12 @@ class PPOTrainer:
         self, critic_config: PPOCriticConfig
     ) -> FSDPPPOCritic | MegatronPPOCritic | PPOCriticController:
         if self.allocation_mode.train_backend == "fsdp":
+            from areal.engine.fsdp_engine import FSDPPPOCritic
+
             critic_cls = FSDPPPOCritic
         elif self.allocation_mode.train_backend == "megatron":
+            from areal.engine.megatron_engine import MegatronPPOCritic
+
             critic_cls = MegatronPPOCritic
         else:
             raise ValueError(
@@ -485,6 +510,9 @@ class PPOTrainer:
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             config.max_head_offpolicyness = int(1e12)
+            # eval-rollout uses the same inference servsers as rollout
+            for spec in config.scheduling_spec:
+                spec.gpu = 0
 
         # Determine engine class and server args based on backend
         if self.allocation_mode.gen_backend == "sglang":

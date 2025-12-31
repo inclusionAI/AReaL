@@ -16,7 +16,7 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import logging, stats_tracker
 
-logger = logging.getLogger("Multi-Turn workflow")
+logger = logging.getLogger("MultiTurnV2Workflow")
 
 
 class MultiTurnWorkflow(RolloutWorkflow):

@@ -48,9 +48,6 @@ dependencies = [
     "huggingface_hub",
     "datasets>=3.0.0",
     "transformers==4.57.1",
-    "megatron-core==0.13.1",
-    "mbridge==0.13.0",
-    "torch_memory_saver==0.0.9",
     "peft",
     "qwen_agent",
     "openai-agents",
@@ -144,6 +141,15 @@ vllm = [
     "vllm==0.11.0",
 ]
 
+tms = [
+    "torch_memory_saver==0.0.9",
+]
+
+megatron = [
+    "megatron-core==0.13.1",
+    "mbridge==0.13.0",
+]
+
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -157,6 +163,7 @@ dev = [
     "mdformat-tables",
     "mdformat-frontmatter",
     "plotly",
+    "pre-commit",
 ]
 
 docs = [
@@ -169,6 +176,8 @@ all = [
     "areal[fa]",
     "areal[vllm]",
     "areal[sglang]",
+    "areal[tms]",
+    "areal[megatron]",
     "areal[dev]",
     "areal[docs]",
 ]

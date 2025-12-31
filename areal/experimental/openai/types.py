@@ -10,7 +10,7 @@ from openai.types.responses.response_input_param import ResponseInputParam
 from areal.api.io_struct import ModelResponse
 from areal.utils import logging
 
-logger = logging.getLogger("InteractionWithTokenLogpReward")
+logger = logging.getLogger("TokenLogpReward")
 
 
 @dataclass

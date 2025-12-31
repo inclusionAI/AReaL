@@ -16,6 +16,9 @@ cluster:
 
 allocation_mode: vllm:d4p1t1+d4p1t1
 
+scheduler:
+  type: null
+
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -24,6 +27,7 @@ rollout:
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
   use_lora: true
 
 gconfig:
@@ -82,6 +86,13 @@ actor:
   lora_rank: 16
   lora_alpha: 16
   target_modules: [all-linear]
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
 
 ref:
   experiment_name: ${experiment_name}
@@ -93,6 +104,10 @@ ref:
   mb_spec:
     max_tokens_per_mb: 10240
   optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
 
 # vLLM
 vllm:
@@ -158,21 +173,10 @@ stats_logger:
   wandb:
     mode: disabled
 
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768
-  inference_server_env_vars: 'VLLM_USE_V1=1,TASK_QUEUE_ENABLE=2,HCCL_EXEC_TIMEOUT=14400,HCCL_OP_EXPANSION_MODE=HOST,VLLM_ALLOW_LONG_MAX_MODEL_LEN=1,ACL_DEVICE_SYNC_TIMEOUT=14400,HCCL_EVENT_TIMEOUT=14500,HCCL_ASYNC_ERROR_HANDLING=0,ACL_STREAM_TIMEOUT=14500000,HCCL_CONNECT_TIMEOUT=7200'
-  trainer_env_vars: 'TASK_QUEUE_ENABLE=2,HCCL_EXEC_TIMEOUT=14400,HCCL_OP_EXPANSION_MODE=HOST,ACL_DEVICE_SYNC_TIMEOUT=14400,HCCL_EVENT_TIMEOUT=14500,HCCL_ASYNC_ERROR_HANDLING=0,ACL_STREAM_TIMEOUT=14500000,HCCL_CONNECT_TIMEOUT=7200,PYTORCH_NPU_ALLOC_CONF=expandable_segments:True'
-  slurm:
-    mount: /storage:/storage
-    trainer_image: /storage/openpsi/images/areal-25.02-v0.3.0.post2-v3.sif
-    inference_server_image: /storage/openpsi/images/areal-25.02-v0.3.0.post2-v3.sif
-
-
-# launcher:
-#   inference_server_cpus_per_gpu: 4
-#   inference_server_mem_per_gpu: 32768
-#   trainer_cpus_per_gpu: 4
-#   trainer_mem_per_gpu: 32768
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: false
+  session_tracer:
+    enabled: false

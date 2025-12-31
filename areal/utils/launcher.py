@@ -12,7 +12,7 @@ from pathlib import Path
 from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.utils import logging, name_resolve, names, pkg_version
 
-logger = logging.getLogger("Launcher Utils")
+logger = logging.getLogger("LauncherUtils")
 
 LOCAL_CACHE_DIR = os.getenv("AREAL_CACHE_DIR", f"/tmp/areal-{getpass.getuser()}")
 PYTORCH_KERNEL_CACHE_PATH = (
@@ -114,7 +114,23 @@ def wait_llm_server_addrs(
     return rollout_addrs
 
 
+def validate_config_for_launcher(config):
+    if not hasattr(config, "actor"):
+        raise RuntimeError("`actor` field is required by all yaml configs.")
+    allocation_mode = config.allocation_mode
+    allocation_mode = AllocationMode.from_str(allocation_mode)
+    if allocation_mode.gen_backend in ["sglang", "vllm"]:
+        if not hasattr(config, "rollout"):
+            raise RuntimeError(
+                "`rollout` field is required when `allocation_mode` "
+                "includes inference backends like sglang/vllm. "
+                "You should use a yaml config for RL rather than SFT, or "
+                "remove the inference part from `allocation_mode`."
+            )
+
+
 def validate_config_for_distributed_launcher(config):
+    validate_config_for_launcher(config)
     n_nodes = config.cluster.n_nodes
     n_gpus_per_node = config.cluster.n_gpus_per_node
     allocation_mode = config.allocation_mode

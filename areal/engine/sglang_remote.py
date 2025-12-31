@@ -265,9 +265,13 @@ class RemoteSGLangEngine(InferenceEngine):
         """Asynchronously generate a response for the given request."""
         return await self._engine.agenerate(req)
 
-    def init_weights_update_group(self, meta: WeightUpdateMeta) -> Future[None]:
+    def init_weights_update_group(
+        self, meta: WeightUpdateMeta, xccl_group_ranks: list[int] | None = None
+    ) -> Future[None]:
         """Initialize the weight update process group."""
-        return self._engine.init_weights_update_group(meta)
+        return self._engine.init_weights_update_group(
+            meta, xccl_group_ranks=xccl_group_ranks
+        )
 
     def update_weights_from_distributed(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
@@ -286,10 +290,11 @@ class RemoteSGLangEngine(InferenceEngine):
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
+        callback_addr: str | None = None,
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
-            data, workflow, workflow_kwargs, should_accept_fn, task_id
+            data, workflow, workflow_kwargs, should_accept_fn, task_id, callback_addr
         )
 
     def wait(

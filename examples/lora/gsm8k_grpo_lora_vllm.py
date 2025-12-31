@@ -9,7 +9,7 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
-from areal.engine.ppo.actor import FSDPPPOActor
+from areal.engine.fsdp_engine import FSDPPPOActor
 from areal.engine.vllm_remote import RemotevLLMEngine
 from areal.platforms import current_platform
 from areal.reward.gsm8k import gsm8k_reward_fn
@@ -176,10 +176,9 @@ def main(args):
                 should_accept_fn=lambda sample: True,
             )
 
-        if config.actor.recompute_logprob or config.actor.use_decoupled_loss:
+        if config.actor.should_compute_prox_logp():
             with stats_tracker.record_timing("recompute_logp"):
-                logp = actor.compute_logp(batch)
-                batch["prox_logp"] = logp
+                batch["prox_logp"] = actor.compute_logp(batch)
                 actor.get_device_stats().log("recompute logp")
 
         if ref is not None:

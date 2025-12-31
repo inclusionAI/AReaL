@@ -3,7 +3,7 @@ import re
 from areal.reward import get_math_verify_worker
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Geometry3KReward")
 
 
 def extract_answer(pred_str, use_last_number=True):

@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "none")
 os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 
-logger = logging.getLogger("AReaLOpenAI Client")
+logger = logging.getLogger("OpenAIClient")
 
 
 def _ensure_message_dict_list(
@@ -818,8 +818,8 @@ class ArealOpenAI(AsyncOpenAI):
         self,
         engine: "InferenceEngine",
         tokenizer: "PreTrainedTokenizerFast",
-        tool_call_parser: str,
-        reasoning_parser: str,
+        tool_call_parser: str = "qwen3",
+        reasoning_parser: str = "qwen3",
         engine_max_tokens: int | None = None,
         chat_template_type: str = "hf",
         **kwargs,

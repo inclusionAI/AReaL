@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import gc
 import math
@@ -7,7 +9,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import nullcontext
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
@@ -26,7 +28,6 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy
 from torch.distributed.tensor import DTensor
-from torch_memory_saver import torch_memory_saver
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
     AutoConfig,
@@ -93,7 +94,8 @@ from areal.utils.model import (
     is_qwen_vl_model,
     is_valid_vision_model,
 )
-from areal.utils.offload import is_tms_enabled
+from areal.utils.network import find_free_ports, gethostip
+from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 from areal.utils.ulysses import (
@@ -102,6 +104,11 @@ from areal.utils.ulysses import (
     ulysses_pad_and_slice_inputs,
     ulysses_prepare_inputs,
 )
+
+if TYPE_CHECKING:
+    from areal.engine.ppo.actor import PPOActorConfig
+    from areal.engine.ppo.critic import PPOCriticConfig
+    from areal.scheduler.scheduler import Scheduler
 
 
 @dataclasses.dataclass
@@ -142,6 +149,9 @@ class FSDPEngine(TrainEngine):
         self.own_global_group = False
         self._cpu_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
+        self.weight_update_group_name: str
+        self.weight_update_master_addr: str
+        self.weight_update_master_port: int
 
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.config.path,
@@ -188,7 +198,7 @@ class FSDPEngine(TrainEngine):
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
 
-        self.logger = logging.getLogger(f"[FSDP Engine Rank {dist.get_rank()}]")
+        self.logger = logging.getLogger(f"[FSDPEngine Rank {dist.get_rank()}]")
 
         parallel_strategy = self._make_parallel_strategy(parallel_strategy)
 
@@ -223,6 +233,7 @@ class FSDPEngine(TrainEngine):
 
         if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
+        self.weight_update_group_name = "update_weight_group"
 
         # Create device model
         self._create_device_model()
@@ -332,10 +343,7 @@ class FSDPEngine(TrainEngine):
             rollout_engine=engine, train_engine=self
         )
 
-        if (
-            meta.type == current_platform.communication_backend
-            and not self.weight_update_group_initialized
-        ):
+        if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
@@ -376,7 +384,7 @@ class FSDPEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
-        if meta.type == current_platform.communication_backend:
+        if meta.type == "xccl":
             assert self.weight_update_group_initialized
             # In offload mode, wakes up parameters as needed to perform the update.
             tms_context = (
@@ -928,7 +936,12 @@ class FSDPEngine(TrainEngine):
         named_tensors.clear()
 
     def _init_weight_update_from_distributed(self, meta: WeightUpdateMeta):
-        assert meta.type == current_platform.communication_backend
+        assert meta.type == "xccl"
+
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr = gethostip()
+        meta.nccl_master_port = self.weight_update_master_port = find_free_ports(1)[0]
+        meta.nccl_group_name = self.weight_update_group_name
 
         # NOTE: Processes launched with torchrun will set the following env var to True,
         # which blocks creating another TCP store for weight update.
@@ -957,6 +970,11 @@ class FSDPEngine(TrainEngine):
     @trace_perf("fsdp_engine.update_weights_from_distributed", category="comm")
     def _update_weights_from_distributed(self, meta: WeightUpdateMeta):
         """Broadcast parameters (chunked) from rank 0 (FSDP2 compatible)."""
+
+        # Reset weight weight meta with local info
+        meta.nccl_master_address = self.weight_update_master_addr
+        meta.nccl_master_port = self.weight_update_master_port
+        meta.nccl_group_name = self.weight_update_group_name
 
         if dist.get_rank() == 0:
             self.rollout_engine.pause_generation()
@@ -1426,3 +1444,109 @@ class FSDPEngine(TrainEngine):
         if ctx.pad_length > 0:
             result = result[: -ctx.pad_length]
         return result
+
+
+# =============================================================================
+# Algorithm-specific FSDP Engines
+# =============================================================================
+
+
+class FSDPPPOActor(FSDPEngine):
+    """PPO Actor implementation using FSDP backend."""
+
+    def __init__(self, config: PPOActorConfig):
+        from areal.engine.ppo.actor import PPOActor
+
+        super().__init__(config)
+        self.actor = PPOActor(config, self)
+
+    @torch.no_grad()
+    def compute_logp(self, *args, **kwargs) -> torch.Tensor | None:
+        return self.actor.compute_logp(*args, **kwargs)
+
+    @torch.no_grad()
+    def compute_advantages(self, *args, **kwargs) -> dict[str, Any]:
+        return self.actor.compute_advantages(*args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.actor.ppo_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(cls, config: PPOActorConfig, scheduler: Scheduler):
+        from areal.engine.ppo.actor import PPOActorController
+
+        return PPOActorController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class FSDPPPOCritic(FSDPEngine):
+    """PPO Critic implementation using FSDP backend."""
+
+    def __init__(self, config: PPOCriticConfig):
+        from areal.engine.ppo.critic import PPOCritic
+
+        super().__init__(config)
+        self.critic = PPOCritic(config, self)
+
+    @torch.no_grad()
+    def compute_values(self, *args, **kwargs) -> torch.Tensor:
+        return self.critic.compute_values(*args, **kwargs)
+
+    def ppo_update(self, *args, **kwargs) -> None:
+        self.critic.ppo_update(*args, **kwargs)
+
+    @classmethod
+    def as_controller(cls, config: PPOCriticConfig, scheduler: Scheduler):
+        from areal.engine.ppo.critic import PPOCriticController
+
+        return PPOCriticController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class FSDPLMEngine(FSDPEngine):
+    """Language model engine for SFT using FSDP backend."""
+
+    def __init__(self, config: TrainEngineConfig):
+        from areal.engine.sft.lm_engine import LMEngine
+
+        super().__init__(config)
+        self.lm_engine = LMEngine(self)
+
+    def train_lm(self, data):
+        return self.lm_engine.train_lm(data)
+
+    def evaluate_lm(self, data):
+        return self.lm_engine.evaluate_lm(data)
+
+    @classmethod
+    def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
+        from areal.engine.sft.lm_engine import LMController
+
+        return LMController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class FSDPRWEngine(FSDPEngine):
+    """Reward model engine using FSDP backend."""
+
+    def __init__(self, config: TrainEngineConfig):
+        from copy import deepcopy
+
+        from areal.engine.rw.rw_engine import RWEngine
+
+        super().__init__(config)
+        self.rw_engine = RWEngine(self)
+        if self.config.mb_spec.granularity != 2:
+            logger = logging.getLogger("RW engine")
+            logger.warning("mb_spec.granularity must be 2 for reward modeling")
+            self.config = deepcopy(self.config)
+            self.config.mb_spec.granularity = 2
+
+    def train_rw(self, data):
+        return self.rw_engine.train_rw(data)
+
+    def evaluate_rw(self, data):
+        return self.rw_engine.evaluate_rw(data)
+
+    @classmethod
+    def as_controller(cls, config: TrainEngineConfig, scheduler: Scheduler):
+        from areal.engine.rw.rw_engine import RWController
+
+        return RWController(train_engine=cls, config=config, scheduler=scheduler)

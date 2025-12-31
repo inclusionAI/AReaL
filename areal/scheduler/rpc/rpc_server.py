@@ -27,7 +27,7 @@ from areal.utils.data import (
     tensor_container_to,
 )
 from areal.utils.dynamic_import import import_from_string
-from areal.utils.network import gethostip
+from areal.utils.network import find_free_ports, gethostip
 
 logger = logging.getLogger("SyncRPCServer")
 
@@ -47,6 +47,7 @@ _engine_thread_lock = Lock()
 _server_host: str = "0.0.0.0"
 _server_port: int = 8000
 
+_allocated_ports: set[int] = set()
 
 # Create Flask app
 app = Flask(__name__)
@@ -56,8 +57,11 @@ def _init_engine_thread():
     global _engine_thread, _engine_work_queue
 
     with _engine_thread_lock:
-        if _engine_thread is not None and _engine_thread.is_alive():
-            return  # Already initialized
+        if _engine_thread is not None:
+            if _engine_thread.is_alive():
+                return  # Already initialized
+            else:
+                raise RuntimeError("Engine thread is dead.")
 
         _engine_work_queue = Queue()
 
@@ -70,7 +74,7 @@ def _init_engine_thread():
                         logger.info("Engine thread shutting down")
                         break
 
-                    func, args, kwargs, future = work_item
+                    func, args, kwargs, future, func_name = work_item
                     try:
                         result = func(*args, **kwargs)
                         future.set_result(result)
@@ -79,7 +83,10 @@ def _init_engine_thread():
                     finally:
                         _engine_work_queue.task_done()
                 except Exception as e:
-                    logger.error(f"Error in engine thread: {e}")
+                    logger.error(
+                        f"Error in engine thread when "
+                        f"running {func_name}: {e}\n{traceback.format_exc()}"
+                    )
                     if work_item and len(work_item) > 3:
                         work_item[3].set_exception(e)
 
@@ -88,13 +95,13 @@ def _init_engine_thread():
         logger.info("Engine thread initialized")
 
 
-def _submit_to_engine_thread(func: Callable, *args, **kwargs) -> Any:
+def _submit_to_engine_thread(func_name: str, func: Callable, *args, **kwargs) -> Any:
     global _engine_work_queue
 
     _init_engine_thread()
 
     future = Future()
-    _engine_work_queue.put((func, args, kwargs, future))
+    _engine_work_queue.put((func, args, kwargs, future, func_name))
     return future.result()  # Block until result is available
 
 
@@ -103,6 +110,38 @@ def health_check():
     """Health check endpoint to verify server is alive."""
     global _engine
     return jsonify({"status": "healthy", "engine_initialized": _engine is not None})
+
+
+@app.route("/alloc_ports", methods=["POST"])
+def alloc_ports():
+    """Allocate multiple free ports.
+
+    Expected JSON payload:
+    {
+        "count": 5  # Number of ports to allocate
+    }
+    """
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON in request body"}), 400
+
+        count = data.get("count")
+        if count is None:
+            return jsonify({"error": "Missing 'count' field in request"}), 400
+
+        if not isinstance(count, int) or count <= 0:
+            return jsonify({"error": "'count' must be a positive integer"}), 400
+
+        global _allocated_ports
+        ports = find_free_ports(count, exclude_ports=_allocated_ports)
+        _allocated_ports.update(ports)
+
+        return jsonify({"status": "success", "ports": ports, "host": _server_host})
+
+    except Exception as e:
+        logger.error(f"Error in alloc_ports: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
 @app.route("/configure", methods=["POST"])
@@ -136,7 +175,7 @@ def configure():
                 "result": None,
             }
 
-        result = _submit_to_engine_thread(execute_configure)
+        result = _submit_to_engine_thread("configure", execute_configure)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Unexpected error in configure: {e}\n{traceback.format_exc()}")
@@ -179,7 +218,7 @@ def set_env():
                 logger.info(f"Set {key}={value}")
             return {"status": "success"}
 
-        result = _submit_to_engine_thread(execute_set_env)
+        result = _submit_to_engine_thread("set_env", execute_set_env)
         return jsonify(result)
 
     except Exception as e:
@@ -257,7 +296,9 @@ def create_engine():
                 raise
 
         try:
-            _engine = _submit_to_engine_thread(create_engine_in_engine_thread)
+            _engine = _submit_to_engine_thread(
+                "create_engine", create_engine_in_engine_thread
+            )
             return jsonify(
                 {
                     "status": "success",
@@ -330,12 +371,16 @@ def call_engine_method():
 
                     nonlocal raw_args, raw_kwargs
                     raw_args = broadcast_tensor_container(
-                        raw_args,
+                        tensor_container_to(
+                            raw_args, current_platform.current_device()
+                        ),
                         src_rank=_engine.current_data_parallel_head(),
                         group=_engine.context_and_model_parallel_group,
                     )
                     raw_kwargs = broadcast_tensor_container(
-                        raw_kwargs,
+                        tensor_container_to(
+                            raw_kwargs, current_platform.current_device()
+                        ),
                         src_rank=_engine.current_data_parallel_head(),
                         group=_engine.context_and_model_parallel_group,
                     )
@@ -417,7 +462,9 @@ def call_engine_method():
 
         # Submit to engine thread
         try:
-            result = _submit_to_engine_thread(execute_in_engine_thread)
+            result = _submit_to_engine_thread(
+                f"call_{method_name}", execute_in_engine_thread
+            )
         except Exception as e:
             error_msg = str(e)
             if "Engine does not have method" in error_msg:
@@ -591,7 +638,7 @@ def main():
     parser.add_argument("--experiment-name", type=str, required=True)
     parser.add_argument("--trial-name", type=str, required=True)
     parser.add_argument("--role", type=str, required=True)
-    parser.add_argument("--worker-index", type=int, required=True)
+    parser.add_argument("--worker-index", type=int, default=-1)
     parser.add_argument("--name-resolve-type", type=str, default="nfs")
     parser.add_argument(
         "--nfs-record-root", type=str, default="/tmp/areal/name_resolve"
@@ -612,7 +659,14 @@ def main():
     _role = args.role
 
     # Get worker identity
-    worker_id = f"{args.role}/{args.worker_index}"
+    worker_role = args.role
+    worker_index = args.worker_index
+    if "SLURM_PROCID" in os.environ:
+        # Overwriting with slurm task id
+        worker_index = os.environ["SLURM_PROCID"]
+    if worker_index == -1:
+        raise ValueError("Invalid worker index. Not found from SLURM environ or args.")
+    worker_id = f"{worker_role}/{worker_index}"
 
     # Make a flask server
     server = make_server(args.host, args.port, app, threaded=True)
@@ -626,9 +680,12 @@ def main():
         )
     )
     key = names.worker_discovery(
-        args.experiment_name, args.trial_name, args.role, args.worker_index
+        args.experiment_name, args.trial_name, args.role, worker_index
     )
     name_resolve.add(key, f"{_server_host}:{_server_port}", replace=True)
+
+    global _allocated_ports
+    _allocated_ports.add(_server_port)
 
     logger.info(
         f"Starting sync RPC server on {_server_host}:{_server_port} for worker {worker_id}"
