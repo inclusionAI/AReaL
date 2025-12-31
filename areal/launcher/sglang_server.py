@@ -179,29 +179,18 @@ class SGLangServerWrapper:
                         break
 
                 if not all_alive:
-                    # Clean up all servers if one dies
                     for i, process in enumerate(self.server_processes):
                         if process.poll() is None:
                             kill_process_tree(process.pid, graceful=True)
                             logger.info(
-                                f"SGLang server process{server_addresses[i]} terminated."
+                                f"SGLang server process {server_addresses[i]} terminated."
                             )
                     sys.exit(1)
 
                 time.sleep(1)
 
-        except Exception as e:
-            # Log error and clean up child processes
-            logger.error(f"Error in SGLang server wrapper: {e}")
+        except Exception:
             logger.error(f"Traceback:\n{traceback.format_exc()}")
-
-            # Clean up child server processes only
-            if hasattr(self, "server_processes"):
-                for process in self.server_processes:
-                    if process.poll() is None:  # Still running
-                        kill_process_tree(process.pid, graceful=True)
-
-            # Re-raise to let Python print full traceback
             raise
 
     def launch_one_server(self, cmd, host_ip, server_port, node_rank):
@@ -238,7 +227,10 @@ def launch_sglang_server(argv):
 
 
 def main(argv):
-    launch_sglang_server(argv)
+    try:
+        launch_sglang_server(argv)
+    finally:
+        kill_process_tree(os.getpid(), graceful=True)
 
 
 if __name__ == "__main__":
