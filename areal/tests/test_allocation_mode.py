@@ -129,9 +129,9 @@ TEST_CASES = [
         "id": "colocation_with_names",
         "input": "sglang[rollout]:d2+fsdp[actor]:d4|fsdp[critic]:d4",
         "num_allocs": 3,
-        "rollout_sched": SchedulingStrategyType.separation,
-        "actor_sched": SchedulingStrategyType.separation,
-        "critic_sched": SchedulingStrategyType.colocation,
+        "rollout_sched": SchedulingStrategyType.separation.value,
+        "actor_sched": SchedulingStrategyType.separation.value,
+        "critic_sched": SchedulingStrategyType.colocation.value,
         "critic_target": "actor",
     },
     # Eval expressions (backward compat)
@@ -372,8 +372,17 @@ def test_operator_precedence():
     mode = AllocationMode.from_str("sglang[rollout]:d2+fsdp[actor]:d4|fsdp[critic]:d4")
     assert len(mode.allocations) == 3
     # rollout is separate
-    assert mode["rollout"].scheduling_strategy.type == SchedulingStrategyType.separation
+    assert (
+        mode["rollout"].scheduling_strategy.type
+        == SchedulingStrategyType.separation.value
+    )
     # actor and critic are colocated
-    assert mode["actor"].scheduling_strategy.type == SchedulingStrategyType.separation
-    assert mode["critic"].scheduling_strategy.type == SchedulingStrategyType.colocation
+    assert (
+        mode["actor"].scheduling_strategy.type
+        == SchedulingStrategyType.separation.value
+    )
+    assert (
+        mode["critic"].scheduling_strategy.type
+        == SchedulingStrategyType.colocation.value
+    )
     assert mode["critic"].scheduling_strategy.target == "actor"

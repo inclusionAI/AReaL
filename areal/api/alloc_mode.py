@@ -299,7 +299,7 @@ class ModelAllocation:
 
     @property
     def world_size(self):
-        if self.scheduling_strategy.type == SchedulingStrategyType.colocation:
+        if self.scheduling_strategy.type == SchedulingStrategyType.colocation.value:
             return 0
         return self.parallel.world_size
 
@@ -471,9 +471,10 @@ class AllocationMode:
                 "Ambiguous allocation type: expected one inference and one training allocation."
             )
         if (
-            inf_alloc[0].scheduling_strategy.type == SchedulingStrategyType.separation
+            inf_alloc[0].scheduling_strategy.type
+            == SchedulingStrategyType.separation.value
             and train_alloc[0].scheduling_strategy.type
-            == SchedulingStrategyType.separation
+            == SchedulingStrategyType.separation.value
         ):
             return AllocationType.DECOUPLED_TRAIN
         return AllocationType.COLOCATE

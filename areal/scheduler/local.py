@@ -282,7 +282,7 @@ class LocalScheduler(Scheduler):
         schedulings = self._prepare_worker_specs(role, num_workers, job.tasks)
 
         strategy = job.scheduling_strategy
-        strategy_type = strategy.type
+        strategy_type = SchedulingStrategyType(strategy.type)
         colocate_role = strategy.target
         logger.info(
             f"Creating {num_workers} workers for role '{role}' "

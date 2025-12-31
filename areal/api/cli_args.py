@@ -455,14 +455,9 @@ class SchedulingStrategyType(str, Enum):
 
 @dataclass
 class SchedulingStrategy:
-    type: SchedulingStrategyType = field(
-        default=SchedulingStrategyType.separation,
-        metadata={
-            "choices": [
-                SchedulingStrategyType.separation,
-                SchedulingStrategyType.colocation,
-            ]
-        },
+    type: str = field(
+        default="separation",
+        metadata={"choices": ["separation", "colocation"]},
     )
     target: str | None = field(
         default=None, metadata={"help": "The target role to be colocated with"}

@@ -874,10 +874,10 @@ Configuration class: SchedulingSpec
 
 Configuration class: SchedulingStrategy
 
-| Parameter | Type                     | Default        | Description                               |
-| --------- | ------------------------ | -------------- | ----------------------------------------- |
-| `type`    | `SchedulingStrategyType` | `"separation"` | - **Choices:** `separation`, `colocation` |
-| `target`  | string \| None           | `None`         | The target role to be colocated with      |
+| Parameter | Type           | Default        | Description                               |
+| --------- | -------------- | -------------- | ----------------------------------------- |
+| `type`    | string         | `"separation"` | - **Choices:** `separation`, `colocation` |
+| `target`  | string \| None | `None`         | The target role to be colocated with      |
 
 (section-session-tracer)=
 
