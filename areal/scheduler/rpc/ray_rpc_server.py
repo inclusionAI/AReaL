@@ -59,13 +59,13 @@ class RayRPCServer:
 
     def create_engine(
         self,
-        engine_path: str,
+        engine: str,
         *init_args,
         engine_name: str | None = None,
         **init_kwargs,
     ) -> None:
         try:
-            engine_class = import_from_string(engine_path)
+            engine_class = import_from_string(engine)
             self.logger.debug(f"Initializing engine {engine_class}")
             if not issubclass(engine_class, (TrainEngine, InferenceEngine)):
                 raise TypeError(
@@ -83,11 +83,11 @@ class RayRPCServer:
                 self._default_engine_name = engine_name
 
             self.logger.info(
-                f"RayRPCServer Engine '{engine_path}' instantiated as '{engine_name}'!"
+                f"RayRPCServer Engine '{engine}' instantiated as '{engine_name}'!"
             )
         except Exception as e:
             self.logger.error(
-                f"RayRPCServer failed to create engine '{engine_path}' : {e}\n"
+                f"RayRPCServer failed to create engine '{engine}' : {e}\n"
                 f"{traceback.format_exc()}"
             )
             raise

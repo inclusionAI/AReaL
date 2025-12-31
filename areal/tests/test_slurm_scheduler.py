@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from areal.api.cli_args import BaseExperimentConfig, SchedulingSpec, SchedulingStrategy
+from areal.api.cli_args import (
+    BaseExperimentConfig,
+    SchedulingSpec,
+    SchedulingStrategy,
+    SchedulingStrategyType,
+)
 from areal.api.scheduler_api import Job
 from areal.scheduler.exceptions import (
     EngineCreationError,
@@ -367,7 +372,9 @@ def test_create_workers_with_colocate_strategy(scheduler):
         role="ref",
         replicas=2,
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
-        scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.COLOCATION, target="actor"
+        ),
     )
     ref_ids = scheduler.create_workers(ref_job)
 
@@ -399,7 +406,9 @@ def test_get_workers_for_colocated_role_delegates_to_target(scheduler):
         role="ref",
         replicas=2,
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
-        scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.COLOCATION, target="actor"
+        ),
     )
     scheduler.create_workers(ref_job)
     ref_workers = scheduler.get_workers("ref", timeout=60)
@@ -431,7 +440,9 @@ def test_delete_colocated_role_does_not_kill_processes(scheduler):
         role="ref",
         replicas=2,
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
-        scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.COLOCATION, target="actor"
+        ),
     )
     scheduler.create_workers(ref_job)
 
@@ -466,7 +477,9 @@ def test_colocation_replica_mismatch_raises_error(scheduler):
         role="ref",
         replicas=3,  # Mismatch!
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
-        scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.COLOCATION, target="actor"
+        ),
     )
 
     with pytest.raises(WorkerCreationError, match="Replica count mismatch"):
@@ -483,7 +496,9 @@ def test_colocation_target_not_found_raises_error(scheduler):
         role="ref",
         replicas=2,
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
-        scheduling_strategy=SchedulingStrategy(type="colocation", target="nonexistent"),
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.COLOCATION, target="nonexistent"
+        ),
     )
 
     with pytest.raises(WorkerNotFoundError):

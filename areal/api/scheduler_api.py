@@ -2,7 +2,10 @@ import abc
 from dataclasses import dataclass, field
 from typing import Any
 
-from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
+from areal.api.cli_args import (
+    SchedulingSpec,
+    SchedulingStrategy,
+)
 
 
 @dataclass
@@ -29,10 +32,10 @@ class Worker:
 
 @dataclass
 class Job:
+    role: str
     replicas: int = 0
     tasks: list[SchedulingSpec] = field(default_factory=list)
-    scheduling_strategy: SchedulingStrategy | None = None
-    role: str = ""
+    scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
 
 
 class Scheduler(abc.ABC):

@@ -258,13 +258,13 @@ def create_engine():
         if data is None:
             return jsonify({"error": "Invalid JSON in request body"}), 400
 
-        engine_path = data.get("engine")
+        engine = data.get("engine")
         engine_name = data.get("engine_name")
         # Deserialize init_args and init_kwargs (may contain tensors or dataclasses)
         init_args = deserialize_value(data.get("init_args", []))
         init_kwargs = deserialize_value(data.get("init_kwargs", {}))
 
-        if not engine_path:
+        if not engine:
             return jsonify({"error": "Missing 'engine' field in request"}), 400
 
         if not engine_name:
@@ -280,7 +280,7 @@ def create_engine():
 
         # Dynamic import (can be done in main thread)
         try:
-            engine_class = import_from_string(engine_path)
+            engine_class = import_from_string(engine)
 
             # Validate that the class is a TrainEngine or InferenceEngine
             if not issubclass(engine_class, TrainEngine) and not issubclass(
@@ -291,11 +291,9 @@ def create_engine():
                     f"got {engine_class}.."
                 )
         except (ValueError, ImportError, AttributeError) as e:
-            logger.error(f"Failed to import engine '{engine_path}': {e}")
+            logger.error(f"Failed to import engine '{engine}': {e}")
             return (
-                jsonify(
-                    {"error": f"Failed to import engine '{engine_path}': {str(e)}"}
-                ),
+                jsonify({"error": f"Failed to import engine '{engine}': {str(e)}"}),
                 400,
             )
         except TypeError as e:
@@ -306,11 +304,11 @@ def create_engine():
         def create_engine_in_engine_thread():
             """Create engine in engine thread."""
             try:
-                engine = engine_class(*init_args, **init_kwargs)
+                engine_obj = engine_class(*init_args, **init_kwargs)
                 logger.info(
-                    f"Engine '{engine_name}' (class: {engine_path}) instantiated successfully"
+                    f"Engine '{engine_name}' (class: {engine}) instantiated successfully"
                 )
-                return engine
+                return engine_obj
             except Exception as e:
                 logger.error(
                     f"Failed to instantiate engine: {e}\n{traceback.format_exc()}"
@@ -318,10 +316,10 @@ def create_engine():
                 raise
 
         try:
-            engine = _submit_to_engine_thread(
+            engine_obj = _submit_to_engine_thread(
                 "create_engine", create_engine_in_engine_thread
             )
-            _engines[engine_name] = engine
+            _engines[engine_name] = engine_obj
             return jsonify(
                 {
                     "status": "success",

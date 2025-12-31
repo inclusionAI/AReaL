@@ -161,10 +161,13 @@ class TrainController:
         # Construct engine class import path for dynamic loading on workers
         # Workers will import and instantiate the engine class using this path
         engine_class = self.train_engine
-        engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
-        self._run_async_task(self._async_create_engines(engine_path))
+        self._run_async_task(
+            self._async_create_engines(
+                f"{engine_class.__module__}.{engine_class.__name__}"
+            )
+        )
         self._run_async_task(self._async_initialize_engines(ft_spec, **kwargs))
 
         # Identify DP head workers
@@ -182,7 +185,7 @@ class TrainController:
         """
         return f"{self._worker_role}/{rank}"
 
-    async def _async_create_engines(self, engine_path: str):
+    async def _async_create_engines(self, engine: str):
         """Create engine instances on all workers. Sets distributed env vars before creation."""
         logger.info("Creating engines on workers...")
 
@@ -197,7 +200,7 @@ class TrainController:
             await self.scheduler.set_worker_env(worker.id, env)
             await self.scheduler.create_engine(
                 worker_id=worker.id,
-                engine=engine_path,
+                engine=engine,
                 engine_name=self._engine_name(rank),
                 config=self.config,
             )

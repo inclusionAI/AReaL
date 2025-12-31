@@ -198,14 +198,13 @@ class RolloutController:
 
         # Get engine class path for dynamic import on workers
         engine_class = self.inf_engine
-        engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
         logger.info("Creating engines...")
         tasks = [
             self.scheduler.create_engine(
                 worker_id=worker.id,
-                engine=engine_path,
+                engine=f"{engine_class.__module__}.{engine_class.__name__}",
                 engine_name=self._engine_name(rank),
                 config=self.config,
             )
@@ -398,19 +397,20 @@ class RolloutController:
         ]
         return await asyncio.gather(*tasks)
 
-    def _choose_worker(self) -> Worker:
+    def _choose_worker(self) -> tuple[Worker, int]:
         """Choose a worker for the next request using round-robin scheduling.
 
         Returns
         -------
-        Worker
-            The chosen worker object
+        tuple[Worker, int]
+            The chosen worker object and its rank
         """
         if not self.workers:
             raise RuntimeError("No workers available to choose from.")
         worker = self.workers[self._current_worker_idx]
+        rank = self._current_worker_idx
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
-        return worker
+        return worker, rank
 
     def _resolve_workflow_str(
         self, workflow: RolloutWorkflow | type[RolloutWorkflow] | str
@@ -452,8 +452,7 @@ class RolloutController:
     def _create_submit_callback(self, pending_task: _RemoteRolloutTaskInput):
         async def _submit_then_wait() -> _RemoteRolloutResult | None:
             # Choose worker via round-robin
-            worker = self._choose_worker()
-            rank = self.workers.index(worker)
+            worker, rank = self._choose_worker()
             engine_name = self._engine_name(rank)
 
             # NOTE: No need to call `on_rollout_submitted` here.
@@ -658,8 +657,7 @@ class RolloutController:
             The generated response from the model
         """
         # Choose worker and delegate
-        worker = self._choose_worker()
-        rank = self.workers.index(worker)
+        worker, rank = self._choose_worker()
 
         # Call agenerate on engine via scheduler
         return await self.scheduler.async_call_engine(

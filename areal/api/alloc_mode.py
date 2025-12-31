@@ -5,6 +5,7 @@ from typing import Literal
 
 from lark import Lark, Transformer
 
+from areal.api.cli_args import SchedulingStrategy, SchedulingStrategyType
 from areal.utils import logging
 
 logger = logging.getLogger("AllocMode")
@@ -25,22 +26,6 @@ class AllocationValidationError(Exception):
 
 class InvalidAllocationModeError(Exception):
     """Legacy exception for backward compatibility with existing code."""
-
-
-@dataclass
-class SchedulingStrategy:
-    """Resource scheduling type for allocation components.
-
-    Parameters
-    ----------
-    type : str
-        "separation" for independent resources, "colocation" for shared resources
-    target : str, optional
-        For colocation, name of anchor component to colocate with, by default None
-    """
-
-    type: str  # "separation" or "colocation"
-    target: str | None = None
 
 
 @dataclass
@@ -314,7 +299,7 @@ class ModelAllocation:
 
     @property
     def world_size(self):
-        if self.scheduling_strategy.type == "colocation":
+        if self.scheduling_strategy.type == SchedulingStrategyType.COLOCATION:
             return 0
         return self.parallel.world_size
 
@@ -486,8 +471,9 @@ class AllocationMode:
                 "Ambiguous allocation type: expected one inference and one training allocation."
             )
         if (
-            inf_alloc[0].scheduling_strategy.type == "separation"
-            and train_alloc[0].scheduling_strategy.type == "separation"
+            inf_alloc[0].scheduling_strategy.type == SchedulingStrategyType.SEPARATION
+            and train_alloc[0].scheduling_strategy.type
+            == SchedulingStrategyType.SEPARATION
         ):
             return AllocationType.DECOUPLED_TRAIN
         return AllocationType.COLOCATE
@@ -767,7 +753,7 @@ class _ParallelStrategyTransformer(Transformer):
                     # First component is the anchor
                     anchor_name = alloc.name
                     alloc.scheduling_strategy = SchedulingStrategy(
-                        type="separation", target=None
+                        type=SchedulingStrategyType.SEPARATION, target=None
                     )
                 else:
                     # Rest colocate with anchor
@@ -776,7 +762,7 @@ class _ParallelStrategyTransformer(Transformer):
                             "Components in colocation group must have names"
                         )
                     alloc.scheduling_strategy = SchedulingStrategy(
-                        type="colocation", target=anchor_name
+                        type=SchedulingStrategyType.COLOCATION, target=anchor_name
                     )
 
                     # Validate world sizes match
@@ -829,7 +815,10 @@ class _ParallelStrategyTransformer(Transformer):
 
         strategy = ParallelStrategy(**strategy_kwargs)
         return self._build_model_allocation(
-            backend, name, strategy, SchedulingStrategy(type="separation", target=None)
+            backend,
+            name,
+            strategy,
+            SchedulingStrategy(type=SchedulingStrategyType.SEPARATION, target=None),
         )
 
     def train_para(self, items):
@@ -844,7 +833,7 @@ class _ParallelStrategyTransformer(Transformer):
                 backend,
                 None,
                 result,
-                SchedulingStrategy(type="separation", target=None),
+                SchedulingStrategy(type=SchedulingStrategyType.SEPARATION, target=None),
                 backend_explicit=False,
             )
 
@@ -874,7 +863,7 @@ class _ParallelStrategyTransformer(Transformer):
             backend,
             name,
             strategy,
-            SchedulingStrategy(type="separation", target=None),
+            SchedulingStrategy(type=SchedulingStrategyType.SEPARATION, target=None),
             backend_explicit=True,
         )
 
@@ -887,7 +876,7 @@ class _ParallelStrategyTransformer(Transformer):
             backend,
             None,
             strategy,
-            SchedulingStrategy(type="separation", target=None),
+            SchedulingStrategy(type=SchedulingStrategyType.SEPARATION, target=None),
             backend_explicit=True,
         )
 
@@ -914,7 +903,7 @@ class _ParallelStrategyTransformer(Transformer):
             backend,
             None,
             strategy,
-            SchedulingStrategy(type="separation", target=None),
+            SchedulingStrategy(type=SchedulingStrategyType.SEPARATION, target=None),
             backend_explicit=True,
         )
 
@@ -951,7 +940,7 @@ class _ParallelStrategyTransformer(Transformer):
             backend,
             name,
             strategy,
-            SchedulingStrategy(type="separation", target=None),
+            SchedulingStrategy(type=SchedulingStrategyType.SEPARATION, target=None),
             backend_explicit=False,
         )
 
@@ -987,7 +976,7 @@ class _ParallelStrategyTransformer(Transformer):
             backend,
             None,
             strategy,
-            SchedulingStrategy(type="separation", target=None),
+            SchedulingStrategy(type=SchedulingStrategyType.SEPARATION, target=None),
             backend_explicit=False,
         )
 
@@ -1226,13 +1215,17 @@ Hints:
                 backend=result.inference.backend,
                 name=None,
                 parallel=result.inference.strategy,
-                scheduling_strategy=SchedulingStrategy(type="separation", target=None),
+                scheduling_strategy=SchedulingStrategy(
+                    type=SchedulingStrategyType.SEPARATION, target=None
+                ),
             )
             eval_alloc = ModelAllocation(
                 backend="cpu",
                 name=None,
                 parallel=None,
-                scheduling_strategy=SchedulingStrategy(type="separation", target=None),
+                scheduling_strategy=SchedulingStrategy(
+                    type=SchedulingStrategyType.SEPARATION, target=None
+                ),
             )
             return AllocationMode(allocations=[inf_alloc, eval_alloc])
         else:

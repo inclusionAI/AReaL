@@ -16,7 +16,7 @@ from ray.util.placement_group import (
 )
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-from areal.api.cli_args import BaseExperimentConfig
+from areal.api.cli_args import BaseExperimentConfig, SchedulingStrategyType
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
 from areal.scheduler.exceptions import (
     EngineCallError,
@@ -72,7 +72,6 @@ class RayScheduler(Scheduler):
 
         # Colocation tracking: colocated roles reuse workers from target role
         self._colocated_roles: dict[str, str] = {}  # colocated_role -> target_role
-        self._role_to_workers: dict[str, list[str]] = {}  # role -> list of worker_ids
 
     def _prepare_worker_specs(
         self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
@@ -416,20 +415,15 @@ class RayScheduler(Scheduler):
         schedulings = self._prepare_worker_specs(role, num_workers, job.tasks)
 
         strategy = job.scheduling_strategy
-        if strategy is None:
-            strategy_type = "separation"
-            colocate_role = None
-        else:
-            strategy_type = strategy.type or "separation"
-            colocate_role = strategy.target if strategy_type == "colocation" else None
-
+        strategy_type = strategy.type
+        colocate_role = strategy.target
         logger.info(
             f"Creating {num_workers} workers for role '{role}' "
             f"(strategy: {strategy_type}, colocate_with: {colocate_role})"
         )
 
         # Handle colocation: reuse existing workers from target role
-        if strategy_type == "colocation":
+        if strategy_type == SchedulingStrategyType.COLOCATION:
             if not colocate_role:
                 raise WorkerCreationError(
                     role,
@@ -453,7 +447,6 @@ class RayScheduler(Scheduler):
             # Reuse existing workers - no new actors spawned
             worker_ids = [w.worker.id for w in target_workers]
             self._colocated_roles[role] = colocate_role
-            self._role_to_workers[role] = worker_ids
 
             logger.info(
                 f"Role '{role}' colocated with '{colocate_role}': "
@@ -461,6 +454,8 @@ class RayScheduler(Scheduler):
             )
             return worker_ids
 
+        if strategy_type != SchedulingStrategyType.SEPARATION:
+            raise ValueError(f"Unknown scheduling strategy type: {strategy_type}")
         # Non-colocated: spawn new worker actors
         if "rollout" in role:
             worker_info_list, worker_ids = self._create_rollout_workers(
@@ -530,8 +525,6 @@ class RayScheduler(Scheduler):
         if role in self._colocated_roles:
             logger.info(f"Removing colocated role '{role}' mapping")
             del self._colocated_roles[role]
-            if role in self._role_to_workers:
-                del self._role_to_workers[role]
             return
 
         if role not in self._workers:

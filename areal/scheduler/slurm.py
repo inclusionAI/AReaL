@@ -12,7 +12,11 @@ import aiohttp
 import orjson
 import requests
 
-from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
+from areal.api.cli_args import (
+    BaseExperimentConfig,
+    NameResolveConfig,
+    SchedulingStrategyType,
+)
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
 from areal.scheduler.exceptions import (
     EngineCallError,
@@ -131,7 +135,6 @@ class SlurmScheduler(Scheduler):
 
         # Colocation tracking: colocated roles reuse workers from target role
         self._colocated_roles: dict[str, str] = {}  # colocated_role -> target_role
-        self._role_to_workers: dict[str, list[str]] = {}  # role -> list of worker_ids
 
         logger.info(
             f"Initialized SlurmScheduler: exp={self.experiment_name}, "
@@ -567,23 +570,29 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         replicas = job.replicas
         if ":" in role:
             raise ValueError("Invalid worker name.")
-        replicas = job.replicas
+        num_workers = job.replicas
 
         # Validation
         if role in self._workers:
             raise WorkerCreationError(role, f"Role '{role}' already exists")
-        if replicas <= 0:
+        if num_workers <= 0:
             raise WorkerCreationError(
                 role, "Invalid configuration", "replicas must be greater than 0"
             )
 
         # Prepare scheduling specs
-        schedulings = self._prepare_worker_specs(role, replicas, job.tasks)
-        spec = schedulings[0]
+        schedulings = self._prepare_worker_specs(role, num_workers, job.tasks)
+
+        strategy = job.scheduling_strategy
+        strategy_type = strategy.type
+        colocate_role = strategy.target
+        logger.info(
+            f"Creating {num_workers} workers for role '{role}' "
+            f"(strategy: {strategy_type}, colocate_with: {colocate_role})"
+        )
 
         # Determine node allocation and handle colocation
-        strategy = job.scheduling_strategy
-        if strategy and strategy.type == "colocation":
+        if strategy_type == SchedulingStrategyType.COLOCATION:
             colocate_role = strategy.target
             if not colocate_role:
                 raise WorkerCreationError(
@@ -597,18 +606,17 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
                 )
 
             target_workers = self._workers[colocate_role]
-            if replicas != len(target_workers):
+            if num_workers != len(target_workers):
                 raise WorkerCreationError(
                     role,
                     "Replica count mismatch",
                     f"Colocated role must have same replica count as target "
-                    f"({replicas} != {len(target_workers)})",
+                    f"({num_workers} != {len(target_workers)})",
                 )
 
             # Reuse existing workers - no new Slurm job submitted
             worker_ids = [w.worker.id for w in target_workers]
             self._colocated_roles[role] = colocate_role
-            self._role_to_workers[role] = worker_ids
 
             logger.info(
                 f"Role '{role}' colocated with '{colocate_role}': "
@@ -616,7 +624,10 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
             )
             return worker_ids
 
+        if strategy_type != SchedulingStrategyType.SEPARATION:
+            raise ValueError(f"Unknown scheduling strategy type: {strategy_type}")
         # Non-colocated: calculate nodes needed and submit new Slurm job
+        spec = schedulings[0]
         total_gpus = spec.gpu * replicas
         nodes = max(1, (total_gpus + self.n_gpus_per_node - 1) // self.n_gpus_per_node)
         nodelist = spec.nodelist
@@ -703,14 +714,14 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         )
         return worker_ids
 
-    def get_workers(self, role: str, timeout: int | None = None) -> list[Worker]:
+    def get_workers(self, role: str, timeout: float | None = None) -> list[Worker]:
         """Wait for workers to be ready and return their information.
 
         Parameters
         ----------
         role : str
             Role name to query
-        timeout : int, optional
+        timeout : float, optional
             Maximum wait time in seconds
 
         Returns
@@ -826,8 +837,6 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         if role in self._colocated_roles:
             logger.info(f"Removing colocated role '{role}' mapping")
             del self._colocated_roles[role]
-            if role in self._role_to_workers:
-                del self._role_to_workers[role]
             return
 
         if role not in self._workers:

@@ -13,7 +13,11 @@ import aiohttp
 import orjson
 import requests
 
-from areal.api.cli_args import BaseExperimentConfig, NameResolveConfig
+from areal.api.cli_args import (
+    BaseExperimentConfig,
+    NameResolveConfig,
+    SchedulingStrategyType,
+)
 from areal.api.scheduler_api import Job, Scheduler, SchedulingSpec, Worker
 from areal.platforms import current_platform
 from areal.scheduler.exceptions import (
@@ -148,7 +152,6 @@ class LocalScheduler(Scheduler):
 
         # Colocation tracking: colocated roles reuse workers from target role
         self._colocated_roles: dict[str, str] = {}  # colocated_role -> target_role
-        self._role_to_workers: dict[str, list[str]] = {}  # role -> list of worker_ids
 
         logger.info(
             f"LocalScheduler initialized with GPU devices: {self.gpu_devices}, "
@@ -279,20 +282,15 @@ class LocalScheduler(Scheduler):
         schedulings = self._prepare_worker_specs(role, num_workers, job.tasks)
 
         strategy = job.scheduling_strategy
-        if strategy is None:
-            strategy_type = "separation"
-            colocate_role = None
-        else:
-            strategy_type = strategy.type or "separation"
-            colocate_role = strategy.target if strategy_type == "colocation" else None
-
+        strategy_type = strategy.type
+        colocate_role = strategy.target
         logger.info(
             f"Creating {num_workers} workers for role '{role}' "
             f"(strategy: {strategy_type}, colocate_with: {colocate_role})"
         )
 
         # Handle colocation: reuse existing workers from target role
-        if strategy_type == "colocation":
+        if strategy_type == SchedulingStrategyType.COLOCATION:
             if not colocate_role:
                 raise WorkerCreationError(
                     role,
@@ -316,7 +314,6 @@ class LocalScheduler(Scheduler):
             # Reuse existing workers - no new processes spawned
             worker_ids = [w.worker.id for w in target_workers]
             self._colocated_roles[role] = colocate_role
-            self._role_to_workers[role] = worker_ids
 
             logger.info(
                 f"Role '{role}' colocated with '{colocate_role}': "
@@ -324,6 +321,8 @@ class LocalScheduler(Scheduler):
             )
             return worker_ids
 
+        if strategy_type != SchedulingStrategyType.SEPARATION:
+            raise ValueError(f"Unknown scheduling strategy type: {strategy_type}")
         # Non-colocated: spawn new worker processes
         workers = []
         worker_ids = []
@@ -652,8 +651,6 @@ class LocalScheduler(Scheduler):
         if role in self._colocated_roles:
             logger.info(f"Removing colocated role '{role}' mapping")
             del self._colocated_roles[role]
-            if role in self._role_to_workers:
-                del self._role_to_workers[role]
             return
 
         if role not in self._workers:

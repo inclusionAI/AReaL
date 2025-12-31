@@ -12,6 +12,7 @@ from areal.api.scheduler_api import (
     Job,
     SchedulingSpec,
     SchedulingStrategy,
+    SchedulingStrategyType,
     Worker,
 )
 from areal.scheduler.exceptions import (
@@ -654,7 +655,9 @@ class TestWorkerCreation:
                     cmd="python -m areal.scheduler.rpc.rpc_server",
                 )
             ],
-            scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+            scheduling_strategy=SchedulingStrategy(
+                type=SchedulingStrategyType.COLOCATION, target="actor"
+            ),
         )
         critic_ids = scheduler.create_workers(critic_job)
 
@@ -844,7 +847,7 @@ class TestWorkerCreation:
                 )
             ],
             scheduling_strategy=SchedulingStrategy(
-                type="colocation", target=""
+                type=SchedulingStrategyType.COLOCATION, target=""
             ),  # Missing target
         )
 
@@ -1866,7 +1869,9 @@ class TestColocationBehavior:
         ref_job = Job(
             replicas=1,
             role="ref",
-            scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+            scheduling_strategy=SchedulingStrategy(
+                type=SchedulingStrategyType.COLOCATION, target="actor"
+            ),
         )
         scheduler.create_workers(ref_job)
 
@@ -1908,7 +1913,9 @@ class TestColocationBehavior:
         ref_job = Job(
             replicas=1,
             role="ref",
-            scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+            scheduling_strategy=SchedulingStrategy(
+                type=SchedulingStrategyType.COLOCATION, target="actor"
+            ),
         )
         scheduler.create_workers(ref_job)
 
@@ -1964,7 +1971,9 @@ class TestColocationBehavior:
         ref_job = Job(
             replicas=1,  # Mismatch!
             role="ref",
-            scheduling_strategy=SchedulingStrategy(type="colocation", target="actor"),
+            scheduling_strategy=SchedulingStrategy(
+                type=SchedulingStrategyType.COLOCATION, target="actor"
+            ),
         )
         with pytest.raises(WorkerCreationError) as exc_info:
             scheduler.create_workers(ref_job)
@@ -1993,7 +2002,7 @@ class TestColocationBehavior:
             replicas=1,
             role="ref",
             scheduling_strategy=SchedulingStrategy(
-                type="colocation", target="nonexistent"
+                type=SchedulingStrategyType.COLOCATION, target="nonexistent"
             ),
         )
         with pytest.raises(WorkerNotFoundError):
