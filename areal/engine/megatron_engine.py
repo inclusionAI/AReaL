@@ -131,6 +131,7 @@ class MegatronEngine(TrainEngine):
         self.lr_scheduler = None
         self.bridge = None
         self.process_group_initialized = False
+        self._initialized = False
         self.rollout_engine: InferenceEngine | None = None
         self.rollout_coordinator: DistRolloutCoordinator | None = None
         self.weight_update_group_initialized: bool = False
@@ -332,6 +333,11 @@ class MegatronEngine(TrainEngine):
                 model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
         self._create_optimizer(ft_spec)
+        self._initialized = True
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
 
     @property
     def data_parallel_rank(self) -> int:
@@ -379,6 +385,8 @@ class MegatronEngine(TrainEngine):
         return self._cpu_group
 
     def destroy(self):
+        self._initialized = False
+        self.process_group_initialized = False
         if hasattr(self, "optimizer"):
             del self.optimizer
         if hasattr(self, "model"):
@@ -386,7 +394,6 @@ class MegatronEngine(TrainEngine):
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
-        self.process_group_initialized = False
         # NOTE: if `own_global_group` is true, we assume that
         # no communications are needed after `destroy`, so we
         # directly destroy all groups. Otherwise, process group

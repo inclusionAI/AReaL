@@ -291,6 +291,7 @@ class RemoteInfEngine(InferenceEngine):
 
         self._executor: ProcessPoolExecutor | None = None
         self._workflow_executor: WorkflowExecutor | None = None
+        self._initialized = False
         self.local_server_processes: list[LocalInfServerInfo] = []
 
     def _create_session(self) -> aiohttp.ClientSession:
@@ -429,9 +430,11 @@ class RemoteInfEngine(InferenceEngine):
         self.workflow_executor.initialize(
             logger=self.logger, train_data_parallel_size=train_data_parallel_size
         )
+        self._initialized = True
 
     def destroy(self):
         """Destroy the engine and clean up resources."""
+        self._initialized = False
         if self._workflow_executor is not None:
             self._workflow_executor.destroy()
         if self._executor is not None:
@@ -462,6 +465,10 @@ class RemoteInfEngine(InferenceEngine):
     def workflow_executor(self, workflow_executor: WorkflowExecutor):
         """Set the workflow executor of the inference engine."""
         self._workflow_executor = workflow_executor
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
 
     def set_version(self, version):
         """Set the current weight version."""
