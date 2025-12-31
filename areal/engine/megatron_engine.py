@@ -343,6 +343,8 @@ class MegatronEngine(TrainEngine):
         return self._cpu_group
 
     def destroy(self):
+        self._initialized = False
+        self.process_group_initialized = False
         if hasattr(self, "optimizer"):
             del self.optimizer
         if hasattr(self, "model"):
@@ -350,8 +352,6 @@ class MegatronEngine(TrainEngine):
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
-        self.process_group_initialized = False
-        self._initialized = False
         # NOTE: if `own_global_group` is true, we assume that
         # no communications are needed after `destroy`, so we
         # directly destroy all groups. Otherwise, process group

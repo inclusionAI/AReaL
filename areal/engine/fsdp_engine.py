@@ -306,6 +306,7 @@ class FSDPEngine(TrainEngine):
         return self._cpu_group
 
     def destroy(self):
+        self._initialized = False
         if hasattr(self, "optimizer"):
             del self.optimizer
         if hasattr(self, "model"):
@@ -320,7 +321,6 @@ class FSDPEngine(TrainEngine):
         # clean up these groups.
         if dist.is_initialized() and self.own_global_group:
             dist.destroy_process_group()
-        self._initialized = False
 
     @property
     def initialized(self) -> bool:
