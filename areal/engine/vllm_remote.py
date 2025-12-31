@@ -422,4 +422,6 @@ class RemotevLLMEngine(InferenceEngine):
     def config_perf_tracer(
         self, config: PerfTracerConfig, rank: int, role: str
     ) -> None:
+        if perf_tracer.is_configured():
+            return
         perf_tracer.configure(config, rank=rank, role=role)

@@ -57,6 +57,7 @@ class TrainController:
         self.parallel_strategy: ParallelStrategy | None = None
 
         self._worker_role: str = "default"
+        self._own_process_group = False
 
         self.rollout: RolloutController = None
 
@@ -72,10 +73,15 @@ class TrainController:
         parallel_strategy : ParallelStrategy | None, optional
             Parallel strategy configuration (currently unused), by default None
         """
-        port = find_free_ports(1)[0]
-        dist.init_process_group(
-            backend="gloo", init_method=f"tcp://localhost:{port}", rank=0, world_size=1
-        )
+        if not dist.is_initialized():
+            port = find_free_ports(1)[0]
+            dist.init_process_group(
+                backend="gloo",
+                init_method=f"tcp://localhost:{port}",
+                rank=0,
+                world_size=1,
+            )
+            self._own_process_group = True
 
     @property
     def data_parallel_rank(self) -> int:
@@ -155,10 +161,13 @@ class TrainController:
         # Construct engine class import path for dynamic loading on workers
         # Workers will import and instantiate the engine class using this path
         engine_class = self.train_engine
-        engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
-        self._run_async_task(self._async_create_engines(engine_path))
+        self._run_async_task(
+            self._async_create_engines(
+                f"{engine_class.__module__}.{engine_class.__name__}"
+            )
+        )
         self._run_async_task(self._async_initialize_engines(ft_spec, **kwargs))
 
         # Identify DP head workers
@@ -169,7 +178,14 @@ class TrainController:
         """Run an async task synchronously."""
         return asyncio.run(task)
 
-    async def _async_create_engines(self, engine_path: str):
+    def _engine_name(self, rank: int) -> str:
+        """Generate engine name for a worker rank.
+
+        Engine names follow the "role/index" format (e.g., "actor/0", "ref/1").
+        """
+        return f"{self._worker_role}/{rank}"
+
+    async def _async_create_engines(self, engine: str):
         """Create engine instances on all workers. Sets distributed env vars before creation."""
         logger.info("Creating engines on workers...")
 
@@ -184,7 +200,8 @@ class TrainController:
             await self.scheduler.set_worker_env(worker.id, env)
             await self.scheduler.create_engine(
                 worker_id=worker.id,
-                engine=engine_path,
+                engine=engine,
+                engine_name=self._engine_name(rank),
                 config=self.config,
             )
 
@@ -202,9 +219,10 @@ class TrainController:
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
                 method="create_process_group",
+                engine_name=self._engine_name(rank),
                 parallel_strategy=self.parallel_strategy,
             )
-            for worker in self.workers
+            for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
         # Phase 2: Initialize engines (load models, setup optimizers, etc.)
@@ -212,10 +230,11 @@ class TrainController:
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
                 method="initialize",
+                engine_name=self._engine_name(rank),
                 ft_spec=ft_spec,
                 **kwargs,
             )
-            for worker in self.workers
+            for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
         logger.info("All engines are initialized!")
@@ -227,9 +246,11 @@ class TrainController:
         async def _get_dp_head():
             tasks = [
                 self.scheduler.async_call_engine(
-                    worker_id=worker.id, method="is_data_parallel_head"
+                    worker_id=worker.id,
+                    method="is_data_parallel_head",
+                    engine_name=self._engine_name(rank),
                 )
-                for worker in self.workers
+                for rank, worker in enumerate(self.workers)
             ]
             return await asyncio.gather(*tasks)
 
@@ -249,8 +270,12 @@ class TrainController:
 
                 async def _destroy_all_engines():
                     tasks = [
-                        self.scheduler.async_call_engine(worker.id, "destroy")
-                        for worker in self.workers
+                        self.scheduler.async_call_engine(
+                            worker_id=worker.id,
+                            method="destroy",
+                            engine_name=self._engine_name(rank),
+                        )
+                        for rank, worker in enumerate(self.workers)
                     ]
                     await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -271,7 +296,7 @@ class TrainController:
         self.workers.clear()
         self.workers_is_dp_head.clear()
 
-        if dist.is_initialized():
+        if dist.is_initialized() and self._own_process_group:
             dist.destroy_process_group()
         logger.info("TrainController destroyed")
 
@@ -356,6 +381,7 @@ class TrainController:
                 self.scheduler.async_call_engine(
                     worker.id,
                     method,
+                    self._engine_name(idx),
                     *worker_args,
                     **worker_kwargs,
                 )
@@ -491,6 +517,7 @@ class TrainController:
                 self.scheduler.async_call_engine(
                     worker_id=worker.id,
                     method="config_perf_tracer",
+                    engine_name=self._engine_name(rank),
                     rank=rank,
                     role=role,
                     config=config,

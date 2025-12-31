@@ -23,13 +23,16 @@ class RayRPCServer:
     - one training world rank, or
     - one rollout instance
 
+    Supports multiple named engines per worker for colocation scenarios.
+
     Placement group scheduling is controlled by the scheduler.
     The actor is only responsible for the engine lifecycle and method calls
     within this process.
     """
 
     def __init__(self):
-        self._engine: TrainEngine | InferenceEngine | None = None
+        self._engines: dict[str, TrainEngine | InferenceEngine] = {}
+        self._default_engine_name: str | None = None  # For backward compatibility
         self.logger = logging.getLogger("RayRPCServer")
 
     def _get_device(self):
@@ -43,37 +46,67 @@ class RayRPCServer:
 
     def configure(self, config: BaseExperimentConfig, role: str, rank: int) -> None:
         name_resolve.reconfigure(config.cluster.name_resolve)
-        if isinstance(self._engine, TrainEngine):
-            seeding.set_random_seed(config.seed, key=f"{role}{rank}")
+        # Set seed for any TrainEngine instances
+        for engine in self._engines.values():
+            if isinstance(engine, TrainEngine):
+                seeding.set_random_seed(config.seed, key=f"{role}{rank}")
+                break
         self.logger.info(f"RayRPCServer configured for role role={role}, rank={rank}")
 
     def set_env(self, env: dict[str, str]) -> None:
         for k, v in env.items():
             os.environ[str(k)] = str(v)
 
-    def create_engine(self, engine_path: str, *init_args, **init_kwargs) -> None:
+    def create_engine(
+        self,
+        engine: str,
+        *init_args,
+        engine_name: str | None = None,
+        **init_kwargs,
+    ) -> None:
         try:
-            engine_class = import_from_string(engine_path)
+            engine_class = import_from_string(engine)
             self.logger.debug(f"Initializing engine {engine_class}")
             if not issubclass(engine_class, (TrainEngine, InferenceEngine)):
                 raise TypeError(
                     f"Engine class must be a TrainEngine or InferenceEngine, but got {engine_class}"
                 )
-            self._engine = engine_class(*init_args, **init_kwargs)
+            engine = engine_class(*init_args, **init_kwargs)
+
+            # Use engine_name if provided, otherwise generate a default name
+            if engine_name is None:
+                engine_name = f"engine_{len(self._engines)}"
+            self._engines[engine_name] = engine
+
+            # Track first engine as default for backward compatibility
+            if self._default_engine_name is None:
+                self._default_engine_name = engine_name
+
             self.logger.info(
-                f"RayRPCServer Engine '{engine_path}' instantiated successfully!"
+                f"RayRPCServer Engine '{engine}' instantiated as '{engine_name}'!"
             )
         except Exception as e:
             self.logger.error(
-                f"RayRPCServer failed to create engine '{engine_path}' : {e}\n"
+                f"RayRPCServer failed to create engine '{engine}' : {e}\n"
                 f"{traceback.format_exc()}"
             )
             raise
 
-    def call(self, method: str, *args, **kwargs) -> Any:
-        self.logger.debug(f"Calling {method} with arguments {args=} {kwargs=}")
-        if self._engine is None:
-            raise RuntimeError("Engine not initialized. Call create_engine() first")
+    def call(self, method: str, *args, engine_name: str | None = None, **kwargs) -> Any:
+        self.logger.debug(
+            f"Calling {method} on engine '{engine_name}' with arguments {args=} {kwargs=}"
+        )
+
+        # Resolve engine: use provided name, fallback to default, or error
+        if engine_name is None:
+            engine_name = self._default_engine_name
+        if engine_name is None or engine_name not in self._engines:
+            raise RuntimeError(
+                f"Engine '{engine_name}' not found. "
+                f"Available engines: {list(self._engines.keys())}. "
+                "Call create_engine() first."
+            )
+        engine = self._engines[engine_name]
 
         raw_args = list(args)
         raw_kwargs = kwargs.copy()
@@ -83,20 +116,20 @@ class RayRPCServer:
 
         # Broadcast args when engine is a TrainEngine and has been initialized
         try:
-            if isinstance(self._engine, TrainEngine) and self._engine.initialized:
+            if isinstance(engine, TrainEngine) and engine.initialized:
                 device = self._get_device()
 
                 args = tensor_container_to(args, device)
                 args = broadcast_tensor_container(
                     args,
-                    src_rank=self._engine.current_data_parallel_head(),
-                    group=self._engine.context_and_model_parallel_group,
+                    src_rank=engine.current_data_parallel_head(),
+                    group=engine.context_and_model_parallel_group,
                 )
                 kwargs = tensor_container_to(kwargs, device)
                 kwargs = broadcast_tensor_container(
                     kwargs,
-                    src_rank=self._engine.current_data_parallel_head(),
-                    group=self._engine.context_and_model_parallel_group,
+                    src_rank=engine.current_data_parallel_head(),
+                    group=engine.context_and_model_parallel_group,
                 )
         except Exception as e:
             self.logger.error(
@@ -106,7 +139,7 @@ class RayRPCServer:
             raise
 
         try:
-            fn = getattr(self._engine, method)
+            fn = getattr(engine, method)
             result = fn(*args, **kwargs)
             if isinstance(result, Future):
                 result = result.result()
@@ -128,11 +161,15 @@ class RayRPCServer:
             raise
 
     def destroy(self) -> None:
-        if self._engine is not None:
+        # Destroy all engines
+        for engine_name, engine in list(self._engines.items()):
             try:
-                self._engine.destroy()
-                self.logger.info("RayRPCServer Engine destroyed successfully")
+                engine.destroy()
+                self.logger.info(f"RayRPCServer Engine '{engine_name}' destroyed")
             except Exception as e:
-                self.logger.error(f"RayRPCServer error destroying engine: {e}")
-        self._engine = None
+                self.logger.error(
+                    f"RayRPCServer error destroying engine '{engine_name}': {e}"
+                )
+        self._engines.clear()
+        self._default_engine_name = None
         ray.actor.exit_actor()

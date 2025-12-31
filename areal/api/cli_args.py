@@ -3,6 +3,7 @@ import json
 import os
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
@@ -567,10 +568,16 @@ class MegatronEngineConfig:
     fp8_config: FP8EngineConfig | None = None
 
 
+class SchedulingStrategyType(str, Enum):
+    separation = "separation"
+    colocation = "colocation"
+
+
 @dataclass
 class SchedulingStrategy:
     type: str = field(
-        default="separation", metadata={"choices": ["separation", "colocation"]}
+        default="separation",
+        metadata={"choices": ["separation", "colocation"]},
     )
     target: str | None = field(
         default=None, metadata={"help": "The target role to be colocated with"}
@@ -639,6 +646,12 @@ class SchedulingSpec:
     )
     mount: str = field(
         default="/storage:/storage", metadata={"help": "Mount path for slurm."}
+    )
+    nodelist: str | None = field(
+        default=None, metadata={"help": "sbatch/srun's `--nodelist` option for slurm."}
+    )
+    exclude: str | None = field(
+        default=None, metadata={"help": "sbatch/srun's `--exclude` option for slurm."}
     )
 
 

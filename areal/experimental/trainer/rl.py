@@ -16,6 +16,8 @@ from areal.api.cli_args import (
     PPOActorConfig,
     PPOConfig,
     PPOCriticConfig,
+    SchedulingStrategy,
+    SchedulingStrategyType,
     SGLangConfig,
     TrainDatasetConfig,
     ValidDatasetConfig,
@@ -366,6 +368,8 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
+                # Since all RTensor objects are affiliated IPs,
+                # calling `clear_batches` once should be sufficient.
                 self.actor.clear_batches(rollout_batch, adv_batch)
 
             with perf_tracer.trace_scope(
@@ -510,7 +514,10 @@ class PPOTrainer:
         if is_eval:
             # NOTE: eval does not have any offpolicyness control
             config.max_head_offpolicyness = int(1e12)
-            # eval-rollout uses the same inference servsers as rollout
+            # eval-rollout uses the same inference servers as rollout
+            config.scheduling_strategy = SchedulingStrategy(
+                type=SchedulingStrategyType.colocation, target="rollout"
+            )
             for spec in config.scheduling_spec:
                 spec.gpu = 0
 

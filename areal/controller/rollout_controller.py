@@ -101,6 +101,13 @@ class RolloutController:
         self._pending_futures: dict[int, asyncio.Future] = {}
         self._futures_lock = threading.Lock()
 
+    def _engine_name(self, rank: int) -> str:
+        """Generate engine name for a worker rank.
+
+        Engine names follow the "role/index" format (e.g., "rollout/0", "rollout/1").
+        """
+        return f"{self._worker_role}/{rank}"
+
     def initialize(
         self,
         role: str,
@@ -191,17 +198,17 @@ class RolloutController:
 
         # Get engine class path for dynamic import on workers
         engine_class = self.inf_engine
-        engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
         logger.info("Creating engines...")
         tasks = [
             self.scheduler.create_engine(
                 worker_id=worker.id,
-                engine=engine_path,
+                engine=f"{engine_class.__module__}.{engine_class.__name__}",
+                engine_name=self._engine_name(rank),
                 config=self.config,
             )
-            for worker in self.workers
+            for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
         logger.info("Engine created on all workers!")
@@ -218,11 +225,14 @@ class RolloutController:
                 self.scheduler.async_call_engine(
                     worker_id=worker.id,
                     method="initialize",
+                    engine_name=self._engine_name(rank),
                     addr=f"{info.host}:{info.port}",
                     *args,
                     **kwargs,
                 )
-                for worker, info in zip(self.workers, self.server_infos)
+                for rank, (worker, info) in enumerate(
+                    zip(self.workers, self.server_infos)
+                )
             ]
             await asyncio.gather(*tasks)
         else:
@@ -379,26 +389,28 @@ class RolloutController:
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
                 method=method,
+                engine_name=self._engine_name(rank),
                 *args,
                 **kwargs,
             )
-            for worker in self.workers
+            for rank, worker in enumerate(self.workers)
         ]
         return await asyncio.gather(*tasks)
 
-    def _choose_worker(self) -> Worker:
+    def _choose_worker(self) -> tuple[Worker, int]:
         """Choose a worker for the next request using round-robin scheduling.
 
         Returns
         -------
-        Worker
-            The chosen worker object
+        tuple[Worker, int]
+            The chosen worker object and its rank
         """
         if not self.workers:
             raise RuntimeError("No workers available to choose from.")
         worker = self.workers[self._current_worker_idx]
+        rank = self._current_worker_idx
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
-        return worker
+        return worker, rank
 
     def _resolve_workflow_str(
         self, workflow: RolloutWorkflow | type[RolloutWorkflow] | str
@@ -440,7 +452,8 @@ class RolloutController:
     def _create_submit_callback(self, pending_task: _RemoteRolloutTaskInput):
         async def _submit_then_wait() -> _RemoteRolloutResult | None:
             # Choose worker via round-robin
-            worker = self._choose_worker()
+            worker, rank = self._choose_worker()
+            engine_name = self._engine_name(rank)
 
             # NOTE: No need to call `on_rollout_submitted` here.
             # This function will be passed to `BatchTaskDispather` where
@@ -458,6 +471,7 @@ class RolloutController:
                 engine_task_id = await self.scheduler.async_call_engine(
                     worker.id,
                     "submit",
+                    engine_name=engine_name,
                     data=pending_task.data,
                     workflow=pending_task.workflow,
                     workflow_kwargs=pending_task.workflow_kwargs,
@@ -476,6 +490,7 @@ class RolloutController:
                 result = await self.scheduler.async_call_engine(
                     worker.id,
                     "wait_for_task",
+                    engine_name=engine_name,
                     task_id=engine_task_id,
                     timeout=0.1,  # A short time to prevent blocking other requests
                     raise_timeout=False,
@@ -642,12 +657,13 @@ class RolloutController:
             The generated response from the model
         """
         # Choose worker and delegate
-        worker = self._choose_worker()
+        worker, rank = self._choose_worker()
 
         # Call agenerate on engine via scheduler
         return await self.scheduler.async_call_engine(
             worker_id=worker.id,
             method="agenerate",
+            engine_name=self._engine_name(rank),
             req=req,
         )
 
@@ -656,10 +672,11 @@ class RolloutController:
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
                 method="init_weights_update_group",
+                engine_name=self._engine_name(rank),
                 meta=meta,
-                xccl_group_ranks=[i],
+                xccl_group_ranks=[rank],
             )
-            for i, worker in enumerate(self.workers)
+            for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
 
@@ -724,6 +741,7 @@ class RolloutController:
                 self.scheduler.async_call_engine(
                     worker_id=worker.id,
                     method="config_perf_tracer",
+                    engine_name=self._engine_name(rank),
                     rank=rank,
                     role=role,
                     config=config,
