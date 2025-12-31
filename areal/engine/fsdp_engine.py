@@ -145,7 +145,7 @@ class FSDPEngine(TrainEngine):
         self.model_config: PretrainedConfig
         self._version: int = 0
 
-        self.initialized = False
+        self._initialized = False
         self.own_global_group = False
         self._cpu_group: dist.ProcessGroup
         self.weight_update_group_initialized = False
@@ -282,7 +282,7 @@ class FSDPEngine(TrainEngine):
         )
 
         self._create_optimizer(ft_spec)
-        self.initialized = True
+        self._initialized = True
 
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
@@ -302,10 +302,11 @@ class FSDPEngine(TrainEngine):
 
     @property
     def cpu_group(self) -> dist.ProcessGroup:
-        assert self.initialized
+        assert self._initialized
         return self._cpu_group
 
     def destroy(self):
+        self._initialized = False
         if hasattr(self, "optimizer"):
             del self.optimizer
         if hasattr(self, "model"):
@@ -320,7 +321,10 @@ class FSDPEngine(TrainEngine):
         # clean up these groups.
         if dist.is_initialized() and self.own_global_group:
             dist.destroy_process_group()
-        self.initialized = False
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
 
     def current_data_parallel_head(self) -> int:
         return self.dp_head

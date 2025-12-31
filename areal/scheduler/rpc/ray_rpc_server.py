@@ -114,11 +114,9 @@ class RayRPCServer:
         args = RTensor.localize(raw_args)
         kwargs = RTensor.localize(raw_kwargs)
 
-        should_broadcast = kwargs.pop("should_broadcast", True)
-
-        # keep broadcast behavior the same as RPCServer
+        # Broadcast args when engine is a TrainEngine and has been initialized
         try:
-            if should_broadcast and isinstance(engine, TrainEngine):
+            if isinstance(engine, TrainEngine) and engine.initialized:
                 device = self._get_device()
 
                 args = tensor_container_to(args, device)

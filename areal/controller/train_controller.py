@@ -221,7 +221,6 @@ class TrainController:
                 method="create_process_group",
                 engine_name=self._engine_name(rank),
                 parallel_strategy=self.parallel_strategy,
-                should_broadcast=False,
             )
             for rank, worker in enumerate(self.workers)
         ]
@@ -233,7 +232,6 @@ class TrainController:
                 method="initialize",
                 engine_name=self._engine_name(rank),
                 ft_spec=ft_spec,
-                should_broadcast=False,
                 **kwargs,
             )
             for rank, worker in enumerate(self.workers)

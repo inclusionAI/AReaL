@@ -394,12 +394,10 @@ def call_engine_method():
         args = RTensor.localize(raw_args)
         kwargs = RTensor.localize(raw_kwargs)
 
-        # FIXME: remove should_broadcast param
-        should_broadcast = kwargs.pop("should_broadcast", True)
-
         def execute_in_engine_thread():
             try:
-                if should_broadcast and isinstance(engine, TrainEngine):
+                # Broadcast args when engine is a TrainEngine and has been initialized
+                if isinstance(engine, TrainEngine) and engine.initialized:
                     logger.debug(
                         f"Broadcasting data for TrainEngine method: {method_name}"
                     )
