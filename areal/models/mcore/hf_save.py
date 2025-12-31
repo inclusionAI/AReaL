@@ -17,7 +17,7 @@ from torch.distributed._functional_collectives import all_gather_into_tensor_coa
 from areal.models.mcore.registry import unwrap_to_gpt_model
 from areal.platforms import current_platform
 from areal.utils import logging
-from areal.utils.fp8_utils import quantize_params
+from areal.utils.fp8 import quantize_params
 
 logger = logging.getLogger("HFSaver")
 

@@ -1,11 +1,11 @@
+# FP8 Triton kernels for quantization and dequantization
 # Adapted from slime
+
 import torch
 import triton
 import triton.language as tl
 
-
-def ceil_div(x: int, y: int) -> int:
-    return (x + y - 1) // y
+from areal.utils.math import ceil_div
 
 
 @triton.jit
@@ -52,8 +52,17 @@ def _blockwise_cast_to_fp8_triton(
 
 
 def blockwise_cast_to_fp8_triton(
-    x: torch.Tensor, block_size=None
+    x: torch.Tensor, block_size: list[int] | tuple[int, int] | None = None
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Blockwise FP8 quantization using Triton.
+
+    Args:
+        x: Input tensor (2D)
+        block_size: Optional [block_m, block_n], defaults to [128, 128]
+
+    Returns:
+        (quantized_weight, scale)
+    """
     BLOCK_M, BLOCK_N = 128, 128
     if block_size:
         BLOCK_M, BLOCK_N = block_size[0], block_size[1]

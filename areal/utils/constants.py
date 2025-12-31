@@ -1,9 +1,26 @@
 import datetime
 from enum import Enum
 
+# =============================================================================
+# Distributed Training
+# =============================================================================
+
 # For large models, generation may consume more than 7200s.
 # We set a large value to avoid timeout issues during generation.
 DIST_GROUP_DEFAULT_TIMEOUT = datetime.timedelta(seconds=7200)
+
+
+# =============================================================================
+# Memory Alignment
+# =============================================================================
+
+# Default alignment for vectorized memory operations (128-bit / 16 bytes).
+# This is the standard boundary across modern CPU (SSE/AVX/NEON) and GPU architectures.
+# In CUDA specifically, this applies to:
+#   - Vectorized load/store instructions (float4, int4, etc.)
+#   - TMA (Tensor Memory Accelerator) descriptor alignment
+#   - Coalesced memory access patterns
+DEFAULT_VECTORIZED_ALIGNMENT_BYTES = 16
 
 
 # =============================================================================
@@ -44,7 +61,8 @@ class ProxApproxMethod(str, Enum):
 
 
 # =============================================================================
-# Backward Compatibility Aliases (use enum classes above for new code)
+# Proximal Log-Probability Backward Compatibility Aliases
+# (use enum classes above for new code)
 # =============================================================================
 
 # Proximal log-probability computation methods for decoupled PPO
@@ -62,6 +80,3 @@ PROX_APPROX_METHOD_ROLLOUT = ProxApproxMethod.ROLLOUT.value
 
 # List of all approximation methods computed for metrics comparison
 PROX_APPROX_METHODS_ALL = [m.value for m in ProxApproxMethod]
-
-# FP8 GEMM requires 16-byte alignment
-DEFAULT_ALIGNMENT_SIZE_IN_BYTES_FP8 = 16

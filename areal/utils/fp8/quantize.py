@@ -1,11 +1,15 @@
+# High-level FP8 quantization and dequantization utilities
+# Adapted from slime
+
 import re
 
 import torch
 
-from areal.utils.fp8_kernels import blockwise_cast_to_fp8_triton, weight_dequant
+from areal.utils.fp8.deepgemm import should_deepgemm_weight_requant_ue8m0
+from areal.utils.fp8.kernels import blockwise_cast_to_fp8_triton, weight_dequant
+from areal.utils.fp8.ue8m0 import quant_weight_ue8m0, transform_scale_ue8m0
 
 
-# Adapted from slime
 def _quantize_param(
     name: str,
     weight: torch.Tensor,
@@ -18,6 +22,7 @@ def _quantize_param(
         name: Parameter name (must end with ".weight")
         weight: Weight tensor to quantize
         weight_block_size: Optional block size for blockwise quantization [block_m, block_n]
+        scale_dtype: Dtype for the scale tensor
 
     Returns:
         List of (name, tensor) tuples: [(weight_name, quantized_weight), (scale_name, scale)]
@@ -27,30 +32,9 @@ def _quantize_param(
     FP8_MAX = torch.finfo(torch.float8_e4m3fn).max
 
     if weight_block_size is not None:
-        # Blockwise quantizations
-        try:
-            from sglang.srt.layers.quantization.fp8_utils import (
-                quant_weight_ue8m0,
-                transform_scale_ue8m0,
-            )
-            from sglang.srt.model_loader.utils import (
-                should_deepgemm_weight_requant_ue8m0,
-            )
-
-        except ImportError:
-            should_deepgemm_weight_requant_ue8m0 = None
-            quant_weight_ue8m0 = None
-            transform_scale_ue8m0 = None
-
-        if (
-            should_deepgemm_weight_requant_ue8m0 is not None
-            and quant_weight_ue8m0 is not None
-            and transform_scale_ue8m0 is not None
-            and should_deepgemm_weight_requant_ue8m0(
-                weight_block_size=weight_block_size
-            )
-        ):
-            # Use sglang's quantization
+        # Blockwise quantization
+        if should_deepgemm_weight_requant_ue8m0(weight_block_size=weight_block_size):
+            # Use UE8M0 quantization for DeepGEMM on Blackwell
             qweight, scale = quant_weight_ue8m0(
                 weight, weight_block_size=weight_block_size
             )
@@ -72,14 +56,23 @@ def _quantize_param(
     return [(name, qweight), (scale_name, scale)]
 
 
-# Adapted from slime
 def quantize_params(
     megatron_name: str,
     converted_named_params: list[tuple[str, torch.Tensor]],
     quantization_config: dict[str, int | str | list[str]] | None,
     scale_dtype: torch.dtype = torch.bfloat16,
 ) -> list[tuple[str, torch.Tensor]]:
-    """Apply FP8 quantization to converted HuggingFace parameters."""
+    """Apply FP8 quantization to converted HuggingFace parameters.
+
+    Args:
+        megatron_name: Megatron parameter name
+        converted_named_params: List of (name, tensor) tuples
+        quantization_config: Quantization configuration dict
+        scale_dtype: Dtype for scale tensors
+
+    Returns:
+        List of (name, tensor) tuples with quantized parameters
+    """
     if quantization_config is None:
         return converted_named_params
 
@@ -174,7 +167,17 @@ def dequantize_params(
     dst_dtype: torch.dtype = torch.bfloat16,
     quantization_config: dict[str, int | str | list[str]] | None = None,
 ) -> torch.Tensor:
-    """Dequantize FP8 weights to the given dtype."""
+    """Dequantize FP8 weights to the given dtype.
+
+    Args:
+        weight: FP8 weight tensor
+        scale_inv: Scale inverse tensor
+        dst_dtype: Destination dtype
+        quantization_config: Quantization configuration
+
+    Returns:
+        Dequantized weight tensor
+    """
     if not weight.is_contiguous():
         weight = weight.contiguous()
     if not scale_inv.is_contiguous():

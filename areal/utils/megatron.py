@@ -8,7 +8,7 @@ from megatron.core.transformer.transformer_layer import get_transformer_layer_of
 from torch import Tensor
 from torch.nn.parameter import Parameter
 
-from areal.utils.fp8_utils import quantize_params
+from areal.utils.fp8 import quantize_params
 
 
 # Adapted from slime

@@ -56,7 +56,7 @@ from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_mod
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
 from areal.utils.constants import (
-    DEFAULT_ALIGNMENT_SIZE_IN_BYTES_FP8,
+    DEFAULT_VECTORIZED_ALIGNMENT_BYTES,
     DIST_GROUP_DEFAULT_TIMEOUT,
 )
 from areal.utils.data import (
@@ -261,11 +261,23 @@ class MegatronEngine(TrainEngine):
         with self.device:
             self._load_model_from_hf(self.config.path)
 
-        # NOTE: When using distributed optimizer, megatron will use the
-        # high precision init val to initialize the main parameters for optimizer.
-        # However, the high precision init val does not exist for FP8 models.
-        # (The high precision init val is random initialization for FP8 models.)
-        # So we need to clear the high precision init val here.
+        # NOTE: Clear high_precision_init_val for FP8 parameters.
+        #
+        # Background: When using distributed optimizer, Megatron uses
+        # high_precision_init_val to initialize optimizer's main parameters.
+        # TransformerEngine (TE) provides this via get_high_precision_init_val().
+        #
+        # Problem with publicly available HF FP8 models:
+        # - Megatron sets preserve_high_precision_init_val=True when loading FP8 models
+        # - This causes TE (transformer_engine/pytorch/module/base.py) to use the
+        #   init_method's random initialization as high_precision_init_val
+        # - But for pre-trained HF models, we load actual weights AFTER initialization,
+        #   so high_precision_init_val still holds the random init values, not the
+        #   loaded weights
+        #
+        # Solution: Clear high_precision_init_val here after loading HF weights.
+        # The optimizer will then use the actual FP8 weights (upcast to high precision)
+        # instead of stale random initialization values.
         for model in self.model:
             for _, param in model.named_parameters():
                 if hasattr(param, "get_high_precision_init_val"):
@@ -1313,7 +1325,7 @@ class MegatronEngine(TrainEngine):
         #    to satisfy the requirement of Megatron parallelism.
         align_to_multiple_of = tp_size * cp_size * 2 if cp_size > 1 else tp_size
         align_to_multiple_of = (
-            math.lcm(align_to_multiple_of, DEFAULT_ALIGNMENT_SIZE_IN_BYTES_FP8)
+            math.lcm(align_to_multiple_of, DEFAULT_VECTORIZED_ALIGNMENT_BYTES)
             if self.enable_fp8
             else align_to_multiple_of
         )
