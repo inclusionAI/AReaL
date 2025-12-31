@@ -88,6 +88,30 @@ class SGLangServerWrapper:
         if self.config.enable_fast_load or self.config.enable_multithread_load:
             apply_sglang_patch()
 
+    def _monitor_server_processes(self, server_addresses):
+        """Monitor server processes and exit if any dies."""
+        while True:
+            all_alive = True
+            for i, process in enumerate(self.server_processes):
+                return_code = process.poll()
+                if return_code is not None:
+                    logger.info(
+                        f"SGLang server {server_addresses[i]} exits, returncode={return_code}"
+                    )
+                    all_alive = False
+                    break
+
+            if not all_alive:
+                for i, process in enumerate(self.server_processes):
+                    if process.poll() is None:
+                        kill_process_tree(process.pid, graceful=True)
+                        logger.info(
+                            f"SGLang server process {server_addresses[i]} terminated."
+                        )
+                sys.exit(1)
+
+            time.sleep(1)
+
     def run(self):
         gpus_per_server = self.allocation_mode.gen_instance_size
         cross_nodes = False
@@ -167,27 +191,7 @@ class SGLangServerWrapper:
                 self.server_processes = list(server_iterator)
 
             # Monitor server processes
-            while True:
-                all_alive = True
-                for i, process in enumerate(self.server_processes):
-                    return_code = process.poll()
-                    if return_code is not None:
-                        logger.info(
-                            f"SGLang server {server_addresses[i]} exits, returncode={return_code}"
-                        )
-                        all_alive = False
-                        break
-
-                if not all_alive:
-                    for i, process in enumerate(self.server_processes):
-                        if process.poll() is None:
-                            kill_process_tree(process.pid, graceful=True)
-                            logger.info(
-                                f"SGLang server process {server_addresses[i]} terminated."
-                            )
-                    sys.exit(1)
-
-                time.sleep(1)
+            self._monitor_server_processes(server_addresses)
 
         except Exception:
             logger.error(f"Traceback:\n{traceback.format_exc()}")
