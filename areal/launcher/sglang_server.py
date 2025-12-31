@@ -189,7 +189,7 @@ class SGLangServerWrapper:
 
         except:  # noqa: E722
             logger.error(traceback.format_exc())
-            raise
+            sys.exit(1)
 
     def launch_one_server(self, cmd, host_ip, server_port, node_rank):
         server_process = launch_server_cmd(cmd)
