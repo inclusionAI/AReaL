@@ -116,6 +116,8 @@ def per_block_cast_to_fp8_ue8m0(
     x_padded[:m, :n] = x
     x_view = x_padded.view(-1, 128, x_padded.size(1) // 128, 128)
     x_amax = x_view.abs().float().amax(dim=(1, 3), keepdim=True).clamp(1e-4)
+    # 448.0 is the max representable value for FP8 E4M3 format
+    # (torch.finfo(torch.float8_e4m3fn).max == 448.0)
     sf = ceil_to_ue8m0(x_amax / 448.0)
     x_scaled = (x_view * (1.0 / sf)).to(torch.float8_e4m3fn)
     return x_scaled.view_as(x_padded)[:m, :n].contiguous(), sf.view(
@@ -138,7 +140,9 @@ def quant_weight_ue8m0(
     Returns:
         (fp8_weight, fp32_scale)
     """
-    assert weight_block_size == [128, 128]
+    assert weight_block_size == [128, 128], (
+        f"UE8M0 quantization requires [128, 128] block size, got {weight_block_size}"
+    )
     assert weight_dequant.dtype == torch.bfloat16, (
         f"{weight_dequant.dtype=} {weight_dequant.shape=}"
     )
