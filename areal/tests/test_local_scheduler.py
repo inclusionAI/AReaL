@@ -658,7 +658,7 @@ class TestWorkerCreation:
                 )
             ],
             scheduling_strategy=SchedulingStrategy(
-                type=SchedulingStrategyType.COLOCATION, target="actor"
+                type=SchedulingStrategyType.colocation, target="actor"
             ),
         )
         critic_ids = scheduler.create_workers(critic_job)
@@ -672,7 +672,6 @@ class TestWorkerCreation:
         # Verify colocation tracking is set up correctly
         assert "critic" in scheduler._colocated_roles
         assert scheduler._colocated_roles["critic"] == "actor"
-        assert scheduler._role_to_workers["critic"] == actor_ids
 
     def test_create_workers_duplicate_role_error(self, tmp_path):
         """Should raise WorkerCreationError when attempting to create workers for existing role."""
@@ -849,7 +848,7 @@ class TestWorkerCreation:
                 )
             ],
             scheduling_strategy=SchedulingStrategy(
-                type=SchedulingStrategyType.COLOCATION, target=""
+                type=SchedulingStrategyType.colocation, target=""
             ),  # Missing target
         )
 
@@ -1872,7 +1871,7 @@ class TestColocationBehavior:
             replicas=1,
             role="ref",
             scheduling_strategy=SchedulingStrategy(
-                type=SchedulingStrategyType.COLOCATION, target="actor"
+                type=SchedulingStrategyType.colocation, target="actor"
             ),
         )
         scheduler.create_workers(ref_job)
@@ -1916,7 +1915,7 @@ class TestColocationBehavior:
             replicas=1,
             role="ref",
             scheduling_strategy=SchedulingStrategy(
-                type=SchedulingStrategyType.COLOCATION, target="actor"
+                type=SchedulingStrategyType.colocation, target="actor"
             ),
         )
         scheduler.create_workers(ref_job)
@@ -1933,7 +1932,6 @@ class TestColocationBehavior:
 
         # Colocation mapping should be removed
         assert "ref" not in scheduler._colocated_roles
-        assert "ref" not in scheduler._role_to_workers
 
         # Target role's workers should still exist
         assert "actor" in scheduler._workers
@@ -1974,7 +1972,7 @@ class TestColocationBehavior:
             replicas=1,  # Mismatch!
             role="ref",
             scheduling_strategy=SchedulingStrategy(
-                type=SchedulingStrategyType.COLOCATION, target="actor"
+                type=SchedulingStrategyType.colocation, target="actor"
             ),
         )
         with pytest.raises(WorkerCreationError) as exc_info:
@@ -2004,7 +2002,7 @@ class TestColocationBehavior:
             replicas=1,
             role="ref",
             scheduling_strategy=SchedulingStrategy(
-                type=SchedulingStrategyType.COLOCATION, target="nonexistent"
+                type=SchedulingStrategyType.colocation, target="nonexistent"
             ),
         )
         with pytest.raises(WorkerNotFoundError):

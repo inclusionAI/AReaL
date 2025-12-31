@@ -592,7 +592,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
         )
 
         # Determine node allocation and handle colocation
-        if strategy_type == SchedulingStrategyType.COLOCATION:
+        if strategy_type == SchedulingStrategyType.colocation:
             colocate_role = strategy.target
             if not colocate_role:
                 raise WorkerCreationError(
@@ -624,7 +624,7 @@ srun {self.srun_additional_args} {" ".join(srun_flags)} \\
             )
             return worker_ids
 
-        if strategy_type != SchedulingStrategyType.SEPARATION:
+        if strategy_type != SchedulingStrategyType.separation:
             raise ValueError(f"Unknown scheduling strategy type: {strategy_type}")
         # Non-colocated: calculate nodes needed and submit new Slurm job
         spec = schedulings[0]

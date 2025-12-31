@@ -516,7 +516,7 @@ class PPOTrainer:
             config.max_head_offpolicyness = int(1e12)
             # eval-rollout uses the same inference servers as rollout
             config.scheduling_strategy = SchedulingStrategy(
-                type=SchedulingStrategyType.COLOCATION, target="rollout"
+                type=SchedulingStrategyType.colocation, target="rollout"
             )
             for spec in config.scheduling_spec:
                 spec.gpu = 0

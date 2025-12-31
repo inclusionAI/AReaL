@@ -373,7 +373,7 @@ def test_create_workers_with_colocate_strategy(scheduler):
         replicas=2,
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
         scheduling_strategy=SchedulingStrategy(
-            type=SchedulingStrategyType.COLOCATION, target="actor"
+            type=SchedulingStrategyType.colocation, target="actor"
         ),
     )
     ref_ids = scheduler.create_workers(ref_job)
@@ -407,7 +407,7 @@ def test_get_workers_for_colocated_role_delegates_to_target(scheduler):
         replicas=2,
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
         scheduling_strategy=SchedulingStrategy(
-            type=SchedulingStrategyType.COLOCATION, target="actor"
+            type=SchedulingStrategyType.colocation, target="actor"
         ),
     )
     scheduler.create_workers(ref_job)
@@ -441,7 +441,7 @@ def test_delete_colocated_role_does_not_kill_processes(scheduler):
         replicas=2,
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
         scheduling_strategy=SchedulingStrategy(
-            type=SchedulingStrategyType.COLOCATION, target="actor"
+            type=SchedulingStrategyType.colocation, target="actor"
         ),
     )
     scheduler.create_workers(ref_job)
@@ -478,7 +478,7 @@ def test_colocation_replica_mismatch_raises_error(scheduler):
         replicas=3,  # Mismatch!
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
         scheduling_strategy=SchedulingStrategy(
-            type=SchedulingStrategyType.COLOCATION, target="actor"
+            type=SchedulingStrategyType.colocation, target="actor"
         ),
     )
 
@@ -497,7 +497,7 @@ def test_colocation_target_not_found_raises_error(scheduler):
         replicas=2,
         tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
         scheduling_strategy=SchedulingStrategy(
-            type=SchedulingStrategyType.COLOCATION, target="nonexistent"
+            type=SchedulingStrategyType.colocation, target="nonexistent"
         ),
     )
 

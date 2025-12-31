@@ -3,7 +3,7 @@ import json
 import os
 from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
@@ -448,19 +448,19 @@ class MegatronEngineConfig:
     recompute_modules: list[str] | None = None
 
 
-class SchedulingStrategyType(StrEnum):
-    SEPARATION = "separation"
-    COLOCATION = "colocation"
+class SchedulingStrategyType(str, Enum):
+    separation = "separation"
+    colocation = "colocation"
 
 
 @dataclass
 class SchedulingStrategy:
     type: SchedulingStrategyType = field(
-        default=SchedulingStrategyType.SEPARATION,
+        default=SchedulingStrategyType.separation,
         metadata={
             "choices": [
-                SchedulingStrategyType.SEPARATION,
-                SchedulingStrategyType.COLOCATION,
+                SchedulingStrategyType.separation,
+                SchedulingStrategyType.colocation,
             ]
         },
     )

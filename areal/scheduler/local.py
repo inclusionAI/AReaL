@@ -290,7 +290,7 @@ class LocalScheduler(Scheduler):
         )
 
         # Handle colocation: reuse existing workers from target role
-        if strategy_type == SchedulingStrategyType.COLOCATION:
+        if strategy_type == SchedulingStrategyType.colocation:
             if not colocate_role:
                 raise WorkerCreationError(
                     role,
@@ -321,7 +321,7 @@ class LocalScheduler(Scheduler):
             )
             return worker_ids
 
-        if strategy_type != SchedulingStrategyType.SEPARATION:
+        if strategy_type != SchedulingStrategyType.separation:
             raise ValueError(f"Unknown scheduling strategy type: {strategy_type}")
         # Non-colocated: spawn new worker processes
         workers = []

@@ -389,7 +389,7 @@ class TestRolloutControllerWorkerSelection:
 
         worker_ids = []
         for _ in range(6):
-            worker = controller._choose_worker()
+            worker, _ = controller._choose_worker()
             worker_ids.append(worker.id)
 
         assert worker_ids[0] == "rollout/0"
