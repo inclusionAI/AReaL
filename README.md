@@ -10,13 +10,14 @@
 <img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
 
 AReaL is an open-source **fully asynchronous** reinforcement learning training system
-for large **reasoning and agentic models**, developed by the AReaL Team at Ant Group.
-Built upon the open-source project [ReaLHF](https://github.com/openpsi-project/ReaLHF),
-we are fully committed to open-source principles by providing training details, data,
-and infrastructure required to reproduce our results along with the models themselves.
-AReaL aims to help everyone build their own AI agents easily and affordably. Our team
-loves milk tea because it's delicious, customizable, and affordable. We hope you enjoy
-our project just as you enjoy real-world milk tea (cheers).
+for large **reasoning and agentic models**, developed by members from Tsinghua IIIS and
+the AReaL Team at Ant Group. Built upon the open-source project
+[ReaLHF](https://github.com/openpsi-project/ReaLHF), we are fully committed to
+open-source principles by providing the training details, data, and infrastructure
+required to reproduce our results, along with the models themselves. AReaL aims to help
+everyone build their own AI agents easily and affordably. Our team loves milk tea
+because it's delicious, customizable, and affordable—we hope you enjoy our project just
+as much as you'd enjoy real milk tea. Cheers!
 
 **AReaL Highlights**
 
@@ -34,9 +35,19 @@ our project just as you enjoy real-world milk tea (cheers).
 
 ## 📰 News
 
+**\[2026/01/01\]** Happy New Year! Thanks to the outstanding contribution from
+@HwVanICI, we are excited to officially announce stable support for AReaL training on
+**Ascend NPU devices**! The code is actively maintained and continuously updated in the
+[`ascend` branch](https://github.com/inclusionAI/AReaL/tree/ascend). Check out
+[our documentation](https://inclusionai.github.io/AReaL/tutorial/installation_npu.html)
+to get started, and feel free to report any issues!
+
 **\[2025/08/30\]** Introducing ASearcher, a state-of-the-art search agent built with
 AReaL's end-to-end asynchronous RL training. Check out the [paper](assets/paper.pdf) and
 the [open-source repository](https://github.com/inclusionAI/ASearcher)!
+
+<details>
+<summary><b>📋 Previous Releases</b></summary>
 
 **\[2025/07/31\] (AReaL-lite)** We introduce AReaL-lite, a **lightweight** version of
 AReaL designed specifically for AI researchers and rapid prototyping. AReaL-lite
@@ -46,9 +57,6 @@ lines of code, AReaL-lite maintains 90% of AReaL's performance and core function
 Check out [our AReaL-lite design documentation](/areal/README.md) and
 [the quickstart guide](https://inclusionai.github.io/AReaL/tutorial/quickstart.html) to
 begin your journey with **AReaL-lite**!
-
-<details>
-<summary><b>📋 Previous Releases</b></summary>
 
 **\[2025/06/03\] (v0.3, boba²)** We release **boba²** (double-boba) for fully
 asynchronous RL training, which achieves **2.77× speedup while delivering comparable or
@@ -222,8 +230,10 @@ alphabetically):
 
 - The Data Intelligence Lab at Ant Research for their data support
 
-- The [Relaxed System Lab](https://github.com/Relaxed-System-Lab) from HKUST for
-  seamless collaboration on numerous system-related aspects
+- @HwVanICI for support on vLLM, LoRA, NPU integration, and more
+
+- The [Relaxed System Lab](https://github.com/Relaxed-System-Lab) at HKUST for seamless
+  collaboration on numerous system-related aspects
 
 - The [SGLang team](https://github.com/sgl-project/sglang) for supporting custom weight
   update features and their contributions during AReaL-lite development
@@ -231,7 +241,7 @@ alphabetically):
 - The Super Computing Technology (SCT) team at Ant Group for their expertise in
   large-scale cluster operations and maintenance
 
-- Special thanks to @Lyken17 for providing valuable suggestions throughout our
+- Special thanks to @Lyken17 for providing valuable suggestions throughout the
   development process
 
 We also deeply appreciate all pioneering work from the community, particularly the
