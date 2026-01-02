@@ -184,9 +184,9 @@ def main(args):
         valid_dataset=valid_dataset,
     ) as trainer:
         trainer.train(
-            workflow="examples.openai_agents.train_agents.OpenAIAgentWorkflow",
+            workflow="examples.openai-agents.train_agents.OpenAIAgentWorkflow",
             workflow_kwargs=workflow_kwargs,
-            eval_workflow="examples.openai_agents.train_agents.OpenAIAgentWorkflow",
+            eval_workflow="examples.openai-agents.train_agents.OpenAIAgentWorkflow",
             eval_workflow_kwargs=eval_workflow_kwargs,
         )
 
