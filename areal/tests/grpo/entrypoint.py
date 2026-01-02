@@ -10,7 +10,6 @@ from areal.experimental.trainer import PPOTrainer
 from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils import stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
 
@@ -47,9 +46,6 @@ def main() -> None:
             gconfig=config.gconfig,
             tokenizer=trainer.tokenizer,
             enable_thinking=False,
-            dump_dir=os.path.join(
-                StatsLogger.get_log_path(config.stats_logger), "generated"
-            ),
         )
 
         trainer.train(workflow)
