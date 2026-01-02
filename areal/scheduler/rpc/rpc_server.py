@@ -242,7 +242,7 @@ def create_engine():
 
     Expected JSON payload:
     {
-        "engine": "areal.engine.ppo.actor.FSDPPPOActor",  # Import path
+        "engine": "areal.engine.fsdp_engine.FSDPPPOActor",  # Import path
         "engine_name": "actor/0",  # Unique name for this engine (required)
         "init_args": [...],  # Positional arguments
         "init_kwargs": {
