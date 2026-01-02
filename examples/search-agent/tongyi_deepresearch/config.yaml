@@ -27,6 +27,9 @@ rollout:
   max_head_offpolicyness: 4
   enable_rollout_tracing: true
   scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+  dump_to_file: true
 
 gconfig:
   # `n_sample` is not the actual group_size.

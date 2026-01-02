@@ -118,9 +118,6 @@ def main(args):
         gconfig=config.gconfig,
         tokenizer=tokenizer,
         enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
     eval_workflow = RLVRWorkflow(
         reward_fn=gsm8k_reward_fn,
@@ -128,9 +125,6 @@ def main(args):
         tokenizer=tokenizer,
         enable_thinking=False,
         rollout_stat_scope="eval-rollout",
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-        ),
     )
 
     # Run training.

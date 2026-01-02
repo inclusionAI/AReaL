@@ -11,7 +11,6 @@ from areal.utils import seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.printing import tabulate_stats
-from areal.utils.stats_logger import StatsLogger
 from areal.workflow.rlvr import RLVRWorkflow
 
 
@@ -51,9 +50,6 @@ def main(args):
         tokenizer=tokenizer,
         enable_thinking=False,
         rollout_stat_scope="eval-rollout",
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
 
     # Run evaluation.

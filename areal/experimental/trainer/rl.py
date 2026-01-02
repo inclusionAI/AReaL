@@ -615,7 +615,9 @@ class PPOTrainer:
             cnt = 0
             for data in self.valid_dataloader:
                 for item in data:
-                    self.eval_rollout.submit(item, eval_workflow, eval_workflow_kwargs)
+                    self.eval_rollout.submit(
+                        item, eval_workflow, eval_workflow_kwargs, eval=True
+                    )
                     cnt += 1
             self.eval_rollout.wait(cnt, timeout=None)
 

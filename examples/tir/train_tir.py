@@ -1,4 +1,3 @@
-import os
 import sys
 
 from areal.api.cli_args import load_expr_config
@@ -7,7 +6,6 @@ from areal.experimental.trainer import PPOTrainer
 from areal.reward import get_math_verify_worker
 from areal.utils import logging
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.stats_logger import StatsLogger
 
 from tir_workflow import TIRGRPOConfig  # isort: skip
 
@@ -49,16 +47,10 @@ def main(args):
         tokenizer=config.tokenizer_path,
         tir_config=config.tir,
         enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
     eval_workflow_kwargs = workflow_kwargs.copy()
     eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
     eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
-    eval_workflow_kwargs["dump_dir"] = os.path.join(
-        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-    )
 
     # Create trainer
     with PPOTrainer(config, train_dataset, valid_dataset) as trainer:

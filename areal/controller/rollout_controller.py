@@ -46,6 +46,7 @@ class _RemoteRolloutTaskInput:
     workflow: str
     workflow_kwargs: dict[str, Any]
     should_accept_fn: str | None
+    eval: bool = False
 
 
 @dataclass
@@ -538,6 +539,7 @@ class RolloutController:
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         task_id: int | None = None,
+        eval: bool = False,
     ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -555,6 +557,7 @@ class RolloutController:
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
             task_id=task_id,
+            eval=eval,
         )
 
         # Delegate to dispatcher

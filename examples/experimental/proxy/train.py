@@ -7,9 +7,6 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
 
-import aiofiles
-import aiofiles.os
-
 from areal.api.cli_args import GenerationHyperparameters, PPOConfig, load_expr_config
 from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
@@ -23,7 +20,6 @@ from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils import logging, stats_tracker
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.stats_logger import StatsLogger
 
 logger = logging.getLogger("GSM8K GRPO Proxy Example")
 
@@ -52,7 +48,6 @@ class ProxyWorkflow(RolloutWorkflow):
         agent_run_args: dict | None = None,
         rollout_stat_scope: str = "rollout",
         export_style: str = "concat",
-        dump_dir: str | None = None,
     ):
         self.proxy_server = proxy_server
         self.group_size = gconfig.n_samples
@@ -65,9 +60,6 @@ class ProxyWorkflow(RolloutWorkflow):
         self.agent_run_args = agent_run_args or {}
         self.rollout_stat_scope = rollout_stat_scope
         self.export_style = export_style
-        self.dump_dir = dump_dir
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
 
     async def _run_episode(self, task_id: str, data: dict):
         process_data = {
@@ -108,50 +100,6 @@ class ProxyWorkflow(RolloutWorkflow):
         )
         for reward in rewards.values():
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
-
-        if self.dump_dir is not None:
-            for session_id, session_completions in completions.items():
-                if len(session_completions) == 0:
-                    continue
-                version = list(session_completions.values())[
-                    0
-                ].model_response.output_versions[0]
-
-                dump_path = os.path.join(self.dump_dir, str(version))
-                await aiofiles.os.makedirs(dump_path, exist_ok=True)
-                # Get the unique identifier for this prompt
-                qid = None
-                for key in ["query_id", "id", "qid"]:
-                    qid = data.get(key, None)
-                    if qid is not None:
-                        qid = str(qid)
-                        break
-                qid = qid + f"_{session_id}" if qid is not None else session_id
-
-                info = f"\n=== Completion Session ID: {session_id} ===\n"
-                for i, completion in enumerate(session_completions.values()):
-                    info += f"Completion {i + 1}\n"
-                    info += "=======Input Messages=======\n"
-                    for message in completion.messages:
-                        role = message.get("role", "unknown")
-                        content = message.get("content", "")
-                        info += f"role[{role}]: {content}\n"
-                        if "tool_calls" in message:
-                            info += f"\t[tool_calls]: {message['tool_calls']}\n"
-
-                    if completion.is_completion:
-                        info += f"=======Completion=======\n{completion.completion}\n"
-                    else:
-                        info += f"=======Response=======\n{completion.response}\n"
-                    info += f"=======Reward=======\n{completion.reward}\n"
-                    info += f"=======Input Tokens=======\n{completion.model_response.input_tokens}\n"
-                    info += f"=======Output Tokens=======\n{completion.model_response.output_tokens}\n"
-                    info += "=========================\n\n"
-
-                # Dump rollout to file
-                file_path = os.path.join(dump_path, f"{qid}.txt")
-                async with aiofiles.open(file_path, "a") as f:
-                    await f.write(info + "\n")
 
         merged_completions = {}
         for session_id, session_completions in completions.items():
@@ -220,7 +168,6 @@ def main(args):
                 else config.gconfig
             )
             rollout_stat_scope = "rollout" if not is_eval else "eval-rollout"
-            dump_dir = "generated" if not is_eval else "generated-eval"
 
             server = ProxyServer(
                 rollout=rollout,
@@ -241,10 +188,6 @@ def main(args):
                 agent_run_args=config.agent_run_args,
                 rollout_stat_scope=rollout_stat_scope,
                 export_style=config.export_style,
-                dump_dir=os.path.join(
-                    StatsLogger.get_log_path(config.stats_logger),
-                    dump_dir,
-                ),
             )
             return server, workflow
 
