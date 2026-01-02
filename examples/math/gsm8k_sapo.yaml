@@ -69,7 +69,6 @@ actor:
   recompute_logprob: false
   use_decoupled_loss: false  # SAPO requires decoupled loss to be disabled
   behav_imp_weight_cap: 5.0
-  dynamic_sampling: false
   reward_norm:
     mean_level: group
     std_level: group

@@ -30,7 +30,7 @@ from areal.core.staleness_manager import StalenessManager
 from areal.core import workflow_context
 from areal.core.workflow_context import WorkflowContext
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
-from areal.utils import logging, perf_tracer
+from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf, trace_session_event
@@ -636,7 +636,10 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             return found_result.data
 
     def active_submit_and_wait(
-        self, input_generator: Generator[TInput, None, None], batch_size: int
+        self,
+        input_generator: Generator[TInput, None, None],
+        batch_size: int,
+        dynamic_bs: bool = False,
     ) -> list[TResult]:
         """Continuously submit tasks and wait until a full batch of results is ready.
 
@@ -651,18 +654,25 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             :func:`~areal.utils.data.cycle_dataloader` to wrap finite data sources.
         batch_size : int
             Number of results to collect before returning.
+        dynamic_bs : bool, optional
+            If True, enables dynamic batch sizing. The method will stop collecting
+            when (accepted + rejected) >= batch_size, returning only accepted results.
+            This results in variable-sized batches of valid data. Default is False.
 
         Returns
         -------
         list[TResult]
-            A list of ``batch_size`` task results.
+            A list of task results. When ``dynamic_bs=False``, returns exactly
+            ``batch_size`` results. When ``dynamic_bs=True``, returns up to
+            ``batch_size`` accepted results (variable-sized).
 
         Raises
         ------
         RuntimeError
             If the input generator is exhausted before the batch is complete.
         """
-        cnt = 0
+        accepted_cnt = 0
+        total_attempts = 0
         results = []
 
         while True:
@@ -696,12 +706,21 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             try:
                 res = self.wait_results(count=1, timeout=1)
                 if not res or res[0] is None:
+                    if dynamic_bs:
+                        total_attempts += 1
+                        if total_attempts >= batch_size:
+                            break
                     continue
                 assert len(res) == 1
-                cnt += 1
+                accepted_cnt += 1
+                total_attempts += 1
                 results.append(res[0])
-                if cnt >= batch_size:
-                    break
+                if dynamic_bs:
+                    if total_attempts >= batch_size:
+                        break
+                else:
+                    if accepted_cnt >= batch_size:
+                        break
             except TimeoutError:
                 pass
 
@@ -1200,6 +1219,7 @@ class WorkflowExecutor:
 
                 if should_accept_traj:
                     manager.on_rollout_accepted()
+                    stats_tracker.get("rollout").scalar(accepted=1)
                     trace_session_event(
                         "mark_finalized",
                         task_id=task_id,
@@ -1213,6 +1233,7 @@ class WorkflowExecutor:
                     return _RolloutResult(task_id=task_id, trajectory=traj)
 
                 manager.on_rollout_rejected()
+                stats_tracker.get("rollout").scalar(rejected=1)
                 trace_session_event(
                     "mark_finalized",
                     task_id=task_id,
@@ -1227,6 +1248,7 @@ class WorkflowExecutor:
 
             except Exception as exc:  # pragma: no cover - workflow execution errors
                 manager.on_rollout_rejected()
+                stats_tracker.get("rollout").scalar(rejected=1)
                 trace_session_event(
                     "mark_finalized",
                     task_id=task_id,
@@ -1367,6 +1389,7 @@ class WorkflowExecutor:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        dynamic_bs: bool = False,
     ):
         """Prepare a batch with controlled staleness.
 
@@ -1413,7 +1436,7 @@ class WorkflowExecutor:
         # Delegate to dispatcher
         assert dataloader.batch_size is not None
         results = self.dispatcher.active_submit_and_wait(
-            self.data_generator, batch_size=dataloader.batch_size
+            self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
         )
 
         # Extract trajectories and concatenate

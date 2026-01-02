@@ -229,6 +229,7 @@ class PPOTrainer:
                     workflow=workflow,
                     workflow_kwargs=workflow_kwargs,
                     should_accept_fn=dynamic_filter_fn,
+                    dynamic_bs=self.config.dynamic_bs,
                 )
 
             if self.critic is not None:

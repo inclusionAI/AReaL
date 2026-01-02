@@ -1,5 +1,4 @@
 import functools
-import warnings
 from typing import Any
 
 import numpy as np
@@ -387,67 +386,6 @@ def ppo_critic_loss_fn(
         value_loss = value_loss.mean()
 
     return value_loss, stat
-
-
-def dynamic_sampling(
-    data: dict[str, Any], group_size: int
-) -> tuple[dict[str, Any], dict[str, int]]:
-    """Filter samples by group when all rewards in a group are equal.
-
-    Assumes samples of the same group are adjacent in the batch.
-
-    Returns a new dict containing only kept samples (mask applied on batch dim
-    for all tensor values whose first dimension equals batch size), and a small
-    stats dict.
-    """
-    rewards = data["rewards"]
-    if not torch.is_tensor(rewards):
-        raise TypeError("data['rewards'] must be a torch.Tensor")
-    batch_size = rewards.shape[0]
-
-    if group_size <= 0:
-        warnings.warn("group_size <= 0; returning original data")
-        return data, dict(n_group_kept=0, n_group_filtered=0)
-
-    if batch_size % group_size != 0:
-        warnings.warn(
-            "The group size is not divisible by the batch size. Return the original data"
-        )
-        return data, dict(
-            n_group_kept=batch_size // max(group_size, 1), n_group_filtered=0
-        )
-
-    # Calculate number of groups (must be divisible)
-    num_groups = batch_size // group_size
-
-    # Reshape rewards to (num_groups, group_size) for group-wise operations
-    rewards_reshaped = rewards.view(num_groups, group_size)
-
-    # Check if all elements in each group are equal to the first element
-    all_equal = (rewards_reshaped == rewards_reshaped[:, 0:1]).all(dim=1)
-
-    # Create mask for groups to keep (where not all rewards are equal)
-    valid_groups = ~all_equal
-
-    # Expand the group mask to individual samples
-    mask = valid_groups.repeat_interleave(group_size)
-
-    # In case all group is filtered out, return the original data (although not gradient in this case)
-    if not mask.any():
-        return data, dict(n_group_kept=0, n_group_filtered=num_groups)
-
-    n_group_kept = int(valid_groups.sum().item())
-    n_group_filtered = int(num_groups - n_group_kept)
-
-    # Apply mask row-wise across tensors that share the same batch dimension
-    filtered: dict[str, Any] = {}
-    for k, v in data.items():
-        if torch.is_tensor(v) and v.shape[:1] == (batch_size,):
-            filtered[k] = v[mask]
-        else:
-            # keep untouched (e.g., scalars, metadata); caller should ensure consistency
-            filtered[k] = v
-    return filtered, dict(n_group_kept=n_group_kept, n_group_filtered=n_group_filtered)
 
 
 # code modified from VERL: https://github.com/volcengine/verl/blob/main/verl/workers/reward_manager/dapo.py
