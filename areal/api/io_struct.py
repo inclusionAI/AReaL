@@ -148,7 +148,7 @@ class WeightUpdateMeta:
         use_lora: bool = False,
         clear_checkpoint_after_load: bool = True,
         lora_name: str = "",
-        lora_int_id: int = 0,
+        lora_int_id: int = 1,
         base_model_name: str = "",
     ) -> "WeightUpdateMeta":
         from areal.utils.saver import Saver
