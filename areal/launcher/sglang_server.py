@@ -187,7 +187,7 @@ class SGLangServerWrapper:
             # Monitor server processes
             self._monitor_server_processes(server_addresses)
 
-        except:  # noqa: E722
+        except Exception:
             logger.error(traceback.format_exc())
             sys.exit(1)
 
