@@ -124,7 +124,6 @@ def main(args):
         gconfig=config.gconfig.new(temperature=0.6),
         tokenizer=tokenizer,
         enable_thinking=False,
-        rollout_stat_scope="eval-rollout",
     )
 
     # Run training.

@@ -11,6 +11,7 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 from areal.utils.dynamic_import import import_from_string
@@ -50,7 +51,6 @@ class RLVRWorkflow(RolloutWorkflow):
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
         enable_thinking: bool = False,
-        rollout_stat_scope: str = "rollout",
         get_input_ids_fn: Callable[[Any, PreTrainedTokenizerFast, bool], list[int]]
         | str = default_get_input_ids_fn,
         data_extract_prompt_fn: Callable[[dict[str, Any]], Any]
@@ -65,7 +65,6 @@ class RLVRWorkflow(RolloutWorkflow):
             self.tokenizer = tokenizer
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(self.tokenizer)
         self.enable_thinking = enable_thinking
-        self.rollout_stat_scope = rollout_stat_scope
         if not isinstance(reward_fn, str):
             self.async_reward_fn = AsyncRewardWrapper(reward_fn)
         # Support string paths for get_input_ids_fn
@@ -129,7 +128,7 @@ class RLVRWorkflow(RolloutWorkflow):
 
         reward = await self._compute_rewards(resp, prompt_str, task_data)
 
-        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
         return resp, reward
 

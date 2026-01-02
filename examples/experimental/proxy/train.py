@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from areal.api.cli_args import GenerationHyperparameters, PPOConfig, load_expr_config
 from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.dataset import get_custom_dataset
 from areal.experimental.openai.proxy import (
     ProxyServer,
@@ -46,7 +47,6 @@ class ProxyWorkflow(RolloutWorkflow):
         max_concurrent_processes: int,
         agent_module_path: str,
         agent_run_args: dict | None = None,
-        rollout_stat_scope: str = "rollout",
         export_style: str = "concat",
     ):
         self.proxy_server = proxy_server
@@ -58,7 +58,6 @@ class ProxyWorkflow(RolloutWorkflow):
             ".".join([agent_module_path, "run_and_submit"])
         )
         self.agent_run_args = agent_run_args or {}
-        self.rollout_stat_scope = rollout_stat_scope
         self.export_style = export_style
 
     async def _run_episode(self, task_id: str, data: dict):
@@ -99,7 +98,7 @@ class ProxyWorkflow(RolloutWorkflow):
             session_ids, style=self.export_style
         )
         for reward in rewards.values():
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
         merged_completions = {}
         for session_id, session_completions in completions.items():
@@ -167,7 +166,6 @@ def main(args):
                 if is_eval
                 else config.gconfig
             )
-            rollout_stat_scope = "rollout" if not is_eval else "eval-rollout"
 
             server = ProxyServer(
                 rollout=rollout,
@@ -186,7 +184,6 @@ def main(args):
                 max_concurrent_processes=num_processes // world_size,
                 agent_module_path=config.agent_module_path,
                 agent_run_args=config.agent_run_args,
-                rollout_stat_scope=rollout_stat_scope,
                 export_style=config.export_style,
             )
             return server, workflow

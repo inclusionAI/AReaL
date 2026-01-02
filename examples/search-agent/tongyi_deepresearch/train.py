@@ -16,6 +16,7 @@ from areal.api.cli_args import (
     load_expr_config,
 )
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
 from areal.experimental.trainer import PPOTrainer
@@ -47,7 +48,6 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
-        rollout_stat_scope: str = "rollout",
         n_trajs: int = 1,
         max_tokens: int = 32768,
         max_llm_calls_per_run: int = 100,
@@ -61,7 +61,6 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
         self.max_tokens = max_tokens
-        self.rollout_stat_scope = rollout_stat_scope
 
         # Search hyper-parameters
         self.n_trajs = n_trajs
@@ -116,7 +115,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
             ]
         )
         for stats in all_stats:
-            stats_tracker.get(self.rollout_stat_scope).scalar(**stats)
+            stats_tracker.get(workflow_context.stat_scope()).scalar(**stats)
 
         completions_with_rewards = {}
         for client in clients:

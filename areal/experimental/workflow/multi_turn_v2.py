@@ -9,6 +9,7 @@ from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.experimental.openai import ArealOpenAI
 from areal.utils import logging, stats_tracker
 
@@ -23,7 +24,6 @@ class MultiTurnWorkflow(RolloutWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         max_turns: int,
         turn_discount: float,
-        rollout_stat_scope: str = "rollout",
     ):
         self.reward_fn = reward_fn
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
@@ -31,7 +31,6 @@ class MultiTurnWorkflow(RolloutWorkflow):
         self.max_turns = max_turns
         self.turn_discount = turn_discount
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
-        self.rollout_stat_scope = rollout_stat_scope
 
         self.reflection_msg = [
             {
@@ -88,7 +87,9 @@ class MultiTurnWorkflow(RolloutWorkflow):
         reward = float(reward * discount)
 
         # Log reward.
-        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward, num_turns=t)
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
+            reward=reward, num_turns=t
+        )
 
         client.set_reward(_comp.id, reward)
         return client.export_interactions(), comp

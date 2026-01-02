@@ -12,6 +12,7 @@ from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.experimental.trainer import PPOTrainer
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
@@ -26,7 +27,6 @@ class CountDownWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
-        rollout_stat_scope: str = "rollout",
     ):
         if isinstance(tokenizer, str):
             from areal.utils.hf_utils import load_hf_tokenizer
@@ -34,7 +34,6 @@ class CountDownWorkflow(RolloutWorkflow):
             tokenizer = load_hf_tokenizer(tokenizer)
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
-        self.rollout_stat_scope = rollout_stat_scope
 
     async def arun_episode(self, engine: InferenceEngine, data):
         input_ids = self.tokenizer.encode(data["query"], add_special_tokens=False)
@@ -62,7 +61,7 @@ class CountDownWorkflow(RolloutWorkflow):
             )
 
             # Log reward.
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
             res = {
                 # unsqueeze to add an additional batch dimension

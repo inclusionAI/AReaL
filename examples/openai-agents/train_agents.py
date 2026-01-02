@@ -9,6 +9,7 @@ from transformers import PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.dataset import get_custom_dataset
 from areal.experimental.openai import ArealOpenAI
 from areal.experimental.trainer import PPOTrainer
@@ -70,7 +71,6 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
         reward_fn_path: str,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
-        rollout_stat_scope: str = "rollout",
     ):
         if isinstance(tokenizer, str):
             from areal.utils.hf_utils import load_hf_tokenizer
@@ -78,7 +78,6 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
             tokenizer = load_hf_tokenizer(tokenizer)
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
-        self.rollout_stat_scope = rollout_stat_scope
 
         # Search hyper-parameters
         self.agent = OpenAIAgentWrapper(
@@ -108,7 +107,7 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
             ]
         )
         for reward in rewards:
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
         interactions_with_reward = {}
         for client in clients:

@@ -9,6 +9,7 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse
+from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 from areal.utils.image import image2base64
@@ -30,14 +31,12 @@ class VisionRLVRWorkflow(RLVRWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         processor: AutoProcessor | str,
         enable_thinking: bool,
-        rollout_stat_scope: str = "rollout",
     ):
         super().__init__(
             reward_fn,
             gconfig,
             tokenizer,
             enable_thinking,
-            rollout_stat_scope=rollout_stat_scope,
         )
         if isinstance(processor, str):
             processor = AutoProcessor.from_pretrained(processor)
@@ -97,7 +96,7 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
         reward = await self._compute_rewards(resp, prompt_str, task_data)
 
-        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
         return resp, reward
 

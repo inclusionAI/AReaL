@@ -27,6 +27,8 @@ from areal.core.async_task_runner import (
     TimedResult,
 )
 from areal.core.staleness_manager import StalenessManager
+from areal.core import workflow_context
+from areal.core.workflow_context import WorkflowContext
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, perf_tracer
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
@@ -1131,6 +1133,11 @@ class WorkflowExecutor:
 
             # Set task_id in ContextVar before entering arun_episode
             perf_tracer.set_task_id(task_id)
+
+            # Set workflow execution context
+            workflow_context.set(
+                WorkflowContext(eval=pending_task.eval, task_id=task_id)
+            )
 
             manager = self.staleness_manager
             traj: dict[str, Any] | None = None

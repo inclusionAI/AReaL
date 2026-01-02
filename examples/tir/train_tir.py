@@ -50,7 +50,6 @@ def main(args):
     )
     eval_workflow_kwargs = workflow_kwargs.copy()
     eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
-    eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
 
     # Create trainer
     with PPOTrainer(config, train_dataset, valid_dataset) as trainer:

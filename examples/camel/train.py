@@ -7,6 +7,7 @@ from transformers import PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.dataset import get_custom_dataset
 from areal.experimental.camel.openai_model import AReaLOpenAICompatibleModel
 from areal.experimental.openai import ArealOpenAI
@@ -78,7 +79,6 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
-        rollout_stat_scope: str = "rollout",
         n_trajs: int = 1,
         max_tokens: int = 32768,
     ):
@@ -90,7 +90,6 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
         self.max_tokens = max_tokens
-        self.rollout_stat_scope = rollout_stat_scope
 
         # Search hyper-parameters
         self.n_trajs = n_trajs
@@ -117,7 +116,7 @@ class CamelRLVRWorkflow(RolloutWorkflow):
             ]
         )
         for reward in rewards:
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
         interactions_with_reward = {}
         for client in clients:

@@ -11,6 +11,7 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 
@@ -27,7 +28,6 @@ class MultiTurnWorkflow(RolloutWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         max_turns: int,
         turn_discount: float,
-        rollout_stat_scope: str = "rollout",
     ):
         if max_turns <= 0:
             raise ValueError("max_turns must be positive")
@@ -39,7 +39,6 @@ class MultiTurnWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer
         self.max_turns = max_turns
         self.turn_discount = turn_discount
-        self.rollout_stat_scope = rollout_stat_scope
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
 
         # Create tokens that should be amended if the answer is incorrect.
@@ -128,7 +127,9 @@ class MultiTurnWorkflow(RolloutWorkflow):
         reward = float(reward * discount)
 
         # Log reward.
-        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward, num_turns=t)
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
+            reward=reward, num_turns=t
+        )
 
         res = dict(
             input_ids=torch.tensor(seq, dtype=torch.int32),

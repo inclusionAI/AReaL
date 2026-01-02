@@ -18,6 +18,7 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 
@@ -51,7 +52,6 @@ class TIRWorkflow(RolloutWorkflow):
         tokenizer: PreTrainedTokenizerFast | str,
         tir_config: TIRConfig,
         enable_thinking: bool = False,
-        rollout_stat_scope: str = "rollout",
     ):
         super().__init__()
         if isinstance(tokenizer, str):
@@ -72,7 +72,6 @@ class TIRWorkflow(RolloutWorkflow):
         self.max_turns = tir_config.max_turns
         self.max_length = tir_config.max_length
         self.enable_thinking = enable_thinking
-        self.rollout_stat_scope = rollout_stat_scope
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
 
         self.start_markers = self.tool_manager.get_all_start_markers()
@@ -246,7 +245,7 @@ class TIRWorkflow(RolloutWorkflow):
         )
 
         # Record tool call count to stats_tracker
-        stats_tracker.get(self.rollout_stat_scope).scalar(
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
             tool_call_count=tool_call_count, tool_success_count=tool_success_count
         )
 
