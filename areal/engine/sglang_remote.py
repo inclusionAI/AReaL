@@ -249,6 +249,10 @@ class RemoteSGLangEngine(InferenceEngine):
         return self._engine.destroy()
 
     @property
+    def initialized(self) -> bool:
+        return self._engine.initialized
+
+    @property
     def workflow_executor(self) -> WorkflowExecutor:
         """Get the workflow executor of the inference engine."""
         return self._engine.workflow_executor
@@ -376,4 +380,6 @@ class RemoteSGLangEngine(InferenceEngine):
     def config_perf_tracer(
         self, config: PerfTracerConfig, rank: int, role: str
     ) -> None:
+        if perf_tracer.is_configured():
+            return
         perf_tracer.configure(config, rank=rank, role=role)

@@ -1839,6 +1839,12 @@ def configure(
         return GLOBAL_TRACER
 
 
+def is_configured() -> bool:
+    global GLOBAL_TRACER
+    with _GLOBAL_TRACER_LOCK:
+        return GLOBAL_TRACER is not None
+
+
 def reset() -> None:
     """Clear the global tracer so the next configure() call reinitializes it."""
     global GLOBAL_TRACER

@@ -15,7 +15,7 @@ from areal.utils.constants import (
     PROX_LOGP_METHOD_LOGLINEAR,
     PROX_LOGP_METHOD_METRICS,
     PROX_LOGP_METHOD_RECOMPUTE,
-    PROX_LOGP_METHODS_SKIP_FORWARD,
+    ProxLogpMethod,
 )
 from areal.utils.data import (
     KLEstimator,
@@ -122,18 +122,7 @@ class PPOActor:
 
     @trace_perf("ppo_actor.compute_logp", category="compute")
     @torch.no_grad()
-    def compute_logp(self, data: dict[str, Any]) -> torch.Tensor | None:
-        # Determine if forward pass is needed based on prox_logp_method
-        # - loglinear: Skip forward pass (use approximation)
-        # - recompute/metrics: Do forward pass
-        if self.config.use_decoupled_loss:
-            if self.config.prox_logp_method in PROX_LOGP_METHODS_SKIP_FORWARD:
-                return None  # Skip forward pass, use approximation
-        else:
-            # Standard PPO: follow recompute_logprob flag
-            if not self.config.recompute_logprob:
-                return None
-
+    def compute_logp(self, data: dict[str, Any]) -> torch.Tensor:
         self.engine.eval()
         return self.engine.forward(
             input_=data,
@@ -650,7 +639,7 @@ def _resolve_proximal_logp(
 
     # Validate configuration when prox_logp is None
     if prox_logp_is_none:
-        if prox_logp_method not in PROX_LOGP_METHODS_SKIP_FORWARD:
+        if not ProxLogpMethod(prox_logp_method).skips_forward_pass():
             raise ValueError(
                 f"prox_logp is None but prox_logp_method='{prox_logp_method}'. "
                 "This indicates compute_logp() was skipped incorrectly."

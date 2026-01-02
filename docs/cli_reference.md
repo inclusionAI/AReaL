@@ -71,6 +71,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 ### Others
 
 - [DistributedDataParallel Configuration](section-distributed-data-parallel)
+- [FP8Engine Configuration](section-fp8-engine)
 - [MegatronEngine Configuration](section-megatron-engine)
 - [PerfTracer Configuration](section-perf-tracer)
 - [Scheduler Configuration](section-scheduler)
@@ -783,6 +784,32 @@ Refer to Megatron-LM documentation for details.
 | `average_in_collective`     | boolean         | `False` | -           |
 | `fp8_param_gather`          | boolean         | `False` | -           |
 
+(section-fp8-engine)=
+
+## FP8Engine Configuration
+
+Configuration for FP8 (8-bit floating point) training.
+
+This configuration encapsulates all FP8-related parameters and can be reused across
+different engines (e.g., Megatron, FSDP). When None in the parent config, FP8 training
+is disabled.
+
+| Parameter                     | Type    | Default         | Description                                                                                                                              |
+| ----------------------------- | ------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`                        | string  | `"e4m3"`        | FP8 precision mode. Options: 'e4m3' (uniform e4m3), 'hybrid' (e4m3 for activations/weights, e5m2 for output activation gradients).       |
+| `recipe`                      | string  | `"delayed"`     | FP8 scaling recipe. Options: 'tensorwise', 'delayed', 'mxfp8' (Blackwell only), 'blockwise'.                                             |
+| `param`                       | boolean | `False`         | Keep parameters in FP8 precision to save memory. Not all parameters will be converted to fp8; for example, biases will remain unchanged. |
+| `margin`                      | integer | `0`             | Margin for FP8 scaling factor computation.                                                                                               |
+| `amax_history_len`            | integer | `1`             | Length of amax history window for scaling factor computation.                                                                            |
+| `amax_compute_algo`           | string  | `"most_recent"` | Algorithm for choosing amax value. Options: 'max' (largest in history window), 'most_recent'.                                            |
+| `wgrad`                       | boolean | `True`          | When False, override FP8 config and compute weight gradients in higher precision.                                                        |
+| `dot_product_attention`       | boolean | `False`         | Use FP8 implementation of Dot Product Attention.                                                                                         |
+| `multi_head_attention`        | boolean | `False`         | Use FP8 implementation of Multi Head Attention.                                                                                          |
+| `tp_only_amax_red`            | boolean | `False`         | Reduce FP8 AMAX only in TP or TP-CP domain.                                                                                              |
+| `first_last_layers_bf16`      | boolean | `False`         | Retain first and last N TransformerBlocks in BF16 instead of FP8.                                                                        |
+| `num_layers_at_start_in_bf16` | integer | `1`             | Number of layers at start to keep in BF16 when first_last_layers_bf16 is True.                                                           |
+| `num_layers_at_end_in_bf16`   | integer | `1`             | Number of layers at end to keep in BF16 when first_last_layers_bf16 is True.                                                             |
+
 (section-megatron-engine)=
 
 ## MegatronEngine Configuration
@@ -791,27 +818,33 @@ Configuration for Megatron-LM training framework.
 
 Refer to Megatron-LM documentation for implementation details.
 
-| Parameter                                  | Type                                                                 | Default      | Description                                                                                                         |
-| ------------------------------------------ | -------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `wrap_with_ddp`                            | boolean                                                              | `True`       | -                                                                                                                   |
-| `use_torch_fsdp2`                          | boolean                                                              | `False`      | -                                                                                                                   |
-| `use_custom_fsdp`                          | boolean                                                              | `False`      | -                                                                                                                   |
-| `ddp`                                      | [`DistributedDataParallelConfig`](section-distributed-data-parallel) | **Required** | -                                                                                                                   |
-| `virtual_pipeline_parallel_size`           | integer                                                              | `1`          | Virtual pipeline parallel size for Megatron interleaved schedule. Set to >1 to enable VPP. Default is 1 (disabled). |
-| `overlap_param_gather_with_optimizer_step` | boolean                                                              | `False`      | -                                                                                                                   |
-| `use_precision_aware_optimizer`            | boolean                                                              | `False`      | -                                                                                                                   |
-| `main_grads_dtype`                         | string                                                               | `"float32"`  | -                                                                                                                   |
-| `main_params_dtype`                        | string                                                               | `"float32"`  | -                                                                                                                   |
-| `exp_avg_dtype`                            | string                                                               | `"float32"`  | -                                                                                                                   |
-| `exp_avg_sq_dtype`                         | string                                                               | `"float32"`  | -                                                                                                                   |
-| `async_save`                               | boolean                                                              | `False`      | -                                                                                                                   |
-| `use_checkpoint_opt_param_scheduler`       | boolean                                                              | `True`       | -                                                                                                                   |
-| `use_deterministic_algorithms`             | boolean                                                              | `False`      | -                                                                                                                   |
-| `recompute_granularity`                    | string \| None                                                       | `"full"`     | -                                                                                                                   |
-| `recompute_method`                         | string \| None                                                       | `"uniform"`  | -                                                                                                                   |
-| `recompute_num_layers`                     | integer \| None                                                      | `1`          | -                                                                                                                   |
-| `distribute_saved_activations`             | boolean \| None                                                      | `None`       | -                                                                                                                   |
-| `recompute_modules`                        | list of string \| None                                               | `None`       | -                                                                                                                   |
+| Parameter                                  | Type                                                                 | Default      | Description                                                                                                                                             |
+| ------------------------------------------ | -------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wrap_with_ddp`                            | boolean                                                              | `True`       | -                                                                                                                                                       |
+| `use_torch_fsdp2`                          | boolean                                                              | `False`      | -                                                                                                                                                       |
+| `use_custom_fsdp`                          | boolean                                                              | `False`      | -                                                                                                                                                       |
+| `ddp`                                      | [`DistributedDataParallelConfig`](section-distributed-data-parallel) | **Required** | -                                                                                                                                                       |
+| `virtual_pipeline_parallel_size`           | integer                                                              | `1`          | Virtual pipeline parallel size for Megatron interleaved schedule. Set to >1 to enable VPP. Default is 1 (disabled).                                     |
+| `overlap_param_gather_with_optimizer_step` | boolean                                                              | `False`      | -                                                                                                                                                       |
+| `use_precision_aware_optimizer`            | boolean                                                              | `False`      | -                                                                                                                                                       |
+| `main_grads_dtype`                         | string                                                               | `"float32"`  | -                                                                                                                                                       |
+| `main_params_dtype`                        | string                                                               | `"float32"`  | -                                                                                                                                                       |
+| `exp_avg_dtype`                            | string                                                               | `"float32"`  | -                                                                                                                                                       |
+| `exp_avg_sq_dtype`                         | string                                                               | `"float32"`  | -                                                                                                                                                       |
+| `async_save`                               | boolean                                                              | `False`      | -                                                                                                                                                       |
+| `use_checkpoint_opt_param_scheduler`       | boolean                                                              | `True`       | -                                                                                                                                                       |
+| `use_deterministic_algorithms`             | boolean                                                              | `False`      | -                                                                                                                                                       |
+| `recompute_granularity`                    | string \| None                                                       | `"full"`     | -                                                                                                                                                       |
+| `recompute_method`                         | string \| None                                                       | `"uniform"`  | -                                                                                                                                                       |
+| `recompute_num_layers`                     | integer \| None                                                      | `1`          | -                                                                                                                                                       |
+| `distribute_saved_activations`             | boolean \| None                                                      | `None`       | -                                                                                                                                                       |
+| `recompute_modules`                        | list of string \| None                                               | `None`       | -                                                                                                                                                       |
+| `moe_router_dtype`                         | string \| None                                                       | `"fp32"`     | -                                                                                                                                                       |
+| `moe_shared_expert_overlap`                | boolean                                                              | `False`      | Enable overlapping between shared expert computations and dispatcher communications. Without this, the shared experts execute after the routed experts. |
+| `moe_enable_deepep`                        | boolean                                                              | `False`      | -                                                                                                                                                       |
+| `moe_token_dispatcher_type`                | string                                                               | `"alltoall"` | Type of token dispatcher. Options: 'allgather','alltoall' and 'flex'.                                                                                   |
+| `moe_permute_fusion`                       | boolean                                                              | `False`      | Fuse token rearrangement ops during token dispatching.                                                                                                  |
+| `fp8_config`                               | [`FP8EngineConfig`](section-fp8-engine) \| None                      | `None`       | -                                                                                                                                                       |
 
 (section-perf-tracer)=
 
@@ -865,6 +898,8 @@ Configuration class: SchedulingSpec
 | `additional_bash_cmds` | list of string \| None | `None`                                       | Additional bash commands to setup the container before running the torchrun command. Only used by slurm.                       |
 | `container_type`       | string                 | `"apptainer"`                                | Type of containers used in slurm **Choices:** `apptainer`, `none`                                                              |
 | `mount`                | string                 | `"/storage:/storage"`                        | Mount path for slurm.                                                                                                          |
+| `nodelist`             | string \| None         | `None`                                       | sbatch/srun's `--nodelist` option for slurm.                                                                                   |
+| `exclude`              | string \| None         | `None`                                       | sbatch/srun's `--exclude` option for slurm.                                                                                    |
 
 (section-scheduling-strategy)=
 

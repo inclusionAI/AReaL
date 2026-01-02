@@ -12,7 +12,9 @@ from megatron.core import parallel_state as mpu
 from safetensors import safe_open
 
 from areal.models.mcore.registry import unwrap_to_gpt_model
+from areal.platforms import current_platform
 from areal.utils import logging
+from areal.utils.fp8 import dequantize_params
 
 logger = logging.getLogger("HFLoader")
 
@@ -22,6 +24,15 @@ def _get_tp_slice(shape, dim, tp_rank, tp_size) -> tuple:
     res = [slice(None) for _ in range(dim)]
     res.append(slice(tp_rank * size_per_tp, (tp_rank + 1) * size_per_tp))
     return tuple(res)
+
+
+def _get_shape(obj) -> list:
+    """Get shape from either a tensor or PySafeSlice object."""
+    if isinstance(obj, torch.Tensor):
+        return list(obj.shape)
+    else:
+        # PySafeSlice object
+        return obj.get_shape()
 
 
 def _weight_to_mcore_tp(
@@ -46,7 +57,7 @@ def _weight_to_mcore_tp(
         group_dim = head_dim * num_attention_heads // num_key_value_heads
         q, k, v = hf_weights_safe_slice
         # q k v might be tp split
-        real_num_key_value_heads = q.get_shape()[0] // group_dim
+        real_num_key_value_heads = _get_shape(q)[0] // group_dim
         s = _get_tp_slice((real_num_key_value_heads * group_dim,), 0, tp_rank, tp_size)
         q = q[s].reshape(
             real_num_key_value_heads // tp_size,
@@ -67,32 +78,36 @@ def _weight_to_mcore_tp(
         gate, up = hf_weights_safe_slice
         # chunk 0 for TP split
         gate = gate[
-            _get_tp_slice(gate.get_shape(), dim=0, tp_rank=tp_rank, tp_size=tp_size)
+            _get_tp_slice(_get_shape(gate), dim=0, tp_rank=tp_rank, tp_size=tp_size)
         ]
-        up = up[_get_tp_slice(up.get_shape(), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
+        up = up[_get_tp_slice(_get_shape(up), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
         res = torch.cat([gate, up], dim=0)
     elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
         assert len(hf_weights_safe_slice) == 1
         x = hf_weights_safe_slice[0]
-        shape = x.get_shape()
+        shape = _get_shape(x)
         # dim 1 chunk
-        res = x[_get_tp_slice(shape, dim=1, tp_rank=tp_rank, tp_size=tp_size)]
+        partition_dim = 1
+        res = x[
+            _get_tp_slice(shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)
+        ]
     else:
         assert len(hf_weights_safe_slice) == 1
         x = hf_weights_safe_slice[0]
-        if mcore_param_shape == x.get_shape():
-            res = x[:]
+        x_shape = _get_shape(x)
+        partition_dim = None
+        if mcore_param_shape == x_shape:
+            res = x[:] if not isinstance(x, torch.Tensor) else x
         else:
-            assert len(x.get_shape()) == len(mcore_param_shape)
-            for partition_dim, (s1, s2) in enumerate(
-                zip(x.get_shape(), mcore_param_shape)
-            ):
+            assert len(x_shape) == len(mcore_param_shape)
+            for dim, (s1, s2) in enumerate(zip(x_shape, mcore_param_shape)):
                 if s1 != s2:
+                    partition_dim = dim
                     break
             # chunk on `partition_dim`
             res = x[
                 _get_tp_slice(
-                    x.get_shape(), dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size
+                    x_shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size
                 )
             ]
     if dtype is not None:
@@ -115,27 +130,59 @@ def _load_weight_with_bridge_worker(
             for name in f.keys():
                 all_slices[name] = f.get_slice(name)
 
+    quantization_config = getattr(bridge.hf_config, "quantization_config", None)
+
     for local_name in local_names:
         hf_names = local_to_hf_map[local_name]
         param = state_dict[local_name]
 
-        if "experts" in local_name:
+        if "experts" in local_name and "shared_experts" not in local_name:
             tp_size = mpu.get_expert_tensor_parallel_world_size()
             tp_rank = mpu.get_expert_tensor_parallel_rank()
         else:
             tp_size = mpu.get_tensor_model_parallel_world_size()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
+        # Check if any HF weight is FP8 (has _scale_inv suffix)
+        # If fp8 mode is not enabled in megatron,
+        # we need to dequantize FP8 weights before converting to mcore format
+        # Now only support FP8 dequantization
+        hf_weights_safe_slice = []
+
+        for hf_name in hf_names:
+            if "_scale_inv" in hf_name:
+                continue
+            hf_slice = all_slices[hf_name]
+            scale_inv_name = f"{hf_name}_scale_inv"
+            if scale_inv_name in all_slices:
+                # HF weight is FP8, dequantize to higher precision (bf16)
+                # TODO: convert pytorch fp8 to te fp8 directly
+                device = torch.device(current_platform.device_type)
+                weight = hf_slice[:].to(device)
+                scale_inv = all_slices[scale_inv_name][:].to(device)
+                dequantized_weight = dequantize_params(
+                    weight,
+                    scale_inv,
+                    dst_dtype=bridge.dtype,
+                    quantization_config=quantization_config,
+                )
+                dequantized_weight = dequantized_weight.cpu()
+                hf_weights_safe_slice.append(dequantized_weight)
+            else:
+                hf_weights_safe_slice.append(hf_slice)
+
         param_to_load = _weight_to_mcore_tp(
             hf_config=bridge.hf_config,
             mcore_weights_name=local_name,
             mcore_param_shape=list(param.shape),
-            hf_weights_safe_slice=[all_slices[hf_name] for hf_name in hf_names],
+            hf_weights_safe_slice=hf_weights_safe_slice,
             tp_rank=tp_rank,
             tp_size=tp_size,
             dtype=bridge.dtype,
         )
-        # load
+
+        # Load the parameter
+        # NOTE: for megatron FP8 param, `param.copy_` will do quantization internally
         param.copy_(param_to_load, non_blocking=True)
 
 
@@ -272,9 +319,17 @@ def load_weights_from_hf_with_mbridge_fast(
             if is_critic and "output_layer" in local_name:
                 continue
             for name in hf_names:
+                if "_scale_inv" in name:
+                    continue
                 filename = index[name]
                 if filename not in local_to_file_map[local_name]:
                     local_to_file_map[local_name].append(filename)
+                # Also include the scale_inv file if it exists
+                scale_inv_name = f"{name}_scale_inv"
+                if scale_inv_name in index:
+                    scale_inv_filename = index[scale_inv_name]
+                    if scale_inv_filename not in local_to_file_map[local_name]:
+                        local_to_file_map[local_name].append(scale_inv_filename)
 
         grouped_local_names, grouped_filenames = make_filename_bins(local_to_file_map)
 

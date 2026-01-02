@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from areal.api.cli_args import BaseExperimentConfig, SchedulingSpec
+from areal.api.cli_args import (
+    BaseExperimentConfig,
+    SchedulingSpec,
+    SchedulingStrategy,
+    SchedulingStrategyType,
+)
 from areal.api.scheduler_api import Job
 from areal.scheduler.exceptions import (
     EngineCreationError,
@@ -344,3 +349,157 @@ def test_scheduler_no_config_no_gpus_fails():
         ValueError, match="experiment_name and trial_name must be provided"
     ):
         SlurmScheduler()
+
+
+# ============================================================================
+# Colocation Tests
+# ============================================================================
+
+
+def test_create_workers_with_colocate_strategy(scheduler):
+    """Test colocation reuses existing workers from target role."""
+    # Create target role first
+    actor_job = Job(
+        role="actor",
+        replicas=2,
+        tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
+    )
+    actor_ids = scheduler.create_workers(actor_job)
+    scheduler.get_workers("actor", timeout=180)
+
+    # Create colocated role
+    ref_job = Job(
+        role="ref",
+        replicas=2,
+        tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.colocation, target="actor"
+        ),
+    )
+    ref_ids = scheduler.create_workers(ref_job)
+
+    # Verify colocated role returns the SAME worker IDs as target role
+    assert ref_ids == actor_ids
+
+    # Verify colocation tracking is set up correctly
+    assert "ref" in scheduler._colocated_roles
+    assert scheduler._colocated_roles["ref"] == "actor"
+    assert scheduler._role_to_workers["ref"] == actor_ids
+
+    # Cleanup
+    scheduler.delete_workers()
+
+
+def test_get_workers_for_colocated_role_delegates_to_target(scheduler):
+    """Test that get_workers for colocated role returns target's workers."""
+    # Create target role
+    actor_job = Job(
+        role="actor",
+        replicas=2,
+        tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
+    )
+    scheduler.create_workers(actor_job)
+    actor_workers = scheduler.get_workers("actor", timeout=180)
+
+    # Create colocated role
+    ref_job = Job(
+        role="ref",
+        replicas=2,
+        tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.colocation, target="actor"
+        ),
+    )
+    scheduler.create_workers(ref_job)
+    ref_workers = scheduler.get_workers("ref", timeout=60)
+
+    # Verify same worker info is returned
+    assert len(ref_workers) == len(actor_workers)
+    for ref_w, actor_w in zip(ref_workers, actor_workers):
+        assert ref_w.id == actor_w.id
+        assert ref_w.ip == actor_w.ip
+        assert ref_w.worker_ports == actor_w.worker_ports
+
+    # Cleanup
+    scheduler.delete_workers()
+
+
+def test_delete_colocated_role_does_not_kill_processes(scheduler):
+    """Test deleting colocated role only removes mapping, not actual workers."""
+    # Create target role
+    actor_job = Job(
+        role="actor",
+        replicas=2,
+        tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
+    )
+    scheduler.create_workers(actor_job)
+    scheduler.get_workers("actor", timeout=180)
+
+    # Create colocated role
+    ref_job = Job(
+        role="ref",
+        replicas=2,
+        tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.colocation, target="actor"
+        ),
+    )
+    scheduler.create_workers(ref_job)
+
+    # Delete colocated role
+    scheduler.delete_workers("ref")
+
+    # Verify colocated role is removed from tracking
+    assert "ref" not in scheduler._colocated_roles
+    assert "ref" not in scheduler._role_to_workers
+
+    # Verify target role workers are still available
+    actor_workers = scheduler.get_workers("actor", timeout=60)
+    assert len(actor_workers) == 2
+
+    # Cleanup
+    scheduler.delete_workers()
+
+
+def test_colocation_replica_mismatch_raises_error(scheduler):
+    """Test that colocation fails if replica count doesn't match target."""
+    # Create target role
+    actor_job = Job(
+        role="actor",
+        replicas=2,
+        tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
+    )
+    scheduler.create_workers(actor_job)
+    scheduler.get_workers("actor", timeout=180)
+
+    # Try to create colocated role with different replica count
+    ref_job = Job(
+        role="ref",
+        replicas=3,  # Mismatch!
+        tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.colocation, target="actor"
+        ),
+    )
+
+    with pytest.raises(WorkerCreationError, match="Replica count mismatch"):
+        scheduler.create_workers(ref_job)
+
+    # Cleanup
+    scheduler.delete_workers()
+
+
+def test_colocation_target_not_found_raises_error(scheduler):
+    """Test that colocation fails if target role doesn't exist."""
+    # Create colocated role without target
+    ref_job = Job(
+        role="ref",
+        replicas=2,
+        tasks=[SchedulingSpec(cpu=2, gpu=4, mem=4, port_count=2)],
+        scheduling_strategy=SchedulingStrategy(
+            type=SchedulingStrategyType.colocation, target="nonexistent"
+        ),
+    )
+
+    with pytest.raises(WorkerNotFoundError):
+        scheduler.create_workers(ref_job)

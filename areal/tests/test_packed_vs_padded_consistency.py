@@ -76,7 +76,7 @@ def test_llm_consistency(model_path, mock_padded_llm_data):
     engine = FSDPEngine(config)
     engine.create_process_group()
     engine._create_device_model()
-    engine.initialized = True
+    engine._initialized = True
 
     try:
         # Prepare padded input
@@ -243,7 +243,7 @@ def test_vlm_consistency(model_path):
     engine = FSDPEngine(config)
     engine.create_process_group()
     engine._create_device_model()
-    engine.initialized = True
+    engine._initialized = True
 
     padded_input = mock_padded_vlm_data(model_path)
 
