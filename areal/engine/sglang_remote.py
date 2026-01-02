@@ -299,13 +299,13 @@ class RemoteSGLangEngine(InferenceEngine):
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
-            data,
-            workflow,
-            workflow_kwargs,
-            should_accept_fn,
-            task_id,
-            callback_addr,
-            eval,
+            data=data,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
+            task_id=task_id,
+            callback_addr=callback_addr,
+            eval=eval,
         )
 
     def wait(
