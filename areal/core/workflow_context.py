@@ -8,13 +8,13 @@ class WorkflowContext:
 
     Attributes
     ----------
-    eval : bool
+    is_eval : bool
         Whether the workflow is running in evaluation mode.
     task_id : int | None
         The task ID assigned by the workflow executor.
     """
 
-    eval: bool = False
+    is_eval: bool = False
     task_id: int | None = None
 
 
@@ -41,4 +41,4 @@ def stat_scope() -> str:
     str
         "eval-rollout" if in eval mode, "rollout" otherwise.
     """
-    return "eval-rollout" if get().eval else "rollout"
+    return "eval-rollout" if get().is_eval else "rollout"

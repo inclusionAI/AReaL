@@ -770,7 +770,7 @@ class RemoteInfEngine(InferenceEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
         callback_addr: str | None = None,
-        eval: bool = False,
+        is_eval: bool = False,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -786,7 +786,7 @@ class RemoteInfEngine(InferenceEngine):
             A function or module path for trajectory filtering
         task_id : int, optional
             The task ID to use. If None, a new task ID will be generated internally.
-        eval : bool, optional
+        is_eval : bool, optional
             Whether this is an evaluation workflow. Affects variables like trajectory dump path
             and statistics keys. By default False.
         """
@@ -799,7 +799,7 @@ class RemoteInfEngine(InferenceEngine):
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
             task_id=task_id,
-            eval=eval,
+            is_eval=is_eval,
         )
 
     def wait(

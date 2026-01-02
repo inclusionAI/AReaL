@@ -230,7 +230,7 @@ class _RolloutTaskInput:
     data: dict[str, Any]
     workflow: RolloutWorkflow
     should_accept_fn: Callable[[dict[str, Any]], bool] | None = None
-    eval: bool = False
+    is_eval: bool = False
 
 
 @dataclass
@@ -792,8 +792,8 @@ class WorkflowExecutor:
             self._tokenizer = load_hf_tokenizer(tokenizer_path)
             return self._tokenizer
 
-    def _get_dump_dir(self, eval: bool) -> str | None:
-        """Get the dump directory based on config and eval flag."""
+    def _get_dump_dir(self, is_eval: bool) -> str | None:
+        """Get the dump directory based on config and is_eval flag."""
         config = self.config
         if not config.fileroot or not config.experiment_name or not config.trial_name:
             return None
@@ -805,19 +805,19 @@ class WorkflowExecutor:
             trial_name=self.config.trial_name,
             fileroot=self.config.fileroot,
         )
-        subdir = "eval-rollout" if eval else "rollout"
+        subdir = "eval-rollout" if is_eval else "rollout"
         return os.path.join(log_path, subdir)
 
     async def _dump_trajectory(
         self,
         traj: dict[str, Any] | None,
         task_id: int,
-        eval: bool,
+        is_eval: bool,
     ) -> tuple[bool, str]:
         if traj is None:
             return False, "trajectory is None"
 
-        dump_dir = self._get_dump_dir(eval)
+        dump_dir = self._get_dump_dir(is_eval)
         if dump_dir is None:
             return False, "dump dir is empty"
 
@@ -1136,7 +1136,7 @@ class WorkflowExecutor:
 
             # Set workflow execution context
             workflow_context.set(
-                WorkflowContext(eval=pending_task.eval, task_id=task_id)
+                WorkflowContext(is_eval=pending_task.is_eval, task_id=task_id)
             )
 
             manager = self.staleness_manager
@@ -1191,7 +1191,7 @@ class WorkflowExecutor:
                 # Dump trajectory to file
                 if self.config.dump_to_file:
                     dump_success, dump_reason = await self._dump_trajectory(
-                        traj, task_id, pending_task.eval
+                        traj, task_id, pending_task.is_eval
                     )
                     if not dump_success:
                         self.logger.warning(
@@ -1252,7 +1252,7 @@ class WorkflowExecutor:
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
-        eval: bool = False,
+        is_eval: bool = False,
     ) -> int:
         """Submit a rollout request to the workflow executor.
 
@@ -1273,7 +1273,7 @@ class WorkflowExecutor:
             workflow=resolved_workflow,
             should_accept_fn=resolved_should_accept_fn,
             task_id=task_id,
-            eval=eval,
+            is_eval=is_eval,
         )
 
         # Delegate to dispatcher

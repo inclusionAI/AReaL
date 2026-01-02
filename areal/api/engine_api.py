@@ -699,7 +699,7 @@ class InferenceEngine(abc.ABC):
         should_accept_fn: Callable | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         task_id: int | None = None,
-        eval: bool = False,
+        is_eval: bool = False,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -725,7 +725,7 @@ class InferenceEngine(abc.ABC):
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
         task_id : int, optional
             The task ID to use. If None, a new task ID will be generated internally.
-        eval : bool, optional
+        is_eval : bool, optional
             Whether this is an evaluation workflow. Affects variables like trajectory dump path
             and statistics keys. By default False.
 

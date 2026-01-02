@@ -295,7 +295,7 @@ class RemoteSGLangEngine(InferenceEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
         callback_addr: str | None = None,
-        eval: bool = False,
+        is_eval: bool = False,
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
@@ -305,7 +305,7 @@ class RemoteSGLangEngine(InferenceEngine):
             should_accept_fn=should_accept_fn,
             task_id=task_id,
             callback_addr=callback_addr,
-            eval=eval,
+            is_eval=is_eval,
         )
 
     def wait(
