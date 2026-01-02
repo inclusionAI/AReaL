@@ -1232,6 +1232,10 @@ class InferenceEngineConfig:
 
     experiment_name: str | None = None
     trial_name: str | None = None
+    fileroot: str | None = field(
+        default=None,
+        metadata={"help": "Root directory for logs and trajectory dumps."},
+    )
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={
@@ -1270,6 +1274,14 @@ class InferenceEngineConfig:
     schedule_policy: str = field(
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
+    )
+    tokenizer_path: str = field(
+        default="",
+        metadata={"help": "Path to tokenizer for trajectory text decoding."},
+    )
+    dump_to_file: bool = field(
+        default=False,
+        metadata={"help": "Whether to dump the trajectories to files under fileroot."},
     )
     setup_timeout: float = field(
         default=300.0,

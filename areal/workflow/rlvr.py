@@ -1,12 +1,8 @@
 import asyncio
-import os
 import uuid
 from collections.abc import Callable
 from typing import Any
 
-import aiofiles
-import aiofiles.os
-import colorama
 import torch
 from transformers import PreTrainedTokenizerFast
 
@@ -55,7 +51,6 @@ class RLVRWorkflow(RolloutWorkflow):
         tokenizer: PreTrainedTokenizerFast | str,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
-        dump_dir: str | None = None,
         get_input_ids_fn: Callable[[Any, PreTrainedTokenizerFast, bool], list[int]]
         | str = default_get_input_ids_fn,
         data_extract_prompt_fn: Callable[[dict[str, Any]], Any]
@@ -70,7 +65,6 @@ class RLVRWorkflow(RolloutWorkflow):
             self.tokenizer = tokenizer
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(self.tokenizer)
         self.enable_thinking = enable_thinking
-        self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
         if not isinstance(reward_fn, str):
             self.async_reward_fn = AsyncRewardWrapper(reward_fn)
@@ -82,8 +76,6 @@ class RLVRWorkflow(RolloutWorkflow):
         if isinstance(data_extract_prompt_fn, str):
             data_extract_prompt_fn = import_from_string(data_extract_prompt_fn)
         self.data_extract_prompt_fn = data_extract_prompt_fn
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
 
     @trace_session("reward")
     async def _compute_rewards(
@@ -91,7 +83,7 @@ class RLVRWorkflow(RolloutWorkflow):
         resp: ModelResponse,
         prompt_str: str,
         task_data: dict[str, Any],
-    ) -> tuple[float, str]:
+    ) -> float:
         """Decode completion and compute reward.
 
         Traces reward phase execution for SessionTracer. Decodes output tokens
@@ -99,8 +91,8 @@ class RLVRWorkflow(RolloutWorkflow):
 
         Returns
         -------
-        tuple[float, str]
-            Reward value and decoded completion string.
+        float
+            Reward value.
         """
         completions_str = self.tokenizer.decode(resp.output_tokens)
         reward = await self.async_reward_fn(
@@ -111,7 +103,7 @@ class RLVRWorkflow(RolloutWorkflow):
             **task_data,
         )
 
-        return reward, completions_str
+        return reward
 
     @session_context()
     async def _collect_samples(
@@ -120,7 +112,7 @@ class RLVRWorkflow(RolloutWorkflow):
         req: ModelRequest,
         prompt_str: str,
         task_data: dict[str, Any],
-    ) -> tuple[ModelResponse, float, str]:
+    ) -> tuple[ModelResponse, float]:
         """Generate one sample and compute its reward.
 
         Registers a new session for this sample, calls engine.agenerate,
@@ -129,19 +121,17 @@ class RLVRWorkflow(RolloutWorkflow):
 
         Returns
         -------
-        tuple[ModelResponse, float, str]
-            Model response, reward value, and completion string.
+        tuple[ModelResponse, float]
+            Model response and reward value.
         """
         async with atrace_session_phase("generate"):
             resp = await engine.agenerate(req)
 
-        reward, completions_str = await self._compute_rewards(
-            resp, prompt_str, task_data
-        )
+        reward = await self._compute_rewards(resp, prompt_str, task_data)
 
         stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        return resp, reward, completions_str
+        return resp, reward
 
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
@@ -164,9 +154,7 @@ class RLVRWorkflow(RolloutWorkflow):
             tokenizer=self.tokenizer,
         )
 
-        version = engine.get_version()
         prompt_str = self.tokenizer.decode(input_ids)
-        prompt_strs = [prompt_str] * n_samples
 
         # Generate responses and collect rewards
         sample_results = await asyncio.gather(
@@ -176,9 +164,9 @@ class RLVRWorkflow(RolloutWorkflow):
             ]
         )
         if sample_results:
-            resps, rewards, completions_strs = map(list, zip(*sample_results))
+            resps, rewards = map(list, zip(*sample_results))
         else:
-            resps, rewards, completions_strs = [], [], []
+            resps, rewards = [], []
 
         # Build result tensors
         results = []
@@ -198,35 +186,5 @@ class RLVRWorkflow(RolloutWorkflow):
             }
             res = {k: v.unsqueeze(0) for k, v in res.items()}
             results.append(res)
-
-        if self.dump_dir is not None:
-            dump_path = os.path.join(self.dump_dir, str(version))
-            await aiofiles.os.makedirs(dump_path, exist_ok=True)
-
-            # Get the unique identifier for this prompt
-            qid = None
-            for key in ["query_id", "id", "qid"]:
-                qid = data.get(key, None)
-                if qid is not None:
-                    break
-            qid = qid or uuid.uuid4().hex
-
-            # Dump rollout to file
-            file_path = os.path.join(dump_path, f"{qid}.txt")
-            seqlens = [
-                len(resp.input_tokens) + len(resp.output_tokens) for resp in resps
-            ]
-            async with aiofiles.open(file_path, "a") as f:
-                for i, (prompt, completion, reward, seqlen) in enumerate(
-                    zip(prompt_strs, completions_strs, rewards, seqlens)
-                ):
-                    info = "\n".join(
-                        [
-                            f"idx: {i + 1} / {n_samples}, seqlen: {seqlen}, reward is {reward}.",
-                            f"prompt is \n{colorama.Fore.YELLOW + colorama.Style.DIM}{prompt}{colorama.Style.RESET_ALL}",
-                            f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{completion}{colorama.Style.RESET_ALL}",
-                        ]
-                    )
-                    await f.write(info + "\n")
 
         return concat_padded_tensors(results)

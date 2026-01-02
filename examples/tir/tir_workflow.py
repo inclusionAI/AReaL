@@ -52,7 +52,6 @@ class TIRWorkflow(RolloutWorkflow):
         tir_config: TIRConfig,
         enable_thinking: bool = False,
         rollout_stat_scope: str = "rollout",
-        dump_dir: str | None = None,
     ):
         super().__init__()
         if isinstance(tokenizer, str):
@@ -74,7 +73,6 @@ class TIRWorkflow(RolloutWorkflow):
         self.max_length = tir_config.max_length
         self.enable_thinking = enable_thinking
         self.rollout_stat_scope = rollout_stat_scope
-        self.dump_dir = dump_dir
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
 
         self.start_markers = self.tool_manager.get_all_start_markers()

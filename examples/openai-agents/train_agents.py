@@ -1,5 +1,4 @@
 import asyncio
-import os
 from dataclasses import dataclass, field
 
 from agents import Agent as OpenAIAgent
@@ -16,7 +15,6 @@ from areal.experimental.trainer import PPOTrainer
 from areal.utils import stats_tracker
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.stats_logger import StatsLogger
 
 
 class OpenAIAgentWrapper:
@@ -72,7 +70,6 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
         reward_fn_path: str,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
-        dump_dir: str | None = None,
         rollout_stat_scope: str = "rollout",
     ):
         if isinstance(tokenizer, str):
@@ -81,10 +78,7 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
             tokenizer = load_hf_tokenizer(tokenizer)
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
-        self.dump_dir = dump_dir
         self.rollout_stat_scope = rollout_stat_scope
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
 
         # Search hyper-parameters
         self.agent = OpenAIAgentWrapper(
@@ -169,14 +163,8 @@ def main(args):
         reward_fn_path=config.reward_fn_path,
         gconfig=config.gconfig,
         tokenizer=config.tokenizer_path,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
     eval_workflow_kwargs = workflow_kwargs.copy()
-    eval_workflow_kwargs["dump_dir"] = os.path.join(
-        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-    )
 
     with PPOTrainer(
         config,
