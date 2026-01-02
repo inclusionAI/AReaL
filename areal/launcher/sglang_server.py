@@ -175,21 +175,15 @@ class SGLangServerWrapper:
             launch_server_args.append((cmd, host_ip, server_port, node_rank))
             server_addresses.append(f"http://{host_ip}:{server_port}")
 
-        # Store processes in instance variable instead of local variable
-        try:
-            with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
-                server_iterator = executor.map(
-                    lambda args: self.launch_one_server(*args), launch_server_args
-                )
-                # Collect all server processes
-                self.server_processes = list(server_iterator)
+        with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
+            server_iterator = executor.map(
+                lambda args: self.launch_one_server(*args), launch_server_args
+            )
+            # Collect all server processes
+            self.server_processes = list(server_iterator)
 
-            # Monitor server processes
-            self._monitor_server_processes(server_addresses)
-
-        except:  # noqa: E722
-            logger.error(traceback.format_exc())
-            sys.exit(1)
+        # Monitor server processes
+        self._monitor_server_processes(server_addresses)
 
     def launch_one_server(self, cmd, host_ip, server_port, node_rank):
         server_process = launch_server_cmd(cmd)
@@ -227,6 +221,9 @@ def launch_sglang_server(argv):
 def main(argv):
     try:
         launch_sglang_server(argv)
+    except Exception:
+        logger.error(traceback.format_exc())
+        sys.exit(1)
     finally:
         kill_process_tree(os.getpid(), graceful=True)
 
