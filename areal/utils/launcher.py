@@ -10,6 +10,9 @@ import time
 from pathlib import Path
 
 from areal.api.alloc_mode import AllocationMode, AllocationType
+from areal.api.cli_args import (
+    SGLangConfig,
+)
 from areal.utils import logging, name_resolve, names, pkg_version
 
 logger = logging.getLogger("LauncherUtils")
@@ -159,14 +162,17 @@ def validate_config_for_distributed_launcher(config):
             raise ValueError("Currently only support vLLM TP size <= #GPUs per node.")
 
 
-def apply_sglang_patch():
-    p = Path(os.path.dirname(__file__))
-    patch_path = str(
-        p.parent.parent
-        / "patch"
-        / "sglang"
-        / f"v{pkg_version.get_version('sglang')}.patch"
-    )
+def _get_sglang_install_info():
+    """Get SGLang installation path and patch binary location.
+
+    Returns:
+        tuple: (target_path, patch_binary) where target_path is the SGLang
+               installation directory and patch_binary is the path to patch command.
+
+    Raises:
+        RuntimeError: If SGLang installation path cannot be determined or patch
+                     command is not found.
+    """
     target_path = None
     sglang_meta = subprocess.check_output(
         [sys.executable, "-m", "pip", "show", "sglang"]
@@ -193,6 +199,32 @@ def apply_sglang_patch():
         raise RuntimeError(
             "Could not locate the `patch` command; SGLang patch application failed."
         )
+
+    return target_path, patch_binary
+
+
+def _apply_fast_load_patch(config: SGLangConfig):
+    """Apply fast load or multithread load patch to SGLang installation.
+
+    Args:
+        config: SGLang configuration containing enable_fast_load and
+                enable_multithread_load flags.
+
+    Raises:
+        RuntimeError: If patch application fails.
+    """
+
+    p = Path(os.path.dirname(__file__))
+    patch_path = str(
+        p.parent.parent
+        / "patch"
+        / "sglang"
+        / "fast_load"
+        / f"v{pkg_version.get_version('sglang')}.patch"
+    )
+
+    target_path, patch_binary = _get_sglang_install_info()
+
     result = subprocess.run(
         [patch_binary, "-p1", "-N", "-i", patch_path],
         cwd=target_path,
@@ -220,3 +252,71 @@ def apply_sglang_patch():
         raise RuntimeError(
             f"SGLang patch {patch_path} failed with exit code {result.returncode}."
         )
+
+
+def _apply_routing_replay_patch():
+    """Apply routing replay patch to SGLang installation.
+
+    Raises:
+        RuntimeError: If patch file doesn't exist or patch application fails.
+    """
+    # if sglang version >= 0.5.7, routing_replay is built-in
+    if pkg_version.get_version("sglang") >= "0.5.7":
+        return
+
+    p = Path(os.path.dirname(__file__))
+    routing_replay_patch = (
+        p.parent.parent
+        / "patch"
+        / "sglang"
+        / "routing_replay"
+        / f"v{pkg_version.get_version('sglang')}.patch"
+    )
+
+    if not routing_replay_patch.exists():
+        raise RuntimeError(
+            f"Routing_replay patch file {routing_replay_patch} does not exist."
+        )
+
+    target_path, patch_binary = _get_sglang_install_info()
+
+    result = subprocess.run(
+        [patch_binary, "-p2", "-N", "-i", str(routing_replay_patch)],
+        cwd=target_path,
+        capture_output=True,
+        text=True,
+    )
+
+    output = (result.stdout or "") + (result.stderr or "")
+    if result.returncode == 0:
+        logger.info(f"Applied routing_replay patch to {target_path}")
+    elif (
+        "Reversed (or previously applied) patch detected" in output
+        or "Skipping patch." in output
+    ):
+        logger.warning(
+            f"Routing_replay patch {routing_replay_patch} appears to be already applied for {target_path}."
+        )
+    else:
+        logger.error(
+            "Failed to apply routing_replay patch %s to %s. Output:\n%s",
+            str(routing_replay_patch),
+            target_path,
+            output.strip(),
+        )
+        raise RuntimeError(
+            f"Routing_replay patch failed with exit code {result.returncode}"
+        )
+
+
+def maybe_apply_sglang_patch(config: SGLangConfig, enable_routing_replay: bool = False):
+    """Apply SGLang patches based on configuration.
+
+    Args:
+        config: SGLang configuration.
+        enable_routing_replay: Whether to apply routing replay patch.
+    """
+    if config.enable_fast_load or config.enable_multithread_load:
+        _apply_fast_load_patch(config)
+    if enable_routing_replay:
+        _apply_routing_replay_patch()

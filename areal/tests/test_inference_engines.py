@@ -62,6 +62,7 @@ def inference_engine(request):
         tp_size=1,
         base_gpu_id=0,
         dist_init_addr=f"{host}:{dist_port}",
+        enable_routing_replay=False,
     )
 
     # Configure vLLM

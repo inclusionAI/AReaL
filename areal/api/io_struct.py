@@ -216,6 +216,7 @@ class HttpGenerationResult:
     output_tokens: list[int]
     output_logprobs: list[float]
     stop_reason: str
+    routed_experts: Any | None = None
 
 
 @dataclass

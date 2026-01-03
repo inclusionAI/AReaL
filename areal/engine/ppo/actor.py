@@ -162,21 +162,21 @@ class PPOActor:
 
         loss_mask = data["loss_mask"].float()
         loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
+
+        rolled_logprobs = torch.roll(data["logprobs"], shifts=-1, dims=-1)
         # Apply the mask to log probabilities.
         if not self.config.use_decoupled_loss and self.config.recompute_logprob:
-            # Overwrite logprobs produced by the inference engine
             prox_logp_value = data["prox_logp"]
             if prox_logp_value is None:
                 raise ValueError(
                     "prox_logp is None but recompute_logprob=True. "
                     "This indicates compute_logp() was skipped incorrectly."
                 )
-            old_logp = data["logprobs"] = prox_logp_value
+            old_logp = prox_logp_value
         else:
-            old_logp = torch.roll(data["logprobs"], shifts=-1, dims=-1)
-            if not self.config.use_decoupled_loss:
-                # prox logp not available, use inferenced logp
-                data["prox_logp"] = old_logp
+            old_logp = rolled_logprobs
+
+        # use old_logp (Either rolled_logprobs or prox_logp_value) for KL and GAE computation
         ref_logp = data.get("ref_logp")
         if ref_logp is None:
             ref_logp = torch.zeros_like(old_logp)
@@ -231,8 +231,6 @@ class PPOActor:
         data["kl_rewards"] = kl_rewards
         data["tot_rewards"] = rewards
         data["loss_mask"] = loss_mask
-        # because we have rolled old_logp by -1
-        data["logprobs"] = old_logp
 
         return data
 
@@ -384,10 +382,12 @@ def grpo_loss_fn(
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
-    old_logp = input_data["logprobs"]
+    prox_logp_gt = input_data.get("prox_logp")  # Could be None if skipped
+    # Determine old_logp here is more resonable
+    # prox_logp_gt is from recompted forward pass if available and input_data["logprobs"] is always from rollout
+    old_logp = prox_logp_gt if (prox_logp_gt is not None) else input_data["logprobs"]
     advantages = input_data["advantages"]
     loss_mask = input_data["loss_mask"].bool()
-    prox_logp_gt = input_data.get("prox_logp")  # Could be None if skipped
 
     entropy = entropy.detach()
 
@@ -460,6 +460,12 @@ def grpo_loss_fn(
         dual_clip_ratio=stat["dual_clip_mask"].float(),
         denominator="n_valid_tokens",
     )
+    if prox_logp_gt is not None:
+        rollout_logprob = input_data["logprobs"]
+        stats_tracker.stat(
+            rollout_vs_training_diff=rollout_logprob - prox_logp_gt,
+            denominator="n_valid_tokens",
+        )
     if "behave_imp_weight" in stat:
         stats_tracker.denominator(unclipped_behave_tokens=stat["behave_mask"])
         stats_tracker.stat(

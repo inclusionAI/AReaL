@@ -6,6 +6,8 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
+import numpy as np
+import pybase64
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig, PerfTracerConfig, SGLangConfig
@@ -67,6 +69,9 @@ class SGLangBackend:
             "stream": False,
         }
 
+        # Add return_routed_experts to payload if set
+        if req.gconfig.return_routed_experts:
+            payload["return_routed_experts"] = True
         # Add LoRA if initialized
         if with_lora:
             payload["lora_path"] = "lora_1"
@@ -81,11 +86,20 @@ class SGLangBackend:
         finish_reason = meta_info["finish_reason"]
         stop_reason = finish_reason["type"]
         stop_message = finish_reason.get("message", "")
+
+        # Extract routed_experts information if available
+        routed_experts = meta_info.get("routed_experts", None)
+        if routed_experts is not None:
+            routed_experts = np.frombuffer(
+                pybase64.b64decode(routed_experts.encode("utf-8")), dtype=np.int32
+            )
+
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):
             return HttpGenerationResult(
                 output_tokens=[],
                 output_logprobs=[],
                 stop_reason=stop_reason,
+                routed_experts=routed_experts,
             )
 
         output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
@@ -95,6 +109,7 @@ class SGLangBackend:
             output_tokens=output_tokens,
             output_logprobs=output_logprobs,
             stop_reason=stop_reason,
+            routed_experts=routed_experts,
         )
 
     def build_disk_weight_update_requests(

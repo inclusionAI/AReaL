@@ -528,6 +528,7 @@ class PPOTrainer:
                 sglang_config=self.config.sglang,
                 tp_size=self.allocation_mode.gen.tp_size,
                 base_gpu_id=0,
+                enable_routing_replay=self.config.actor.enable_routing_replay,
             )
         elif self.allocation_mode.gen_backend == "vllm":
             engine_cls = RemotevLLMEngine

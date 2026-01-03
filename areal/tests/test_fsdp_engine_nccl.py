@@ -38,6 +38,7 @@ def sglang_server():
         tp_size=1,
         base_gpu_id=1,
         dist_init_addr=f"{host}:{dist_port}",
+        enable_routing_replay=False,
     )
 
     # Create engine instance for server management
