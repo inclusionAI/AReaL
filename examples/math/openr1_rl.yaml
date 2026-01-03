@@ -1,17 +1,16 @@
 experiment_name: zzy_test
 trial_name: trial0
-allocation_mode: sglang:d4+fsdp:d1c4
+allocation_mode: sglang:d32p1t1+d4p1t8 
 cluster:
   fileroot: /storage/openpsi/experiments
-  n_nodes: 1
+  n_nodes: 8
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
-    nfs_record_root: /tmp/areal/name_resolve
+    nfs_record_root: /storage/openpsi/experiments
 seed: 1
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
-async_training: true
 
 rollout:
   experiment_name: ${experiment_name}
@@ -23,7 +22,7 @@ rollout:
   enable_rollout_tracing: false
 
 gconfig:
-  n_samples: 4
+  n_samples: 8
   min_new_tokens: 0
   max_new_tokens: 32768
   greedy: false
@@ -32,7 +31,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/users/zzy/model/parallel_1_5b/nvidia-parallel-thinking_1_5B_lr5/checkpoint-267
+  path: /storage/openpsi/models/zzy/Qwen3-4B-s1-parallel-only-5
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: false
@@ -41,17 +40,16 @@ actor:
     max_tokens_per_mb: 32768
   optimizer:
     type: adam
-    lr: 1.70e-5
-    weight_decay: 0.017
+    lr: 1.0e-6
+    weight_decay: 0.001
     beta1: 0.9
     beta2: 0.999
     eps: 1e-8
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  backend: fsdp
   group_size: ${gconfig.n_samples}
-  group_adv_norm: false
+  # group_adv_norm: false
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -74,7 +72,7 @@ ref:
   mb_spec:
     max_tokens_per_mb: 32768
   optimizer: null
-  backend: fsdp
+  # backend: fsdp
 # SGLang
 sglang:
   model_path: ${actor.path}
@@ -82,7 +80,7 @@ sglang:
   skip_tokenizer_init: false
   dtype: ${actor.dtype}
   max_running_requests: null
-  context_length: 32768
+  context_length: 65536
   mem_fraction_static: 0.8
 
 # datasets
@@ -91,7 +89,8 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path:  /storage/openpsi/users/zzy/zeta/openr1/train_OpenR1.jsonl
+  # path:  /storage/openpsi/users/zzy/zeta/openr1/train_OpenR1.jsonl
+  path: /storage/openpsi/users/zzy/RL-clean/polaris-data-53K-transformed.jsonl
   type: rl
   max_length: 20480
 
@@ -100,7 +99,7 @@ valid_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /storage/openpsi/users/zzy/zeta/openr1/eval_OpenR1.jsonl
+  path: /storage/openpsi/users/zzy/RL-clean/evaluation/data/aime24/test.jsonl
   type: rl
 
 # Utilities
@@ -137,8 +136,12 @@ stats_logger:
     mode: online
 
 launcher:
-  inference_server_cpus_per_gpu: 4
+  inference_server_cpus_per_gpu: 8
   inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
+  inference_server_env_vars: "NCCL_SOCKET_IFNAME=bond0,NCCL_IB_DISABLE=0,NCCL_NET=IB,NCCL_NET_PLUGIN=,NCCL_IB_GID_INDEX=3,NCCL_IB_TIMEOUT=22,NCCL_IB_RETRY_CNT=7,NCCL_IB_SL=5,NCCL_IB_TC=136,NCCL_IB_HCA=mlx5_bond,NCCL_IB_QPS_PER_CONNECTION=8,NCCL_SET_THREAD_NAME=1,NCCL_DEBUG=WARN"
+  trainer_cpus_per_gpu: 8
   trainer_mem_per_gpu: 32768
-  trainer_env_vars: "HF_ENDPOINT=https://hf-mirror.com,WANDB_BASE_URL=http://8.150.1.98:8080,WANDB_API_KEY=local-cbda2388524cc38099946424d819c1b010376090"
+  trainer_env_vars: "NCCL_SOCKET_IFNAME=bond0,NCCL_IB_DISABLE=0,NCCL_NET=IB,NCCL_NET_PLUGIN=,NCCL_IB_GID_INDEX=3,NCCL_IB_TIMEOUT=22,NCCL_IB_RETRY_CNT=7,NCCL_IB_SL=5,NCCL_IB_TC=136,NCCL_IB_HCA=mlx5_bond,NCCL_IB_QPS_PER_CONNECTION=8,NCCL_SET_THREAD_NAME=1,NCCL_DEBUG=WARN"
+  slurm:
+    trainer_image: "/storage/openpsi/images/areal-latest.sif"
+    inference_server_image: "/storage/openpsi/images/areal-latest.sif"

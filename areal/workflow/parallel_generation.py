@@ -669,7 +669,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         # Multi-turn loop
         for turn_idx in range(self.max_turns):
             # Check if we still have room to generate
-            if len(current_context_ids) >= MAX_POS_ENCODING or "".join(all_completion_strs).endswith("<|im_end|>") or "**Final Answer**" in "".join(all_completion_strs):
+            if len(current_context_ids) >= MAX_POS_ENCODING or "".join(all_completion_strs).endswith("<|im_end|>") or "</think>" in "".join(all_completion_strs):
                 # No more room, stop generating
                 break
             
@@ -687,37 +687,32 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             if goal_resp is None:
                 # Cannot continue, stop here
                 break
-            if current_context_ids[-1] == 151645 or "".join(all_completion_strs).endswith("<|im_end|>") or "**Final Answer**" in "".join(all_completion_strs) or "</think>" in "".join(all_completion_strs):
+            if current_context_ids[-1] == 151645 or "".join(all_completion_strs).endswith("<|im_end|>")  or "</think>" in "".join(all_completion_strs):
                 break
-            goal_tokens = goal_resp.output_tokens
-            goal_str = self.tokenizer.decode(goal_tokens)
-        
-        # Add closing </Goal> tag if not present
-            if goal_str.strip().endswith("</Goal>"):
             # Step 2: Process parallel stage (paths + conclusion)
-                turn_output_tokens, turn_output_logprobs, turn_output_versions, turn_completion_str, stage_path_tokens, stage_longest_path = await self._process_parallel_stage(
-                    engine, current_context_ids, goal_resp, data, version, sample_idx, qid
-                )
-                
-                # Accumulate parallel metrics
-                total_path_tokens += stage_path_tokens
-                sum_longest_path_per_stage += stage_longest_path
-                
-                # Accumulate outputs from this turn
-                all_output_tokens.extend(turn_output_tokens)
-                all_output_logprobs.extend(turn_output_logprobs)
-                all_output_versions.extend(turn_output_versions)
-                all_completion_strs.append(turn_completion_str)
-                
-                # Update context for next turn: full sequence so far
-                current_context_ids = input_ids + all_output_tokens
-                
-                # Check if "\boxed{" appears in the completion
-                completion_so_far = "".join(all_completion_strs)
-                
-                # Check if we've hit the length limit
-                if len(current_context_ids) >= MAX_POS_ENCODING or current_context_ids[-1] == 151645 or completion_so_far.endswith("<|im_end|>") or "**Final Answer**" in completion_so_far:
-                    break
+            turn_output_tokens, turn_output_logprobs, turn_output_versions, turn_completion_str, stage_path_tokens, stage_longest_path = await self._process_parallel_stage(
+                engine, current_context_ids, goal_resp, data, version, sample_idx, qid
+            )
+            
+            # Accumulate parallel metrics
+            total_path_tokens += stage_path_tokens
+            sum_longest_path_per_stage += stage_longest_path
+            
+            # Accumulate outputs from this turn
+            all_output_tokens.extend(turn_output_tokens)
+            all_output_logprobs.extend(turn_output_logprobs)
+            all_output_versions.extend(turn_output_versions)
+            all_completion_strs.append(turn_completion_str)
+            
+            # Update context for next turn: full sequence so far
+            current_context_ids = input_ids + all_output_tokens
+            
+            # Check if "\boxed{" appears in the completion
+            completion_so_far = "".join(all_completion_strs)
+            
+            # Check if we've hit the length limit
+            if len(current_context_ids) >= MAX_POS_ENCODING or current_context_ids[-1] == 151645 or completion_so_far.endswith("<|im_end|>") or "</think>" in "".join(all_completion_strs):
+                break
         
         # Combine all turns into a single completion string
         completion_str = "".join(all_completion_strs)

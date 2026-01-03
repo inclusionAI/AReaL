@@ -30,6 +30,32 @@ def gsm8k_reward_fn(prompt, completions, prompt_ids, completion_ids, answer, **k
     return int(process_results(completions, answer)[0])
 
 
+def custom_format_prompt(user_content: str, enable_thinking: bool) -> str:
+    """
+    Custom function to format the user's input into a string before tokenization.
+    
+    You can modify this function to create your own prompt format.
+    
+    Args:
+        user_content: The user's input content (e.g., the math problem)
+        enable_thinking: Whether thinking mode is enabled
+    
+    Returns:
+        Formatted string ready for tokenization
+    """
+    # TODO: Customize this to match your desired format
+    # Example: Simple ChatML format
+    formatted = f"<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
+    
+    # If you want a different format, modify the line above
+    # Examples:
+    # formatted = f"Question: {user_content}\nAnswer: "
+    # formatted = f"### Problem:\n{user_content}\n\n### Solution:\n"
+    # formatted = f"User: {user_content}\nAssistant: "
+    
+    return formatted
+
+
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
     config: GRPOConfig
@@ -109,13 +135,12 @@ def main(args):
     # but `WeightUpdateMeta.from_fsdp_nccl` has to be executed on all ranks
     # due to `engine.get_param_specs()`.
     # Therefore, we create weight update meta on all ranks, then broadcast the one on rank 0.
-    weight_update_meta = [
-        WeightUpdateMeta.from_fsdp_nccl(
-            AllocationMode.from_str(config.allocation_mode), actor
-        )
-    ]
-    dist.broadcast_object_list(weight_update_meta, src=0)
-    weight_update_meta = weight_update_meta[0]
+    # Each rank creates its own weight update meta.
+    weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(allocation_mode)
+    
+    # Connect the actor to the rollout engine for weight updates
+    # This must be called ONCE before the training loop, not inside it
+    actor.connect_engine(rollout, weight_update_meta)
 
     # Create rollout workflow
     if tokenizer.pad_token_id not in config.gconfig.stop_token_ids:
@@ -126,33 +151,27 @@ def main(args):
         reward_fn=gsm8k_reward_fn,
         gconfig=config.gconfig,
         tokenizer=tokenizer,
+        format_prompt_fn=custom_format_prompt,  # Use custom format function
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
-        max_turns=10,
-        # Reward shaping options:
-        # - None: No reward shaping (default)
-        # - "parallel_ratio": reward = original * [1 + alpha * (parallel_ratio - avg) / std]
-        # - "latency": reward = original * [1 - alpha * (latency - avg) / std]
         reward_shaping_mode=None,  # Options: None, "parallel_ratio", "latency"
-        reward_shaping_alpha=0.1,
     )
     eval_workflow = ParallelGenerationWorkflow(
         reward_fn=gsm8k_reward_fn,
         gconfig=config.gconfig.new(temperature=0.6),
         tokenizer=tokenizer,
+        format_prompt_fn=custom_format_prompt,  # Use custom format function
         rollout_stat_scope="eval-rollout",
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated-eval"
         ),
-        max_turns=10,
-        # No reward shaping for evaluation
         reward_shaping_mode=None,
     )
 
     # Run training.
     saver = Saver(config.saver, ft_spec)
-    stats_logger = StatsLogger(config.stats_logger, ft_spec)
+    stats_logger = StatsLogger(config, ft_spec)
     evaluator = Evaluator(config.evaluator, ft_spec)
 
     recover_handler = RecoverHandler(config.recover, ft_spec)
@@ -191,24 +210,28 @@ def main(args):
         with stats_tracker.record_timing("rollout"):
             batch = None
             if actor.is_data_parallel_head():
-                if config.async_training:
-                    batch = rollout.prepare_batch(
-                        train_dataloader,
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                else:
-                    batch = rollout.rollout_batch(
-                        next(data_generator),
-                        workflow=workflow,
-                        should_accept=lambda sample: True,
-                    )
-                batch = batch.to(actor.device)
+                batch = rollout.prepare_batch(
+                    train_dataloader,
+                    workflow=workflow,
+                    should_accept_fn=lambda sample: True,
+                )
+                # Move batch to device before broadcasting
+                if batch is not None:
+                    for k, v in batch.items():
+                        if hasattr(v, 'to'):
+                            batch[k] = v.to(actor.device)
             batch = broadcast_tensor_container(
                 batch,
                 src_rank=actor.current_data_parallel_head(),
                 group=actor.context_and_model_parallel_group,
             )
+            # Redistribute batch with GRPO group_size granularity for balanced load
+            from areal.utils.redistributor import redistribute
+            batch = redistribute(
+                batch,
+                granularity=config.actor.group_size,
+                group=actor.data_parallel_group,
+            ).data
         # Create barrier to synchronize all rollout processes.
         dist.barrier(device_ids=[actor.device.index])
         torch.cuda.synchronize()
@@ -232,7 +255,7 @@ def main(args):
             stats_tracker.record_timing("train_step"),
             stats_tracker.scope("grpo_actor"),
         ):
-            stats = actor.ppo_update(batch)
+            actor.ppo_update(batch)
             actor.step_lr_scheduler()
             log_gpu_stats("ppo update")
 
@@ -240,11 +263,7 @@ def main(args):
         rollout.pause()
 
         with stats_tracker.record_timing("update_weights"):
-            if dist.get_rank() == 0:
-                future = rollout.update_weights(weight_update_meta)
-            actor.upload_weights(weight_update_meta)
-            if dist.get_rank() == 0:
-                future.result()
+            actor.update_weights(weight_update_meta)
             dist.barrier(device_ids=[actor.device.index])
             torch.cuda.synchronize()
 
@@ -289,9 +308,11 @@ def main(args):
         torch.cuda.synchronize()
 
         # Upload statistics to the logger (e.g., wandb)
-        stats[0].update(
-            stats_tracker.export_all(reduce_group=actor.data_parallel_group)
-        )
+        stats = actor.export_stats()
+        # if stats:  # Check if stats list is not empty
+        #     stats[0].update(
+        #         stats_tracker.export_all(reduce_group=actor.data_parallel_group)
+        #     )
         stats_logger.commit(epoch, step, global_step, stats)
 
         dist.barrier(device_ids=[actor.device.index])
