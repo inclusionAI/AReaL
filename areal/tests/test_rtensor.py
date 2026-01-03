@@ -1,5 +1,6 @@
 """Integration tests for RTensor with RPC server."""
 
+import asyncio
 import subprocess
 import sys
 import time
@@ -7,14 +8,28 @@ import uuid
 
 import orjson
 import pytest
+import ray
 import requests
 import torch
 
-from areal.scheduler.rpc.rtensor import RTensor, TensorShardInfo
+from areal.scheduler.rpc.rtensor import (
+    HttpTensorBackend,
+    RayTensorBackend,
+    RTensor,
+    TensorBackend,
+    TensorShardInfo,
+    get_backend,
+    set_backend,
+)
 from areal.scheduler.rpc.serialization import serialize_value
 from areal.utils.proc import kill_process_tree
 
 RPC_SERVER_PORT = 8077
+
+
+# =============================================================================
+# Test Fixtures
+# =============================================================================
 
 
 @pytest.fixture(scope="module")
@@ -59,6 +74,177 @@ def rpc_server():
     yield f"localhost:{RPC_SERVER_PORT}"
 
     kill_process_tree(proc.pid)
+
+
+@pytest.fixture(autouse=True)
+def reset_backend():
+    """Reset backend to auto-detection mode before each test."""
+    set_backend(None)
+    yield
+    set_backend(None)
+
+
+# =============================================================================
+# Backend Tests
+# =============================================================================
+
+
+class TestTensorBackend:
+    """Tests for TensorBackend protocol and implementations."""
+
+    def test_http_backend_store_returns_string(self):
+        """HttpTensorBackend.store returns a UUID string."""
+        backend = HttpTensorBackend()
+        tensor = torch.randn(3, 4)
+        shard_id = backend.store(tensor)
+
+        assert isinstance(shard_id, str)
+        # Verify it's a valid UUID
+        uuid.UUID(shard_id)
+
+    def test_get_backend_returns_http_when_ray_not_initialized(self):
+        """get_backend returns HttpTensorBackend when Ray is not initialized."""
+        # Ensure Ray is not initialized for this test
+        if ray.is_initialized():
+            pytest.skip("Ray is initialized, cannot test HTTP backend auto-detection")
+
+        set_backend(None)  # Reset to auto-detection
+        backend = get_backend()
+
+        assert isinstance(backend, HttpTensorBackend)
+
+    def test_set_backend_overrides_auto_detection(self):
+        """set_backend allows explicit backend injection."""
+        custom_backend = HttpTensorBackend()
+        set_backend(custom_backend)
+
+        assert get_backend() is custom_backend
+
+    def test_set_backend_none_resets_to_auto_detection(self):
+        """set_backend(None) resets to auto-detection mode."""
+        custom_backend = HttpTensorBackend()
+        set_backend(custom_backend)
+        set_backend(None)
+
+        # Should auto-detect again
+        backend = get_backend()
+        assert backend is not custom_backend
+
+    def test_backend_protocol_compliance(self):
+        """Verify backend classes implement the Protocol correctly."""
+        # These should not raise - they implement the protocol
+        http_backend: TensorBackend = HttpTensorBackend()
+        assert hasattr(http_backend, "fetch")
+        assert hasattr(http_backend, "store")
+        assert hasattr(http_backend, "delete")
+
+        ray_backend: TensorBackend = RayTensorBackend()
+        assert hasattr(ray_backend, "fetch")
+        assert hasattr(ray_backend, "store")
+        assert hasattr(ray_backend, "delete")
+
+
+# =============================================================================
+# Ray Backend Tests (skipped by default)
+# =============================================================================
+
+# Skip Ray tests unless Ray is initialized
+ray_backend_tests = pytest.mark.skipif(
+    not ray.is_initialized(),
+    reason=(
+        "Ray backend tests require initialized Ray environment.\n"
+        "To run these tests:\n"
+        "1. Start Ray cluster with `ray start --head`\n"
+        "2. Run pytest with Ray initialized"
+    ),
+)
+
+
+@ray_backend_tests
+class TestRayTensorBackend:
+    """Tests for Ray-based tensor backend."""
+
+    def test_ray_store_returns_object_ref(self):
+        """RayTensorBackend.store returns a ray.ObjectRef."""
+        backend = RayTensorBackend()
+        tensor = torch.randn(3, 4)
+        shard_id = backend.store(tensor)
+
+        assert isinstance(shard_id, ray.ObjectRef)
+
+    def test_ray_store_and_fetch(self):
+        """Test round-trip store and fetch with Ray backend."""
+        backend = RayTensorBackend()
+        tensor = torch.randn(5, 10)
+        shard_id = backend.store(tensor)
+
+        shard = TensorShardInfo(size=5, seqlens=[5], shard_id=shard_id, node_addr="")
+        fetched = backend.fetch([shard])
+
+        assert len(fetched) == 1
+        assert torch.allclose(fetched[0], tensor)
+
+    def test_ray_fetch_multiple_shards(self):
+        """Test fetching multiple shards at once."""
+        backend = RayTensorBackend()
+        tensors = [torch.randn(3, 4) for _ in range(5)]
+        shard_ids = [backend.store(t) for t in tensors]
+
+        shards = [
+            TensorShardInfo(size=3, seqlens=[3], shard_id=sid, node_addr="")
+            for sid in shard_ids
+        ]
+        fetched = backend.fetch(shards)
+
+        assert len(fetched) == 5
+        for original, retrieved in zip(tensors, fetched):
+            assert torch.allclose(original, retrieved)
+
+    def test_ray_delete(self):
+        """Test deleting objects from Ray object store."""
+        backend = RayTensorBackend()
+        tensor = torch.randn(5, 10)
+        shard_id = backend.store(tensor)
+
+        # Delete should not raise
+        asyncio.run(backend.delete("", [shard_id]))
+
+    def test_get_backend_returns_ray_when_initialized(self):
+        """get_backend returns RayTensorBackend when Ray is initialized."""
+        set_backend(None)  # Reset to auto-detection
+        backend = get_backend()
+
+        assert isinstance(backend, RayTensorBackend)
+
+    def test_rtensor_uses_ray_backend(self):
+        """RTensor operations use Ray backend when Ray is initialized."""
+        set_backend(None)  # Reset to auto-detection
+
+        # Create layout
+        layout = RTensor(
+            shards=[
+                TensorShardInfo(
+                    shard_id="", node_addr="", size=4, seqlens=[10, 10, 10, 10]
+                )
+            ],
+            data=torch.empty(0, device="meta"),
+        )
+
+        # from_batched should use Ray backend
+        batch_tensor = torch.randn(4, 10)
+        rtensor = RTensor.from_batched(batch_tensor, layout=layout, node_addr="")
+
+        # Shard ID should be a Ray ObjectRef
+        assert isinstance(rtensor.shards[0].shard_id, ray.ObjectRef)
+
+        # to_local should fetch via Ray
+        localized = rtensor.to_local()
+        assert torch.allclose(localized, batch_tensor)
+
+
+# =============================================================================
+# HTTP Integration Tests (original tests)
+# =============================================================================
 
 
 class TestRTensorIntegration:
