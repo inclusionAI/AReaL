@@ -705,22 +705,26 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                         ) from None
             try:
                 res = self.wait_results(count=1, timeout=1)
-                if not res or res[0] is None:
+                is_accepted = res and res[0] is not None
+
+                if not is_accepted:
                     if dynamic_bs:
                         total_attempts += 1
                         if total_attempts >= batch_size:
                             break
                     continue
+
+                # Accepted sample
                 assert len(res) == 1
                 accepted_cnt += 1
                 total_attempts += 1
                 results.append(res[0])
+
                 if dynamic_bs:
                     if total_attempts >= batch_size:
                         break
-                else:
-                    if accepted_cnt >= batch_size:
-                        break
+                elif accepted_cnt >= batch_size:
+                    break
             except TimeoutError:
                 pass
 
