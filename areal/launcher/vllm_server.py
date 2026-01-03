@@ -266,7 +266,7 @@ def main(argv):
         logger.error(traceback.format_exc())
         sys.exit(1)
     finally:
-        kill_process_tree(os.getpid(), graceful=True)
+        kill_process_tree(graceful=True)
 
 
 if __name__ == "__main__":
