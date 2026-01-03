@@ -103,13 +103,14 @@ class RayScheduler(Scheduler):
             )
         device_resource = device
         if device == "CPU":
-            device_resource = "num_cpus"
-        if device == "GPU":
-            device_resource = "num_gpus"
+            return {
+                "CPU": cpu,
+                "memory": mem * 1024**3,  # convert gb to bytes
+            }
         return {
-            "num_cpus": cpu,
+            "CPU": cpu,
             device_resource: float(gpu),
-            "memory": mem * 1024 * 1024,  # convert mb to bytes
+            "memory": mem * 1024**3,  # convert gb to bytes
         }
 
     def _create_bundle_list_gpu(self, cpu: int, gpu: int, mem: int) -> list[dict]:
@@ -156,6 +157,17 @@ class RayScheduler(Scheduler):
             raise ValueError(
                 f"Current detected device is CPU but specified number of GPUs is {gpu}"
             )
+
+        res = {
+            "num_cpus": cpu,
+            "memory": mem * 1024 * 1024,
+        }
+        if device == "CPU":
+            return res
+
+        if device == "GPU":
+            res["num_gpus"] = float(gpu)
+            return res
 
         return {
             "num_cpus": cpu,
