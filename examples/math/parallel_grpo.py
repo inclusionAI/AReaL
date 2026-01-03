@@ -129,8 +129,13 @@ def main(args):
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
-        max_turns = 10,
-        turn_discount = 1.0
+        max_turns=10,
+        # Reward shaping options:
+        # - None: No reward shaping (default)
+        # - "parallel_ratio": reward = original * [1 + alpha * (parallel_ratio - avg) / std]
+        # - "latency": reward = original * [1 - alpha * (latency - avg) / std]
+        reward_shaping_mode=None,  # Options: None, "parallel_ratio", "latency"
+        reward_shaping_alpha=0.1,
     )
     eval_workflow = ParallelGenerationWorkflow(
         reward_fn=gsm8k_reward_fn,
@@ -140,8 +145,9 @@ def main(args):
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated-eval"
         ),
-        max_turns = 10,
-        turn_discount = 1.0
+        max_turns=10,
+        # No reward shaping for evaluation
+        reward_shaping_mode=None,
     )
 
     # Run training.

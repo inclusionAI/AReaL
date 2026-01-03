@@ -200,6 +200,8 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         data_extract_prompt_fn: Callable[
             [dict[str, Any]], Any
         ] = default_data_extract_prompt_fn,
+        reward_shaping_mode: str | None = None,
+        reward_shaping_alpha: float = 0.1,
     ):
         """
         Initialize the parallel generation workflow.
@@ -219,6 +221,11 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
                              If None, will use chat template. Signature: (user_content: str, enable_thinking: bool) -> str
             get_input_ids_fn: Function to convert data to input_ids
             data_extract_prompt_fn: Function to extract prompt from data
+            reward_shaping_mode: Mode for reward shaping. Options:
+                - None: No reward shaping (default)
+                - "parallel_ratio": reward = original_reward * [1 + alpha * (parallel_ratio - avg) / std]
+                - "latency": reward = original_reward * [1 - alpha * (latency - avg) / std]
+            reward_shaping_alpha: Alpha hyperparameter for reward shaping (default: 0.1)
         """
         self.reward_fn = reward_fn
         self.tokenizer = tokenizer
@@ -242,6 +249,10 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         self.format_prompt_fn = format_prompt_fn
         self.get_input_ids_fn = get_input_ids_fn
         self.data_extract_prompt_fn = data_extract_prompt_fn
+        
+        # Reward shaping parameters
+        self.reward_shaping_mode = reward_shaping_mode
+        self.reward_shaping_alpha = reward_shaping_alpha
         
         if self.dump_dir is not None and not os.path.exists(self.dump_dir):
             os.makedirs(self.dump_dir, exist_ok=True)
@@ -678,30 +689,35 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
                 break
             if current_context_ids[-1] == 151645 or "".join(all_completion_strs).endswith("<|im_end|>") or "**Final Answer**" in "".join(all_completion_strs) or "</think>" in "".join(all_completion_strs):
                 break
+            goal_tokens = goal_resp.output_tokens
+            goal_str = self.tokenizer.decode(goal_tokens)
+        
+        # Add closing </Goal> tag if not present
+            if goal_str.strip().endswith("</Goal>"):
             # Step 2: Process parallel stage (paths + conclusion)
-            turn_output_tokens, turn_output_logprobs, turn_output_versions, turn_completion_str, stage_path_tokens, stage_longest_path = await self._process_parallel_stage(
-                engine, current_context_ids, goal_resp, data, version, sample_idx, qid
-            )
-            
-            # Accumulate parallel metrics
-            total_path_tokens += stage_path_tokens
-            sum_longest_path_per_stage += stage_longest_path
-            
-            # Accumulate outputs from this turn
-            all_output_tokens.extend(turn_output_tokens)
-            all_output_logprobs.extend(turn_output_logprobs)
-            all_output_versions.extend(turn_output_versions)
-            all_completion_strs.append(turn_completion_str)
-            
-            # Update context for next turn: full sequence so far
-            current_context_ids = input_ids + all_output_tokens
-            
-            # Check if "\boxed{" appears in the completion
-            completion_so_far = "".join(all_completion_strs)
-            
-            # Check if we've hit the length limit
-            if len(current_context_ids) >= MAX_POS_ENCODING or current_context_ids[-1] == 151645 or completion_so_far.endswith("<|im_end|>") or "**Final Answer**" in completion_so_far:
-                break
+                turn_output_tokens, turn_output_logprobs, turn_output_versions, turn_completion_str, stage_path_tokens, stage_longest_path = await self._process_parallel_stage(
+                    engine, current_context_ids, goal_resp, data, version, sample_idx, qid
+                )
+                
+                # Accumulate parallel metrics
+                total_path_tokens += stage_path_tokens
+                sum_longest_path_per_stage += stage_longest_path
+                
+                # Accumulate outputs from this turn
+                all_output_tokens.extend(turn_output_tokens)
+                all_output_logprobs.extend(turn_output_logprobs)
+                all_output_versions.extend(turn_output_versions)
+                all_completion_strs.append(turn_completion_str)
+                
+                # Update context for next turn: full sequence so far
+                current_context_ids = input_ids + all_output_tokens
+                
+                # Check if "\boxed{" appears in the completion
+                completion_so_far = "".join(all_completion_strs)
+                
+                # Check if we've hit the length limit
+                if len(current_context_ids) >= MAX_POS_ENCODING or current_context_ids[-1] == 151645 or completion_so_far.endswith("<|im_end|>") or "**Final Answer**" in completion_so_far:
+                    break
         
         # Combine all turns into a single completion string
         completion_str = "".join(all_completion_strs)
@@ -802,31 +818,63 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             ]
             trajectories = await asyncio.gather(*trajectory_tasks)
         
-        # Collect rewards for stats
+        # Collect original rewards and parallel metrics
+        original_rewards = [t["reward"] for t in trajectories]
+        parallel_ratio_list = [t["parallel_ratio"] for t in trajectories]
+        total_latency_list = [t["total_latency"] for t in trajectories]
+        
+        # Apply reward shaping if enabled
+        if self.reward_shaping_mode is not None and len(trajectories) > 1:
+            if self.reward_shaping_mode == "parallel_ratio":
+                # Parallel ratio based: reward = original * [1 + alpha * (parallel_ratio - avg) / std]
+                avg_pr = sum(parallel_ratio_list) / len(parallel_ratio_list)
+                std_pr = torch.tensor(parallel_ratio_list, dtype=torch.float32).std().item()
+                if std_pr > 1e-8:  # Avoid division by zero
+                    for i, traj in enumerate(trajectories):
+                        shaping_factor = 1.0 + self.reward_shaping_alpha * (traj["parallel_ratio"] - avg_pr) / std_pr
+                        traj["reward"] = traj["reward"] * shaping_factor
+            elif self.reward_shaping_mode == "latency":
+                # Latency based: reward = original * [1 - alpha * (latency - avg) / std]
+                avg_lat = sum(total_latency_list) / len(total_latency_list)
+                std_lat = torch.tensor(total_latency_list, dtype=torch.float32).std().item()
+                if std_lat > 1e-8:  # Avoid division by zero
+                    for i, traj in enumerate(trajectories):
+                        shaping_factor = 1.0 - self.reward_shaping_alpha * (traj["total_latency"] - avg_lat) / std_lat
+                        traj["reward"] = traj["reward"] * shaping_factor
+        
+        # Collect rewards for stats (after shaping)
         rewards = [t["reward"] for t in trajectories]
         avg_reward = sum(rewards) / len(rewards)
         
         # Collect parallel metrics for stats
         total_gen_tokens_list = [t["total_gen_tokens"] for t in trajectories]
         total_path_tokens_list = [t["total_path_tokens"] for t in trajectories]
-        parallel_ratio_list = [t["parallel_ratio"] for t in trajectories]
-        total_latency_list = [t["total_latency"] for t in trajectories]
         
         avg_total_gen_tokens = sum(total_gen_tokens_list) / len(total_gen_tokens_list)
         avg_total_path_tokens = sum(total_path_tokens_list) / len(total_path_tokens_list)
         avg_parallel_ratio = sum(parallel_ratio_list) / len(parallel_ratio_list)
         avg_total_latency = sum(total_latency_list) / len(total_latency_list)
         
-        stats_tracker.get(self.rollout_stat_scope).scalar(
-            reward=avg_reward,
-            reward_std=torch.tensor(rewards, dtype=torch.float32).std().item() if len(rewards) > 1 else 0.0,
-            n_samples=n_samples,
+        # Calculate original reward stats (before shaping)
+        avg_original_reward = sum(original_rewards) / len(original_rewards)
+        
+        stats_dict = {
+            "reward": avg_reward,
+            "reward_std": torch.tensor(rewards, dtype=torch.float32).std().item() if len(rewards) > 1 else 0.0,
+            "n_samples": n_samples,
             # Parallel metrics
-            total_gen_tokens=avg_total_gen_tokens,
-            total_path_tokens=avg_total_path_tokens,
-            parallel_ratio=avg_parallel_ratio,
-            total_latency=avg_total_latency,
-        )
+            "total_gen_tokens": avg_total_gen_tokens,
+            "total_path_tokens": avg_total_path_tokens,
+            "parallel_ratio": avg_parallel_ratio,
+            "total_latency": avg_total_latency,
+        }
+        
+        # Add original reward stats if reward shaping is enabled
+        if self.reward_shaping_mode is not None:
+            stats_dict["original_reward"] = avg_original_reward
+            stats_dict["original_reward_std"] = torch.tensor(original_rewards, dtype=torch.float32).std().item() if len(original_rewards) > 1 else 0.0
+        
+        stats_tracker.get(self.rollout_stat_scope).scalar(**stats_dict)
         
         # Concatenate all trajectories into batch format
         all_results = []
