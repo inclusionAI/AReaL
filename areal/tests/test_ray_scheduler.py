@@ -9,10 +9,13 @@ from areal.api.cli_args import BaseExperimentConfig
 from areal.api.scheduler_api import Job, SchedulingSpec, Worker
 from areal.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
 
-pytestmark = pytest.mark.skipif(
-    not ray.is_initialized(),
-    reason="Ray scheduler tests will only run if ray is explicitly initialized.",
-)
+
+@pytest.fixture(scope="module", autouse=True)
+def ray_init():
+    """Initialize Ray at module start and shutdown at module end."""
+    ray.init(ignore_reinit_error=True)
+    yield
+    ray.shutdown()
 
 
 class TestRaySchedulerInitialization:
@@ -25,8 +28,6 @@ class TestRaySchedulerInitialization:
 
 class TestWorkerCreationAndDeletion:
     def test_create_delete_workers(self):
-        ray.init()
-
         config = BaseExperimentConfig()
 
         scheduler = RayScheduler(startup_timeout=60.0, exp_config=config)
@@ -46,6 +47,7 @@ class TestWorkerCreationAndDeletion:
                     gpu=1,
                 ),
             ],
+            shared_placement_group=True,
         )
 
         # create workers
