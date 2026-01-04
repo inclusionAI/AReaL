@@ -57,7 +57,7 @@ For more details:
 
 - SAPO Detail: [Paper of SAPO](https://arxiv.org/abs/2511.20347)
 
-## Algorithm Core Parameters
+## Core Parameters
 
 SAPO introduces three new parameters while maintaining compatibility with existing PPO infrastructure:
 

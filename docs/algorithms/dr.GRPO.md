@@ -20,7 +20,7 @@ For more details:
 
 - Dr.GRPO Detail: [Paper of Dr.GRPO](https://arxiv.org/abs/2503.20783)
 
-## Algorithm Core Parameters
+## Core Parameters
 
 We only list the different parameters from GRPO here:
 

@@ -36,7 +36,7 @@ For more details:
 
 - M2PO Detail: [Paper of M2PO](https://arxiv.org/abs/2510.01161)
 
-## Algorithm Core Parameters
+## Core Parameters
 
 - `actor.m2_threshold`: The threshold for the mean of the second momentum, used in computing the M2PO mask as $\tau_{M_2}$
 

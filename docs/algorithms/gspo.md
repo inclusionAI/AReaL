@@ -40,7 +40,7 @@ For more details:
 
 - Qwen Team Blog: [GSPO Blog Post](https://qwenlm.github.io/blog/gspo/)
 
-## Algorithm Core Parameters
+## Core Parameters
 
 GSPO shares most parameters with GRPO, with one key addition:
 
