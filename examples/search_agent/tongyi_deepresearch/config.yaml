@@ -32,9 +32,7 @@ rollout:
   dump_to_file: true
 
 gconfig:
-  # `n_sample` is not the actual group_size.
-  # Actual group_size is determined by `n_trajs` due to agent implementation
-  n_samples: 1
+  n_samples: 8
   min_new_tokens: 0
   max_new_tokens: 8192
   greedy: false
@@ -61,9 +59,9 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  group_size: ${n_trajs}
   adv_norm:
-    group_size: ${n_trajs}
+    mean_level: batch
+    std_level: batch
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -180,7 +178,6 @@ judge_engine:
   max_head_offpolicyness: 10000000
   enable_rollout_tracing: false
 
-n_trajs: 8
 max_llm_calls_per_run: 100
 max_tokens_per_trajectory: 27648
 log_agent_stats: false

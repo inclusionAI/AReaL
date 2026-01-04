@@ -61,7 +61,6 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0

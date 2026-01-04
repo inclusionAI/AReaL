@@ -33,7 +33,7 @@ For more details:
 
 ## Core Parameters
 
-- `actor.group_size`: The number of groups to divide the sampled responses into.
+- `gconfig.n_samples`: The number of groups to divide the sampled responses into.
 - `actor.path`: The path to the actor model.
 - `ref.path`: The path to the reference model (if using a reference model).
 - `kl_ctl`: The coefficient for the KL divergence term. Default: `0.0` (disabled for GRPO).

@@ -1,5 +1,3 @@
-import asyncio
-import uuid
 from copy import deepcopy
 from typing import Any
 
@@ -26,7 +24,10 @@ class MultiTurnWorkflow(RolloutWorkflow):
         turn_discount: float,
     ):
         self.reward_fn = reward_fn
-        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
+        # Enforce n_samples=1; grouping is handled by GroupedRolloutWorkflow
+        self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer).new(
+            n_samples=1
+        )
         self.tokenizer = tokenizer
         self.max_turns = max_turns
         self.turn_discount = turn_discount
@@ -40,8 +41,8 @@ class MultiTurnWorkflow(RolloutWorkflow):
             }
         ]
 
-    async def _run_one_episode(
-        self, engine: InferenceEngine, data: dict, rid: str
+    async def arun_episode(
+        self, engine: InferenceEngine, data: dict
     ) -> tuple[dict, Any]:
         client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
         messages = deepcopy(data["messages"])
@@ -92,17 +93,4 @@ class MultiTurnWorkflow(RolloutWorkflow):
         )
 
         client.set_reward(_comp.id, reward)
-        return client.export_interactions(), comp
-
-    async def arun_episode(self, engine: InferenceEngine, data: dict[str, Any]) -> dict:
-        rid = uuid.uuid4().hex
-        tasks = [
-            self._run_one_episode(engine, data, rid)
-            for _ in range(self.gconfig.n_samples)
-        ]
-        results = await asyncio.gather(*tasks)
-
-        merged: dict = {}
-        for rollout_data, _ in results:
-            merged.update(rollout_data)
-        return merged
+        return client.export_interactions()
