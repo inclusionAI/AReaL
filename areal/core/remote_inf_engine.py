@@ -389,25 +389,28 @@ class RemoteInfEngine(InferenceEngine):
         elif len(self.local_server_processes) > 0:
             self.addresses = [f"{s.host}:{s.port}" for s in self.local_server_processes]
             self.logger.info("Get server addresses from the local subprocess.")
-        elif os.getenv("AREAL_LLM_SERVER_ADDRS"):
-            # When addr is not provided, fallback to reading addrs from env var
-            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
-            self.logger.info("Get server addresses from environment variable.")
-        else:
-            if (
-                self.config.experiment_name is not None
-                and self.config.trial_name is not None
-            ):
-                try:
-                    self.addresses = wait_llm_server_addrs(
-                        experiment_name=self.config.experiment_name,
-                        trial_name=self.config.trial_name,
-                        timeout=1,
-                    )
-                    self.logger.info("Get server addresses from name_resolve.")
-                except (TimeoutError, RuntimeError):
-                    # RuntimeError happens when name_resolve is not properly configured.
-                    pass
+        elif (
+            self.config.experiment_name is not None
+            and self.config.trial_name is not None
+        ):
+            try:
+                self.addresses = wait_llm_server_addrs(
+                    experiment_name=self.config.experiment_name,
+                    trial_name=self.config.trial_name,
+                    timeout=1,
+                )
+                self.logger.info("Get server addresses from name_resolve.")
+            except (TimeoutError, RuntimeError):
+                self.logger.info(
+                    "Failed to get server addresses from name_resolve, "
+                    "falling back to environment variable."
+                )
+                addrs_str = os.getenv("AREAL_LLM_SERVER_ADDRS")
+                if addrs_str:
+                    # When addr is not provided, fallback to reading addrs from env var
+                    self.addresses = addrs_str.split(",")
+                    self.logger.info("Get server addresses from environment variable.")
+
         if not self.addresses:
             raise RuntimeError(
                 "No configured inference servers. "
