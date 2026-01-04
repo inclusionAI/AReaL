@@ -61,21 +61,15 @@ def _pytorch_fp8_to_te_fp8(
         assert pytorch_fp8_tensor.shape == target_te_tensor._rowwise_data.shape
         # rowwise_data is stored in uint8 format
         target_te_tensor._rowwise_data.copy_(
-            pytorch_fp8_tensor.view(torch.uint8), non_blocking=True
-        )
-        target_te_tensor._columnwise_data.copy_(
-            pytorch_fp8_tensor.t().contiguous().view(torch.uint8), non_blocking=True
+            pytorch_fp8_tensor.view(torch.uint8), non_blocking=False
         )
         scale_inv_shape = scale_inv.shape
         assert len(scale_inv_shape) == 2
         target_te_tensor._rowwise_scale_inv[
             : scale_inv_shape[0], : scale_inv_shape[1]
-        ].copy_(scale_inv, non_blocking=True)
-        target_te_tensor._columnwise_scale_inv[
-            : scale_inv_shape[1], : scale_inv_shape[0]
-        ].copy_(scale_inv.t().contiguous(), non_blocking=True)
-        # target_te_tensor._create_columnwise()
-
+        ].copy_(scale_inv, non_blocking=False)
+        with torch.cuda.device(target_te_tensor.device):
+            target_te_tensor._create_columnwise()
     else:
         # Fallback for non-blockwise tensors
         target_te_tensor._data.copy_(pytorch_fp8_tensor.view(torch.uint8))
@@ -84,6 +78,7 @@ def _pytorch_fp8_to_te_fp8(
 
 def _te_fp8_to_pytorch_fp8(
     te_fp8_tensor: torch.Tensor,
+    block_size: int = 128,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Convert Transformer Engine Float8BlockwiseQTensor to PyTorch float8 tensor.
 
@@ -92,11 +87,13 @@ def _te_fp8_to_pytorch_fp8(
 
     Args:
         te_fp8_tensor: Transformer Engine Float8BlockwiseQTensor
+        block_size: The block size used for quantization (default: 128)
 
     Returns:
         Tuple of (pytorch_fp8_tensor, scale_inv) where:
         - pytorch_fp8_tensor: PyTorch float8 tensor (torch.float8_e4m3fn)
-        - scale_inv: Inverse scale tensor (1/scale) with blockwise shape [M/block_m, N/block_n]
+        - scale_inv: Inverse scale tensor (1/scale) with compact blockwise shape
+                     [M/block_size, K/block_size] without padding
     """
     if not is_float8tensor(te_fp8_tensor):
         raise ValueError("te_fp8_tensor must be a Transformer Engine Float8Tensor")
@@ -107,13 +104,28 @@ def _te_fp8_to_pytorch_fp8(
     ):
         # rowwise_data is stored in uint8 format, convert to PyTorch FP8
         rowwise_data_uint8 = te_fp8_tensor._rowwise_data
-        pytorch_fp8_tensor = rowwise_data_uint8.view(torch.float8_e4m3fn)
+        pytorch_fp8_tensor = rowwise_data_uint8.clone().view(torch.float8_e4m3fn)
 
-        # Extract rowwise_scale_inv
-        # The scale_inv shape matches the blockwise quantization structure
+        # Extract rowwise_scale_inv and remove padding
+        # TE rowwise_scale_inv shape: (M // block_size, round_up(K // block_size, 4)), padded
+        # We need to return: (M // block_size, K // block_size), compact, no padding
         rowwise_scale_inv = te_fp8_tensor._rowwise_scale_inv
-        # Clone to avoid sharing memory
-        scale_inv = rowwise_scale_inv.clone()
+
+        # Calculate the actual (unpadded) scale_inv shape from the data shape
+        data_shape = pytorch_fp8_tensor.shape
+        M = data_shape[0] if len(data_shape) >= 1 else 1
+        K = data_shape[-1] if len(data_shape) >= 1 else 1
+
+        # For 2D tensor (M, K), scale_inv should be (M // block_size, K // block_size)
+        actual_scale_rows = (M + block_size - 1) // block_size
+        actual_scale_cols = (K + block_size - 1) // block_size
+
+        # Extract only the valid (non-padded) portion
+        scale_inv = (
+            rowwise_scale_inv[:actual_scale_rows, :actual_scale_cols]
+            .clone()
+            .contiguous()
+        )
 
     else:
         # Fallback for non-blockwise tensors
