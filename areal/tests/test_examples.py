@@ -452,8 +452,8 @@ def test_multi_turn_math(tmp_path_factory):
     )
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
 
-    example_file = "examples/multi-turn-math/gsm8k_rl_mt.py"
-    config_name = "examples/multi-turn-math/gsm8k_grpo_mt.yaml"
+    example_file = "examples/multi_turn_math/gsm8k_rl_mt.py"
+    config_name = "examples/multi_turn_math/gsm8k_grpo_mt.yaml"
     loop = asyncio.get_event_loop()
     success = loop.run_until_complete(
         run_example(
@@ -559,8 +559,8 @@ def test_search_agent_deepresearch(tmp_path_factory):
     if not os.path.exists(dataset_path):
         pytest.skip("Tongyi DeepResearch dataset not available")
 
-    example_file = "examples/search-agent/tongyi_deepresearch/train.py"
-    config_name = "examples/search-agent/tongyi_deepresearch/config.yaml"
+    example_file = "examples/search_agent/tongyi_deepresearch/train.py"
+    config_name = "examples/search_agent/tongyi_deepresearch/config.yaml"
 
     visible_devices = os.getenv(
         current_platform.device_control_env_var,
@@ -633,8 +633,8 @@ def test_openai_agents(tmp_path_factory):
         "/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B"
     )
     dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
-    example_file = "examples/openai-agents/train_agents.py"
-    config_name = "examples/openai-agents/config.yaml"
+    example_file = "examples/openai_agents/train_agents.py"
+    config_name = "examples/openai_agents/config.yaml"
     loop = asyncio.get_event_loop()
     success = loop.run_until_complete(
         run_example(

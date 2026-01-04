@@ -1,4 +1,3 @@
-import os
 import sys
 
 from datasets import load_dataset
@@ -7,7 +6,6 @@ from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.experimental.trainer import PPOTrainer
 from areal.reward import get_math_verify_worker
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.stats_logger import StatsLogger
 
 
 def get_input_ids_fn(data, tokenizer, enable_thinking):
@@ -72,9 +70,6 @@ def main(args):
         gconfig=config.gconfig,
         tokenizer=config.tokenizer_path,
         enable_thinking=True,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
         get_input_ids_fn="examples.math.boba_grpo.get_input_ids_fn",
         data_extract_prompt_fn="examples.math.boba_grpo.data_extract_prompt_fn",
     )

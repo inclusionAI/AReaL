@@ -136,6 +136,7 @@ does a single prompt take from submission to reward calculation?).
 **Example** (from `areal/workflow/rlvr.py`):
 
 ```python
+from areal.core import workflow_context
 from areal.utils.perf_tracer import (
     atrace_session_phase,
     session_context,
@@ -182,7 +183,7 @@ class RLVRWorkflow(RolloutWorkflow):
             task_data,
         )
 
-        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
         return resp, reward, completion_str
 

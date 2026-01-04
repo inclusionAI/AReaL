@@ -142,7 +142,20 @@ class StatsLogger:
         logger.info("\n" + tabulate_stats(stats))
 
     @staticmethod
-    def get_log_path(config: StatsLoggerConfig):
-        path = f"{config.fileroot}/logs/{getpass.getuser()}/{config.experiment_name}/{config.trial_name}"
+    def get_log_path(
+        config: StatsLoggerConfig | None = None,
+        experiment_name: str | None = None,
+        trial_name: str | None = None,
+        fileroot: str | None = None,
+    ) -> str:
+        if config is not None:
+            experiment_name = config.experiment_name
+            trial_name = config.trial_name
+            fileroot = config.fileroot
+        if not fileroot or not experiment_name or not trial_name:
+            raise ValueError(
+                "fileroot, experiment_name, and trial_name must be provided."
+            )
+        path = f"{fileroot}/logs/{getpass.getuser()}/{experiment_name}/{trial_name}"
         os.makedirs(path, exist_ok=True)
         return path

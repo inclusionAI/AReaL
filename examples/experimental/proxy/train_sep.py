@@ -18,6 +18,7 @@ from areal.api.cli_args import GenerationHyperparameters, PPOConfig, load_expr_c
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import StepInfo
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.dataset import get_custom_dataset
 from areal.experimental.openai.proxy import (
     ProxyServer,
@@ -30,7 +31,6 @@ from areal.utils.data import cycle_dataloader
 from areal.utils.dataloader import create_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.stats_logger import StatsLogger
 
 logger = logging.getLogger("GSM8K GRPO Proxy Example")
 
@@ -39,16 +39,10 @@ class ProxyWorkflow(RolloutWorkflow):
     def __init__(
         self,
         proxy_server: ProxyServer,
-        rollout_stat_scope: str = "rollout",
         export_style: str = "concat",
-        dump_dir: str | None = None,
     ):
         self.proxy_server = proxy_server
-        self.rollout_stat_scope = rollout_stat_scope
         self.export_style = export_style
-        self.dump_dir = dump_dir
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
 
     async def arun_episode(self, engine: InferenceEngine, data):
         # task_index = data["_index"]
@@ -59,7 +53,7 @@ class ProxyWorkflow(RolloutWorkflow):
             session_ids, style=self.export_style
         )
         for reward in rewards.values():
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
         return completions
 
@@ -319,8 +313,6 @@ def main(args):
                 if is_eval
                 else config.gconfig
             )
-            rollout_stat_scope = "rollout" if not is_eval else "eval-rollout"
-            dump_dir = "generated" if not is_eval else "generated-eval"
 
             server = ProxyServer(
                 rollout=rollout,
@@ -334,11 +326,7 @@ def main(args):
             server.start(wait_until_ready=True)
             workflow = ProxyWorkflow(
                 proxy_server=server,
-                rollout_stat_scope=rollout_stat_scope,
                 export_style=config.export_style,
-                dump_dir=os.path.join(
-                    StatsLogger.get_log_path(config.stats_logger), dump_dir
-                ),
             )
             agent_dataloader = create_dataloader(
                 dataset,

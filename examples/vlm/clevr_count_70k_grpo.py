@@ -1,4 +1,3 @@
-import os
 import re
 import sys
 
@@ -6,7 +5,6 @@ from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.experimental.trainer import PPOTrainer
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
-from areal.utils.stats_logger import StatsLogger
 
 
 def extract_answer(pred_str, data_name, use_last_number=True):
@@ -55,16 +53,9 @@ def main(args):
         tokenizer=config.tokenizer_path,
         processor=config.tokenizer_path,
         enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
     eval_workflow_kwargs = workflow_kwargs.copy()
     eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
-    eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
-    eval_workflow_kwargs["dump_dir"] = os.path.join(
-        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-    )
 
     with PPOTrainer(
         config,

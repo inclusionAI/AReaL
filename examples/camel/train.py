@@ -1,5 +1,4 @@
 import asyncio
-import os
 from dataclasses import dataclass, field
 
 from camel.agents import ChatAgent
@@ -8,6 +7,7 @@ from transformers import PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters, GRPOConfig, load_expr_config
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.dataset import get_custom_dataset
 from areal.experimental.camel.openai_model import AReaLOpenAICompatibleModel
 from areal.experimental.openai import ArealOpenAI
@@ -15,7 +15,6 @@ from areal.experimental.trainer import PPOTrainer
 from areal.reward import get_math_verify_worker
 from areal.utils import stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.stats_logger import StatsLogger
 
 
 @dataclass
@@ -80,8 +79,6 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
-        dump_dir: str | None = None,
-        rollout_stat_scope: str = "rollout",
         n_trajs: int = 1,
         max_tokens: int = 32768,
     ):
@@ -92,11 +89,7 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
-        self.dump_dir = dump_dir
         self.max_tokens = max_tokens
-        self.rollout_stat_scope = rollout_stat_scope
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
 
         # Search hyper-parameters
         self.n_trajs = n_trajs
@@ -123,7 +116,7 @@ class CamelRLVRWorkflow(RolloutWorkflow):
             ]
         )
         for reward in rewards:
-            stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
+            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
         interactions_with_reward = {}
         for client in clients:
@@ -148,9 +141,6 @@ def main(args):
         tokenizer=config.tokenizer_path,
         n_trajs=config.n_trajs,
         max_tokens=config.max_tokens_per_trajectory,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
 
     # Create trainer (no valid_dataset for this example)
