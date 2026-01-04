@@ -890,15 +890,6 @@ class PPOActorConfig(TrainEngineConfig):
             "choices": PROX_LOGP_METHODS_ALL,
         },
     )
-    # Advanced Options
-    dynamic_sampling: bool = field(
-        default=False,
-        metadata={
-            "help": "Enable dynamic sampling (within DAPO). If enabled, groups with the same reward will be masked out. "
-            "Note that enabling this option will lead to variable batch sizes. If you want to use a constant batch size with dynamic filtering, "
-            "you should use the `should_accept_fn` parameter in `prepare_batch`."
-        },
-    )
 
     # Logging Agent Trajectories
     log_agent_stats: bool = field(
@@ -1736,6 +1727,14 @@ class PPOConfig(BaseExperimentConfig):
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig | None = field(default=None)
     critic: PPOCriticConfig | None = field(default=None)
+    dynamic_bs: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable dynamic batch sizing in prepare_batch. When True, batch collection "
+            "stops when (accepted + rejected) >= batch_size, returning only accepted results. "
+            "This results in variable-sized batches of valid data."
+        },
+    )
 
 
 @dataclass

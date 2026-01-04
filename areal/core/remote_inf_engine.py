@@ -870,6 +870,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        dynamic_bs: bool = False,
     ):
         """Asynchronously submit and wait until a full batch is ready.
 
@@ -883,6 +884,8 @@ class RemoteInfEngine(InferenceEngine):
             Keyword arguments to pass to the workflow constructor
         should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
             A function or module path for trajectory filtering
+        dynamic_bs : bool, optional
+            If True, enables dynamic batch sizing. Default is False.
 
         Returns
         -------
@@ -895,6 +898,7 @@ class RemoteInfEngine(InferenceEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            dynamic_bs=dynamic_bs,
         )
 
     @trace_perf("remote_inf_engine.pause_generation", category="misc")

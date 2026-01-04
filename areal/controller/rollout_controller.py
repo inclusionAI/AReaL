@@ -606,6 +606,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
+        dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         """Prepare a batch with controlled staleness.
 
@@ -636,7 +637,7 @@ class RolloutController:
         # Delegate to dispatcher
         assert dataloader.batch_size is not None
         results = self.dispatcher.active_submit_and_wait(
-            self.data_generator, batch_size=dataloader.batch_size
+            self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
         )
 
         # Extract trajectories and concatenate
