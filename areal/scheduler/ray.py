@@ -160,7 +160,7 @@ class RayScheduler(Scheduler):
 
         res = {
             "num_cpus": cpu,
-            "memory": mem * 1024 * 1024,
+            "memory": mem * 1024**3,
         }
         if device == "CPU":
             return res
@@ -172,7 +172,7 @@ class RayScheduler(Scheduler):
         return {
             "num_cpus": cpu,
             "resources": {device: float(gpu)},
-            "memory": mem * 1024 * 1024,
+            "memory": mem * 1024**3,
         }
 
     def _sum_resource_spec(
