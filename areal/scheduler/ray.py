@@ -103,13 +103,14 @@ class RayScheduler(Scheduler):
             )
         device_resource = device
         if device == "CPU":
-            device_resource = "num_cpus"
-        if device == "GPU":
-            device_resource = "num_gpus"
+            return {
+                "CPU": cpu,
+                "memory": mem * 1024**3,  # convert gb to bytes
+            }
         return {
-            "num_cpus": cpu,
+            "CPU": cpu,
             device_resource: float(gpu),
-            "memory": mem * 1024 * 1024,  # convert mb to bytes
+            "memory": mem * 1024**3,  # convert gb to bytes
         }
 
     def _create_bundle_list_gpu(self, cpu: int, gpu: int, mem: int) -> list[dict]:
@@ -157,10 +158,21 @@ class RayScheduler(Scheduler):
                 f"Current detected device is CPU but specified number of GPUs is {gpu}"
             )
 
+        res = {
+            "num_cpus": cpu,
+            "memory": mem * 1024**3,
+        }
+        if device == "CPU":
+            return res
+
+        if device == "GPU":
+            res["num_gpus"] = float(gpu)
+            return res
+
         return {
             "num_cpus": cpu,
             "resources": {device: float(gpu)},
-            "memory": mem * 1024 * 1024,
+            "memory": mem * 1024**3,
         }
 
     def _sum_resource_spec(
@@ -198,72 +210,78 @@ class RayScheduler(Scheduler):
                 failed_worker = ref_to_worker[ref]
                 raise WorkerFailedError(failed_worker.worker.id, -1)
 
-    def _create_rollout_workers(
-        self, role: str, schedulings: list[SchedulingSpec]
+    def _create_placement_group(self, role: str, bundles: list[dict]) -> PlacementGroup:
+        """Helper to create and wait for a placement group."""
+        pg = placement_group(bundles=bundles, strategy="PACK")
+        try:
+            ray.get(pg.ready(), timeout=self.startup_timeout)
+        except ray.exceptions.GetTimeoutError:
+            logger.error(
+                f"Ray placement group timeout for role {role}\n"
+                f"ray.nodes(): {ray.nodes()}"
+                f"bundles: {bundles}"
+            )
+            raise
+        self._placement_groups.append(pg)
+        return pg
+
+    def _build_env_vars(self, spec: SchedulingSpec) -> dict[str, str]:
+        """Helper to build environment variables for a worker."""
+        additional_envs_str = None
+        if spec.env_vars:
+            additional_envs_str = ",".join(f"{k}={v}" for k, v in spec.env_vars.items())
+        return get_env_vars(
+            self.exp_config.cluster.cluster_name if self.exp_config else "",
+            additional_envs_str,
+        )
+
+    def _create_ray_workers(
+        self, role: str, schedulings: list[SchedulingSpec], shared_placement_group: bool
     ) -> tuple[list[RayWorkerInfo], list[str]]:
-        """
-        Crate rollout workers, assuming 1 worker per rollout instance.
-
-        Parameters
-        ---------
-        role: str
-        schedulings: list[SchedulingSpec]
-
-        Returns
-        --------
-        Tuple[list[RayWorkerInfo], list[str]]
-            List of RayWorkerInfo of created workers
-            List of worker IDs created
-        """
-
         worker_info_list: list[RayWorkerInfo] = []
         worker_ids: list[str] = []
 
-        # create placement_groups
-        for idx, spec in enumerate(schedulings):
+        if shared_placement_group:
+            # Train-style: one shared PG with summed/split bundles across nodes
+            sum_cpu, sum_gpu, sum_mem = self._sum_resource_spec(schedulings)
+            bundles = self._create_bundle_list_gpu(sum_cpu, sum_gpu, sum_mem)
+            shared_pg = self._create_placement_group(role, bundles)
+            placement_groups = [shared_pg] * len(schedulings)
+            bundle_indices: list[int | None] = [None] * len(schedulings)
+        else:
+            # Rollout-style: one PG per worker
+            placement_groups = []
+            bundle_indices = []
+            for spec in schedulings:
+                bundles = [self._bundle_spec(spec.cpu, spec.gpu, spec.mem)]
+                pg = self._create_placement_group(role, bundles)
+                placement_groups.append(pg)
+                bundle_indices.append(0)
+
+        master_ip, master_port = get_placement_group_master_ip_and_port(
+            placement_groups[0], placement_group_bundle_index=0
+        )
+
+        for idx, (spec, pg, bundle_idx) in enumerate(
+            zip(schedulings, placement_groups, bundle_indices)
+        ):
             worker_id = f"{role}/{idx}"
-            # TODO: should later support some parameter whether to allocate gpus or not
-            gpu = 0 if "eval-rollout" in role else spec.gpu
-            bundles = [self._bundle_spec(spec.cpu, gpu, spec.mem)]
-            pg = placement_group(bundles, strategy="PACK")
+            env = self._build_env_vars(spec)
+            options = self._actor_resource_spec(spec.cpu, spec.gpu, spec.mem)
 
-            try:
-                ray.get(pg.ready(), timeout=self.startup_timeout)
-            except ray.exceptions.GetTimeoutError:
-                logger.error(
-                    f"Ray placement group timeout for train role {role}\n"
-                    f"ray.nodes(): {ray.nodes()}"
-                    f"bundles: {bundles}"
-                )
-                raise
-            self._placement_groups.append(pg)
-
-            master_ip, master_port = get_placement_group_master_ip_and_port(
-                pg, placement_group_bundle_index=0
-            )
-
-            # define resources to actor
-            options = self._actor_resource_spec(spec.cpu, gpu, spec.mem)
-
-            additional_envs_str = None
-            if spec.env_vars:
-                additional_envs_str = ",".join(
-                    f"{k}={v}" for k, v in spec.env_vars.items()
-                )
-            env = get_env_vars(
-                self.exp_config.cluster.cluster_name if self.exp_config else "",
-                additional_envs_str,
-            )
+            # Build scheduling strategy with optional bundle index
+            strategy_kwargs: dict[str, Any] = {
+                "placement_group": pg,
+                "placement_group_capture_child_tasks": True,
+            }
+            if bundle_idx is not None:
+                strategy_kwargs["placement_group_bundle_index"] = bundle_idx
 
             actor = RayRPCServer.options(
                 **options,
                 name=worker_id,
                 runtime_env=RuntimeEnv(env_vars=env),
-                scheduling_strategy=PlacementGroupSchedulingStrategy(
-                    placement_group=pg,
-                    placement_group_bundle_index=0,
-                    placement_group_capture_child_tasks=True,
-                ),
+                scheduling_strategy=PlacementGroupSchedulingStrategy(**strategy_kwargs),
             ).remote()
 
             # 0 needed to pad the list as the trainer takes index 1 for ports
@@ -277,96 +295,7 @@ class RayScheduler(Scheduler):
                 actor=actor,
                 role=role,
                 placement_group=pg,
-                bundle_index=0,
-                created_at=time.time(),
-                env_vars=env,
-            )
-
-            worker_info_list.append(wi)
-            worker_ids.append(worker_id)
-
-        return worker_info_list, worker_ids
-
-    def _create_train_workers(
-        self, role: str, schedulings: list[SchedulingSpec]
-    ) -> tuple[list[RayWorkerInfo], list[str]]:
-        """
-        Create workers for training roles. One PG per role with multiple bundles.
-        Assume 1 ray worker per train rank.
-
-        Parameters
-        ---------
-        role: str
-        schedulings: list[SchedulingSpec]
-
-        Returns
-        --------
-        Tuple[list[RayWorkerInfo], list[str]]
-            List of RayWorkerInfo of created workers
-            List of worker IDs created
-        """
-        # build bundles
-        sum_cpu, sum_gpu, sum_mem = self._sum_resource_spec(schedulings)
-        bundles: list[dict[str, float]] = self._create_bundle_list_gpu(
-            sum_cpu, sum_gpu, sum_mem
-        )
-
-        pg = placement_group(bundles=bundles, strategy="PACK")
-
-        try:
-            ray.get(pg.ready(), timeout=self.startup_timeout)
-        except ray.exceptions.GetTimeoutError:
-            logger.error(
-                f"Ray placement group timeout for train role {role}\n"
-                f"ray.nodes(): {ray.nodes()}"
-                f"bundles: {bundles}"
-            )
-            raise
-
-        self._placement_groups.append(pg)
-
-        master_ip, master_port = get_placement_group_master_ip_and_port(
-            pg, placement_group_bundle_index=0
-        )
-
-        worker_info_list: list[RayWorkerInfo] = []
-        worker_ids: list[str] = []
-
-        for idx, spec in enumerate(schedulings):
-            worker_id = f"{role}/{idx}"
-
-            options = self._actor_resource_spec(spec.cpu, spec.gpu, spec.mem)
-
-            additional_envs_str = None
-            if spec.env_vars:
-                additional_envs_str = ",".join(
-                    f"{k}={v}" for k, v in spec.env_vars.items()
-                )
-            env = get_env_vars(
-                self.exp_config.cluster.cluster_name if self.exp_config else "",
-                additional_envs_str,
-            )
-
-            actor = RayRPCServer.options(
-                **options,
-                name=worker_id,
-                runtime_env=RuntimeEnv(env_vars=env),
-                scheduling_strategy=PlacementGroupSchedulingStrategy(
-                    placement_group=pg, placement_group_capture_child_tasks=True
-                ),
-            ).remote()
-
-            worker_ports = ["0", str(master_port)]
-            worker = Worker(
-                id=worker_id, ip=master_ip, worker_ports=worker_ports, engine_ports=[]
-            )
-
-            wi = RayWorkerInfo(
-                worker=worker,
-                actor=actor,
-                role=role,
-                placement_group=pg,
-                bundle_index=None,  # decided by ray
+                bundle_index=bundle_idx,
                 created_at=time.time(),
                 env_vars=env,
             )
@@ -457,12 +386,9 @@ class RayScheduler(Scheduler):
         if strategy_type != SchedulingStrategyType.separation:
             raise ValueError(f"Unknown scheduling strategy type: {strategy_type}")
         # Non-colocated: spawn new worker actors
-        if "rollout" in role:
-            worker_info_list, worker_ids = self._create_rollout_workers(
-                role, schedulings
-            )
-        else:
-            worker_info_list, worker_ids = self._create_train_workers(role, schedulings)
+        worker_info_list, worker_ids = self._create_ray_workers(
+            role, schedulings, job.shared_placement_group
+        )
 
         self._workers[role].extend(worker_info_list)
 

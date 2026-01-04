@@ -132,6 +132,7 @@ class TrainController:
             tasks=list(self.config.scheduling_spec),
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
+            shared_placement_group=True,
         )
 
         # Create workers via scheduler
