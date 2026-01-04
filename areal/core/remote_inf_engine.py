@@ -405,9 +405,10 @@ class RemoteInfEngine(InferenceEngine):
                     "Failed to get server addresses from name_resolve, "
                     "falling back to environment variable."
                 )
-                if os.getenv("AREAL_LLM_SERVER_ADDRS"):
+                addrs_str = os.getenv("AREAL_LLM_SERVER_ADDRS")
+                if addrs_str:
                     # When addr is not provided, fallback to reading addrs from env var
-                    self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
+                    self.addresses = addrs_str.split(",")
                     self.logger.info("Get server addresses from environment variable.")
 
         if not self.addresses:
