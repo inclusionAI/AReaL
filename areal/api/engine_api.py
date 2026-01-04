@@ -195,9 +195,9 @@ class TrainEngine(abc.ABC):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        granularity: int = 1,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -210,12 +210,13 @@ class TrainEngine(abc.ABC):
         ----------
         data : list[dict[str, Any]]
             A list of input data dictionaries.
-        granularity : int, optional
-            The granularity of the rollout, by default 1.
         workflow : RolloutWorkflow | type[RolloutWorkflow] | str | None, optional
             The workflow to use for rollout generation, by default None.
         workflow_kwargs : dict[str, Any] | None, optional
             Keyword arguments to pass to the workflow constructor, by default None.
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
 
         Returns
         -------
@@ -228,10 +229,10 @@ class TrainEngine(abc.ABC):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        granularity: int = 1,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         """Prepare a batch of data for training from a dataloader.
@@ -240,14 +241,15 @@ class TrainEngine(abc.ABC):
         ----------
         dataloader : StatefulDataLoader
             The dataloader to fetch data from.
-        granularity : int, optional
-            The granularity of the rollout, by default 1.
         workflow : RolloutWorkflow | type[RolloutWorkflow] | str | None, optional
             The workflow to use for rollout generation, by default None.
         workflow_kwargs : dict[str, Any] | None, optional
             Keyword arguments to pass to the workflow constructor, by default None.
         should_accept_fn : Callable[[dict[str, Any]], bool] | str | None, optional
             A function to filter trajectories, by default None.
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. The method will stop collecting
             when (accepted + rejected) >= batch_size, returning only accepted results.
@@ -701,8 +703,9 @@ class InferenceEngine(abc.ABC):
         self,
         data: dict[str, Any],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        should_accept_fn: Callable | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
+        should_accept_fn: Callable | None = None,
+        group_size: int = 1,
         task_id: int | None = None,
         is_eval: bool = False,
     ) -> int:
@@ -728,6 +731,9 @@ class InferenceEngine(abc.ABC):
         should_accept_fn : Callable, optional
             A function used to decide whether to accept a specific trajectory, i.e., dynamic filtering.
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
         task_id : int, optional
             The task ID to use. If None, a new task ID will be generated internally.
         is_eval : bool, optional
@@ -803,6 +809,7 @@ class InferenceEngine(abc.ABC):
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         """Submit a batch of requests to the inference engine and wait for the results.
 
@@ -826,6 +833,9 @@ class InferenceEngine(abc.ABC):
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
             By default None.
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
 
         Returns
         -------
@@ -840,6 +850,7 @@ class InferenceEngine(abc.ABC):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.
@@ -849,8 +860,8 @@ class InferenceEngine(abc.ABC):
         .. warning::
 
             This method caches an internal data generator on the first call.
-            The ``dataloader``, ``workflow``, ``workflow_kwargs``, and
-            ``should_accept_fn`` parameters are captured at the first invocation
+            The ``dataloader``, ``workflow``, ``workflow_kwargs``, ``group_size``,
+            and ``should_accept_fn`` parameters are captured at the first invocation
             and reused in all subsequent calls. Passing different arguments in
             later calls will **not** take effect.
 
@@ -876,6 +887,9 @@ class InferenceEngine(abc.ABC):
             By default None.
         should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory, by default None
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. The method will stop collecting
             when (accepted + rejected) >= batch_size, returning only accepted results.

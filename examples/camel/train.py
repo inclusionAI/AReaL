@@ -1,4 +1,3 @@
-import asyncio
 from dataclasses import dataclass, field
 
 from camel.agents import ChatAgent
@@ -19,12 +18,6 @@ from areal.utils.hf_utils import load_hf_tokenizer
 
 @dataclass
 class AgentRLConfig(GRPOConfig):
-    n_trajs: int = field(
-        default=1,
-        metadata={
-            "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
-        },
-    )
     max_tokens_per_trajectory: int = field(
         default=32768,
         metadata={
@@ -79,7 +72,6 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
-        n_trajs: int = 1,
         max_tokens: int = 32768,
     ):
         if isinstance(tokenizer, str):
@@ -92,7 +84,6 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         self.max_tokens = max_tokens
 
         # Search hyper-parameters
-        self.n_trajs = n_trajs
         self.agent = CamelMathAgent(
             tokenizer=self.tokenizer,
             max_tokens_per_turn=self.gconfig.max_new_tokens,
@@ -100,29 +91,17 @@ class CamelRLVRWorkflow(RolloutWorkflow):
         )
 
     async def arun_episode(self, engine, data):
-        clients = [
-            ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
-            for _ in range(self.n_trajs)
-        ]
+        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
 
-        # Collect trajectories
-        rewards = await asyncio.gather(
-            *[
-                self.agent.run_agent(
-                    data=data,
-                    client=clients[i],
-                )
-                for i in range(self.n_trajs)
-            ]
+        # Collect single trajectory
+        reward = await self.agent.run_agent(
+            data=data,
+            client=client,
         )
-        for reward in rewards:
-            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
+        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
-        interactions_with_reward = {}
-        for client in clients:
-            client.apply_reward_discount(turn_discount=0.9)
-            interactions = client.export_interactions(style="individual")
-            interactions_with_reward.update(interactions)
+        client.apply_reward_discount(turn_discount=0.9)
+        interactions_with_reward = client.export_interactions(style="individual")
         return interactions_with_reward
 
 
@@ -139,7 +118,6 @@ def main(args):
     workflow_kwargs = dict(
         gconfig=config.gconfig,
         tokenizer=config.tokenizer_path,
-        n_trajs=config.n_trajs,
         max_tokens=config.max_tokens_per_trajectory,
     )
 

@@ -164,7 +164,7 @@ def main(args):
         with stats_tracker.record_timing("rollout"):
             batch = actor.prepare_batch(
                 train_dataloader,
-                granularity=actor.config.group_size,
+                group_size=config.gconfig.n_samples,
                 workflow=workflow,
                 should_accept_fn=lambda sample: True,
             )
@@ -224,7 +224,11 @@ def main(args):
                     cnt = 0
                     for data in valid_dataloader:
                         for item in data:
-                            eval_rollout.submit(item, eval_workflow)
+                            eval_rollout.submit(
+                                item,
+                                eval_workflow,
+                                group_size=config.eval_gconfig.n_samples,
+                            )
                             cnt += 1
                     eval_rollout.wait(cnt, timeout=None)
                 dist.barrier(device_ids=[actor.device.index])

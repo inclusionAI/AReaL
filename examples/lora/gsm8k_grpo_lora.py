@@ -170,10 +170,11 @@ def main(args):
                     train_dataloader,
                     workflow=workflow,
                     should_accept_fn=lambda sample: True,
+                    group_size=config.gconfig.n_samples,
                 )
                 batch = tensor_container_to(batch, actor.device)
             batch = bcast_and_split_from_rank0(
-                batch, granularity=config.actor.group_size
+                batch, granularity=config.gconfig.n_samples
             )
 
         # Create barrier to synchronize all rollout processes.

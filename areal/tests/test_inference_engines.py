@@ -142,9 +142,7 @@ def test_rollout(inference_engine, n_samples):
     engine = inference_engine["engine_class"](config)
     engine.initialize()
 
-    gconfig = GenerationHyperparameters(
-        max_new_tokens=16, greedy=False, n_samples=n_samples
-    )
+    gconfig = GenerationHyperparameters(max_new_tokens=16, greedy=False)
     tokenizer = load_hf_tokenizer(MODEL_PATH)
 
     workflow = RLVRWorkflow(
@@ -157,7 +155,7 @@ def test_rollout(inference_engine, n_samples):
     data = {
         "messages": [{"role": "user", "content": "Hello, how are you?"}],
     }
-    result = engine.rollout_batch([data] * 2, workflow=workflow)
+    result = engine.rollout_batch([data] * 2, workflow=workflow, group_size=n_samples)
     assert isinstance(result, dict)
     bs = get_batch_size(result)
     assert bs == 2 * n_samples
@@ -198,9 +196,7 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
     engine = inference_engine["engine_class"](config)
     engine.initialize()
 
-    gconfig = GenerationHyperparameters(
-        max_new_tokens=2, greedy=False, n_samples=n_samples
-    )
+    gconfig = GenerationHyperparameters(max_new_tokens=2, greedy=False)
     tokenizer = load_hf_tokenizer(MODEL_PATH)
 
     workflow = RLVRWorkflow(
@@ -213,7 +209,7 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         "messages": [{"role": "user", "content": "Hello, how are you?"}],
     }
     for _ in range(bs * 2):
-        engine.submit(data, workflow=workflow)
+        engine.submit(data, workflow=workflow, group_size=n_samples)
 
     if ofp < 1:
         # Due to controlled offpolicyness, not all requests are committed
@@ -230,7 +226,7 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
 
     # submit again
     for _ in range(bs * 2):
-        engine.submit(data, workflow=workflow)
+        engine.submit(data, workflow=workflow, group_size=n_samples)
 
     if ofp < 2:
         # Due to controlled offpolicyness, not all requests are committed

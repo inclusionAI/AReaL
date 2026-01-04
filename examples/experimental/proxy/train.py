@@ -50,7 +50,6 @@ class ProxyWorkflow(RolloutWorkflow):
         export_style: str = "concat",
     ):
         self.proxy_server = proxy_server
-        self.group_size = gconfig.n_samples
         self.gconfig = gconfig.new(n_samples=1)
         self.base_url = ensure_end_with_slash(base_url)
         self.process_pool = ProcessPoolExecutor(max_workers=max_concurrent_processes)
@@ -82,26 +81,27 @@ class ProxyWorkflow(RolloutWorkflow):
                     data=process_data,
                 )
             )
+            return session.session_id
 
     async def arun_episode(self, engine: InferenceEngine, data):
+        """Run a single episode via proxy subprocess."""
         task_id = uuid.uuid4().hex
-        await asyncio.gather(
-            *[self._run_episode(task_id, data) for _ in range(self.group_size)]
-        )
+
+        session_id = await self._run_episode(task_id, data)
+
         # the queue is prepared for separated agent and trainer mode, should not be used in this example
         await ProxyServer.finish_task(
             task_id, base_url=self.base_url, put_to_queue=False
         )
 
-        session_ids = [f"{task_id}-{i}" for i in range(self.group_size)]
         rewards, completions = await self.proxy_server.get_sessionwise_results(
-            session_ids, style=self.export_style
+            [session_id], style=self.export_style
         )
         for reward in rewards.values():
             stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
         merged_completions = {}
-        for session_id, session_completions in completions.items():
+        for session_completions in completions.values():
             merged_completions.update(session_completions)
         return merged_completions
 

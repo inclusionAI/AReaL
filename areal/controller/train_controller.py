@@ -538,16 +538,15 @@ class TrainController:
         workflow: str,
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
-        granularity: int | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> dict[str, Any]:
-        if granularity is not None:
-            logger.warning("For now, granularity takes no effect in train controller.")
         return self.rollout.prepare_batch(
             dataloader=dataloader,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            group_size=group_size,
             dynamic_bs=dynamic_bs,
         )
 
@@ -557,15 +556,14 @@ class TrainController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
-        granularity: int | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
-        if granularity is not None:
-            logger.warning("For now, granularity takes no effect in train controller.")
         return self.rollout.rollout_batch(
             data=data,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            group_size=group_size,
         )
 
     def _check_rollout_engine_connected(self):
