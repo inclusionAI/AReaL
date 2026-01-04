@@ -33,21 +33,16 @@ parts:
     - file: customization/dataset
     - file: customization/agent
     - file: customization/algorithm
-  - caption: References
-    chapters:
-    - file: references/benchmark
-    - file: references/reproduce
   - caption: Algorithms
     chapters:
     - file: algorithms/async
-    - file: algorithms/ppo
-    - file: algorithms/grpo
-    - file: algorithms/rloo
-    - file: algorithms/dapo
-    - file: algorithms/gspo
-    - file: algorithms/sapo
-    - file: algorithms/dr.GRPO
-    - file: algorithms/litePPO
+    - file: algorithms/grpo_series
+    - file: algorithms/m2po
+    - file: algorithms/prox_approx
+  - caption: References (Legacy)
+    chapters:
+    - file: references/benchmark
+    - file: references/reproduce
 
   # - caption: Customization (Legacy)
   #   chapters:

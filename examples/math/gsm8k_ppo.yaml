@@ -33,7 +33,7 @@ rollout:
   dump_to_file: true
 
 gconfig:
-  n_samples: 1
+  n_samples: 4
   min_new_tokens: 0
   max_new_tokens: 1024
   greedy: false
