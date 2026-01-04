@@ -127,7 +127,7 @@ parameters:
 
 | Algorithm   | `adv_norm.mean_level` | `adv_norm.std_level` | `adv_norm.mean_leave1out` | `importance_sampling_level` | Special                           |
 | ----------- | --------------------- | -------------------- | ------------------------- | --------------------------- | --------------------------------- |
-| **PPO**     | `batch`               | `batch`              | `false`                   | `token`                     | critic model, `n_samples=1`       |
+| **PPO**     | `batch`               | `batch`              | `false`                   | `token`                     |          critic model.            |
 | **GRPO**    | `batch`               | `batch`              | `false`                   | `token`                     | -                                 |
 | **Dr.GRPO** | `group`               | `null`               | `false`                   | `token`                     | -                                 |
 | **LitePPO** | `group`               | `batch`              | `false`                   | `token`                     | -                                 |
