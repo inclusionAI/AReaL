@@ -3,6 +3,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -235,7 +236,7 @@ class vLLMServerWrapper:
         return server_process
 
 
-def main(argv):
+def launch_vllm_server(argv):
     config, _ = parse_cli_args(argv)
     config.vllm = to_structured_cfg(config.vllm, vLLMConfig)
     config.cluster = to_structured_cfg(config.cluster, ClusterSpecConfig)
@@ -256,6 +257,16 @@ def main(argv):
         n_gpus_per_node=config.cluster.n_gpus_per_node,
     )
     vllm_server.run()
+
+
+def main(argv):
+    try:
+        launch_vllm_server(argv)
+    except Exception:
+        logger.error(traceback.format_exc())
+        sys.exit(1)
+    finally:
+        kill_process_tree(graceful=True)
 
 
 if __name__ == "__main__":
