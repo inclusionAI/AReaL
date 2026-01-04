@@ -2,16 +2,19 @@ import asyncio
 from unittest.mock import Mock, patch
 
 import pytest
-import ray
 from ray.util.state import summarize_actors
 
 from areal.api.cli_args import BaseExperimentConfig
 from areal.api.scheduler_api import Job, SchedulingSpec, Worker
 from areal.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
 
-pytestmark = pytest.mark.skipif(
-    not ray.is_initialized(),
-    reason="Ray scheduler tests will only run if ray is explicitly initialized.",
+pytestmark = pytest.mark.skip(
+    reason=(
+        "Ray scheduler tests will only run if ray environment is explicitly initialized\n"
+        "To run this test:\n"
+        "1. Set up the ray cluster with `ray start --head` and ensure that there are enough resources;\n"
+        "2. Comment this skip mark."
+    ),
 )
 
 
@@ -25,8 +28,6 @@ class TestRaySchedulerInitialization:
 
 class TestWorkerCreationAndDeletion:
     def test_create_delete_workers(self):
-        ray.init()
-
         config = BaseExperimentConfig()
 
         scheduler = RayScheduler(startup_timeout=60.0, exp_config=config)
@@ -37,15 +38,16 @@ class TestWorkerCreationAndDeletion:
             tasks=[
                 SchedulingSpec(
                     cpu=1,
-                    mem=1024,
+                    mem=1,
                     gpu=1,
                 ),
                 SchedulingSpec(
                     cpu=1,
-                    mem=1024,
+                    mem=1,
                     gpu=1,
                 ),
             ],
+            shared_placement_group=True,
         )
 
         # create workers
@@ -80,6 +82,9 @@ class TestWorkerCallEngine:
         async def async_none(*args, **kwargs):
             return None
 
+        def sync_none(*args, **kwargs):
+            return None
+
         config = BaseExperimentConfig()
 
         scheduler = RayScheduler(startup_timeout=60.0, exp_config=config)
@@ -107,14 +112,20 @@ class TestWorkerCallEngine:
         assert result is None
 
         # sync
-        ray_actor_handle.call.remote = lambda x: None
+        ray_actor_handle.call.remote = sync_none
         with patch("areal.scheduler.ray.ray.get", return_value=None):
-            result = scheduler.call_engine(worker.worker.id, "test_fn")
+            result = scheduler.call_engine(
+                worker.worker.id, "test_fn", engine_name="test/0"
+            )
         assert result is None
 
         # async
         ray_actor_handle.call.remote = async_none
-        result = asyncio.run(scheduler.async_call_engine(worker.worker.id, "test_fn"))
+        result = asyncio.run(
+            scheduler.async_call_engine(
+                worker.worker.id, "test_fn", engine_name="test/0"
+            )
+        )
         assert result is None
 
 
@@ -130,12 +141,12 @@ class TestUtilityFunctions:
         schedulings = [
             SchedulingSpec(
                 cpu=1,
-                mem=1024,
+                mem=1,
                 gpu=1,
             ),
             SchedulingSpec(
                 cpu=1,
-                mem=1024,
+                mem=1,
                 gpu=1,
             ),
         ]
@@ -144,7 +155,7 @@ class TestUtilityFunctions:
         assert len(new_schedulings) == 2
         for spec in new_schedulings:
             assert spec.cpu == 1
-            assert spec.mem == 1024
+            assert spec.mem == 1
             assert spec.gpu == 1
 
         # case where only 1 spec is passed but multiple workers
@@ -152,7 +163,7 @@ class TestUtilityFunctions:
         assert len(new_schedulings) == 2
         for spec in new_schedulings:
             assert spec.cpu == 1
-            assert spec.mem == 1024
+            assert spec.mem == 1
             assert spec.gpu == 1
 
         bundle_list = scheduler._create_bundle_list_gpu(1, 24, 1024)

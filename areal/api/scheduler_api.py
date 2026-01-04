@@ -36,6 +36,7 @@ class Job:
     replicas: int = 0
     tasks: list[SchedulingSpec] = field(default_factory=list)
     scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
+    shared_placement_group: bool = False
 
 
 class Scheduler(abc.ABC):

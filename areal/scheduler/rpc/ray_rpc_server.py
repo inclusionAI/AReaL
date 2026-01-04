@@ -119,6 +119,16 @@ class RayRPCServer:
             if isinstance(engine, TrainEngine) and engine.initialized:
                 device = self._get_device()
 
+                raw_args = broadcast_tensor_container(
+                    tensor_container_to(raw_args, self._get_device()),
+                    src_rank=engine.current_data_parallel_head(),
+                    group=engine.context_and_model_parallel_group,
+                )
+                raw_kwargs = broadcast_tensor_container(
+                    tensor_container_to(raw_kwargs, self._get_device()),
+                    src_rank=engine.current_data_parallel_head(),
+                    group=engine.context_and_model_parallel_group,
+                )
                 args = tensor_container_to(args, device)
                 args = broadcast_tensor_container(
                     args,

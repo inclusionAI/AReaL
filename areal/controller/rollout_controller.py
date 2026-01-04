@@ -138,6 +138,7 @@ class RolloutController:
             tasks=[sch_spec for _ in range(alloc_mode.gen.dp_size)],
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
+            shared_placement_group=False,
         )
 
         # Use asyncio.run to call async scheduler methods synchronously
