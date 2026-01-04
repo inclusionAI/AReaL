@@ -266,7 +266,7 @@ def main_grpo():
         # Data collection using prepare_batch with distributed coordination
         batch = actor.prepare_batch(
             dataloader,
-            granularity=actor.config.group_size,  # For GRPO grouping
+            group_size=config.gconfig.n_samples,
             workflow=workflow,
         )
         batch: dict[str, Any]
@@ -452,7 +452,6 @@ class RLVRWorkflow(RolloutWorkflow):
             enable_thinking=self.enable_thinking,
         )
 
-        n_samples = self.gconfig.n_samples
         req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
@@ -460,21 +459,30 @@ class RLVRWorkflow(RolloutWorkflow):
         )
 
         # Generate multiple responses concurrently
-        resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
+        resp = await engine.agenerate(req)
+        reward = self.reward_fn(
+            prompt=prompt_str,
+            completions=completions_str,
+            prompt_ids=resp.input_tokens,
+            completion_ids=resp.output_tokens,
+            **data,
+        )
 
-        results = []
-        for resp in resps:
-            reward = self.reward_fn(
-                prompt=prompt_str,
-                completions=completions_str,
-                prompt_ids=resp.input_tokens,
-                completion_ids=resp.output_tokens,
-                **data,
-            )
+        # Build result tensor dict with batch dim 1
+        seq = resp.input_tokens + resp.output_tokens
+        logprobs = [0.0] * resp.input_len + resp.output_logprobs
+        loss_mask = [0] * resp.input_len + [1] * resp.output_len
+        versions = [-1] * resp.input_len + resp.output_versions
 
-            results.append(res)
-
-        return concat_padded_tensors(results)
+        res = {
+            "input_ids": torch.tensor(seq, dtype=torch.int32),
+            "loss_mask": torch.tensor(loss_mask, dtype=torch.int32),
+            "logprobs": torch.tensor(logprobs, dtype=torch.float32),
+            "versions": torch.tensor(versions, dtype=torch.int32),
+            "attention_mask": torch.ones(len(seq), dtype=torch.bool),
+            "rewards": torch.tensor(reward, dtype=torch.float32),
+        }
+        return {k: v.unsqueeze(0) for k, v in res.items()}
 ```
 
 #### Batch Processing and Asynchronous Operations

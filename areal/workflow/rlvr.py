@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -13,7 +12,6 @@ from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
-from areal.utils.data import concat_padded_tensors
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import (
     atrace_session_phase,
@@ -145,7 +143,6 @@ class RLVRWorkflow(RolloutWorkflow):
             self.tokenizer,
             self.enable_thinking,
         )
-        n_samples = self.gconfig.n_samples
         req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
@@ -155,35 +152,21 @@ class RLVRWorkflow(RolloutWorkflow):
 
         prompt_str = self.tokenizer.decode(input_ids)
 
-        # Generate responses and collect rewards
-        sample_results = await asyncio.gather(
-            *[
-                self._collect_samples(engine, req, prompt_str, data)
-                for _ in range(n_samples)
-            ]
-        )
-        if sample_results:
-            resps, rewards = map(list, zip(*sample_results))
-        else:
-            resps, rewards = [], []
+        # Generate single response and compute reward
+        resp, reward = await self._collect_samples(engine, req, prompt_str, data)
 
-        # Build result tensors
-        results = []
-        for resp, reward in zip(resps, rewards):
-            seq = resp.input_tokens + resp.output_tokens
-            logprobs = [0.0] * resp.input_len + resp.output_logprobs
-            loss_mask = [0] * resp.input_len + [1] * resp.output_len
-            versions = [-1] * resp.input_len + resp.output_versions
+        # Build result tensor dict with batch dim 1
+        seq = resp.input_tokens + resp.output_tokens
+        logprobs = [0.0] * resp.input_len + resp.output_logprobs
+        loss_mask = [0] * resp.input_len + [1] * resp.output_len
+        versions = [-1] * resp.input_len + resp.output_versions
 
-            res = {
-                "input_ids": torch.tensor(seq, dtype=torch.int32),
-                "loss_mask": torch.tensor(loss_mask, dtype=torch.int32),
-                "logprobs": torch.tensor(logprobs, dtype=torch.float32),
-                "versions": torch.tensor(versions, dtype=torch.int32),
-                "attention_mask": torch.ones(len(seq), dtype=torch.bool),
-                "rewards": torch.tensor(reward, dtype=torch.float32),
-            }
-            res = {k: v.unsqueeze(0) for k, v in res.items()}
-            results.append(res)
-
-        return concat_padded_tensors(results)
+        res = {
+            "input_ids": torch.tensor(seq, dtype=torch.int32),
+            "loss_mask": torch.tensor(loss_mask, dtype=torch.int32),
+            "logprobs": torch.tensor(logprobs, dtype=torch.float32),
+            "versions": torch.tensor(versions, dtype=torch.int32),
+            "attention_mask": torch.ones(len(seq), dtype=torch.bool),
+            "rewards": torch.tensor(reward, dtype=torch.float32),
+        }
+        return {k: v.unsqueeze(0) for k, v in res.items()}

@@ -279,34 +279,27 @@ class RLVRWorkflow(RolloutWorkflow):
             self.enable_thinking
         )
 
-        # Step 2: Generate n_samples responses in parallel
-        n_samples = self.gconfig.n_samples
+        # Step 2: Generate text responses
         req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             gconfig=self.gconfig.new(n_samples=1),
             tokenizer=self.tokenizer,
         )
-        resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
+        resp = await engine.agenerate(req)
 
         # Step 3: Compute rewards and build training samples
-        results = []
-        for resp in resps:
-            # Extract text and compute reward
-            prompt_str = self.tokenizer.decode(resp.input_tokens)
-            completion_str = self.tokenizer.decode(resp.output_tokens)
-            reward = await self.async_reward_fn(prompt_str, completion_str, data)
+        # Extract text and compute reward
+        prompt_str = self.tokenizer.decode(resp.input_tokens)
+        completion_str = self.tokenizer.decode(resp.output_tokens)
+        reward = await self.async_reward_fn(prompt_str, completion_str, data)
 
-            # Build training sample with all required fields
-            res = dict(
-                input_ids=...,
-                rewards=...,
-                ... # other required fields for training
-            )
-            results.append(res)
-
-        # Return concatenated samples
-        return concat_padded_tensors(results)
+        # Build training sample with all required fields
+        return dict(
+            input_ids=...,
+            rewards=...,
+            ... # other required fields for training
+        )
 ```
 
 **GSM8K Reward Function**: Checks if the model's answer matches the ground truth.
@@ -471,7 +464,7 @@ accept or reject the sample.
 ```python
 batch = actor.prepare_batch(
     train_dataloader,
-    granularity=actor.config.group_size,
+    group_size=config.gconfig.n_samples,
     workflow=workflow,
     should_accept_fn=lambda sample: 0 < sample['rewards'].mean() < 1
 )
@@ -505,10 +498,10 @@ class DistRolloutCoordinator:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        granularity: int = 1,
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
         should_accept_fn: Callable | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         batch = None
 
@@ -523,7 +516,7 @@ class DistRolloutCoordinator:
             batch = tensor_container_to(batch, current_platform.current_device())
 
         # Broadcast and redistribute to all data parallel ranks
-        return self._broadcast_and_redistribute_batch(batch, granularity=granularity)
+        return self._broadcast_and_redistribute_batch(batch, granularity=group_size)
 ```
 
 **Key Design**:
@@ -592,15 +585,15 @@ class FSDPEngine(TrainEngine):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        granularity: int = 1,
         workflow: RolloutWorkflow | None = None,
         workflow_builder: Callable | None = None,
         should_accept_fn: Callable | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         # Delegate to coordinator
         return self.rollout_coordinator.prepare_batch(
             dataloader,
-            granularity=granularity,
+            group_size=group_size,
             workflow=workflow,
             workflow_builder=workflow_builder,
             should_accept_fn=should_accept_fn
@@ -615,7 +608,7 @@ Here's what a single training step looks like:
 # Step 1: Collect rollout data through the actor
 batch = actor.prepare_batch(
     train_dataloader,
-    granularity=actor.config.group_size,  # For group normalization
+    group_size=config.gconfig.n_samples,  # For group normalization
     workflow=workflow,
     should_accept_fn=lambda sample: True,  # Accept all samples
 )
@@ -698,7 +691,7 @@ for global_step in range(max_steps):
     # ==== Rollout Phase ====
     batch = actor.prepare_batch(
         train_dataloader,
-        granularity=actor.config.group_size,
+        group_size=config.gconfig.n_samples,
         workflow=workflow,
         should_accept_fn=lambda sample: True,
     )

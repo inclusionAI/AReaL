@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import json
 import sys
@@ -48,7 +47,6 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
-        n_trajs: int = 1,
         max_tokens: int = 32768,
         max_llm_calls_per_run: int = 100,
         judge_engine_config: InferenceEngineConfig | None = None,
@@ -61,9 +59,6 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
         self.max_tokens = max_tokens
-
-        # Search hyper-parameters
-        self.n_trajs = n_trajs
 
         # Initialize judge engine from config if provided
         self._owns_judge_engine = False
@@ -97,44 +92,24 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         qid = str(qid) or uuid.uuid4().hex
         data["qid"] = qid
 
-        clients = [
-            ArealOpenAI(
-                engine=engine, tokenizer=self.tokenizer, chat_template_type="concat"
-            )
-            for _ in range(self.n_trajs)
-        ]
-
-        # Collect trajectories
-        all_stats = await asyncio.gather(
-            *[
-                self.agent.make_trajectory(
-                    data=data,
-                    client=clients[i],
-                )
-                for i in range(self.n_trajs)
-            ]
+        client = ArealOpenAI(
+            engine=engine, tokenizer=self.tokenizer, chat_template_type="concat"
         )
-        for stats in all_stats:
-            stats_tracker.get(workflow_context.stat_scope()).scalar(**stats)
 
-        completions_with_rewards = {}
-        for client in clients:
-            completion_with_rewards = client.export_interactions(style="concat")
-            assert len(completion_with_rewards) == 1, len(completion_with_rewards)
-            completions_with_rewards.update(completion_with_rewards)
-        assert len(all_stats) == self.n_trajs
-        assert len(completions_with_rewards) == self.n_trajs
-        return completions_with_rewards
+        # Collect single trajectory
+        stats = await self.agent.make_trajectory(
+            data=data,
+            client=client,
+        )
+        stats_tracker.get(workflow_context.stat_scope()).scalar(**stats)
+
+        completion_with_rewards = client.export_interactions(style="concat")
+        assert len(completion_with_rewards) == 1, len(completion_with_rewards)
+        return completion_with_rewards
 
 
 @dataclass
 class AgentRLConfig(GRPOConfig):
-    n_trajs: int = field(
-        default=1,
-        metadata={
-            "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
-        },
-    )
     max_llm_calls_per_run: int = field(
         default=100,
         metadata={
@@ -172,12 +147,6 @@ def get_search_dataset(dataset_path, tokenizer):
 def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
 
-    # NOTE: Ensure config.actor.group_size == config.n_trajs for proper batching
-    # The trainer uses config.actor.group_size as granularity in prepare_batch
-    assert config.actor.group_size == config.n_trajs, (
-        f"config.actor.group_size ({config.actor.group_size}) must equal config.n_trajs ({config.n_trajs})"
-    )
-
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     # Load dataset
@@ -186,7 +155,6 @@ def main(args):
     workflow_kwargs = dict(
         gconfig=config.gconfig,
         tokenizer=config.tokenizer_path,
-        n_trajs=config.n_trajs,
         max_tokens=config.max_tokens_per_trajectory,
         max_llm_calls_per_run=config.max_llm_calls_per_run,
         judge_engine_config=config.judge_engine,

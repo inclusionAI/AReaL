@@ -1,5 +1,6 @@
 from __future__ import annotations  # noqa
 
+import asyncio
 import json
 import os
 import random
@@ -20,6 +21,7 @@ import aiofiles.os
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
+from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.async_task_runner import (
     AsyncTaskRunner,
@@ -38,6 +40,59 @@ from logging import Logger
 
 if TYPE_CHECKING:
     from .remote_inf_engine import RemoteInfEngine
+
+
+class GroupedRolloutWorkflow(RolloutWorkflow):
+    def __init__(
+        self,
+        workflow: RolloutWorkflow,
+        group_size: int,
+        logger: Logger,
+    ):
+        if group_size < 1:
+            raise ValueError(f"group_size must be >= 1, got {group_size}")
+        self.workflow = workflow
+        self.group_size = group_size
+        self.logger = logger
+
+    async def arun_episode(
+        self, engine: InferenceEngine, data: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        results = await asyncio.gather(
+            *[self.workflow.arun_episode(engine, data) for _ in range(self.group_size)]
+        )
+
+        valid_results = [r for r in results if r is not None]
+
+        # All results None -> return None
+        if not valid_results:
+            return None
+
+        # Some results None -> warn and continue with valid ones
+        if len(valid_results) < len(results):
+            self.logger.warning(
+                f"GroupedRolloutWorkflow: {len(results) - len(valid_results)}/{len(results)} "
+                "trajectories returned None, using remaining results"
+            )
+
+        # Check if results are InteractionWithTokenLogpReward dicts
+        first = valid_results[0]
+        if (
+            isinstance(first, dict)
+            and first
+            and all(
+                isinstance(v, InteractionWithTokenLogpReward) for v in first.values()
+            )
+        ):
+            # Merge dicts - each result is {completion_id: InteractionWithTokenLogpReward}
+            merged: dict[str, InteractionWithTokenLogpReward] = {}
+            for result in valid_results:
+                merged.update(result)
+            return merged if merged else None
+
+        # Otherwise, tensor dicts - concatenate
+        concatenated = concat_padded_tensors(valid_results)
+        return concatenated if concatenated else None
 
 
 def check_trajectory_format(
@@ -1002,33 +1057,11 @@ class WorkflowExecutor:
         """
         return self.staleness_manager.get_capacity()
 
-    def _resolve_workflow(
+    def _resolve_raw_workflow(
         self,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None,
-    ) -> RolloutWorkflow:
-        """Resolve workflow parameter to a RolloutWorkflow instance.
-
-        Parameters
-        ----------
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
-            The workflow specification
-        workflow_kwargs : Dict[str, Any] | None
-            Keyword arguments for workflow initialization
-
-        Returns
-        -------
-        RolloutWorkflow
-            A workflow instance ready to use
-
-        Raises
-        ------
-        ValueError
-            If workflow_kwargs is required but not provided
-        TypeError
-            If workflow type is invalid
-        """
-
+    ):
         # Case 1: Already a workflow instance
         if isinstance(workflow, RolloutWorkflow):
             if workflow_kwargs is not None:
@@ -1036,7 +1069,6 @@ class WorkflowExecutor:
                     "workflow_kwargs is ignored when workflow is already an instance"
                 )
             return workflow
-
         workflow_class: type[RolloutWorkflow]
 
         # Resolve to a class type
@@ -1077,6 +1109,21 @@ class WorkflowExecutor:
                 f"Failed to instantiate workflow class {workflow_class} "
                 f"with kwargs {workflow_kwargs}: {e}"
             ) from e
+
+    def _resolve_workflow(
+        self,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow_kwargs: dict[str, Any] | None,
+        group_size: int = 1,
+    ) -> RolloutWorkflow:
+        """Resolve workflow parameter to a RolloutWorkflow instance."""
+        resolved = self._resolve_raw_workflow(workflow, workflow_kwargs)
+
+        # Wrap with GroupedRolloutWorkflow if group_size > 1
+        if group_size > 1:
+            resolved = GroupedRolloutWorkflow(resolved, group_size, self.logger)
+
+        return resolved
 
     def _resolve_should_accept_fn(
         self, should_accept_fn: Callable[[dict[str, Any]], bool] | str | None
@@ -1277,6 +1324,7 @@ class WorkflowExecutor:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         task_id: int | None = None,
         is_eval: bool = False,
     ) -> int:
@@ -1288,7 +1336,9 @@ class WorkflowExecutor:
         See :meth:`~areal.api.engine_api.InferenceEngine.submit` for parameters.
         """
         # Resolve workflow and should_accept to their concrete forms
-        resolved_workflow = self._resolve_workflow(workflow, workflow_kwargs)
+        resolved_workflow = self._resolve_workflow(
+            workflow, workflow_kwargs, group_size
+        )
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
 
         if task_id is None:
@@ -1362,6 +1412,7 @@ class WorkflowExecutor:
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -1381,6 +1432,7 @@ class WorkflowExecutor:
                 data=item,
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
+                group_size=group_size,
             )
         results = self.wait(count=len(data))
         # Concatenate into batch tensor format
@@ -1393,6 +1445,7 @@ class WorkflowExecutor:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ):
         """Prepare a batch with controlled staleness.
@@ -1403,8 +1456,8 @@ class WorkflowExecutor:
         .. warning::
 
             This method caches an internal data generator on the first call.
-            The ``dataloader``, ``workflow``, ``workflow_kwargs``, and
-            ``should_accept_fn`` parameters are captured at the first invocation
+            The ``dataloader``, ``workflow``, ``workflow_kwargs``, ``group_size``,
+            and ``should_accept_fn`` parameters are captured at the first invocation
             and reused in all subsequent calls. Passing different arguments in
             later calls will **not** take effect.
 
@@ -1423,7 +1476,7 @@ class WorkflowExecutor:
                     # Resolve workflow for each submission to allow
                     # resource separation if a type or string is provided.
                     resolved_workflow = self._resolve_workflow(
-                        workflow, workflow_kwargs
+                        workflow, workflow_kwargs, group_size
                     )
                     task_id = self._task_id_generator.next()
                     perf_tracer.register_task(task_id)

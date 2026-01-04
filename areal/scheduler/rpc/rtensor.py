@@ -396,8 +396,6 @@ class RTensor:
         if group_indices is None:
             layout_rtensor = _find_in_structure(obj, RTensor)
             if layout_rtensor is not None:
-                # FIXME: the next line prevents splitting a single trajectory
-                # into finer granularity
                 seqlens = [sum(s.seqlens) for s in layout_rtensor.shards]
                 # Use FFD to allocate shards to DP groups
                 group_indices = ffd_allocate(

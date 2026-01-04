@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from collections.abc import Callable
 from typing import Any, cast
@@ -11,7 +10,6 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
-from areal.utils.data import concat_padded_tensors
 from areal.utils.image import image2base64
 from areal.utils.perf_tracer import (
     atrace_session_phase,
@@ -113,8 +111,6 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
         input_ids: list[int] = processed_input["input_ids"].tolist()[0]
 
-        n_samples = self.gconfig.n_samples
-
         byte_images = image2base64(data["images"])
         req = ModelRequest(
             rid=uuid.uuid4().hex,
@@ -130,46 +126,30 @@ class VisionRLVRWorkflow(RLVRWorkflow):
 
         prompt_str = self.tokenizer.decode(input_ids)
 
-        # Generate responses and collect rewards
-        sample_results = await asyncio.gather(
-            *[
-                self._collect_samples(engine, req, prompt_str, data)
-                for _ in range(n_samples)
-            ]
-        )
-        if sample_results:
-            resps, rewards = map(list, zip(*sample_results))
-        else:
-            resps, rewards = [], []
+        # Generate single response and compute reward
+        resp, reward = await self._collect_samples(engine, req, prompt_str, data)
 
-        # Build result tensors
-        results = []
-        for resp, reward in zip(resps, rewards):
-            seq = resp.input_tokens + resp.output_tokens
-            logprobs = [0.0] * resp.input_len + resp.output_logprobs
-            loss_mask = [0] * resp.input_len + [1] * resp.output_len
-            versions = [-1] * resp.input_len + resp.output_versions
+        # Build result tensor dict with batch dim 1
+        seq = resp.input_tokens + resp.output_tokens
+        logprobs = [0.0] * resp.input_len + resp.output_logprobs
+        loss_mask = [0] * resp.input_len + [1] * resp.output_len
+        versions = [-1] * resp.input_len + resp.output_versions
 
-            # Build multi-modal input for each data point
-            multi_modal_input = [
-                {
-                    "pixel_values": processed_input["pixel_values"],
-                }
-            ]
-            if "image_grid_thw" in processed_input:
-                multi_modal_input[0]["image_grid_thw"] = processed_input[
-                    "image_grid_thw"
-                ]
-
-            res = {
-                "input_ids": torch.tensor(seq, dtype=torch.int32).unsqueeze(0),
-                "loss_mask": torch.tensor(loss_mask, dtype=torch.int32).unsqueeze(0),
-                "logprobs": torch.tensor(logprobs, dtype=torch.float32).unsqueeze(0),
-                "multi_modal_input": multi_modal_input,
-                "versions": torch.tensor(versions, dtype=torch.int32).unsqueeze(0),
-                "attention_mask": torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
-                "rewards": torch.tensor(reward, dtype=torch.float32).unsqueeze(0),
+        # Build multi-modal input
+        multi_modal_input = [
+            {
+                "pixel_values": processed_input["pixel_values"],
             }
-            results.append(res)
+        ]
+        if "image_grid_thw" in processed_input:
+            multi_modal_input[0]["image_grid_thw"] = processed_input["image_grid_thw"]
 
-        return concat_padded_tensors(results)
+        return {
+            "input_ids": torch.tensor(seq, dtype=torch.int32).unsqueeze(0),
+            "loss_mask": torch.tensor(loss_mask, dtype=torch.int32).unsqueeze(0),
+            "logprobs": torch.tensor(logprobs, dtype=torch.float32).unsqueeze(0),
+            "multi_modal_input": multi_modal_input,
+            "versions": torch.tensor(versions, dtype=torch.int32).unsqueeze(0),
+            "attention_mask": torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
+            "rewards": torch.tensor(reward, dtype=torch.float32).unsqueeze(0),
+        }

@@ -764,9 +764,6 @@ class PPOActorConfig(TrainEngineConfig):
     """Configuration for PPO actor model, a subclass of a TrainEngine."""
 
     # Core PPO/GRPO Parameters
-    group_size: int = field(
-        default=1, metadata={"help": "Number of sequences in each group"}
-    )
     ppo_n_minibatches: int = field(
         default=4, metadata={"help": "Number of minibatches for each PPO update"}
     )
@@ -1723,6 +1720,12 @@ class PPOConfig(BaseExperimentConfig):
     gconfig: GenerationHyperparameters = field(
         default_factory=GenerationHyperparameters
     )
+    eval_gconfig: GenerationHyperparameters | None = field(
+        default=None,
+        metadata={
+            "help": "Generation hyperparameters for evaluation. If None, use gconfig."
+        },
+    )
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig | None = field(default=None)
@@ -1735,6 +1738,11 @@ class PPOConfig(BaseExperimentConfig):
             "This results in variable-sized batches of valid data."
         },
     )
+
+    def __post_init__(self):
+        """Validate the eval generation config."""
+        if self.eval_gconfig is None:
+            self.eval_gconfig = self.gconfig.new()
 
 
 @dataclass

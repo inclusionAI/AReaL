@@ -604,7 +604,7 @@ def test_search_agent_deepresearch(tmp_path_factory):
                 example_file,
                 config_name,
                 "allocation_mode=sglang:d1+megatron:d1",
-                "gconfig.n_samples=1",
+                "gconfig.n_samples=2",
                 "gconfig.max_new_tokens=128",
                 "actor.mb_spec.max_tokens_per_mb=2048",
                 "train_dataset.batch_size=4",
@@ -612,7 +612,6 @@ def test_search_agent_deepresearch(tmp_path_factory):
                 f"cluster.fileroot={str(experiments_path)}",
                 f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
                 f"actor.path={model_path}",
-                "n_trajs=2",
                 "max_tokens_per_trajectory=1024",
                 "max_llm_calls_per_run=2",
                 f"judge_engine.experiment_name={llm_judge_exp_name}",
@@ -678,7 +677,7 @@ def test_camel(tmp_path_factory):
             example_file,
             config_name,
             "allocation_mode=sglang:d1+fsdp:d1",
-            "gconfig.n_samples=1",
+            "gconfig.n_samples=2",
             "gconfig.max_new_tokens=256",
             "actor.mb_spec.max_tokens_per_mb=4096",
             "train_dataset.batch_size=16",
@@ -687,7 +686,6 @@ def test_camel(tmp_path_factory):
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
             f"actor.path={model_path}",
-            "n_trajs=1",
         )
     )
     if not success:

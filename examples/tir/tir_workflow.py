@@ -1,5 +1,4 @@
 import ast
-import asyncio
 import copy
 import re
 import uuid
@@ -20,7 +19,6 @@ from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
-from areal.utils.data import concat_padded_tensors
 
 from prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT  # isort: skip
 from tool_manager import ToolCallStatus, ToolManager  # isort: skip
@@ -125,16 +123,8 @@ class TIRWorkflow(RolloutWorkflow):
                 add_special_tokens=False,
             )
 
-        n_samples = self.gconfig.n_samples
-        # Append conversation history
-        results = await asyncio.gather(
-            *[
-                self._multi_round_response(engine, input_ids, data)
-                for _ in range(n_samples)
-            ]
-        )
-
-        return concat_padded_tensors(results)
+        # Run single trajectory
+        return await self._multi_round_response(engine, input_ids, data)
 
     async def _multi_round_response(self, engine, prompt_ids, data):
         prompt_str = self.tokenizer.decode(prompt_ids)

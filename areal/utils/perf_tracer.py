@@ -2063,7 +2063,7 @@ def trace_session(phase: str):
     >>> # Use decorator on methods - no need to pass session_id!
     >>> @trace_session("generate")
     ... async def _do_generate(self, engine, req, n_samples):
-    ...     return await asyncio.gather(...)
+    ...     return await engine.agenerate(...)
 
     >>> @trace_session("reward")
     ... async def _compute_rewards(self, resps):

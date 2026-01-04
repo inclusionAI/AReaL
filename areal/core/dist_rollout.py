@@ -119,7 +119,7 @@ class DistRolloutCoordinator:
             Batch data from data parallel head, None for other ranks
         granularity : int, default=1
             Granularity for redistribution within data parallel group.
-            - For single-turn rollouts: Use actor.config.group_size (GRPO grouping)
+            - For single-turn rollouts: Use group_size (GRPO grouping)
             - For multi-turn rollouts: Use 1 (default, per-completion redistribution)
             - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
 
@@ -154,8 +154,8 @@ class DistRolloutCoordinator:
         self,
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        granularity: int = 1,
         workflow_kwargs: dict[str, Any] | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         """Generate rollout batch with distributed coordination (synchronous).
 
@@ -171,15 +171,13 @@ class DistRolloutCoordinator:
         ----------
         data : List[Dict[str, Any]]
             Input data batch for rollout generation
-        granularity : int, default=1
-            Granularity for redistribution within data parallel group.
-            - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
-            - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
-            - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
         workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             Workflow defining rollout logic
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
 
         Returns
         -------
@@ -198,18 +196,19 @@ class DistRolloutCoordinator:
                 data,
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
+                group_size=group_size,
             )
             batch = tensor_container_to(batch, current_platform.current_device())
 
-        return self._broadcast_and_redistribute_batch(batch, granularity=granularity)
+        return self._broadcast_and_redistribute_batch(batch, granularity=group_size)
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        granularity: int = 1,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         """Prepare async rollout batch with distributed coordination.
@@ -223,17 +222,15 @@ class DistRolloutCoordinator:
         ----------
         dataloader : StatefulDataLoader
             Dataloader to pull samples from
-        granularity : int, default=1
-            Granularity for redistribution within data parallel group.
-            - For single-turn rollouts: Set to actor.config.group_size (GRPO grouping)
-            - For multi-turn rollouts: Use default value of 1 (per-completion redistribution)
-            - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
         workflow : RolloutWorkflow | type[RolloutWorkflow] | str
             Workflow defining rollout logic
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
         should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
             Filter function for accepting samples based on staleness
+        group_size : int, optional
+            Number of times to run the workflow per input and concatenate results.
+            Default is 1 (no grouping).
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. Default is False.
 
@@ -255,8 +252,9 @@ class DistRolloutCoordinator:
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
                 should_accept_fn=should_accept_fn,
+                group_size=group_size,
                 dynamic_bs=dynamic_bs,
             )
             batch = tensor_container_to(batch, current_platform.current_device())
 
-        return self._broadcast_and_redistribute_batch(batch, granularity=granularity)
+        return self._broadcast_and_redistribute_batch(batch, granularity=group_size)
