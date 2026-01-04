@@ -75,6 +75,7 @@ from areal.utils.mcore.packed_context_parallel import (
 )
 from areal.utils.mcore.pipeline_parallel import configure_pipeline_layer_splits
 from areal.utils.megatron import (
+    FP8Tensor,
     all_gather_param,
     convert_to_hf,
     get_named_parameters,
@@ -980,16 +981,13 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
-        param = all_gather_param(name, param)
+        fp8_direct_convert = self.fp8_direct_convert
+        param = all_gather_param(name, param, fp8_direct_convert)
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
-        fp8_direct_convert = self.fp8_direct_convert
-        if is_float8tensor(param):
+        if isinstance(param, FP8Tensor):
             # FP8 is stored as uint8, so element_size is 1 byte
             param_size = param.numel()
-            if not fp8_direct_convert:
-                # Convert TE FP8 to bf16 before convert_to_hf (which will convert to PyTorch FP8)
-                param = param.dequantize(dtype=self.dtype)
         else:
             param_size = param.numel() * param.element_size()
 
@@ -1102,7 +1100,7 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
-        param = all_gather_param(name, param)
+        param = all_gather_param(name, param, self.fp8_direct_convert)
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
         if is_float8tensor(param):

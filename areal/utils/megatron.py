@@ -13,17 +13,390 @@ from areal.models.mcore.hf_load import _te_fp8_to_pytorch_fp8
 from areal.utils.fp8_utils import quantize_params
 
 
+class FP8Tensor(torch.Tensor):
+    """A wrapper tensor that maps operations on data to operations on both data and scale_inv.
+
+    This allows conversion functions to work with FP8 tensors as if they were regular tensors,
+    while automatically handling the corresponding scale_inv transformations.
+
+    - scale_inv shape mirrors data shape, but each dimension is divided by block_size
+    - When data is [M, K], scale_inv is [ceil(M/block), ceil(K/block)]
+    - When data is reshaped to [A, B, C], scale_inv is reshaped to [A, ceil(B/block), ceil(C/block)]
+      (assuming the reshape is compatible with block boundaries)
+    - Operations like chunk, split, cat on data apply to scale_inv on the SAME dimension
+    """
+
+    @staticmethod
+    def __new__(
+        cls,
+        rowwise_data: torch.Tensor,
+        rowwise_scale_inv: torch.Tensor,
+        block_size: int = 128,
+    ):
+        # Create a tensor subclass that wraps rowwise_data
+        obj = torch.Tensor._make_wrapper_subclass(
+            cls,
+            rowwise_data.shape,
+            dtype=rowwise_data.dtype,
+            device=rowwise_data.device,
+            requires_grad=False,
+        )
+        obj._rowwise_data = rowwise_data
+        obj._rowwise_scale_inv = rowwise_scale_inv
+        obj._block_size = block_size
+        return obj
+
+    def __repr__(self) -> str:
+        return f"FP8Tensor(data={self._rowwise_data}\nscale_inv={self._rowwise_scale_inv}\ndata_shape={self.shape}, scale_shape={self._rowwise_scale_inv.shape}, block_size={self._block_size})"
+
+    def _ceil_div(self, a: int, b: int) -> int:
+        return (a + b - 1) // b
+
+    def _map_data_dim_to_scale_dim(self, data_dim_size: int) -> int:
+        """Map a data dimension size to the corresponding scale dimension size."""
+        return self._ceil_div(data_dim_size, self._block_size)
+
+    def _compute_scale_shape(
+        self, old_data_shape: tuple, new_data_shape: tuple, old_scale_shape: tuple
+    ) -> tuple:
+        """Compute scale_inv shape after a view/reshape operation.
+
+        - When data dimension is divided by block_size to get scale dimension
+        - Reshapes should preserve this relationship
+
+        For example:
+        - data: [4096, 4096] -> scale: [32, 32]
+        - After view to [8, 512, 4096]:
+          - scale should be [8, 4, 32]
+          - 8 is a factor that doesn't need scaling (it's a "grouping" dimension)
+        """
+        assert old_data_shape[-1] == new_data_shape[-1], (
+            "last dimension of old_data_shape and new_data_shape must be the same"
+        )
+        # Same number of dimensions
+        if len(old_data_shape) == len(new_data_shape):
+            assert old_scale_shape == new_data_shape, (
+                "old_scale_shape and new_data_shape must be the same"
+            )
+            return old_scale_shape
+
+        # For view to dimensions like view(A, B, C, K)
+        # Try to infer scale shape
+        new_scale_shape = []
+
+        for i, data_dim in enumerate(new_data_shape):
+            if i == len(new_data_shape) - 1 or i == len(new_data_shape) - 2:
+                # Last two dimensions
+                scale_dim = self._map_data_dim_to_scale_dim(data_dim)
+                new_scale_shape.append(scale_dim)
+            else:
+                new_scale_shape.append(data_dim)
+
+        assert sum(new_scale_shape) == sum(old_scale_shape), (
+            f"sum of new_scale_shape {new_scale_shape} and old_scale_shape {old_scale_shape} must be the same"
+        )
+        return tuple(new_scale_shape)
+
+    def chunk(self, chunks: int, dim: int = 0):
+        """Chunk operation: split both data and scale_inv along the same dimension."""
+        assert self._rowwise_data.ndim == self._rowwise_scale_inv.ndim, (
+            "data and scale_inv must have the same number of dimensions"
+        )
+        data_chunks = self._rowwise_data.chunk(chunks, dim=dim)
+        scale_inv_chunks = self._rowwise_scale_inv.chunk(chunks, dim=dim)
+
+        return tuple(
+            FP8Tensor(data, scale_inv, self._block_size)
+            for data, scale_inv in zip(data_chunks, scale_inv_chunks)
+        )
+
+    def split(self, split_size_or_sections, dim: int = 0):
+        """Split operation: split both data and scale_inv along the same dimension."""
+        assert self._rowwise_data.ndim == self._rowwise_scale_inv.ndim, (
+            "data and scale_inv must have the same number of dimensions"
+        )
+        # Do not split on last two dims
+        assert dim < self._rowwise_data.ndim - 2 or dim < -2, (
+            "do not split on last two dims"
+        )
+
+        data_splits = list(self._rowwise_data.split(split_size_or_sections, dim=dim))
+        scale_inv_splits = list(
+            self._rowwise_scale_inv.split(split_size_or_sections, dim=dim)
+        )
+
+        return tuple(
+            FP8Tensor(data, scale_inv, self._block_size)
+            for data, scale_inv in zip(data_splits, scale_inv_splits)
+        )
+
+    def view(self, *shape):
+        """View operation: reshape both data and scale_inv.
+
+        When data is reshaped, scale_inv needs to be reshaped correspondingly.
+        From hf_load.py pattern:
+        - data: view(num_groups, -1, head_dim, hidden) with shape like [8, 16, 128, 4096]
+        - scale: view(num_groups, -1, head_dim/block, hidden/block) with shape like [8, 16, 1, 32]
+        """
+        old_data_shape = self._rowwise_data.shape
+        new_data = self._rowwise_data.view(*shape)
+        new_data_shape = new_data.shape
+
+        new_scale_shape = self._compute_scale_shape(
+            old_data_shape, new_data_shape, self._rowwise_scale_inv.shape
+        )
+        new_scale = self._rowwise_scale_inv.view(*new_scale_shape)
+
+        return FP8Tensor(new_data, new_scale, self._block_size)
+
+    def reshape(self, *shape):
+        """Reshape operation: same as view but allows non-contiguous tensors."""
+        old_data_shape = self._rowwise_data.shape
+        new_data = self._rowwise_data.reshape(*shape)
+        new_data_shape = new_data.shape
+
+        new_scale_shape = self._compute_scale_shape(
+            old_data_shape, new_data_shape, self._rowwise_scale_inv.shape
+        )
+        new_scale = self._rowwise_scale_inv.reshape(*new_scale_shape)
+        return FP8Tensor(new_data, new_scale, self._block_size)
+
+    def __getitem__(self, indices):
+        """Indexing operation: slice data and scale_inv accordingly."""
+        new_data = self._rowwise_data[indices]
+
+        if isinstance(indices, slice):
+            # slicing on first dimension
+            start = indices.start if indices.start is not None else 0
+            stop = indices.stop if indices.stop is not None else self.shape[0]
+            scale_start = start // self._block_size
+            scale_stop = self._ceil_div(stop, self._block_size)
+            new_scale = self._rowwise_scale_inv[scale_start:scale_stop]
+        elif isinstance(indices, int):
+            # slicing on first dimension
+            scale_idx = indices // self._block_size
+            new_scale = self._rowwise_scale_inv[scale_idx : scale_idx + 1]
+        elif isinstance(indices, tuple):
+            # indexing on multiple dimensions
+            scale_indices = []
+            for index in indices:
+                if isinstance(index, slice):
+                    start = index.start if index.start is not None else 0
+                    stop = index.stop if index.stop is not None else self.shape[0]
+                    scale_start = start // self._block_size
+                    scale_stop = self._ceil_div(stop, self._block_size)
+                    scale_indices.append(slice(scale_start, scale_stop))
+                elif isinstance(index, int):
+                    scale_idx = index // self._block_size
+                    scale_indices.append(scale_idx)
+                else:
+                    raise NotImplementedError(
+                        f"indexing with {type(index)} is not supported"
+                    )
+            new_scale = self._rowwise_scale_inv[scale_indices]
+        else:
+            raise NotImplementedError(f"indexing with {type(indices)} is not supported")
+
+        return FP8Tensor(new_data, new_scale, self._block_size)
+
+    @staticmethod
+    def cat(tensors, dim: int = 0):
+        """Concatenate FP8Tensors along specified dimension.
+
+        Both data and scale_inv are concatenated along the same dimension.
+        """
+        if not tensors:
+            raise ValueError("cat expects at least one tensor")
+        if not all(isinstance(t, FP8Tensor) for t in tensors):
+            raise ValueError("All tensors must be FP8Tensor instances")
+
+        # Check that all tensors have matching dimensions
+        first_ndim = tensors[0]._rowwise_data.ndim
+        first_scale_ndim = tensors[0]._rowwise_scale_inv.ndim
+        assert first_ndim == first_scale_ndim, (
+            "data and scale_inv must have the same number of dimensions"
+        )
+        assert all(t._rowwise_data.ndim == first_ndim for t in tensors), (
+            "All tensors must have the same number of dimensions"
+        )
+        assert all(t._rowwise_scale_inv.ndim == first_scale_ndim for t in tensors), (
+            "All scale_inv tensors must have the same number of dimensions"
+        )
+
+        block_size = tensors[0]._block_size
+        data_tensors = [t._rowwise_data for t in tensors]
+        scale_tensors = [t._rowwise_scale_inv for t in tensors]
+
+        new_data = torch.cat(data_tensors, dim=dim)
+        new_scale = torch.cat(scale_tensors, dim=dim)
+
+        return FP8Tensor(new_data, new_scale, block_size)
+
+    def contiguous(self):
+        """Make both data and scale_inv contiguous."""
+        return FP8Tensor(
+            self._rowwise_data.contiguous(),
+            self._rowwise_scale_inv.contiguous(),
+            self._block_size,
+        )
+
+    def flatten(self, start_dim: int = 0, end_dim: int = -1):
+        """Flatten operation."""
+        new_data = self._rowwise_data.flatten(start_dim, end_dim)
+        new_scale = self._rowwise_scale_inv.flatten(start_dim, end_dim)
+        return FP8Tensor(new_data, new_scale, self._block_size)
+
+    def to_pytorch_fp8(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Convert FP8Tensor to PyTorch float8 tensor.
+
+        This function extracts the data and scale_inv from this FP8Tensor
+        and converts them to PyTorch FP8 format
+
+        Returns:
+            Tuple of (pytorch_fp8_tensor, scale_inv) where:
+            - pytorch_fp8_tensor: PyTorch float8 tensor (torch.float8_e4m3fn)
+            - scale_inv: Inverse scale tensor (1/scale) with compact blockwise shape
+                         [M/block_size, K/block_size] without padding
+        """
+        # rowwise_data is stored in uint8 format, convert to PyTorch FP8
+        rowwise_data_uint8 = self._rowwise_data
+        pytorch_fp8_tensor = rowwise_data_uint8.view(torch.float8_e4m3fn)
+
+        # Extract rowwise_scale_inv and remove padding if needed
+        # FP8Tensor's scale_inv should already be compact, but we verify and trim padding
+        rowwise_scale_inv = self._rowwise_scale_inv
+
+        # Calculate the actual (unpadded) scale_inv shape from the data shape
+        data_shape = pytorch_fp8_tensor.shape
+        M = data_shape[0] if len(data_shape) >= 1 else 1
+        K = data_shape[-1] if len(data_shape) >= 1 else 1
+
+        # For 2D tensor (M, K), scale_inv should be (M // block_size, K // block_size)
+        actual_scale_rows = (M + self._block_size - 1) // self._block_size
+        actual_scale_cols = (K + self._block_size - 1) // self._block_size
+
+        # Extract only the valid (non-padded) portion
+        scale_inv = rowwise_scale_inv[:actual_scale_rows, :actual_scale_cols].clone()
+
+        return pytorch_fp8_tensor, scale_inv
+
+    @classmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        """Intercept torch operations and handle them appropriately."""
+        if kwargs is None:
+            kwargs = {}
+
+        # Handle torch.cat
+        if func is torch.cat:
+            tensors = args[0] if args else kwargs.get("tensors", [])
+            if tensors and all(isinstance(t, FP8Tensor) for t in tensors):
+                dim = kwargs.get("dim", 0) if not args or len(args) < 2 else args[1]
+                return FP8Tensor.cat(tensors, dim=dim)
+            else:
+                raise RuntimeError(f"cat delegate failed with tensors {tensors}")
+
+        # Handle torch.split
+        if func is torch.split:
+            tensor = args[0]
+            if isinstance(tensor, FP8Tensor):
+                split_size = (
+                    args[1] if len(args) > 1 else kwargs.get("split_size_or_sections")
+                )
+                dim = args[2] if len(args) > 2 else kwargs.get("dim", 0)
+                return tensor.split(split_size, dim=dim)
+
+        # Handle torch.chunk
+        if func is torch.chunk:
+            tensor = args[0]
+            if isinstance(tensor, FP8Tensor):
+                chunks = args[1] if len(args) > 1 else kwargs.get("chunks")
+                dim = args[2] if len(args) > 2 else kwargs.get("dim", 0)
+                return tensor.chunk(chunks, dim=dim)
+
+        # Default: operate on underlying data and return regular tensor
+        # This handles operations that don't preserve FP8 semantics
+        def unwrap(x):
+            if isinstance(x, FP8Tensor):
+                return x._rowwise_data
+            return x
+
+        new_args = tuple(unwrap(a) for a in args)
+        new_kwargs = {k: unwrap(v) for k, v in kwargs.items()}
+
+        return func(*new_args, **new_kwargs)
+
+
+def _all_gather_and_concat(
+    tensor: torch.Tensor,
+    tp_size: int,
+    tp_group,
+    partition_dim: int,
+    name: str,
+) -> torch.Tensor:
+    """All-gather tensor partitions and concatenate along partition dimension."""
+    partitions = [torch.empty_like(tensor) for _ in range(tp_size)]
+    dist.all_gather(partitions, tensor, group=tp_group)
+
+    # TODO: here we did an extra copy during concat, maybe merge this with convert_to_hf is better?
+    # TODO: check only GLU is used.
+    if "linear_fc1.weight" in name:
+        partitions = [p.chunk(2, dim=0) for p in partitions]
+        partitions = [p[0] for p in partitions] + [p[1] for p in partitions]
+
+    # this is bug in megatron's grouped moe.
+    partition_dim = (
+        1 if "linear_fc1.weight" in name and partition_dim == 0 else partition_dim
+    )
+
+    return torch.cat(partitions, dim=partition_dim)
+
+
+def _all_gather_fp8_blockwise_tensor(
+    fp8_tensor,
+    tp_size: int,
+    tp_group,
+    partition_dim: int,
+    name: str,
+    block_size: int = 128,
+) -> FP8Tensor:
+    """All-gather a Float8BlockwiseQTensor along the partition dimension.
+
+    Returns FP8Tensor that wraps rowwise_data and rowwise_scale_inv.
+    This allows conversion functions to work with FP8 tensors as regular tensors.
+    """
+    gathered_rowwise_data = _all_gather_and_concat(
+        fp8_tensor._rowwise_data, tp_size, tp_group, partition_dim, name
+    )
+    gathered_rowwise_scale_inv = _all_gather_and_concat(
+        fp8_tensor._rowwise_scale_inv, tp_size, tp_group, partition_dim, name
+    )
+
+    return FP8Tensor(gathered_rowwise_data, gathered_rowwise_scale_inv, block_size)
+
+
 # Adapted from slime
-def all_gather_param(name: str, param: Parameter | Tensor):
+def all_gather_param(
+    name: str, param: Parameter | Tensor, fp8_direct_convert: bool = False
+) -> torch.Tensor | FP8Tensor:
     if "expert_bias" in name:
         return param
 
     if not hasattr(param, "tensor_model_parallel"):
         raise ValueError(f"{name} does not have tensor_model_parallel attribute")
+
+    param_is_fp8 = is_float8tensor(param)
+
     if (
         not param.tensor_model_parallel
         or getattr(param, "parallel_mode", None) == "duplicated"
     ):
+        # For FP8 tensors, return the tensor directly without accessing .data
+        # because accessing .data on QuantizedTensor triggers __torch_dispatch__
+        # which dequantizes the tensor to bfloat16
+        if param_is_fp8 and fp8_direct_convert:
+            return param
+        # If param is TE FP8, .data will implicitly convert TE FP8 to bf16,
+        # and then be converted to PyTorch FP8 later in convert_to_hf
         return param.data
 
     if ".experts." in name:
@@ -33,22 +406,20 @@ def all_gather_param(name: str, param: Parameter | Tensor):
         tp_size = mpu.get_tensor_model_parallel_world_size()
         tp_group = mpu.get_tensor_model_parallel_group()
 
-    param_partitions = [torch.empty_like(param.data) for _ in range(tp_size)]
-    dist.all_gather(param_partitions, param.data, group=tp_group)
     partition_dim = param.partition_dim
     assert param.partition_stride == 1, "partition_stride != 1 is not supported"
-    # TODO: here we did an extra copy during concat, maybe merge this with convert_to_hf is better?
-    # TODO: check only GLU is used.
-    if "linear_fc1.weight" in name:
-        param_partitions = [p.chunk(2, dim=0) for p in param_partitions]
-        param_partitions = [p[0] for p in param_partitions] + [
-            p[1] for p in param_partitions
-        ]
-    # this is bug in megatron's grouped moe.
-    if "linear_fc2.weight" in name:
-        if partition_dim == 0:
-            partition_dim = 1
-    param = torch.cat(param_partitions, dim=partition_dim)
+
+    # Handle FP8 tensors specially
+    if param_is_fp8:
+        # Get block_size from quantization config if available
+        # Default to 128 if not specified
+        block_size = 128  # TODO: get from quantization_config if available
+        return _all_gather_fp8_blockwise_tensor(
+            param, tp_size, tp_group, partition_dim, name, block_size
+        )
+
+    # bf16/fp32
+    param = _all_gather_and_concat(param.data, tp_size, tp_group, partition_dim, name)
     return param
 
 
@@ -482,7 +853,7 @@ def convert_to_hf(
     tf_config: TransformerConfig,
     model_name: str,
     name: str,
-    param: Parameter | Tensor,
+    param: Parameter | Tensor | FP8Tensor,
     quantization_config: dict[str, int | str | list[str]] | None = None,
     fp8_direct_convert: bool = False,
     **kwargs,
@@ -493,7 +864,7 @@ def convert_to_hf(
         tf_config: Transformer configuration
         model_name: Model name (e.g., "qwen2", "qwen3_moe")
         name: Parameter name in Megatron format
-        param: Parameter tensor
+        param: Parameter tensor or FP8Tensor
         quantization_config: Optional quantization config dict with keys:
             - quant_method: "fp8"
             - fmt: "e4m3"
@@ -512,13 +883,39 @@ def convert_to_hf(
 
             if quantization_config:
                 if fp8_direct_convert:
+                    # Get block_size from quantization_config
+                    weight_block_size = quantization_config.get(
+                        "weight_block_size", None
+                    )
+                    if weight_block_size is not None:
+                        assert (
+                            isinstance(weight_block_size, (list, tuple))
+                            and len(weight_block_size) == 2
+                            and weight_block_size[0] == weight_block_size[1]
+                        ), (
+                            f"weight_block_size must be a square matrix, got {weight_block_size}"
+                        )
+                        block_size = weight_block_size[0]
+                    else:
+                        block_size = 128  # default
+
                     converted_fp8_named_tensors = []
                     for hf_name, hf_tensor in converted_named_tensors:
-                        if is_float8tensor(hf_tensor):
-                            # Directly convert TE FP8 to PyTorch FP8
-                            weight, scale_inv = _te_fp8_to_pytorch_fp8(hf_tensor)
+                        # Check for both TE Float8Tensor and our FP8Tensor wrapper
+                        if isinstance(hf_tensor, FP8Tensor):
+                            # FP8Tensor from all_gather - use member function
+                            weight, scale_inv = hf_tensor.to_pytorch_fp8()
                             converted_fp8_named_tensors.append((hf_name, weight))
-                            # Add scale_inv with _scale_inv suffix
+                            scale_inv_name = f"{hf_name}_scale_inv"
+                            converted_fp8_named_tensors.append(
+                                (scale_inv_name, scale_inv)
+                            )
+                        elif is_float8tensor(hf_tensor):
+                            # TE Float8BlockwiseQTensor - use conversion function
+                            weight, scale_inv = _te_fp8_to_pytorch_fp8(
+                                hf_tensor, block_size=block_size
+                            )
+                            converted_fp8_named_tensors.append((hf_name, weight))
                             scale_inv_name = f"{hf_name}_scale_inv"
                             converted_fp8_named_tensors.append(
                                 (scale_inv_name, scale_inv)
