@@ -1,0 +1,8 @@
+#!/bin/sh
+'''exec' '/lustre/fsw/portfolios/nvr/projects/nvr_elm_llm/users/ligengz/workspace/AReaL/LLaMA-Factory-direct-conversation/.llamafactory/bin/python3' "$0" "$@"
+' '''
+
+from deepspeed.nvme import ds_io_main
+
+if __name__ == '__main__':
+    ds_io_main()

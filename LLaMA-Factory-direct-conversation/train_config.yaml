@@ -18,9 +18,9 @@ mask_history: true
 max_grad_norm: 0.5
 max_new_tokens: 32768
 resume_from_checkpoint: false
-model_name_or_path: /storage/openpsi/models/Qwen3-4b-instruct-2507-new
+model_name_or_path: Qwen/Qwen3-4b-instruct-2507
 num_train_epochs: 5
-output_dir: /storage/openpsi/models/zzy/Qwen3-ins-4b-5-test
+output_dir: ./models/zzy/Qwen3-ins-4b-5-test
 per_device_train_batch_size: 2
 save_steps: 1000
 save_strategy: steps

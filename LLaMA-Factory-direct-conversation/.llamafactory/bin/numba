@@ -1,0 +1,10 @@
+#!/bin/sh
+'''exec' '/lustre/fsw/portfolios/nvr/projects/nvr_elm_llm/users/ligengz/workspace/AReaL/LLaMA-Factory-direct-conversation/.llamafactory/bin/python3' "$0" "$@"
+' '''
+# -*- coding: UTF-8 -*-
+from __future__ import print_function, division, absolute_import
+
+from numba.misc.numba_entry import main
+
+if __name__ == "__main__":
+    main()

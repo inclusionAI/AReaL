@@ -1,0 +1,8 @@
+#!/bin/sh
+'''exec' '/lustre/fsw/portfolios/nvr/projects/nvr_elm_llm/users/ligengz/workspace/AReaL/LLaMA-Factory-direct-conversation/.llamafactory/bin/python3' "$0" "$@"
+' '''
+
+from deepspeed.launcher.runner import main
+
+if __name__ == '__main__':
+    main()

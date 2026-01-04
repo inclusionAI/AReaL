@@ -3,7 +3,7 @@
     "file_name": "identity.json"
   },
   "direct_conversation": {
-    "file_name": "/storage/openpsi/users/zzy/Multiverse_original/new-dataset/zeta-fix-new/zeta-data-zzy-sft/json-only-1-conv.jsonl",
+    "file_name": "s1-parallel/Qwen-4B-dataset/json-only-1-conv.jsonl",
     "columns": {
       "prompt": "input",
       "response": "output"
@@ -26,7 +26,7 @@
     }
   },
   "eval_set_new": {
-    "file_name": "/storage/openpsi/users/zzy/parallel_thinking/val_set.jsonl",
+    "file_name": "s1-parallel/val_set.jsonl",
     "formatting": "sharegpt",
     "columns": {
       "messages": "conversations"
