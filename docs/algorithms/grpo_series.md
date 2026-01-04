@@ -106,10 +106,10 @@ compatibility. Users seeking Dr.GRPO-style behavior should set `actor.adv_norm.s
 | `eps_clip_higher` | float \| None | `None`  | Upper clipping bound: when set, ratio clipped to `[1-eps_clip, 1+eps_clip_higher]` |
 
 When `eps_clip_higher` is `None`, symmetric clipping is used:
-$\\text{clip}(r, 1-\\epsilon, 1+\\epsilon)$.
+$\text{clip}(r, 1-\epsilon, 1+\epsilon)$.
 
 When `eps_clip_higher` is set (DAPO-style), asymmetric clipping is used:
-$\\text{clip}(r, 1-\\epsilon\_{\\text{low}}, 1+\\epsilon\_{\\text{high}})$.
+$\text{clip}(r, 1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}})$.
 
 ### Importance Sampling Level (`actor.importance_sampling_level`)
 
