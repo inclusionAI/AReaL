@@ -85,9 +85,27 @@ class SGLangServerWrapper:
         self.allocation_mode = allocation_mode
         self.server_processes = []  # List to store multiple server processes
         self.n_gpus_per_node = n_gpus_per_node
-        # self.enable_routing_replay = enable_routing_replay
 
-        maybe_apply_sglang_patch(self.config, enable_routing_replay)
+        if self.config.enable_fast_load or self.config.enable_multithread_load:
+            apply_sglang_patch()
+
+    def _monitor_server_processes(self, server_addresses):
+        """Monitor server processes and exit if any dies."""
+        while True:
+            all_alive = True
+            for i, process in enumerate(self.server_processes):
+                return_code = process.poll()
+                if return_code is not None:
+                    logger.info(
+                        f"SGLang server {server_addresses[i]} exits, returncode={return_code}"
+                    )
+                    all_alive = False
+                    break
+
+            if not all_alive:
+                sys.exit(1)
+
+            time.sleep(1)
 
     def run(self):
         gpus_per_server = self.allocation_mode.gen_instance_size
@@ -158,38 +176,15 @@ class SGLangServerWrapper:
             launch_server_args.append((cmd, host_ip, server_port, node_rank))
             server_addresses.append(f"http://{host_ip}:{server_port}")
 
-        # Store processes in instance variable instead of local variable
-        try:
-            with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
-                server_iterator = executor.map(
-                    lambda args: self.launch_one_server(*args), launch_server_args
-                )
-                # Collect all server processes
-                self.server_processes = list(server_iterator)
+        with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
+            server_iterator = executor.map(
+                lambda args: self.launch_one_server(*args), launch_server_args
+            )
+            # Collect all server processes
+            self.server_processes = list(server_iterator)
 
-            # Monitor server processes
-            while True:
-                all_alive = True
-                for i, process in enumerate(self.server_processes):
-                    return_code = process.poll()
-                    if return_code is not None:
-                        logger.info(
-                            f"SGLang server {server_addresses[i]} exits, returncode={return_code}"
-                        )
-                        all_alive = False
-                        break
-
-                if not all_alive:
-                    # Clean up all servers if one dies
-                    for i, process in enumerate(self.server_processes):
-                        if process.poll() is None:
-                            kill_process_tree(process.pid, graceful=True)
-                            logger.info(
-                                f"SGLang server process{server_addresses[i]} terminated."
-                            )
-                    sys.exit(1)
-
-                time.sleep(1)
+        # Monitor server processes
+        self._monitor_server_processes(server_addresses)
 
         except Exception as e:
             # Log error and clean up child processes
@@ -247,7 +242,13 @@ def launch_sglang_server(argv):
 
 
 def main(argv):
-    launch_sglang_server(argv)
+    try:
+        launch_sglang_server(argv)
+    except Exception:
+        logger.error(traceback.format_exc())
+        sys.exit(1)
+    finally:
+        kill_process_tree(graceful=True)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,8 @@
 import asyncio
-import os
 import uuid
 from collections.abc import Callable
 from typing import Any
 
-import aiofiles
-import aiofiles.os
-import colorama
 import torch
 from transformers import PreTrainedTokenizerFast
 
@@ -15,6 +11,7 @@ from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.data import concat_padded_tensors
 
@@ -31,8 +28,6 @@ class MultiTurnWorkflow(RolloutWorkflow):
         tokenizer: PreTrainedTokenizerFast,
         max_turns: int,
         turn_discount: float,
-        rollout_stat_scope: str = "rollout",
-        dump_dir: str | None = None,
     ):
         if max_turns <= 0:
             raise ValueError("max_turns must be positive")
@@ -44,11 +39,7 @@ class MultiTurnWorkflow(RolloutWorkflow):
         self.tokenizer = tokenizer
         self.max_turns = max_turns
         self.turn_discount = turn_discount
-        self.rollout_stat_scope = rollout_stat_scope
         self.async_reward_fn = AsyncRewardWrapper(reward_fn)
-        self.dump_dir = dump_dir
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
 
         # Create tokens that should be amended if the answer is incorrect.
         # This method eliminates the encode-decode inconsistency issue and cancels system prompts.
@@ -136,7 +127,9 @@ class MultiTurnWorkflow(RolloutWorkflow):
         reward = float(reward * discount)
 
         # Log reward.
-        stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward, num_turns=t)
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
+            reward=reward, num_turns=t
+        )
 
         res = dict(
             input_ids=torch.tensor(seq, dtype=torch.int32),
@@ -163,31 +156,5 @@ class MultiTurnWorkflow(RolloutWorkflow):
         ]
         results = await asyncio.gather(*tasks)
 
-        if self.dump_dir is not None:
-            version = engine.get_version()
-            dump_path = os.path.join(self.dump_dir, str(version))
-            await aiofiles.os.makedirs(dump_path, exist_ok=True)
-            # Get the unique identifier for this prompt
-            qid = None
-            for key in ["query_id", "id", "qid"]:
-                qid = data.get(key, None)
-                if qid is not None:
-                    break
-            qid = qid or uuid.uuid4().hex
-
-            # Dump rollout to file
-            file_path = os.path.join(dump_path, f"{qid}.txt")
-            async with aiofiles.open(file_path, "a") as f:
-                n_samples = self.gconfig.n_samples
-                for i, (_, p, c, r, sl) in enumerate(results):
-                    info = "\n".join(
-                        [
-                            f"idx: {i + 1} / {n_samples}, seqlen: {sl}, reward is {r}.",
-                            f"prompt is \n{colorama.Fore.YELLOW + colorama.Style.DIM}{p}{colorama.Style.RESET_ALL}",
-                            f"sequence is: \n{colorama.Fore.YELLOW + colorama.Style.DIM}{c}{colorama.Style.RESET_ALL}",
-                        ]
-                    )
-                    await f.write(info + "\n")
-
-        data = [res[0] for res in results]
-        return concat_padded_tensors(data)
+        traj_data = [res[0] for res in results]
+        return concat_padded_tensors(traj_data)

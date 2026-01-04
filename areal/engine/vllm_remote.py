@@ -337,10 +337,17 @@ class RemotevLLMEngine(InferenceEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
         callback_addr: str | None = None,
+        is_eval: bool = False,
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
-            data, workflow, workflow_kwargs, should_accept_fn, task_id, callback_addr
+            data=data,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
+            task_id=task_id,
+            callback_addr=callback_addr,
+            is_eval=is_eval,
         )
 
     def wait(
@@ -374,10 +381,15 @@ class RemotevLLMEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        dynamic_bs: bool = False,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
         return self._engine.prepare_batch(
-            dataloader, workflow, workflow_kwargs, should_accept_fn
+            dataloader=dataloader,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
+            dynamic_bs=dynamic_bs,
         )
 
     def pause(self):

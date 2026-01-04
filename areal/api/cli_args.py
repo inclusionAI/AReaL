@@ -896,15 +896,6 @@ class PPOActorConfig(TrainEngineConfig):
             "choices": PROX_LOGP_METHODS_ALL,
         },
     )
-    # Advanced Options
-    dynamic_sampling: bool = field(
-        default=False,
-        metadata={
-            "help": "Enable dynamic sampling (within DAPO). If enabled, groups with the same reward will be masked out. "
-            "Note that enabling this option will lead to variable batch sizes. If you want to use a constant batch size with dynamic filtering, "
-            "you should use the `should_accept_fn` parameter in `prepare_batch`."
-        },
-    )
 
     # Logging Agent Trajectories
     log_agent_stats: bool = field(
@@ -1259,6 +1250,10 @@ class InferenceEngineConfig:
 
     experiment_name: str | None = None
     trial_name: str | None = None
+    fileroot: str | None = field(
+        default=None,
+        metadata={"help": "Root directory for logs and trajectory dumps."},
+    )
     max_concurrent_rollouts: None | int = field(
         default=None,
         metadata={
@@ -1297,6 +1292,14 @@ class InferenceEngineConfig:
     schedule_policy: str = field(
         default="round_robin",
         metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
+    )
+    tokenizer_path: str = field(
+        default="",
+        metadata={"help": "Path to tokenizer for trajectory text decoding."},
+    )
+    dump_to_file: bool = field(
+        default=False,
+        metadata={"help": "Whether to dump the trajectories to files under fileroot."},
     )
     setup_timeout: float = field(
         default=300.0,
@@ -1751,6 +1754,14 @@ class PPOConfig(BaseExperimentConfig):
     actor: PPOActorConfig = field(default_factory=PPOActorConfig)
     ref: PPOActorConfig | None = field(default=None)
     critic: PPOCriticConfig | None = field(default=None)
+    dynamic_bs: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable dynamic batch sizing in prepare_batch. When True, batch collection "
+            "stops when (accepted + rejected) >= batch_size, returning only accepted results. "
+            "This results in variable-sized batches of valid data."
+        },
+    )
 
     def __post_init__(self):
         # Validate routing replay is only used with SGLang backend

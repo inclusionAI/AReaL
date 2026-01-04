@@ -12,7 +12,7 @@ from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import load_expr_config
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.dataset import get_custom_dataset
-from areal.engine.ppo.actor import FSDPPPOActor
+from areal.engine.fsdp_engine import FSDPPPOActor
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.platforms import current_platform
 from areal.reward.gsm8k import gsm8k_reward_fn
@@ -120,7 +120,6 @@ def main(args):
         gconfig=config.gconfig.new(temperature=0.6),
         tokenizer=tokenizer,
         enable_thinking=False,
-        rollout_stat_scope="eval-rollout",
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated-eval"
         ),

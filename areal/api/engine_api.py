@@ -232,6 +232,7 @@ class TrainEngine(abc.ABC):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         """Prepare a batch of data for training from a dataloader.
 
@@ -247,6 +248,10 @@ class TrainEngine(abc.ABC):
             Keyword arguments to pass to the workflow constructor, by default None.
         should_accept_fn : Callable[[dict[str, Any]], bool] | str | None, optional
             A function to filter trajectories, by default None.
+        dynamic_bs : bool, optional
+            If True, enables dynamic batch sizing. The method will stop collecting
+            when (accepted + rejected) >= batch_size, returning only accepted results.
+            This results in variable-sized batches of valid data. Default is False.
 
         Returns
         -------
@@ -699,6 +704,7 @@ class InferenceEngine(abc.ABC):
         should_accept_fn: Callable | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         task_id: int | None = None,
+        is_eval: bool = False,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -724,6 +730,9 @@ class InferenceEngine(abc.ABC):
             It takes a complete trajectory output by the workflow, and returns a bool, by default None.
         task_id : int, optional
             The task ID to use. If None, a new task ID will be generated internally.
+        is_eval : bool, optional
+            Whether this is an evaluation workflow. Affects variables like trajectory dump path
+            and statistics keys. By default False.
 
         Returns
         -------
@@ -831,6 +840,7 @@ class InferenceEngine(abc.ABC):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable | None = None,
+        dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.
 
@@ -866,6 +876,10 @@ class InferenceEngine(abc.ABC):
             By default None.
         should_accept_fn : Callable, optional
             A function to decide whether to accept a trajectory, by default None
+        dynamic_bs : bool, optional
+            If True, enables dynamic batch sizing. The method will stop collecting
+            when (accepted + rejected) >= batch_size, returning only accepted results.
+            This results in variable-sized batches of valid data. Default is False.
 
         Returns
         -------

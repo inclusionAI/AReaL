@@ -13,7 +13,6 @@ from areal.engine.ppo.actor import PPOActor
 from areal.utils import stats_tracker
 from areal.utils.data import split_padded_tensor_dict_into_mb_list
 from areal.utils.functional import (
-    dynamic_sampling,
     gather_logprobs_entropy,
     ppo_actor_loss_fn,
 )
@@ -37,11 +36,6 @@ class AEntPPOActor(PPOActor):
     def aent_ppo_update(
         self, data: dict[str, Any], global_step: int
     ) -> list[dict[str, float]]:
-        with stats_tracker.scope("dynamic_sampling"):
-            if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
-                data, sampling_stat = dynamic_sampling(data, self.group_size)
-                stats_tracker.scalar(**sampling_stat)
-
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]

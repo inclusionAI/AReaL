@@ -623,6 +623,7 @@ class TestTrainControllerRolloutIntegration:
             workflow="test.workflow",
             workflow_kwargs={"key": "value"},
             should_accept_fn=None,
+            dynamic_bs=False,
         )
 
     def test_rollout_batch_delegates_to_rollout(

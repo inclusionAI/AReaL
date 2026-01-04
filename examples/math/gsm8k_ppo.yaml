@@ -28,6 +28,9 @@ rollout:
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
   scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+  dump_to_file: true
 
 gconfig:
   n_samples: 1
@@ -66,7 +69,6 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  dynamic_sampling: false
   adv_norm:
     mean_level: batch
     std_level: batch

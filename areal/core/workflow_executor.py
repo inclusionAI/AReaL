@@ -1,5 +1,7 @@
 from __future__ import annotations  # noqa
 
+import json
+import os
 import random
 import threading
 import time
@@ -13,6 +15,8 @@ import torch
 import requests
 import torch.distributed as dist
 
+import aiofiles
+import aiofiles.os
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
@@ -23,8 +27,10 @@ from areal.core.async_task_runner import (
     TimedResult,
 )
 from areal.core.staleness_manager import StalenessManager
+from areal.core import workflow_context
+from areal.core.workflow_context import WorkflowContext
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
-from areal.utils import logging, perf_tracer
+from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf, trace_session_event
@@ -224,6 +230,7 @@ class _RolloutTaskInput:
     data: dict[str, Any]
     workflow: RolloutWorkflow
     should_accept_fn: Callable[[dict[str, Any]], bool] | None = None
+    is_eval: bool = False
 
 
 @dataclass
@@ -629,7 +636,10 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             return found_result.data
 
     def active_submit_and_wait(
-        self, input_generator: Generator[TInput, None, None], batch_size: int
+        self,
+        input_generator: Generator[TInput, None, None],
+        batch_size: int,
+        dynamic_bs: bool = False,
     ) -> list[TResult]:
         """Continuously submit tasks and wait until a full batch of results is ready.
 
@@ -644,18 +654,25 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             :func:`~areal.utils.data.cycle_dataloader` to wrap finite data sources.
         batch_size : int
             Number of results to collect before returning.
+        dynamic_bs : bool, optional
+            If True, enables dynamic batch sizing. The method will stop collecting
+            when (accepted + rejected) >= batch_size, returning only accepted results.
+            This results in variable-sized batches of valid data. Default is False.
 
         Returns
         -------
         list[TResult]
-            A list of ``batch_size`` task results.
+            A list of task results. When ``dynamic_bs=False``, returns exactly
+            ``batch_size`` results. When ``dynamic_bs=True``, returns up to
+            ``batch_size`` accepted results (variable-sized).
 
         Raises
         ------
         RuntimeError
             If the input generator is exhausted before the batch is complete.
         """
-        cnt = 0
+        accepted_cnt = 0
+        total_attempts = 0
         results = []
 
         while True:
@@ -688,12 +705,25 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                         ) from None
             try:
                 res = self.wait_results(count=1, timeout=1)
-                if not res or res[0] is None:
+                is_accepted = res and res[0] is not None
+
+                if not is_accepted:
+                    if dynamic_bs:
+                        total_attempts += 1
+                        if total_attempts >= batch_size:
+                            break
                     continue
+
+                # Accepted sample
                 assert len(res) == 1
-                cnt += 1
+                accepted_cnt += 1
+                total_attempts += 1
                 results.append(res[0])
-                if cnt >= batch_size:
+
+                if dynamic_bs:
+                    if total_attempts >= batch_size:
+                        break
+                elif accepted_cnt >= batch_size:
                     break
             except TimeoutError:
                 pass
@@ -750,6 +780,10 @@ class WorkflowExecutor:
 
         self._task_id_generator = TaskIdGenerator()
 
+        # Lazy-loaded tokenizer for trajectory dumping
+        self._tokenizer = None
+        self._tokenizer_lock = threading.Lock()
+
     def _resolve_dp_world_size(self):
         if not dist.is_initialized():
             return 1
@@ -762,6 +796,129 @@ class WorkflowExecutor:
             return dist.get_world_size()
         except ImportError:
             return dist.get_world_size()
+
+    def _get_tokenizer(self):
+        """Lazy-load tokenizer for trajectory text decoding."""
+        if self._tokenizer is not None:
+            return self._tokenizer
+
+        tokenizer_path = self.config.tokenizer_path
+        if not tokenizer_path:
+            return None
+
+        with self._tokenizer_lock:
+            if self._tokenizer is not None:
+                return self._tokenizer
+
+            from areal.utils.hf_utils import load_hf_tokenizer
+
+            self._tokenizer = load_hf_tokenizer(tokenizer_path)
+            return self._tokenizer
+
+    def _get_dump_dir(self, is_eval: bool) -> str | None:
+        """Get the dump directory based on config and is_eval flag."""
+        config = self.config
+        if not config.fileroot or not config.experiment_name or not config.trial_name:
+            return None
+
+        from areal.utils.stats_logger import StatsLogger
+
+        log_path = StatsLogger.get_log_path(
+            experiment_name=self.config.experiment_name,
+            trial_name=self.config.trial_name,
+            fileroot=self.config.fileroot,
+        )
+        subdir = "eval-rollout" if is_eval else "rollout"
+        return os.path.join(log_path, subdir)
+
+    async def _dump_trajectory(
+        self,
+        traj: dict[str, Any] | None,
+        task_id: int,
+        is_eval: bool,
+    ) -> tuple[bool, str]:
+        if traj is None:
+            return False, "trajectory is None"
+
+        dump_dir = self._get_dump_dir(is_eval)
+        if dump_dir is None:
+            return False, "dump dir is empty"
+
+        tokenizer = self._get_tokenizer()
+        if tokenizer is None:
+            return False, "tokenizer not configured"
+
+        # Extract tensors
+        input_ids = traj.get("input_ids")
+        rewards = traj.get("rewards")
+        loss_mask = traj.get("loss_mask")
+        attention_mask = traj.get("attention_mask")
+
+        if (
+            input_ids is None
+            or rewards is None
+            or loss_mask is None
+            or attention_mask is None
+        ):
+            return (
+                False,
+                "missing required tensor fields: input_ids, rewards, attention_mask, or loss_mask",
+            )
+
+        if "versions" not in traj:
+            self.logger.warning(
+                "Trajectory missing 'versions' field, defaulting to current inference engine version."
+            )
+            versions = [self.inference_engine.get_version()]
+        else:
+            versions = traj["versions"].flatten().tolist()
+
+        tail_version = max(versions)
+        head_version = min(versions)
+        # Create versioned directory
+        version_dir = os.path.join(dump_dir, str(tail_version))
+        await aiofiles.os.makedirs(version_dir, exist_ok=True)
+
+        # Handle batched trajectories
+        batch_size = input_ids.shape[0]
+
+        file_path = os.path.join(version_dir, f"{task_id}.jsonl")
+        async with aiofiles.open(file_path, "a") as f:
+            for i in range(batch_size):
+                seqlen = attention_mask[i].sum().item()
+                if seqlen == 0:
+                    continue
+                ids = input_ids[i, :seqlen].tolist()
+                mask = loss_mask[i, :seqlen].tolist()
+                # Skip samples with empty completions (all prompt, no completion tokens)
+                if mask[-1] != 1:
+                    continue
+
+                prompt_end = seqlen - sum(mask)
+                prompt_ids = ids[:prompt_end]
+                completion_ids = ids[prompt_end:]
+
+                # Decode to text
+                prompt_text = tokenizer.decode(prompt_ids, skip_special_tokens=False)
+                completion_text = tokenizer.decode(
+                    completion_ids, skip_special_tokens=False
+                )
+
+                reward = rewards[i].item()
+
+                record = {
+                    "task_id": task_id,
+                    "sample_idx": i,
+                    "seqlen": seqlen,
+                    "prompt_len": prompt_end,
+                    "head_version": head_version,
+                    "tail_version": tail_version,
+                    "reward": reward,
+                    "prompt": prompt_text,
+                    "completion": completion_text,
+                }
+                await f.write(json.dumps(record) + "\n")
+        return True, ""
 
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
         """Initialize the workflow executor and start background threads.
@@ -1000,6 +1157,11 @@ class WorkflowExecutor:
             # Set task_id in ContextVar before entering arun_episode
             perf_tracer.set_task_id(task_id)
 
+            # Set workflow execution context
+            workflow_context.set(
+                WorkflowContext(is_eval=pending_task.is_eval, task_id=task_id)
+            )
+
             manager = self.staleness_manager
             traj: dict[str, Any] | None = None
             should_accept_fn = pending_task.should_accept_fn
@@ -1049,8 +1211,19 @@ class WorkflowExecutor:
                     if not should_accept_traj and should_accept_fn is not None:
                         reason = "rejected"
 
+                # Dump trajectory to file
+                if self.config.dump_to_file:
+                    dump_success, dump_reason = await self._dump_trajectory(
+                        traj, task_id, pending_task.is_eval
+                    )
+                    if not dump_success:
+                        self.logger.warning(
+                            f"Failed to dump trajectory for task {task_id}: {dump_reason}"
+                        )
+
                 if should_accept_traj:
                     manager.on_rollout_accepted()
+                    stats_tracker.get("rollout").scalar(accepted=1)
                     trace_session_event(
                         "mark_finalized",
                         task_id=task_id,
@@ -1064,6 +1237,7 @@ class WorkflowExecutor:
                     return _RolloutResult(task_id=task_id, trajectory=traj)
 
                 manager.on_rollout_rejected()
+                stats_tracker.get("rollout").scalar(rejected=1)
                 trace_session_event(
                     "mark_finalized",
                     task_id=task_id,
@@ -1078,6 +1252,7 @@ class WorkflowExecutor:
 
             except Exception as exc:  # pragma: no cover - workflow execution errors
                 manager.on_rollout_rejected()
+                stats_tracker.get("rollout").scalar(rejected=1)
                 trace_session_event(
                     "mark_finalized",
                     task_id=task_id,
@@ -1103,6 +1278,7 @@ class WorkflowExecutor:
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
+        is_eval: bool = False,
     ) -> int:
         """Submit a rollout request to the workflow executor.
 
@@ -1123,6 +1299,7 @@ class WorkflowExecutor:
             workflow=resolved_workflow,
             should_accept_fn=resolved_should_accept_fn,
             task_id=task_id,
+            is_eval=is_eval,
         )
 
         # Delegate to dispatcher
@@ -1216,6 +1393,7 @@ class WorkflowExecutor:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        dynamic_bs: bool = False,
     ):
         """Prepare a batch with controlled staleness.
 
@@ -1262,7 +1440,7 @@ class WorkflowExecutor:
         # Delegate to dispatcher
         assert dataloader.batch_size is not None
         results = self.dispatcher.active_submit_and_wait(
-            self.data_generator, batch_size=dataloader.batch_size
+            self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
         )
 
         # Extract trajectories and concatenate

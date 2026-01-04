@@ -414,7 +414,7 @@ For the complete multi-agent implementation, see
 In your config file, specify the paths to your agent builder and reward function:
 
 ```yaml
-# examples/openai-agents/config.yaml
+# examples/openai_agents/config.yaml
 reward_fn_path: "areal.reward.gsm8k.gsm8k_reward_fn"
 agent_builder_path: "areal.workflow.openai_agent.math_agent.build_math_agent"
 agent_builder_kwargs: {}  # Optional kwargs for the builder function
@@ -438,7 +438,7 @@ gconfig:
 AReaL provides a generic `OpenAIAgentWorkflow` that works with any agent builder:
 
 ```python
-# In examples/openai-agents/train_agents.py
+# In examples/openai_agents/train_agents.py
 from areal.api.workflow_api import RolloutWorkflow
 from areal.experimental.openai import ArealOpenAI
 from areal.utils.dynamic_import import import_from_string
@@ -594,17 +594,17 @@ def main(args):
 ```
 
 For a complete implementation, refer to the
-[complete training script](https://github.com/inclusionAI/AReaL/blob/main/examples/openai-agents/train_agents.py).
+[complete training script](https://github.com/inclusionAI/AReaL/blob/main/examples/openai_agents/train_agents.py).
 
 ### Complete Example
 
 The full working OpenAI Agents training example is located in
-[**`examples/openai-agents/`**](https://github.com/inclusionAI/AReaL/blob/main/examples/openai-agents/).
+[**`examples/openai_agents/`**](https://github.com/inclusionAI/AReaL/blob/main/examples/openai_agents/).
 To run the example on a single node:
 
 ```bash
-python3 -m areal.launcher.local examples/openai-agents/train_agents.py \
-    --config examples/openai-agents/config.yaml \
+python3 -m areal.launcher.local examples/openai_agents/train_agents.py \
+    --config examples/openai_agents/config.yaml \
     experiment_name=<your experiment name> \
     trial_name=<your trial name>
 ```

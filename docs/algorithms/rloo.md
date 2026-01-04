@@ -26,7 +26,7 @@ For more details:
 
 - RLOO Detail: [Paper of RLOO](https://arxiv.org/abs/2402.14740)
 
-## Algorithm Core Parameters
+## Core Parameters
 
 We only list the different parameters from GRPO here:
 

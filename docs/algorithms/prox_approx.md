@@ -26,7 +26,7 @@ where $v$ denotes the policy version when each token was generated.
 - **Comparable task reward**: 0.937 vs 0.954 (within 2%)
 - **Zero user script changes**: Works automatically with existing decoupled PPO code
 
-## Algorithm Core Parameters
+## Core Parameters
 
 - `actor.use_decoupled_loss`: Must be `true` to enable decoupled PPO (required for approximation)
 - `actor.prox_logp_method`: Method for computing proximal policy log-probabilities (default: `"recompute"`)

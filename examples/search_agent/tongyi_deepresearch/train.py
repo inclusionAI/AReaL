@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import json
-import os
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -17,12 +16,12 @@ from areal.api.cli_args import (
     load_expr_config,
 )
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.experimental.openai import ArealOpenAI
 from areal.experimental.trainer import PPOTrainer
 from areal.utils import logging, stats_tracker
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.stats_logger import StatsLogger
 
 try:  # Package-style relative import (works if executed via -m with package context)
     from .react_agent import MultiTurnReactAgent  # type: ignore
@@ -49,8 +48,6 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self,
         gconfig: GenerationHyperparameters,
         tokenizer: PreTrainedTokenizerFast | str,
-        rollout_stat_scope: str = "rollout",
-        dump_dir: str | None = None,
         n_trajs: int = 1,
         max_tokens: int = 32768,
         max_llm_calls_per_run: int = 100,
@@ -63,11 +60,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.gconfig.n_samples = 1
         self.tokenizer = tokenizer
-        self.dump_dir = dump_dir
         self.max_tokens = max_tokens
-        self.rollout_stat_scope = rollout_stat_scope
-        if self.dump_dir is not None and not os.path.exists(self.dump_dir):
-            os.makedirs(self.dump_dir, exist_ok=True)
 
         # Search hyper-parameters
         self.n_trajs = n_trajs
@@ -104,14 +97,6 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         qid = str(qid) or uuid.uuid4().hex
         data["qid"] = qid
 
-        # path to save trajs
-        version = engine.get_version()
-        if self.dump_dir is not None:
-            os.makedirs(os.path.join(self.dump_dir, str(version)), exist_ok=True)
-            save_traj_path = os.path.join(
-                self.dump_dir, str(version), f"{qid}_{{traj_id}}.json"
-            )
-
         clients = [
             ArealOpenAI(
                 engine=engine, tokenizer=self.tokenizer, chat_template_type="concat"
@@ -125,13 +110,12 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
                 self.agent.make_trajectory(
                     data=data,
                     client=clients[i],
-                    save_path=save_traj_path.format(traj_id=i),
                 )
                 for i in range(self.n_trajs)
             ]
         )
         for stats in all_stats:
-            stats_tracker.get(self.rollout_stat_scope).scalar(**stats)
+            stats_tracker.get(workflow_context.stat_scope()).scalar(**stats)
 
         completions_with_rewards = {}
         for client in clients:
@@ -202,9 +186,6 @@ def main(args):
     workflow_kwargs = dict(
         gconfig=config.gconfig,
         tokenizer=config.tokenizer_path,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
         n_trajs=config.n_trajs,
         max_tokens=config.max_tokens_per_trajectory,
         max_llm_calls_per_run=config.max_llm_calls_per_run,

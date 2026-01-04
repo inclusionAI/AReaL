@@ -23,7 +23,7 @@ For more details:
 
 - Lite-PPO Detail: [Paper of Lite-PPO](https://arxiv.org/pdf/2508.08221v1)
 
-## Algorithm Core Parameters
+## Core Parameters
 
 We only list the different parameters from GRPO here:
 

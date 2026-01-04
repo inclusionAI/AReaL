@@ -389,25 +389,28 @@ class RemoteInfEngine(InferenceEngine):
         elif len(self.local_server_processes) > 0:
             self.addresses = [f"{s.host}:{s.port}" for s in self.local_server_processes]
             self.logger.info("Get server addresses from the local subprocess.")
-        elif os.getenv("AREAL_LLM_SERVER_ADDRS"):
-            # When addr is not provided, fallback to reading addrs from env var
-            self.addresses = os.environ["AREAL_LLM_SERVER_ADDRS"].split(",")
-            self.logger.info("Get server addresses from environment variable.")
-        else:
-            if (
-                self.config.experiment_name is not None
-                and self.config.trial_name is not None
-            ):
-                try:
-                    self.addresses = wait_llm_server_addrs(
-                        experiment_name=self.config.experiment_name,
-                        trial_name=self.config.trial_name,
-                        timeout=1,
-                    )
-                    self.logger.info("Get server addresses from name_resolve.")
-                except (TimeoutError, RuntimeError):
-                    # RuntimeError happens when name_resolve is not properly configured.
-                    pass
+        elif (
+            self.config.experiment_name is not None
+            and self.config.trial_name is not None
+        ):
+            try:
+                self.addresses = wait_llm_server_addrs(
+                    experiment_name=self.config.experiment_name,
+                    trial_name=self.config.trial_name,
+                    timeout=1,
+                )
+                self.logger.info("Get server addresses from name_resolve.")
+            except (TimeoutError, RuntimeError):
+                self.logger.info(
+                    "Failed to get server addresses from name_resolve, "
+                    "falling back to environment variable."
+                )
+                addrs_str = os.getenv("AREAL_LLM_SERVER_ADDRS")
+                if addrs_str:
+                    # When addr is not provided, fallback to reading addrs from env var
+                    self.addresses = addrs_str.split(",")
+                    self.logger.info("Get server addresses from environment variable.")
+
         if not self.addresses:
             raise RuntimeError(
                 "No configured inference servers. "
@@ -780,6 +783,7 @@ class RemoteInfEngine(InferenceEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         task_id: int | None = None,
         callback_addr: str | None = None,
+        is_eval: bool = False,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -795,6 +799,9 @@ class RemoteInfEngine(InferenceEngine):
             A function or module path for trajectory filtering
         task_id : int, optional
             The task ID to use. If None, a new task ID will be generated internally.
+        is_eval : bool, optional
+            Whether this is an evaluation workflow. Affects variables like trajectory dump path
+            and statistics keys. By default False.
         """
         assert workflow is not None, "Workflow must be specified for submit."
         if callback_addr:
@@ -805,6 +812,7 @@ class RemoteInfEngine(InferenceEngine):
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
             task_id=task_id,
+            is_eval=is_eval,
         )
 
     def wait(
@@ -875,6 +883,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        dynamic_bs: bool = False,
     ):
         """Asynchronously submit and wait until a full batch is ready.
 
@@ -888,6 +897,8 @@ class RemoteInfEngine(InferenceEngine):
             Keyword arguments to pass to the workflow constructor
         should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
             A function or module path for trajectory filtering
+        dynamic_bs : bool, optional
+            If True, enables dynamic batch sizing. Default is False.
 
         Returns
         -------
@@ -900,6 +911,7 @@ class RemoteInfEngine(InferenceEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            dynamic_bs=dynamic_bs,
         )
 
     @trace_perf("remote_inf_engine.pause_generation", category="misc")

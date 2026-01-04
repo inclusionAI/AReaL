@@ -734,7 +734,7 @@ class LocalScheduler(Scheduler):
     ) -> Any:
         """Create an engine instance on a remote worker.
 
-        The engine parameter is a string import path (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
+        The engine parameter is a string import path (e.g., "areal.engine.fsdp_engine.FSDPPPOActor")
         that will be dynamically imported and instantiated on the worker.
 
         Parameters
@@ -742,7 +742,7 @@ class LocalScheduler(Scheduler):
         worker_id : str
             Worker ID in format "role/index"
         engine : str
-            Import path to the engine class (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
+            Import path to the engine class (e.g., "areal.engine.fsdp_engine.FSDPPPOActor")
         engine_name : str, optional
             Unique name for this engine instance. Defaults to worker_id.
         *args

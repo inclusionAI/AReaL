@@ -46,6 +46,7 @@ class _RemoteRolloutTaskInput:
     workflow: str
     workflow_kwargs: dict[str, Any]
     should_accept_fn: str | None
+    is_eval: bool = False
 
 
 @dataclass
@@ -137,6 +138,7 @@ class RolloutController:
             tasks=[sch_spec for _ in range(alloc_mode.gen.dp_size)],
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
+            shared_placement_group=False,
         )
 
         # Use asyncio.run to call async scheduler methods synchronously
@@ -538,6 +540,7 @@ class RolloutController:
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         task_id: int | None = None,
+        is_eval: bool = False,
     ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -555,6 +558,7 @@ class RolloutController:
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
             task_id=task_id,
+            is_eval=is_eval,
         )
 
         # Delegate to dispatcher
@@ -603,6 +607,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
+        dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         """Prepare a batch with controlled staleness.
 
@@ -633,7 +638,7 @@ class RolloutController:
         # Delegate to dispatcher
         assert dataloader.batch_size is not None
         results = self.dispatcher.active_submit_and_wait(
-            self.data_generator, batch_size=dataloader.batch_size
+            self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
         )
 
         # Extract trajectories and concatenate

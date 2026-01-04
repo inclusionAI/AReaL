@@ -1,4 +1,3 @@
-import os
 import sys
 
 import debugpy
@@ -7,7 +6,6 @@ from areal.api.cli_args import GRPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.experimental.trainer import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.utils.stats_logger import StatsLogger
 
 if int(os.environ.get("RANK", "0")) == 0:
     debugpy.listen(("0.0.0.0", 5678))  # 可自定义端口
@@ -28,16 +26,9 @@ def main(args):
         gconfig=config.gconfig,
         tokenizer=config.tokenizer_path,
         enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
     eval_workflow_kwargs = workflow_kwargs.copy()
     eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
-    eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
-    eval_workflow_kwargs["dump_dir"] = os.path.join(
-        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-    )
 
     valid_dataset = get_custom_dataset(
         split="test",
@@ -50,16 +41,9 @@ def main(args):
         gconfig=config.gconfig,
         tokenizer=config.tokenizer_path,
         enable_thinking=False,
-        dump_dir=os.path.join(
-            StatsLogger.get_log_path(config.stats_logger), "generated"
-        ),
     )
     eval_workflow_kwargs = workflow_kwargs.copy()
     eval_workflow_kwargs["gconfig"] = config.gconfig.new(temperature=0.6)
-    eval_workflow_kwargs["rollout_stat_scope"] = "eval-rollout"
-    eval_workflow_kwargs["dump_dir"] = os.path.join(
-        StatsLogger.get_log_path(config.stats_logger), "generated-eval"
-    )
 
     with PPOTrainer(
         config,

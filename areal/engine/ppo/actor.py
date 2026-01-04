@@ -23,7 +23,6 @@ from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
 )
 from areal.utils.functional import (
-    dynamic_sampling,
     ppo_actor_loss_fn,
     reward_overlong_penalty,
     sapo_loss_fn,
@@ -57,7 +56,6 @@ class PPOActor:
         self.mask_no_eos_with_zero = config.mask_no_eos_with_zero
 
         self.temperature = config.temperature
-        self.dynamic_sampling = config.dynamic_sampling
 
         self.m2_threshold = config.m2_threshold
 
@@ -237,11 +235,6 @@ class PPOActor:
     @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
     def ppo_update(self, data: dict[str, Any]) -> None:
-        with stats_tracker.scope("dynamic_sampling"):
-            if self.dynamic_sampling and len(data["rewards"]) % self.group_size == 0:
-                data, sampling_stat = dynamic_sampling(data, self.group_size)
-                stats_tracker.scalar(**sampling_stat)
-
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]

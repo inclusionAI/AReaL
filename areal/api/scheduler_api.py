@@ -36,6 +36,7 @@ class Job:
     replicas: int = 0
     tasks: list[SchedulingSpec] = field(default_factory=list)
     scheduling_strategy: SchedulingStrategy = field(default_factory=SchedulingStrategy)
+    shared_placement_group: bool = False
 
 
 class Scheduler(abc.ABC):
@@ -135,7 +136,7 @@ class Scheduler(abc.ABC):
     ) -> Any:
         """Create an engine instance on a remote worker.
 
-        The engine parameter is a string import path (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
+        The engine parameter is a string import path (e.g., "areal.engine.fsdp_engine.FSDPPPOActor")
         that will be dynamically imported and instantiated on the worker.
 
         Parameters
@@ -143,7 +144,7 @@ class Scheduler(abc.ABC):
         worker_id : str
             ID of the worker to create the engine on (e.g., "rollout/0")
         engine : str
-            Import path to the engine class (e.g., "areal.engine.ppo.actor.FSDPPPOActor")
+            Import path to the engine class (e.g., "areal.engine.fsdp_engine.FSDPPPOActor")
         engine_name : str, optional
             Unique name for this engine instance (e.g., "actor/0", "ref/0").
             Defaults to worker_id if not specified. This allows multiple engines

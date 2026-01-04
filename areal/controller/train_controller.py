@@ -132,6 +132,7 @@ class TrainController:
             tasks=list(self.config.scheduling_spec),
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
+            shared_placement_group=True,
         )
 
         # Create workers via scheduler
@@ -538,6 +539,7 @@ class TrainController:
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
         granularity: int | None = None,
+        dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         if granularity is not None:
             logger.warning("For now, granularity takes no effect in train controller.")
@@ -546,6 +548,7 @@ class TrainController:
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            dynamic_bs=dynamic_bs,
         )
 
     def rollout_batch(

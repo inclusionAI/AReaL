@@ -40,6 +40,7 @@ parts:
   - caption: Algorithms
     chapters:
     - file: algorithms/async
+    - file: algorithms/ppo
     - file: algorithms/grpo
     - file: algorithms/rloo
     - file: algorithms/dapo

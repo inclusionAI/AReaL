@@ -175,7 +175,7 @@ Reference docs:
 - Persist transcripts under `{dump_dir}/{engine.get_version()}/` (follow the
   `multi_turn` implementation) when debugging is enabled.
 - Update whichever entry script or launcher references the workflow (e.g.,
-  `examples/multi-turn-math/gsm8k_rl_mt.py`, configs in `examples/**/conf/`, or CLI
+  `examples/multi_turn_math/gsm8k_rl_mt.py`, configs in `examples/**/conf/`, or CLI
   glue) so Hydra can import the new module.
 
 ### Introduce a reward function
@@ -217,7 +217,7 @@ Reference docs:
 - Read the example README to collect scheduler requirements, container images,
   environment variables, and any dataset preparation steps before running.
 - Keep rollout actors and inference engines version-aligned by propagating
-  `WeightUpdateMeta` (as shown in `examples/multi-turn-math/gsm8k_rl_mt.py`) and noting
+  `WeightUpdateMeta` (as shown in `examples/multi_turn_math/gsm8k_rl_mt.py`) and noting
   skipped weight updates explicitly if clusters are unavailable.
 - Capture the Hydra/CLI overrides you used
   (`python ... +train_dataset.path=... engine.type=...`) inside the PR/test plan so runs
