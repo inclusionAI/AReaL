@@ -9,7 +9,7 @@ ignore_data_skip: true
 overwrite_output_dir: true
 save_only_model: true
 save_safetensors: true
-gradient_accumulation_steps: 1
+gradient_accumulation_steps: 2
 gradient_checkpointing: true
 learning_rate: 0.00001
 logging_steps: 1
@@ -23,7 +23,7 @@ resume_from_checkpoint: false
 model_name_or_path: base-model/Qwen3-4b-instruct-2507
 num_train_epochs: 5
 output_dir: ckpts/your_experiment_name
-per_device_train_batch_size: 2
+per_device_train_batch_size: 1
 save_steps: 1000
 save_strategy: steps
 save_total_limit: 10
