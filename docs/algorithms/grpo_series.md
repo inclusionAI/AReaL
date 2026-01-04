@@ -27,32 +27,46 @@ normalization strategies, clipping mechanisms, importance sampling levels, etc. 
 adjusting a few configuration parameters in AReaL, you can switch between different
 algorithms.
 
-## Core Concepts
+## Example Usage
 
-**Rewards**: AReaL assumes outcome-based rewards. Each trajectory, which may consist
-of concatenated LLM input-output pairs, is assigned a single scalar reward at the
-sequence level rather than at the token level.
+All algorithms use the same launcher pattern. We recommend modifying parameters in the
+configuration YAML file.
 
-**Advantages**: AReaL computes per-token advantages for each output token in the
-trajectory. The PPO algorithm treats the outcome reward as the reward
-for the last token, with all preceding tokens receiving a reward of 0. AReaL then
-applies standard discounting and TD-error back-propagation via Generalized Advantage
-Estimation (GAE) along the token trajectory to compute the advantage of each token.
-When the discount factor is 1, the advantage values equal the outcome reward and are
-effectively broadcast to every token in the trajectory.
+| Backend   | Command                                                                                              |
+| --------- | ---------------------------------------------------------------------------------------------------- |
+| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml` |
+| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml`   |
+| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml` |
 
-## AReaL Implementation Notes
+Replace `<algo>` with: `ppo`, `grpo`, `drgrpo`, `liteppo`, `rloo`, `gspo`, `dapo_dynamic_bs`,
+or `sapo`.
 
-AReaL's GRPO implementation differs from the original DeepSeekMath paper in two key ways:
+### Switching Algorithms via CLI Overrides
 
-**Length Normalization**: AReaL removes the per-token length normalization term from the
-original GRPO objective. This aligns with recommendations from
-[Dr.GRPO](https://arxiv.org/abs/2503.20783) and eliminates bias in advantage estimation.
+You can also switch algorithms by overriding configuration parameters:
 
-**KL Regularization**: Instead of adding a KL divergence term directly to
-the objective function, AReaL incorporates KL regularization into the advantage
-estimation (PPO-style). The KL penalty is computed via `KLEstimator` and added to the
-per-token rewards before GAE computation, controlled by the `actor.kl_ctl` parameter.
+```bash
+# Dr.GRPO from GRPO config
+python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
+  --config examples/math/gsm8k_grpo.yaml \
+  actor.adv_norm.mean_level=group \
+  actor.adv_norm.std_level=null
+
+# GSPO from GRPO config
+python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
+  --config examples/math/gsm8k_grpo.yaml \
+  +actor.importance_sampling_level=sequence
+
+# SAPO from GRPO config
+python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
+  --config examples/math/gsm8k_grpo.yaml \
+  +actor.use_sapo_loss=true \
+  +actor.sapo_tau_pos=1.0 \
+  +actor.sapo_tau_neg=1.05 \
+  actor.use_decoupled_loss=false
+```
+
+Note: Use `+` prefix when adding keys not present in the original YAML.
 
 ## Core Configuration Parameters
 
@@ -127,7 +141,7 @@ parameters:
 
 | Algorithm   | `adv_norm.mean_level` | `adv_norm.std_level` | `adv_norm.mean_leave1out` | `importance_sampling_level` | Special                           |
 | ----------- | --------------------- | -------------------- | ------------------------- | --------------------------- | --------------------------------- |
-| **PPO**     | `batch`               | `batch`              | `false`                   | `token`                     |          critic model.            |
+| **PPO**     | `batch`               | `batch`              | `false`                   | `token`                     | critic model.                     |
 | **GRPO**    | `batch`               | `batch`              | `false`                   | `token`                     | -                                 |
 | **Dr.GRPO** | `group`               | `null`               | `false`                   | `token`                     | -                                 |
 | **LitePPO** | `group`               | `batch`              | `false`                   | `token`                     | -                                 |
@@ -276,43 +290,29 @@ samples and then filter them. The following option controls batch sizing behavio
 | ------------ | ---- | ------- | --------------------------- |
 | `dynamic_bs` | bool | `false` | Enable dynamic batch sizing |
 
-## Example Usage
+## Core Concepts
 
-All algorithms use the same launcher pattern. We recommend modifying parameters in the
-configuration YAML file.
+**Rewards**: AReaL assumes outcome-based rewards. Each trajectory, which may consist
+of concatenated LLM input-output pairs, is assigned a single scalar reward at the
+sequence level rather than at the token level.
 
-| Backend   | Command                                                                                              |
-| --------- | ---------------------------------------------------------------------------------------------------- |
-| **local** | `python3 -m areal.launcher.local examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml` |
-| **ray**   | `python3 -m areal.launcher.ray examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml`   |
-| **slurm** | `python3 -m areal.launcher.slurm examples/math/gsm8k_rl.py --config examples/math/gsm8k_<algo>.yaml` |
+**Advantages**: AReaL computes per-token advantages for each output token in the
+trajectory. The PPO algorithm treats the outcome reward as the reward
+for the last token, with all preceding tokens receiving a reward of 0. AReaL then
+applies standard discounting and TD-error back-propagation via Generalized Advantage
+Estimation (GAE) along the token trajectory to compute the advantage of each token.
+When the discount factor is 1, the advantage values equal the outcome reward and are
+effectively broadcast to every token in the trajectory.
 
-Replace `<algo>` with: `ppo`, `grpo`, `drgrpo`, `liteppo`, `rloo`, `gspo`, `dapo_dynamic_bs`,
-or `sapo`.
+## AReaL Implementation Notes
 
-### Switching Algorithms via CLI Overrides
+AReaL's GRPO implementation differs from the original DeepSeekMath paper in two key ways:
 
-You can also switch algorithms by overriding configuration parameters:
+**Length Normalization**: AReaL removes the per-token length normalization term from the
+original GRPO objective. This aligns with recommendations from
+[Dr.GRPO](https://arxiv.org/abs/2503.20783) and eliminates bias in advantage estimation.
 
-```bash
-# Dr.GRPO from GRPO config
-python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
-  --config examples/math/gsm8k_grpo.yaml \
-  actor.adv_norm.mean_level=group \
-  actor.adv_norm.std_level=null
-
-# GSPO from GRPO config
-python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
-  --config examples/math/gsm8k_grpo.yaml \
-  +actor.importance_sampling_level=sequence
-
-# SAPO from GRPO config
-python3 -m areal.launcher.local examples/math/gsm8k_rl.py \
-  --config examples/math/gsm8k_grpo.yaml \
-  +actor.use_sapo_loss=true \
-  +actor.sapo_tau_pos=1.0 \
-  +actor.sapo_tau_neg=1.05 \
-  actor.use_decoupled_loss=false
-```
-
-Note: Use `+` prefix when adding keys not present in the original YAML.
+**KL Regularization**: Instead of adding a KL divergence term directly to
+the objective function, AReaL incorporates KL regularization into the advantage
+estimation (PPO-style). The KL penalty is computed via `KLEstimator` and added to the
+per-token rewards before GAE computation, controlled by the `actor.kl_ctl` parameter.
