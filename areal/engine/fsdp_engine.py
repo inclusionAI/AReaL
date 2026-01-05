@@ -357,34 +357,34 @@ class FSDPEngine(TrainEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        granularity: int = 1,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
             data,
-            granularity=granularity,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
+            group_size=group_size,
         )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        granularity: int = 1,
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
             dataloader,
-            granularity=granularity,
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            group_size=group_size,
             dynamic_bs=dynamic_bs,
         )
 

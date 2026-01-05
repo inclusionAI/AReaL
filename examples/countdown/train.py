@@ -1,4 +1,3 @@
-import asyncio
 import sys
 import uuid
 
@@ -15,7 +14,6 @@ from areal.api.workflow_api import RolloutWorkflow
 from areal.core import workflow_context
 from areal.experimental.trainer import PPOTrainer
 from areal.utils import logging, stats_tracker
-from areal.utils.data import concat_padded_tensors
 
 worker_id = uuid.uuid4().hex[:4]
 
@@ -38,44 +36,38 @@ class CountDownWorkflow(RolloutWorkflow):
     async def arun_episode(self, engine: InferenceEngine, data):
         input_ids = self.tokenizer.encode(data["query"], add_special_tokens=False)
 
-        n_samples = self.gconfig.n_samples
         req = ModelRequest(
             rid=uuid.uuid4().hex,
             input_ids=input_ids,
             gconfig=self.gconfig.new(n_samples=1),
             tokenizer=self.tokenizer,
         )
-        resps = await asyncio.gather(*[engine.agenerate(req) for _ in range(n_samples)])
+        resp = await engine.agenerate(req)
 
-        results = []
-        for resp in resps:
-            seq = resp.input_tokens + resp.output_tokens
-            logprobs = [0.0] * resp.input_len + resp.output_logprobs
-            loss_mask = [0] * resp.input_len + [1] * resp.output_len
-            versions = [-1] * resp.input_len + resp.output_versions
+        seq = resp.input_tokens + resp.output_tokens
+        logprobs = [0.0] * resp.input_len + resp.output_logprobs
+        loss_mask = [0] * resp.input_len + [1] * resp.output_len
+        versions = [-1] * resp.input_len + resp.output_versions
 
-            completions_str = self.tokenizer.decode(resp.output_tokens)
-            reward = compute_score(
-                completions_str,
-                data,
-            )
+        completions_str = self.tokenizer.decode(resp.output_tokens)
+        reward = compute_score(
+            completions_str,
+            data,
+        )
 
-            # Log reward.
-            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
+        # Log reward.
+        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
-            res = {
-                # unsqueeze to add an additional batch dimension
-                "input_ids": torch.tensor(seq).unsqueeze(0),
-                "loss_mask": torch.tensor(loss_mask).unsqueeze(0),
-                "logprobs": torch.tensor(logprobs).unsqueeze(0),
-                "versions": torch.tensor(versions).unsqueeze(0),
-                "attention_mask": torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
-                # reward
-                "rewards": torch.tensor([float(reward)]),
-            }
-            results.append(res)
-
-        return concat_padded_tensors(results)
+        return {
+            # unsqueeze to add an additional batch dimension
+            "input_ids": torch.tensor(seq).unsqueeze(0),
+            "loss_mask": torch.tensor(loss_mask).unsqueeze(0),
+            "logprobs": torch.tensor(logprobs).unsqueeze(0),
+            "versions": torch.tensor(versions).unsqueeze(0),
+            "attention_mask": torch.ones(len(seq), dtype=torch.bool).unsqueeze(0),
+            # reward
+            "rewards": torch.tensor([float(reward)]),
+        }
 
 
 def get_countdown_dataset(dataset_path, rank, world_size):

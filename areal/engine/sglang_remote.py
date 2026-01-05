@@ -293,6 +293,7 @@ class RemoteSGLangEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         task_id: int | None = None,
         callback_addr: str | None = None,
         is_eval: bool = False,
@@ -303,6 +304,7 @@ class RemoteSGLangEngine(InferenceEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            group_size=group_size,
             task_id=task_id,
             callback_addr=callback_addr,
             is_eval=is_eval,
@@ -325,13 +327,19 @@ class RemoteSGLangEngine(InferenceEngine):
         data: list[dict[str, Any]],
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
         This method does not support asynchronous rollout and should be used for offline
         data collection or debugging, not in production experiments.
         """
-        return self._engine.rollout_batch(data, workflow, workflow_kwargs)
+        return self._engine.rollout_batch(
+            data=data,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            group_size=group_size,
+        )
 
     def prepare_batch(
         self,
@@ -339,6 +347,7 @@ class RemoteSGLangEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
@@ -347,6 +356,7 @@ class RemoteSGLangEngine(InferenceEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
+            group_size=group_size,
             dynamic_bs=dynamic_bs,
         )
 

@@ -47,6 +47,7 @@ class _RemoteRolloutTaskInput:
     workflow_kwargs: dict[str, Any]
     should_accept_fn: str | None
     is_eval: bool = False
+    group_size: int = 1
 
 
 @dataclass
@@ -541,6 +542,7 @@ class RolloutController:
         should_accept_fn: str | None = None,
         task_id: int | None = None,
         is_eval: bool = False,
+        group_size: int = 1,
     ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -559,6 +561,7 @@ class RolloutController:
             should_accept_fn=should_accept_fn,
             task_id=task_id,
             is_eval=is_eval,
+            group_size=group_size,
         )
 
         # Delegate to dispatcher
@@ -583,6 +586,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
+        group_size: int = 1,
     ) -> dict[str, Any]:
         perf_tracer.instant(
             "rollout_controller.rollout_batch",
@@ -595,6 +599,7 @@ class RolloutController:
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
                 should_accept_fn=should_accept_fn,
+                group_size=group_size,
             )
         results = self.wait(count=len(data))
         # Concatenate into batch tensor format
@@ -607,6 +612,7 @@ class RolloutController:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
+        group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> dict[str, Any]:
         """Prepare a batch with controlled staleness.
@@ -630,6 +636,7 @@ class RolloutController:
                         workflow_kwargs=workflow_kwargs,
                         should_accept_fn=should_accept_fn,
                         task_id=self._task_id_generator.next(),
+                        group_size=group_size,
                     )
 
         if not hasattr(self, "data_generator"):

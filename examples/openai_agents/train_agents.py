@@ -1,4 +1,3 @@
-import asyncio
 from dataclasses import dataclass, field
 
 from agents import Agent as OpenAIAgent
@@ -89,31 +88,19 @@ class OpenAIAgentWorkflow(RolloutWorkflow):
         )
 
     async def arun_episode(self, engine, data):
-        clients = [
-            ArealOpenAI(
-                engine=engine, tokenizer=self.tokenizer, tool_call_parser="qwen25"
-            )
-            for _ in range(self.gconfig.n_samples)
-        ]
-
-        # Collect trajectories
-        rewards = await asyncio.gather(
-            *[
-                self.agent.run_agent(
-                    data=data,
-                    client=clients[i],
-                )
-                for i in range(self.gconfig.n_samples)
-            ]
+        client = ArealOpenAI(
+            engine=engine, tokenizer=self.tokenizer, tool_call_parser="qwen25"
         )
-        for reward in rewards:
-            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
 
-        interactions_with_reward = {}
-        for client in clients:
-            client.apply_reward_discount(turn_discount=0.9)
-            interactions = client.export_interactions(style="individual")
-            interactions_with_reward.update(interactions)
+        # Collect single trajectory
+        reward = await self.agent.run_agent(
+            data=data,
+            client=client,
+        )
+        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
+
+        client.apply_reward_discount(turn_discount=0.9)
+        interactions_with_reward = client.export_interactions(style="individual")
         return interactions_with_reward
 
 

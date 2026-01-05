@@ -187,7 +187,6 @@ class PPOTrainer:
         eval_workflow_kwargs: dict[str, Any] | None = None,
         dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         total_epochs: int | None = None,
-        granularity: int | None = None,
     ):
         config = self.config
         start_step = (
@@ -225,10 +224,10 @@ class PPOTrainer:
             ):
                 rollout_batch = self.actor.prepare_batch(
                     self.train_dataloader,
-                    granularity=granularity or self.config.actor.group_size,
                     workflow=workflow,
                     workflow_kwargs=workflow_kwargs,
                     should_accept_fn=dynamic_filter_fn,
+                    group_size=config.gconfig.n_samples,
                     dynamic_bs=self.config.dynamic_bs,
                 )
 
@@ -611,13 +610,21 @@ class PPOTrainer:
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
 
-    def _evaluate_fn(self, eval_workflow: RolloutWorkflow, eval_workflow_kwargs):
+    def _evaluate_fn(
+        self,
+        eval_workflow: RolloutWorkflow,
+        eval_workflow_kwargs,
+    ):
         if self.actor.is_data_parallel_head():
             cnt = 0
             for data in self.valid_dataloader:
                 for item in data:
                     self.eval_rollout.submit(
-                        item, eval_workflow, eval_workflow_kwargs, is_eval=True
+                        item,
+                        eval_workflow,
+                        eval_workflow_kwargs,
+                        group_size=self.config.eval_gconfig.n_samples,
+                        is_eval=True,
                     )
                     cnt += 1
             self.eval_rollout.wait(cnt, timeout=None)

@@ -261,6 +261,10 @@ def main(args):
     )
     valid_dataset = inject_index(valid_dataset, include_uuid=True)
 
+    # HACK: workflow has group sampling, setting trainer group_size to 1
+    raw_gconfig = config.gconfig.new()
+    config.gconfig.n_samples = 1
+
     with PPOTrainer(
         config,
         train_dataset=train_dataset,
@@ -309,9 +313,9 @@ def main(args):
             # Prepare proxy server, workflow and agent thread
             name = "train" if not is_eval else "eval"
             gconfig = (
-                config.gconfig.new(temperature=0.6, n_samples=1)
+                raw_gconfig.new(temperature=0.6, n_samples=1)
                 if is_eval
-                else config.gconfig
+                else raw_gconfig.new()
             )
 
             server = ProxyServer(
@@ -320,7 +324,7 @@ def main(args):
                 tool_call_parser=config.tool_call_parser,
                 reasoning_parser=config.reasoning_parser,
                 chat_template_type=chat_template_type,
-                engine_max_tokens=config.gconfig.max_tokens,
+                engine_max_tokens=gconfig.max_tokens,
                 name=f"{name} proxy server",
             )
             server.start(wait_until_ready=True)
