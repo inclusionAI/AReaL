@@ -132,14 +132,25 @@ class PPOTrainer:
 
         # Prepare weight update meta and connect to inference engine
         if self.config.actor.weight_update_mode == "disk":
-            self.weight_update_meta = WeightUpdateMeta.from_disk(
-                experiment_name=config.experiment_name,
-                trial_name=config.trial_name,
-                file_root=config.cluster.fileroot,
-                name="default",
-                use_lora=config.actor.use_lora,
-                clear_checkpoint_after_load=True,
-            )
+            if config.actor.use_lora:
+                self.weight_update_meta = WeightUpdateMeta.from_disk(
+                    experiment_name=config.experiment_name,
+                    trial_name=config.trial_name,
+                    file_root=config.cluster.fileroot,
+                    name="default",
+                    clear_checkpoint_after_load=True,
+                    use_lora=config.actor.use_lora,
+                    lora_name=config.gconfig.lora_name,
+                    base_model_name=config.actor.path,
+                )
+            else:
+                self.weight_update_meta = WeightUpdateMeta.from_disk(
+                    experiment_name=config.experiment_name,
+                    trial_name=config.trial_name,
+                    file_root=config.cluster.fileroot,
+                    name="default",
+                    clear_checkpoint_after_load=True,
+                )
         elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
             if self.allocation_mode.train_backend == "megatron":
