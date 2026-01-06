@@ -32,7 +32,8 @@ def _remove_padding_from_trajectory(d: dict[str, Any]) -> dict[str, Any]:
     Modifies the dict in-place and returns it.
     """
     if "attention_mask" not in d:
-        return d
+        return d.copy()
+    new_d = {}
     max_sequence_length = int(d["attention_mask"].sum(-1).max().item())
     attn_mask_shape = d["attention_mask"].shape
     for k, v in d.items():
@@ -41,8 +42,10 @@ def _remove_padding_from_trajectory(d: dict[str, Any]) -> dict[str, Any]:
             and len(v.shape) >= 2
             and v.shape[:2] == attn_mask_shape[:2]
         ):
-            d[k] = v[:, :max_sequence_length]
-    return d
+            new_d[k] = v[:, :max_sequence_length]
+        else:
+            new_d[k] = v
+    return new_d
 
 
 def redistribute_trajectories(
