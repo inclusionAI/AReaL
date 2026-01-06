@@ -20,10 +20,9 @@ from areal.api.io_struct import StepInfo
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core import workflow_context
 from areal.dataset import get_custom_dataset
-from areal.experimental.openai.proxy import (
-    ProxyServer,
-    ProxySession,
-    ensure_end_with_slash,
+from areal.experimental.openai import (
+    OpenAIProxyClientSession,
+    OpenAIProxyServer,
 )
 from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils import logging, stats_tracker
@@ -31,6 +30,7 @@ from areal.utils.data import cycle_dataloader
 from areal.utils.dataloader import create_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.http import ensure_end_with_slash
 
 logger = logging.getLogger("GSM8K GRPO Proxy Example")
 
@@ -38,7 +38,7 @@ logger = logging.getLogger("GSM8K GRPO Proxy Example")
 class ProxyWorkflow(RolloutWorkflow):
     def __init__(
         self,
-        proxy_server: ProxyServer,
+        proxy_server: OpenAIProxyServer,
         export_style: str = "concat",
     ):
         self.proxy_server = proxy_server
@@ -141,12 +141,12 @@ class GSM8kAgentWorkflow(AgentWorkflow):
         }
 
         # async with self.process_semaphore:
-        async with ProxySession(base_url=self.base_url, task_id=task_id) as session:
+        async with OpenAIProxyClientSession(
+            base_url=self.base_url, task_id=task_id
+        ) as session:
             extra_envs = {
                 "OPENAI_BASE_URL": session.session_url,
                 "OPENAI_API_KEY": "dummy",  # os.environ["OPENAI_API_KEY"],
-                "AREAL_SESSION_ID": session.session_id,
-                "AREAL_TASK_ID": task_id,
             }
 
             # logger.info(f"Running task {task_id} with semaphore")
@@ -182,7 +182,7 @@ class GSM8kAgentWorkflow(AgentWorkflow):
         await asyncio.gather(
             *[self._run_episode(task_id, data) for _ in range(self.group_size)]
         )
-        await ProxyServer.finish_task(task_id, base_url=self.base_url)
+        await OpenAIProxyServer.finish_task(task_id, base_url=self.base_url)
 
 
 async def prepare_batch(
@@ -207,11 +207,11 @@ async def prepare_batch(
 class ProxyPPOConfig(PPOConfig):
     tool_call_parser: str = field(
         default="qwen25",
-        metadata={"help": "Tool call parser that used by ProxyServer."},
+        metadata={"help": "Tool call parser that used by OpenAIProxyServer."},
     )
     reasoning_parser: str = field(
         default="qwen3",
-        metadata={"help": "Reasoning parser that used by ProxyServer."},
+        metadata={"help": "Reasoning parser that used by OpenAIProxyServer."},
     )
     export_style: str = field(
         default="concat",
@@ -318,7 +318,7 @@ def main(args):
                 else raw_gconfig.new()
             )
 
-            server = ProxyServer(
+            server = OpenAIProxyServer(
                 rollout=rollout,
                 tokenizer=tokenizer,
                 tool_call_parser=config.tool_call_parser,

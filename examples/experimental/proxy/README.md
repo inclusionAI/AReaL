@@ -44,7 +44,7 @@ async def run_agent_return_reward(data: Any) -> float:
 ```
 
 3. Wraps `run_agent_return_reward` function into a `run_and_submit` function, you can
-   use the `run_and_submit_rewards` function in `areal.utils.proxy_utils` to do this.
+   use the `run_and_submit_rewards` function in `areal.experimental.openai` to do this.
 
 ```python
 async def run_and_submit(data: dict):

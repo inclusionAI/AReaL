@@ -4,9 +4,9 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 from areal.api.cli_args import GenerationHyperparameters
+from areal.experimental.openai import run_and_submit_rewards
 from areal.reward import get_math_verify_worker
 from areal.utils import logging
-from areal.utils.proxy_utils import run_and_submit_rewards
 
 logger = logging.getLogger("GSM8K Multi-Turn Agent")
 

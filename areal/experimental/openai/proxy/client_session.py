@@ -1,10 +1,9 @@
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
+from types import TracebackType
 
 import aiohttp
-from fastapi import Request
-from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from tenacity import (
     RetryCallState,
@@ -15,32 +14,77 @@ from tenacity import (
     wait_exponential,
 )
 
-from areal.utils import logging
+from areal.utils.http import ensure_end_with_slash
+from areal.utils.logging import getLogger
 
-logger = logging.getLogger("ProxyUtils")
+from .server import (
+    RL_END_SESSION_PATHNAME,
+    RL_SET_REWARD_PATHNAME,
+    RL_START_SESSION_PATHNAME,
+    AReaLSetRewardRequest,
+    AReaLStartSessionRequest,
+)
+
+logger = getLogger("OpenAIProxyClient")
 
 
-def ensure_end_with_slash(url: str) -> str:
-    if not url.endswith("/"):
-        return url + "/"
-    return url
+class OpenAIProxyClientSession(aiohttp.ClientSession):
+    def __init__(self, base_url: str, task_id: str, *args, **kwargs):
+        base_url = ensure_end_with_slash(base_url)
+        super().__init__(base_url, *args, **kwargs)
 
+        self.base_url = base_url
+        self.task_id = task_id
+        self.session_id = None
 
-# Based on sglang.srt.entrypoints.http_server.validate_json_request
-async def validate_json_request(raw_request: Request):
-    """Validate that the request content-type is application/json."""
-    content_type = raw_request.headers.get("content-type", "").lower()
-    media_type = content_type.split(";", maxsplit=1)[0]
-    if media_type != "application/json":
-        raise RequestValidationError(
-            errors=[
-                {
-                    "loc": ["header", "content-type"],
-                    "msg": "Unsupported Media Type: Only 'application/json' is allowed",
-                    "type": "value_error",
-                }
-            ]
+    @property
+    def session_url(self) -> str:
+        return str(self._build_url(self.session_id))
+
+    async def set_reward(self, completion_id: str, reward: float):
+        """Set reward for a specific completion/response by its ID."""
+        if self.session_id is None:
+            raise ValueError("Session ID is not set")
+        await set_interaction_reward(
+            self,
+            interaction_id=completion_id,
+            reward=reward,
+            url=f"{self.session_id}/{RL_SET_REWARD_PATHNAME}",
         )
+
+    async def set_last_reward(self, reward: float):
+        """Set reward for the most recent completion/response."""
+        if self.session_id is None:
+            raise ValueError("Session ID is not set")
+        await set_last_interaction_reward(
+            self, reward=reward, url=f"{self.session_id}/{RL_SET_REWARD_PATHNAME}"
+        )
+
+    async def __aenter__(self) -> "OpenAIProxyClientSession":
+        await super().__aenter__()
+        data = await _start_session(
+            self,
+            f"{RL_START_SESSION_PATHNAME}",
+            payload=AReaLStartSessionRequest(task_id=self.task_id),
+        )
+        self.session_id = data["session_id"]
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ):
+        if exc_type is not None:
+            await super().__aexit__(exc_type, exc_val, exc_tb)
+            return
+
+        if self.session_id is None:
+            raise ValueError("Session ID is not set")
+
+        await post_json_with_retry(self, f"{self.session_id}/{RL_END_SESSION_PATHNAME}")
+        await super().__aexit__(exc_type, exc_val, exc_tb)
 
 
 async def post_json(
@@ -112,29 +156,6 @@ async def post_json_with_retry(
     return await post_json(session, url, payload, total_timeout)
 
 
-RL_START_SESSION_PATHNAME = "rl/start_session"
-RL_END_SESSION_PATHNAME = "rl/end_session"
-RL_SET_REWARD_PATHNAME = "rl/set_reward"
-RL_FINISH_TASK_PATHNAME = "rl/finish_task"
-CHAT_COMPLETIONS_PATHNAME = "chat/completions"
-RESPONSES_PATHNAME = "responses"
-
-
-class AReaLStartSessionRequest(BaseModel):
-    task_id: str
-    init_from_session_id: str | None = None
-
-
-class AReaLSetRewardRequest(BaseModel):
-    interaction_id: str | None = None
-    reward: float
-
-
-class AReaLFinishTaskRequest(BaseModel):
-    task_id: str
-    put_to_queue: bool = True
-
-
 async def _set_reward(
     http_session: aiohttp.ClientSession,
     interaction_id: str | None,
@@ -162,6 +183,11 @@ async def set_last_interaction_reward(
     url: str = RL_SET_REWARD_PATHNAME,
 ):
     await _set_reward(http_session, interaction_id=None, reward=reward, url=url)
+
+
+@get_retry_strategy(allowed_attempt=-1)
+async def _start_session(*args, **kwargs):
+    return await post_json(*args, **kwargs)
 
 
 async def run_and_submit_rewards(

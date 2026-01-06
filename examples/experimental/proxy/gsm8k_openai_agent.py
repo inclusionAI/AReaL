@@ -10,11 +10,11 @@ from agents import (
 from agents import Runner as OpenAIRunner
 
 from areal.api.cli_args import GenerationHyperparameters
+from areal.experimental.openai import run_and_submit_rewards
 from areal.reward import get_math_verify_worker
 from areal.utils import logging
-from areal.utils.proxy_utils import run_and_submit_rewards
 
-logger = logging.getLogger("OpenAIAgent")
+logger = logging.getLogger("AgentWorkflow")
 
 
 def simplified_gsm8k_reward_fn(completions: str, answer: str):

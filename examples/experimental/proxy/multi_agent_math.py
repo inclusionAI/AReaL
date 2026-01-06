@@ -1,6 +1,6 @@
 import asyncio
 
-from agents import Agent as OpenAIAgent
+from agents import Agent as AgentWorkflow
 from agents import (
     ModelSettings,
     RunConfig,
@@ -11,8 +11,8 @@ from agents import Runner as OpenAIRunner
 from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 
 from areal.api.cli_args import GenerationHyperparameters
+from areal.experimental.openai import run_and_submit_rewards
 from areal.reward import get_math_verify_worker
-from areal.utils.proxy_utils import run_and_submit_rewards
 
 
 def gsm8k_reward_fn(result, answer):
@@ -24,11 +24,11 @@ def gsm8k_reward_fn(result, answer):
 
 
 class MultiAgentMathAgent:
-    def _create_agent_workflow(self) -> OpenAIAgent:
+    def _create_agent_workflow(self) -> AgentWorkflow:
         """Create a multi-agent workflow using handoffs for different reasoning stages."""
 
         # Create specialized agents for different stages
-        problem_analyzer = OpenAIAgent(
+        problem_analyzer = AgentWorkflow(
             name="Problem Analyzer",
             instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
             You are a math problem analyzer. Your job is to:
@@ -42,7 +42,7 @@ class MultiAgentMathAgent:
             Focus on understanding and analyzing the problem structure.""",
         )
 
-        solution_specialist = OpenAIAgent(
+        solution_specialist = AgentWorkflow(
             name="Solution Specialist",
             instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
             You are a math solution specialist. Your job is to:
@@ -56,7 +56,7 @@ class MultiAgentMathAgent:
             Focus on creating accurate, well-explained solutions.""",
         )
 
-        refinement_agent = OpenAIAgent(
+        refinement_agent = AgentWorkflow(
             name="Refinement Agent",
             instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
             You are a refinement specialist. Your job is to:
@@ -70,7 +70,7 @@ class MultiAgentMathAgent:
             Focus on accuracy, thoroughness, and fixing any mistakes from the previous attempt.""",
         )
 
-        verification_agent = OpenAIAgent(
+        verification_agent = AgentWorkflow(
             name="Verification Agent",
             instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
             You are a verification specialist. Your job is to:
@@ -84,7 +84,7 @@ class MultiAgentMathAgent:
         )
 
         # Create the main orchestrator agent with handoffs
-        main_agent = OpenAIAgent(
+        main_agent = AgentWorkflow(
             name="Math Problem Solver",
             instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
             You are a math problem solving coordinator. Your job is to:

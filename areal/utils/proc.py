@@ -217,3 +217,34 @@ def kill_process_tree(
                 parent.send_signal(signal.SIGQUIT)
             except psutil.NoSuchProcess:
                 pass
+
+
+def _get_device_count_safely() -> int:
+    """
+    Safely get device count without initializing CUDA context.
+    """
+    gpu_types = ["nvidia", "davinci"]
+    try:
+        if os.path.exists("/dev"):
+            for gpu_type in gpu_types:
+                devices = [
+                    f
+                    for f in os.listdir("/dev")
+                    if f.startswith(gpu_type) and f[len(gpu_type) :].isdigit()
+                ]
+                if devices:
+                    return len(devices)
+    except (OSError, ValueError) as e:
+        # /dev doesn't exist or can't read (e.g., Windows, macOS)
+        logger.debug(f"Could not read device list from /dev, using fallback: {e}")
+
+    # Fallback: assume 8 devices for cautious max_workers calculation
+    return 8
+
+
+def get_default_max_workers():
+    cpu_count = os.cpu_count() or 1
+    device_count = _get_device_count_safely()
+    # Heuristic for max_workers: distribute CPU cores across devices,
+    # then halve to be conservative, ensuring at least one worker.
+    return max((cpu_count // device_count) // 4, 1)

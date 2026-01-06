@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import random
@@ -6,12 +8,13 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime
+from logging import Logger
 from threading import Lock
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import aiohttp
 import ray
@@ -20,7 +23,7 @@ import torch.distributed as dist
 import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import InferenceEngineConfig
+from areal.api.cli_args import InferenceEngineConfig, OpenAIConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     HttpGenerationResult,
@@ -32,9 +35,11 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     WeightUpdateRequests,
 )
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow, WorkflowLike
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
+from areal.utils.data import concat_padded_tensors
+from areal.utils.dynamic_import import import_from_string
 from areal.utils.http import arequest_with_retry, get_default_connector
 from areal.utils.launcher import wait_llm_server_addrs
 from areal.utils.network import find_free_ports, gethostip
@@ -43,11 +48,70 @@ from areal.utils.proc import kill_process_tree
 
 from .workflow_executor import WorkflowExecutor
 
+if TYPE_CHECKING:
+    from areal.experimental.openai import (
+        InteractionWithTokenLogpReward,
+        OpenAIProxyServer,
+    )
+
 RID_CACHE_SIZE = 128
 
 logger = logging.getLogger("RemoteInfEngine")
 
 _session_storage = ContextVar("aiohttp.ClientSession")
+
+
+class GroupedRolloutWorkflow(RolloutWorkflow):
+    def __init__(
+        self,
+        workflow: RolloutWorkflow,
+        group_size: int,
+        logger: Logger,
+    ):
+        if group_size < 1:
+            raise ValueError(f"group_size must be >= 1, got {group_size}")
+        self.workflow = workflow
+        self.group_size = group_size
+        self.logger = logger
+
+    async def arun_episode(
+        self, engine: InferenceEngine, data: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        results = await asyncio.gather(
+            *[self.workflow.arun_episode(engine, data) for _ in range(self.group_size)]
+        )
+
+        valid_results = [r for r in results if r is not None]
+
+        # All results None -> return None
+        if not valid_results:
+            return None
+
+        # Some results None -> warn and continue with valid ones
+        if len(valid_results) < len(results):
+            self.logger.warning(
+                f"GroupedRolloutWorkflow: {len(results) - len(valid_results)}/{len(results)} "
+                "trajectories returned None, using remaining results"
+            )
+
+        # Check if results are InteractionWithTokenLogpReward dicts
+        first = valid_results[0]
+        if (
+            isinstance(first, dict)
+            and first
+            and all(
+                isinstance(v, InteractionWithTokenLogpReward) for v in first.values()
+            )
+        ):
+            # Merge dicts - each result is {completion_id: InteractionWithTokenLogpReward}
+            merged: dict[str, InteractionWithTokenLogpReward] = {}
+            for result in valid_results:
+                merged.update(result)
+            return merged if merged else None
+
+        # Otherwise, tensor dicts - concatenate
+        concatenated = concat_padded_tensors(valid_results)
+        return concatenated if concatenated else None
 
 
 class RemoteInfBackendProtocol(Protocol):
@@ -289,10 +353,14 @@ class RemoteInfEngine(InferenceEngine):
 
         self.lora_initialized = False
 
-        self._executor: ProcessPoolExecutor | None = None
+        self._executor: ThreadPoolExecutor | None = None
         self._workflow_executor: WorkflowExecutor | None = None
         self._initialized = False
         self.local_server_processes: list[LocalInfServerInfo] = []
+
+        # OpenAI proxy state (lazy initialized on first AgentWorkflow usage)
+        self._openai_client = None  # ArealOpenAI
+        self._openai_proxy_server = None  # OpenAIProxyServer
 
     def _create_session(self) -> aiohttp.ClientSession:
         """Create a ClientSession for the current asyncio coroutine.
@@ -424,7 +492,7 @@ class RemoteInfEngine(InferenceEngine):
             self._wait_for_server(addr_)
         self.server_idx = random.randint(0, len(self.addresses) - 1)
         self.logger.info("Servers are all ready!")
-        self.executor = ProcessPoolExecutor(max_workers=1)
+        self.executor = ThreadPoolExecutor(max_workers=1)
 
         self.workflow_executor = WorkflowExecutor(
             config=self.config,
@@ -438,6 +506,13 @@ class RemoteInfEngine(InferenceEngine):
     def destroy(self):
         """Destroy the engine and clean up resources."""
         self._initialized = False
+
+        # Clean up OpenAI proxy resources if initialized
+        if self._openai_proxy_server is not None:
+            self._openai_proxy_server.close()
+            self._openai_proxy_server = None
+        self._openai_client = None
+
         if self._workflow_executor is not None:
             self._workflow_executor.destroy()
         if self._executor is not None:
@@ -482,6 +557,186 @@ class RemoteInfEngine(InferenceEngine):
         """Get the current weight version."""
         with self.lock:
             return self._version
+
+    def _ensure_openai_proxy_initialized(self) -> OpenAIProxyServer:
+        from areal.experimental.openai import ArealOpenAI, OpenAIProxyServer
+
+        if self._openai_proxy_server is not None:
+            return self._openai_proxy_server
+
+        # Load tokenizer (reuse workflow_executor's tokenizer loading)
+        tokenizer = self.workflow_executor._get_tokenizer()
+        if tokenizer is None:
+            raise RuntimeError(
+                "AgentWorkflow requires tokenizer_path to be set in InferenceEngineConfig"
+            )
+
+        # Get OpenAI config with defaults
+        openai_cfg = self.config.openai or OpenAIConfig()
+
+        # Create ArealOpenAI client wrapping this engine
+        self._openai_client = ArealOpenAI(
+            engine=self,
+            tokenizer=tokenizer,
+            tool_call_parser=openai_cfg.tool_call_parser,
+            reasoning_parser=openai_cfg.reasoning_parser,
+            engine_max_tokens=openai_cfg.engine_max_tokens,
+            chat_template_type=openai_cfg.chat_template_type,
+        )
+
+        # Start proxy server
+        self._openai_proxy_server = OpenAIProxyServer(model=self._openai_client)
+        self._openai_proxy_server.start(wait_until_ready=True)
+
+        self.logger.info("OpenAI proxy server initialized for AgentWorkflow workflows")
+        return self._openai_proxy_server
+
+    def _wrap_openai_agent(self, agent) -> RolloutWorkflow:
+        from areal.experimental.openai import OpenAIProxyWorkflow
+
+        proxy_server = self._ensure_openai_proxy_initialized()
+        openai_cfg = self.config.openai or OpenAIConfig()
+
+        return OpenAIProxyWorkflow(
+            mode="offline",
+            agent=agent,
+            proxy_server=proxy_server,
+            discount=openai_cfg.turn_discount,
+            export_style=openai_cfg.export_style,
+        )
+
+    def _resolve_workflow(
+        self,
+        workflow: WorkflowLike,
+        workflow_kwargs: dict[str, Any] | None,
+        group_size: int = 1,
+    ) -> RolloutWorkflow:
+        resolved: RolloutWorkflow
+
+        # Case 1: Already a RolloutWorkflow instance
+        if isinstance(workflow, RolloutWorkflow):
+            if workflow_kwargs is not None:
+                self.logger.warning(
+                    "workflow_kwargs is ignored when workflow is already an instance"
+                )
+            resolved = workflow
+
+        # Case 2: Already an AgentWorkflow instance
+        elif isinstance(workflow, AgentWorkflow):
+            if workflow_kwargs is not None:
+                self.logger.warning(
+                    "workflow_kwargs is ignored when workflow is already an AgentWorkflow instance"
+                )
+            resolved = self._wrap_openai_agent(workflow)
+
+        # Case 3: String import path
+        elif isinstance(workflow, str):
+            try:
+                imported_obj = import_from_string(workflow)
+            except (ValueError, ImportError, AttributeError) as e:
+                raise ValueError(
+                    f"Failed to import workflow from string {workflow!r}: {e}"
+                ) from e
+
+            # Check if it's an AgentWorkflow class
+            if isinstance(imported_obj, type) and issubclass(
+                imported_obj, AgentWorkflow
+            ):
+                agent = imported_obj(**(workflow_kwargs or {}))
+                resolved = self._wrap_openai_agent(agent)
+            # Check if it's an AgentWorkflow instance
+            elif isinstance(imported_obj, AgentWorkflow):
+                resolved = self._wrap_openai_agent(imported_obj)
+            # Check if it's a RolloutWorkflow class
+            elif isinstance(imported_obj, type) and issubclass(
+                imported_obj, RolloutWorkflow
+            ):
+                if workflow_kwargs is None:
+                    raise ValueError(
+                        f"workflow_kwargs is required when workflow is a class or string. "
+                        f"Got workflow={workflow}, but workflow_kwargs=None."
+                    )
+                resolved = imported_obj(**workflow_kwargs)
+            # Check if it's a RolloutWorkflow instance
+            elif isinstance(imported_obj, RolloutWorkflow):
+                if workflow_kwargs is not None:
+                    self.logger.warning(
+                        "workflow_kwargs is ignored when workflow resolves to an instance"
+                    )
+                resolved = imported_obj
+            else:
+                raise TypeError(
+                    f"Imported object from {workflow!r} is not a valid RolloutWorkflow or AgentWorkflow."
+                )
+
+        # Case 4: RolloutWorkflow class
+        elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
+            if workflow_kwargs is None:
+                raise ValueError(
+                    f"workflow_kwargs is required when workflow is a class. "
+                    f"Got workflow={workflow}, but workflow_kwargs=None."
+                )
+            resolved = workflow(**workflow_kwargs)
+
+        # Case 5: AgentWorkflow class
+        elif isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
+            agent = workflow(**(workflow_kwargs or {}))
+            resolved = self._wrap_openai_agent(agent)
+
+        else:
+            raise TypeError(
+                f"Invalid workflow type: {type(workflow)}. "
+                f"Expected RolloutWorkflow, AgentWorkflow, class, or string module path."
+            )
+
+        # Wrap with GroupedRolloutWorkflow if group_size > 1
+        if group_size > 1:
+            resolved = GroupedRolloutWorkflow(resolved, group_size, self.logger)
+
+        return resolved
+
+    def _resolve_should_accept_fn(
+        self, should_accept_fn: Callable[[dict[str, Any]], bool] | str | None
+    ) -> Callable[[dict[str, Any]], bool] | None:
+        """Resolve should_accept_fn parameter to a callable or None.
+
+        Parameters
+        ----------
+        should_accept_fn : Callable[[Dict[str, Any]], bool] | str | None
+            The should_accept_fn specification
+
+        Returns
+        -------
+        Callable[[Dict[str, Any]], bool] | None
+            A callable for trajectory filtering, or None
+
+        Raises
+        ------
+        ValueError
+            If string import fails
+        TypeError
+            If imported object is not callable
+        """
+        if should_accept_fn is None or callable(should_accept_fn):
+            return should_accept_fn
+
+        if isinstance(should_accept_fn, str):
+            try:
+                func = import_from_string(should_accept_fn)
+            except (ValueError, ImportError, AttributeError) as e:
+                raise ValueError(
+                    f"Failed to import should_accept_fn from string {should_accept_fn!r}: {e}"
+                ) from e
+            if not callable(func):
+                raise TypeError(
+                    f"Imported object {func} from {should_accept_fn!r} is not callable"
+                )
+            return func
+
+        raise TypeError(
+            f"Invalid should_accept_fn type: {type(should_accept_fn)}. "
+            f"Expected callable or string module path."
+        )
 
     def choose_server(self) -> str:
         """Choose a server based on the scheduling policy.
@@ -768,7 +1023,7 @@ class RemoteInfEngine(InferenceEngine):
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
@@ -782,7 +1037,7 @@ class RemoteInfEngine(InferenceEngine):
         ----------
         data : Dict[str, Any]
             The input data for rollout
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
@@ -801,12 +1056,16 @@ class RemoteInfEngine(InferenceEngine):
         if callback_addr:
             self.workflow_executor.dispatcher.register_callback(task_id, callback_addr)
 
+        # Resolve workflow to a RolloutWorkflow instance
+        resolved_workflow = self._resolve_workflow(
+            workflow, workflow_kwargs, group_size
+        )
+        resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
+
         return self.workflow_executor.submit(
             data,
-            workflow=workflow,
-            workflow_kwargs=workflow_kwargs,
-            should_accept_fn=should_accept_fn,
-            group_size=group_size,
+            workflow=resolved_workflow,
+            should_accept_fn=resolved_should_accept_fn,
             task_id=task_id,
             is_eval=is_eval,
         )
@@ -844,7 +1103,7 @@ class RemoteInfEngine(InferenceEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> list[dict[str, Any]]:
@@ -857,7 +1116,7 @@ class RemoteInfEngine(InferenceEngine):
         ----------
         data : List[Dict[str, Any]]
             A list of input data dictionaries for rollout
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
@@ -874,17 +1133,20 @@ class RemoteInfEngine(InferenceEngine):
         """
         assert workflow is not None, "Workflow must be specified for rollout_batch."
 
+        # Resolve workflow to a RolloutWorkflow instance
+        resolved_workflow = self._resolve_workflow(
+            workflow, workflow_kwargs, group_size
+        )
+
         return self.workflow_executor.rollout_batch(
             data=data,
-            workflow=workflow,
-            workflow_kwargs=workflow_kwargs,
-            group_size=group_size,
+            workflow=resolved_workflow,
         )
 
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
@@ -896,7 +1158,7 @@ class RemoteInfEngine(InferenceEngine):
         ----------
         dataloader : StatefulDataLoader
             The data loader to pull data from
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
@@ -917,12 +1179,16 @@ class RemoteInfEngine(InferenceEngine):
         """
         assert workflow is not None, "Workflow must be specified for prepare_batch."
 
+        # Resolve workflow to a RolloutWorkflow instance
+        resolved_workflow = self._resolve_workflow(
+            workflow, workflow_kwargs, group_size
+        )
+        resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
+
         return self.workflow_executor.prepare_batch(
             dataloader=dataloader,
-            workflow=workflow,
-            workflow_kwargs=workflow_kwargs,
-            should_accept_fn=should_accept_fn,
-            group_size=group_size,
+            workflow=resolved_workflow,
+            should_accept_fn=resolved_should_accept_fn,
             dynamic_bs=dynamic_bs,
         )
 

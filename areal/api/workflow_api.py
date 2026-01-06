@@ -1,12 +1,12 @@
 from __future__ import annotations  # noqa
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Union
 
-from areal.experimental.openai.types import InteractionWithTokenLogpReward
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
+    from areal.experimental.openai.types import InteractionWithTokenLogpReward
 
 
 class RolloutWorkflow(ABC):
@@ -35,3 +35,46 @@ class RolloutWorkflow(ABC):
             The trajectory result, None if rejected, or a dictionary of completion results
         """
         raise NotImplementedError()
+
+
+class AgentWorkflow(ABC):
+    async def run(
+        self, base_url: str, data: dict[str, Any]
+    ) -> dict[str, float] | float:
+        """Run an agent with any SDK, e.g., OpenAI SDK.
+
+        Example:
+        ```python
+        class MyOpenAIAgent(AgentWorkflow):
+            async def run(self, base_url, data):
+                from openai import AsyncOpenAI
+                async with AsyncOpenAI(base_url=base_url) as client:
+                    resp = await client.responses.create(input=data["input"])
+                reward = compute_reward(resp, data)
+                return reward
+        ```
+
+        Parameters
+        ----------
+        base_url : str
+            The base URL of the OpenAI-compatible proxy server
+        data : dict[str, Any]
+            Input data for the agent workflow
+
+        Returns
+        -------
+        dict[str, float] | float
+            The final reward or a dictionary of reward keyed by response ID
+        """
+        raise NotImplementedError()
+
+
+# Type alias for workflow parameter across the stack.
+# Accepts RolloutWorkflow instances/classes, string import paths, or AgentWorkflow instances/classes.
+WorkflowLike = Union[
+    "RolloutWorkflow",
+    type["RolloutWorkflow"],
+    str,
+    "AgentWorkflow",
+    type["AgentWorkflow"],
+]
