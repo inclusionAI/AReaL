@@ -463,6 +463,35 @@ class TestRolloutControllerSubmitAndWait:
 
         controller.destroy()
 
+    def test_submit_passes_is_eval_and_group_size(self):
+        config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
+        scheduler = MockScheduler()
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine,
+            config=config,
+            scheduler=scheduler,
+        )
+
+        alloc_mode = AllocationMode.from_str("sglang:d1")
+        controller.initialize(role="rollout", alloc_mode=alloc_mode, server_args={})
+
+        controller.submit(
+            data={"id": 1},
+            workflow="areal.tests.utils.TestWorkflow",
+            workflow_kwargs={},
+            is_eval=True,
+            group_size=4,
+        )
+        controller.wait(count=1, timeout=5.0)
+
+        submit_calls = [call for call in scheduler.engine_calls if call[1] == "submit"]
+        assert len(submit_calls) == 1
+        submit_kwargs = submit_calls[0][3]
+        assert "is_eval" in submit_kwargs and submit_kwargs["is_eval"] is True
+        assert "group_size" in submit_kwargs and submit_kwargs["group_size"] == 4
+
+        controller.destroy()
+
 
 class TestRolloutControllerBatchOperations:
     def test_rollout_batch_returns_dict_not_rtensor(self):
