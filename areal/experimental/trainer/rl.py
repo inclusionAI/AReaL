@@ -158,9 +158,17 @@ class PPOTrainer:
                     self.allocation_mode
                 )
             else:
-                self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
-                    self.allocation_mode
-                )
+                if config.actor.use_lora:
+                    self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
+                        allocation_mode=self.allocation_mode,
+                        use_lora=config.actor.use_lora,
+                        lora_name=config.gconfig.lora_name,
+                        base_model_name=config.actor.path,
+                    )
+                else:
+                    self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
+                        allocation_mode=self.allocation_mode,
+                    )
         else:
             raise ValueError(
                 f"Invalid weight update mode: {self.config.actor.weight_update_mode}"

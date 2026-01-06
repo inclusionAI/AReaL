@@ -79,7 +79,7 @@ actor:
     mean_level: batch
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
-  weight_update_mode: disk
+  weight_update_mode: xccl
   use_lora: ${rollout.use_lora}
   peft_type: lora
   lora_rank: 16
