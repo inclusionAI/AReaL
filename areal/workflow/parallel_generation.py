@@ -104,6 +104,7 @@ def default_get_input_ids_fn(
     """
     # If format_prompt_fn is provided, use it
     if format_prompt_fn is not None:
+        # print("[DEBUG]: Using custom format_prompt_fn for input IDs conversion.")
         # Extract user content from data
         if isinstance(data, str):
             user_content = data
@@ -361,7 +362,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         Returns None if context already exceeds MAX_POS_ENCODING.
         """
         # Tokenize path prefix and add to context
-        path_start = f"\n<Path>\n{path_prefix}"
+        path_start = f"<Path>\n{path_prefix}"
         path_start_ids = self.tokenizer.encode(path_start, add_special_tokens=False)
         full_input_ids = context_ids + path_start_ids
         
@@ -404,7 +405,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         Returns None if context already exceeds MAX_POS_ENCODING.
         """
         # Add conclusion start tag
-        conclusion_start = "\n<Conclusion>"
+        conclusion_start = "<Conclusion>\n"
         conclusion_start_ids = self.tokenizer.encode(conclusion_start, add_special_tokens=False)
         full_input_ids = context_ids + conclusion_start_ids
         
@@ -527,7 +528,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
                 continue
             
             # Add path markers
-            path_open = f"\n<Path>\n{prefix}"
+            path_open = f"<Path>\n{prefix}"
             path_open_ids = self.tokenizer.encode(path_open, add_special_tokens=False)
             path_content_ids = path_resp.output_tokens
             
@@ -556,7 +557,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             conclusion_resp = await self._generate_conclusion(engine, context_with_paths_ids, version, sample_idx, qid)
         
         # Add conclusion markers and content (only if we got a response)
-        conclusion_open = "\n<Conclusion>"
+        conclusion_open = "<Conclusion>\n"
         conclusion_open_ids = self.tokenizer.encode(conclusion_open, add_special_tokens=False)
         
         if conclusion_resp is not None:
@@ -583,7 +584,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         # Path tokens (we only have logprobs for actual generated content, not markers)
         path_token_idx = 0
         for prefix, path_resp in valid_path_data:
-            path_open = f"\n<Path>\n{prefix}"
+            path_open = f"<Path>\n{prefix}"
             path_open_ids = self.tokenizer.encode(path_open, add_special_tokens=False)
             path_content_ids = path_resp.output_tokens
             path_str = self.tokenizer.decode(path_content_ids)
