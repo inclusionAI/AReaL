@@ -131,12 +131,14 @@ def packed_context_parallel_forward(
     packed_seq_params = None
 
     if cu_seqlens is not None:
-        assert attention_mask is None, "Attention mask should be None when using packed sequences."
+        assert attention_mask is None, (
+            "Attention mask should be None when using packed sequences."
+        )
         input_ids, packed_seq_params = preprocess_packed_seqs_context_parallel(
             input_ids, cu_seqlens
         )
         input_ids = input_ids.contiguous()
-    
+
     try:
         output = model(
             input_ids=input_ids,

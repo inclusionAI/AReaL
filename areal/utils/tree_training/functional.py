@@ -6,7 +6,7 @@ for sequences packed into tree structures with shared prefixes.
 
 from __future__ import annotations
 
-from typing import Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import torch
 from torch import distributed as dist
@@ -159,6 +159,7 @@ def _compute_transition_logprob_entropy(
     )
     return lp.squeeze(0), ent.squeeze(0)
 
+
 def _gather_packed_tree_logprobs(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -249,13 +250,14 @@ def _gather_packed_tree_logprobs(
                     logits, input_ids, end, next_start, temperature, tp_group
                 )
             logprob_parts.append(transition_cache[trans_key].unsqueeze(0))
-            
+
         if logprob_parts:
             results[seq_id] = torch.cat(logprob_parts, dim=0)
         else:
             results[seq_id] = torch.empty(0, device=device, dtype=dtype)
 
     return results
+
 
 def _gather_packed_tree_logprobs_entropy(
     logits: torch.Tensor,
@@ -362,6 +364,7 @@ def gather_packed_tree_logprobs(
     logprob = torch.cat([logprob_results[sid] for sid in trie.all_sequence_ids], dim=0)
     return logprob
 
+
 def gather_packed_tree_logprobs_entropy(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -382,6 +385,7 @@ def gather_packed_tree_logprobs_entropy(
     logprob = torch.cat([logprob_results[sid] for sid in trie.all_sequence_ids], dim=0)
     entropy = torch.cat([entropy_results[sid] for sid in trie.all_sequence_ids], dim=0)
     return logprob, entropy
+
 
 def merge_packed_tree_results(
     results_list: list[dict[int, torch.Tensor]],
@@ -443,4 +447,3 @@ def merge_packed_tree_results(
         output[seq_id, :seq_len] = tensor[:seq_len]
 
     return output
-

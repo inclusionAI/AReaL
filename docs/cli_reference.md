@@ -850,6 +850,7 @@ Refer to Megatron-LM documentation for implementation details.
 | `moe_token_dispatcher_type`                | string                                                               | `"alltoall"` | Type of token dispatcher. Options: 'allgather','alltoall' and 'flex'.                                                                                   |
 | `moe_permute_fusion`                       | boolean                                                              | `False`      | Fuse token rearrangement ops during token dispatching.                                                                                                  |
 | `fp8_config`                               | [`FP8EngineConfig`](section-fp8-engine) \| None                      | `None`       | -                                                                                                                                                       |
+| `enable_tree_training`                     | boolean                                                              | `False`      | Enable tree training with flex attention module.                                                                                                        |
 
 (section-perf-tracer)=
 

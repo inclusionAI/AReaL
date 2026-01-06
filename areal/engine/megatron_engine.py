@@ -91,12 +91,12 @@ from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
 from areal.utils.tree_training.data import build_packed_tree_batch
-from areal.utils.tree_training.module import patch_bridge_for_tree_training, BLOCK_SIZE
 from areal.utils.tree_training.functional import (
     _gather_packed_tree_logprobs,
     gather_packed_tree_logprobs_entropy,
     merge_packed_tree_results,
 )
+from areal.utils.tree_training.module import BLOCK_SIZE, patch_bridge_for_tree_training
 
 if TYPE_CHECKING:
     from areal.engine.ppo.actor import PPOActorConfig
@@ -256,7 +256,9 @@ class MegatronEngine(TrainEngine):
             )
 
             # Get quantization_config from hf_config if available (for FP8 weight updates)
-            self.quantization_config = getattr(self.hf_config, "quantization_config", None)
+            self.quantization_config = getattr(
+                self.hf_config, "quantization_config", None
+            )
 
             self._check_and_apply_fp8_config()
             self._validate_fp8_consistency()
@@ -1325,13 +1327,15 @@ class MegatronEngine(TrainEngine):
         cp_size = self.parallel_strategy.context_parallel_size
         tp_size = self.parallel_strategy.tensor_parallel_size
         if self.enable_tree_training:
-            assert cp_size == 1, "Context parallelism is not supported in tree training."
+            assert cp_size == 1, (
+                "Context parallelism is not supported in tree training."
+            )
             # Build tree inputs
             assert BLOCK_SIZE % tp_size == 0, (
                 f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by tensor parallel size ({tp_size})."
             )
             mb_list = build_packed_tree_batch(
-                input_, 
+                input_,
                 max_tokens_per_tree=self.config.mb_spec.max_tokens_per_mb,
                 pad_to_maximum=self.config.pad_to_maximum,
                 pad_to_multiple_of=BLOCK_SIZE,

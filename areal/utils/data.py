@@ -402,7 +402,9 @@ class MicroBatchList:
         if self.padded_mbs is None:
             raise ValueError("padded_mbs is None. Call pad_mb_list first.")
         if self._max_seqlen is None:
-            assert all("cu_seqlens" in m for m in self.padded_mbs), "cu_seqlens not found in some padded micro-batches." 
+            assert all("cu_seqlens" in m for m in self.padded_mbs), (
+                "cu_seqlens not found in some padded micro-batches."
+            )
             self._max_seqlen = max(m["cu_seqlens"][-1].item() for m in self.padded_mbs)
         return self._max_seqlen
 

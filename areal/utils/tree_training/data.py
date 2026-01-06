@@ -7,13 +7,13 @@ prefix computation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
 from areal.utils import logging
-from areal.utils.data import MicroBatchItem, MicroBatchList
+from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.tree_training.module import BLOCK_SIZE, USE_BLOCK_MASK
 
@@ -124,7 +124,6 @@ class TrieNode:
 #             **asdict(mbs),
 #             tries=self.tries,
 #         )
-
 
 
 # =============================================================================
@@ -373,7 +372,7 @@ def build_packed_tree_batch(
     batch = MicroBatchList(
         data=data,
         mb_spec=None,  # type: ignore[arg-type]
-        mbs=mbs, # Already padded
+        mbs=mbs,  # Already padded
         group_lens=[num for num in num_tokens_list],
         padded_mbs=mbs,
         padding_lengths=padding_lengths,
@@ -405,7 +404,9 @@ def _compute_padded_size(
         return max_tokens_per_tree
     elif pad_to_multiple_of > 1:
         # Round up to nearest multiple
-        return ((num_tokens + pad_to_multiple_of - 1) // pad_to_multiple_of) * pad_to_multiple_of
+        return (
+            (num_tokens + pad_to_multiple_of - 1) // pad_to_multiple_of
+        ) * pad_to_multiple_of
     else:
         # No padding
         return num_tokens

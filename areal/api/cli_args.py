@@ -573,6 +573,7 @@ class MegatronEngineConfig:
         metadata={"help": "Enable tree training with flex attention module."},
     )
 
+
 class SchedulingStrategyType(str, Enum):
     separation = "separation"
     colocation = "colocation"

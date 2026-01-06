@@ -16,8 +16,8 @@ from megatron.core.transformer.transformer_layer import (
 )
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
-from areal.utils.perf_tracer import trace_perf
 from areal.utils import logging
+from areal.utils.perf_tracer import trace_perf
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,9 @@ _flex_attention = torch.compile(
     dynamic=_FLEX_DYNAMIC,
     options=_TORCH_COMPILE_OPTIONS,
 )
-USE_BLOCK_MASK = not (os.environ.get("AREAL_DISABLE_FLEX_ATTENTION_BLOCK_MASK", "0") == "1")
+USE_BLOCK_MASK = not (
+    os.environ.get("AREAL_DISABLE_FLEX_ATTENTION_BLOCK_MASK", "0") == "1"
+)
 BLOCK_SIZE = int(os.environ.get("AREAL_FLEX_ATTENTION_BLOCK_SIZE", "128"))
 logger.info(
     "Using block mask in flex attention: %s, block size: %d",
@@ -50,6 +52,7 @@ logger.info(
 
 class PytorchFlexAttention(torch.nn.Module):
     """Pytorch flex attention implementation that supports arbitrary attention mask type."""
+
     def __init__(
         self,
         config: TransformerConfig,
@@ -58,7 +61,7 @@ class PytorchFlexAttention(torch.nn.Module):
         attention_type: str,
         attention_dropout: float | None = None,
         softmax_scale: float | None = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__()
         self.config = config
@@ -71,7 +74,9 @@ class PytorchFlexAttention(torch.nn.Module):
 
         # PytorchFlexAttention does not support context parallel
         if config.context_parallel_size != 1:
-            raise ValueError("PytorchFlexAttention does not support context parallelism.")
+            raise ValueError(
+                "PytorchFlexAttention does not support context parallelism."
+            )
 
         if attention_type != "self":
             raise ValueError("PytorchFlexAttention only supports self-attention.")
@@ -149,7 +154,11 @@ class PytorchFlexAttention(torch.nn.Module):
         )
 
         # output shape: [B, H, S, D] -> [S, B, H, D] -> [S, B, H*D]
-        output = output.permute(2, 0, 1, 3).contiguous().view(output.shape[2], output.shape[0], -1)
+        output = (
+            output.permute(2, 0, 1, 3)
+            .contiguous()
+            .view(output.shape[2], output.shape[0], -1)
+        )
         return output
 
 
@@ -200,15 +209,14 @@ def patch_bridge_for_tree_training(enable: bool = True):
         LLMBridge._get_transformer_layer_spec = original_layer_spec_getter
 
 
-
 @trace_perf("tree_training.model_with_tree_attention_forward")
 def model_with_tree_attention_forward(
     model,
     tree_input: dict[str, torch.Tensor],
     dtype=torch.bfloat16,
 ):
-    """ Patch LLMBridge.model_forward to support tree training with arbitrary attention mask.
-    
+    """Patch LLMBridge.model_forward to support tree training with arbitrary attention mask.
+
     Args:
         model: The model to run forward pass on.
         tree_input: Dictionary containing input_ids, attention_mask, position_ids, and optionally num_pad_tokens.
@@ -220,7 +228,7 @@ def model_with_tree_attention_forward(
     position_ids = tree_input["position_ids"]
     num_pad_tokens = tree_input.get("num_pad_tokens", 0)
     attention_mask = (~attention_mask).unsqueeze(0).unsqueeze(0)
-    
+
     # attention_mask = (~attention_mask).unsqueeze(0).unsqueeze(0)
 
     # Add batch dimension for input_ids and position_ids
@@ -232,9 +240,9 @@ def model_with_tree_attention_forward(
         position_ids=position_ids,
     )
     output = output.squeeze(0)  # Remove batch dimension
-    
+
     # Remove padding tokens from output if requested
     if num_pad_tokens > 0:
         output = output[:-num_pad_tokens]
-    
+
     return output
