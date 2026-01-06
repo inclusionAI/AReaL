@@ -244,7 +244,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         self.rollout_stat_scope = rollout_stat_scope
         
         if not isinstance(reward_fn, str):
-            self.async_reward_fn = AsyncRewardWrapper(reward_fn)
+            self.async_reward_fn = AsyncRewardWrapper(reward_fn, timeout_seconds = 60)
         
         self.format_prompt_fn = format_prompt_fn
         self.get_input_ids_fn = get_input_ids_fn
@@ -787,7 +787,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         # Load reward function dynamically if given as string
         if isinstance(self.reward_fn, str):
             self.reward_fn = import_from_string(self.reward_fn)
-            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
+            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn, 60)
         
         # Get input_ids
         input_ids = self.get_input_ids_fn(
