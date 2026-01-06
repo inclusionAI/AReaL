@@ -847,7 +847,7 @@ class RemoteInfEngine(InferenceEngine):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Submit a batch of requests and wait for results.
 
         This method does not support asynchronous rollout and should be used for offline
@@ -867,8 +867,10 @@ class RemoteInfEngine(InferenceEngine):
 
         Returns
         -------
-        Dict[str, Any]
-            A concatenated batch of trajectory results
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
+            where batch_size can vary per trajectory depending on the workflow output.
         """
         assert workflow is not None, "Workflow must be specified for rollout_batch."
 
@@ -887,7 +889,7 @@ class RemoteInfEngine(InferenceEngine):
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ):
+    ) -> list[dict[str, Any]]:
         """Asynchronously submit and wait until a full batch is ready.
 
         Parameters
@@ -908,8 +910,10 @@ class RemoteInfEngine(InferenceEngine):
 
         Returns
         -------
-        Dict[str, Any]
-            A full batch of trajectory results
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
+            where batch_size can vary per trajectory depending on the workflow output.
         """
         assert workflow is not None, "Workflow must be specified for prepare_batch."
 

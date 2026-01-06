@@ -198,7 +198,7 @@ class TrainEngine(abc.ABC):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Submit a batch of requests and wait for results.
 
         This method does not support asynchronous rollout and should be used for offline
@@ -220,8 +220,9 @@ class TrainEngine(abc.ABC):
 
         Returns
         -------
-        dict[str, Any]
-            The rollout results.
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory contains tensors with shape [group_size, seqlen, ...].
         """
         raise NotImplementedError()
 
@@ -810,7 +811,7 @@ class InferenceEngine(abc.ABC):
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Submit a batch of requests to the inference engine and wait for the results.
 
         This method does not support asynchronous rollout and should be used for offline
@@ -839,8 +840,10 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        dict[str, Any]
-            A concatenated batch of trajectory results
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
+            where batch_size can vary per trajectory depending on the workflow output.
         """
         raise NotImplementedError()
 
@@ -852,7 +855,7 @@ class InferenceEngine(abc.ABC):
         should_accept_fn: Callable | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Asynchronously submit and wait until a full batch is ready with controlled staleness.
 
         See `workflow_api.py` for concrete implementation.
@@ -897,8 +900,10 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        dict[str, Any]
-            A full batch of trajectory results with controlled staleness
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
+            where batch_size can vary per trajectory depending on the workflow output.
         """
         raise NotImplementedError()
 
