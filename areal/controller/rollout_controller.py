@@ -480,6 +480,7 @@ class RolloutController:
                     workflow_kwargs=pending_task.workflow_kwargs,
                     should_accept_fn=pending_task.should_accept_fn,
                     http_timeout=self.config.request_timeout,
+                    is_eval=pending_task.is_eval,
                     task_id=task_id,
                     callback_addr=f"http://{self.callback_addr}/callback/rollout_complete",
                 )
