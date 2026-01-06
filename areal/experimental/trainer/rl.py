@@ -132,25 +132,22 @@ class PPOTrainer:
 
         # Prepare weight update meta and connect to inference engine
         if self.config.actor.weight_update_mode == "disk":
+            disk_kwargs = {
+                "experiment_name": config.experiment_name,
+                "trial_name": config.trial_name,
+                "file_root": config.cluster.fileroot,
+                "name": "default",
+                "clear_checkpoint_after_load": True,
+            }
             if config.actor.use_lora:
-                self.weight_update_meta = WeightUpdateMeta.from_disk(
-                    experiment_name=config.experiment_name,
-                    trial_name=config.trial_name,
-                    file_root=config.cluster.fileroot,
-                    name="default",
-                    clear_checkpoint_after_load=True,
-                    use_lora=config.actor.use_lora,
-                    lora_name=config.gconfig.lora_name,
-                    base_model_name=config.actor.path,
+                disk_kwargs.update(
+                    {
+                        "use_lora": config.actor.use_lora,
+                        "lora_name": config.gconfig.lora_name,
+                        "base_model_name": config.actor.path,
+                    }
                 )
-            else:
-                self.weight_update_meta = WeightUpdateMeta.from_disk(
-                    experiment_name=config.experiment_name,
-                    trial_name=config.trial_name,
-                    file_root=config.cluster.fileroot,
-                    name="default",
-                    clear_checkpoint_after_load=True,
-                )
+            self.weight_update_meta = WeightUpdateMeta.from_disk(**disk_kwargs)
         elif self.config.actor.weight_update_mode == "xccl":
             # NCCL/XCCL weight update
             if self.allocation_mode.train_backend == "megatron":
@@ -158,17 +155,16 @@ class PPOTrainer:
                     self.allocation_mode
                 )
             else:
+                xccl_kwargs = {"allocation_mode": self.allocation_mode}
                 if config.actor.use_lora:
-                    self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
-                        allocation_mode=self.allocation_mode,
-                        use_lora=config.actor.use_lora,
-                        lora_name=config.gconfig.lora_name,
-                        base_model_name=config.actor.path,
+                    xccl_kwargs.update(
+                        {
+                            "use_lora": config.actor.use_lora,
+                            "lora_name": config.gconfig.lora_name,
+                            "base_model_name": config.actor.path,
+                        }
                     )
-                else:
-                    self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(
-                        allocation_mode=self.allocation_mode,
-                    )
+                self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(**xccl_kwargs)
         else:
             raise ValueError(
                 f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
