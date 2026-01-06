@@ -5,6 +5,7 @@ import shutil
 import threading
 from collections import defaultdict
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from threading import Lock
 from typing import Any
@@ -198,6 +199,9 @@ class RolloutController:
 
         # Create and initialize engines on workers
         logger.info("Creating engines...")
+        engine_config = deepcopy(self.config)
+        # Disable engine's staleness control
+        engine_config.max_head_offpolicyness = int(1e12)
         tasks = [
             self.scheduler.create_engine(
                 worker_id=worker.id,

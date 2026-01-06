@@ -1,6 +1,5 @@
 import asyncio
 import os
-from concurrent.futures import ProcessPoolExecutor
 
 import aiohttp
 import pytest
@@ -92,22 +91,20 @@ async def test_session_lifecycle(proxy_server):
             assert session_id == "test-task-0"
 
     # Make a completion request
-    os.environ["OPENAI_BASE_URL"] = f"{proxy_server.public_addr}/{session_id}"
-    os.environ["OPENAI_API_KEY"] = "none"
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI()
-    await client.chat.completions.create(
-        **{
-            "messages": [{"role": "user", "content": "Hi"}],
-            "model": "default",
-            "temperature": 1.0,
-            "top_p": 1.0,
-            "max_tokens": 16,
-        }
-    )
-    os.environ.pop("OPENAI_BASE_URL")
-    os.environ.pop("OPENAI_API_KEY")
+    async with AsyncOpenAI(
+        base_url=f"{proxy_server.public_addr}/{session_id}", max_retries=0
+    ) as client:
+        await client.chat.completions.create(
+            **{
+                "messages": [{"role": "user", "content": "Hi"}],
+                "model": "default",
+                "temperature": 1.0,
+                "top_p": 1.0,
+                "max_tokens": 16,
+            }
+        )
 
     # Set reward
     async with aiohttp.ClientSession() as http_session:
@@ -132,41 +129,30 @@ async def test_session_lifecycle(proxy_server):
 class NullAgent(AgentWorkflow):
     async def run(self, base_url: str, data: dict):
         # Verify env vars are set correctly in subprocess
-        assert os.environ.get("OPENAI_API_KEY") == "dummy"
-        assert os.environ.get("OPENAI_BASE_URL") is not None
         await asyncio.sleep(0)
         return {}
 
 
 @pytest.mark.asyncio
 async def test_offline_null_agent(proxy_server):
-    original_base_url = os.environ.get("OPENAI_BASE_URL")
-    original_api_key = os.environ.get("OPENAI_API_KEY")
+    workflow = OpenAIProxyWorkflow(
+        mode="offline",
+        agent=NullAgent(),
+        proxy_server=proxy_server,
+    )
 
-    with ProcessPoolExecutor(max_workers=1) as pool:
-        workflow = OpenAIProxyWorkflow(
-            mode="offline",
-            agent=NullAgent(),
-            proxy_server=proxy_server,
-            process_pool=pool,
-        )
+    # Set workflow context for task_id
+    workflow_context.set(workflow_context.WorkflowContext(task_id=0))
 
-        # Set workflow context for task_id
-        workflow_context.set(workflow_context.WorkflowContext(task_id=0))
-
-        result = await workflow.arun_episode(proxy_server.engine, None)
-        assert result == {}
-
-    # Verify local env not polluted
-    assert os.environ.get("OPENAI_BASE_URL") == original_base_url
-    assert os.environ.get("OPENAI_API_KEY") == original_api_key
+    result = await workflow.arun_episode(proxy_server.engine, None)
+    assert result == {}
 
 
 class SimpleAgent(AgentWorkflow):
     async def run(self, base_url: str, data: dict):
         from openai import AsyncOpenAI
 
-        async with AsyncOpenAI(base_url=base_url) as client:
+        async with AsyncOpenAI(base_url=base_url, max_retries=0) as client:
             await client.chat.completions.create(
                 model="default",
                 messages=data["messages"],
@@ -179,26 +165,120 @@ class SimpleAgent(AgentWorkflow):
 
 @pytest.mark.asyncio
 async def test_offline_simple_agent(proxy_server):
-    with ProcessPoolExecutor(max_workers=1) as pool:
-        workflow = OpenAIProxyWorkflow(
-            mode="offline",
-            agent=SimpleAgent(),
-            proxy_server=proxy_server,
-            process_pool=pool,
-        )
+    workflow = OpenAIProxyWorkflow(
+        mode="offline",
+        agent=SimpleAgent(),
+        proxy_server=proxy_server,
+    )
 
-        workflow_context.set(workflow_context.WorkflowContext(task_id=1))
+    workflow_context.set(workflow_context.WorkflowContext(task_id=1))
 
-        data = {"messages": [{"role": "user", "content": "What is 2+2?"}]}
-        result = await workflow.arun_episode(proxy_server.engine, data)
+    data = {"messages": [{"role": "user", "content": "What is 2+2?"}]}
+    result = await workflow.arun_episode(proxy_server.engine, data)
 
-        # Should have at least one interaction
-        assert len(result) >= 1
+    # Should have at least one interaction
+    assert len(result) == 1
+    interaction = next(iter(result.values()))
+    assert interaction.model_response is not None
+    assert interaction.reward == 1.0
 
-        # Verify interaction structure
-        for interaction in result.values():
-            assert interaction.model_response is not None
-            assert interaction.reward == 1.0
+
+class MultiTurnAgent(AgentWorkflow):
+    async def run(self, base_url: str, data: dict):
+        from openai import AsyncOpenAI
+
+        async with AsyncOpenAI(base_url=base_url, max_retries=0) as client:
+            comp1 = await client.chat.completions.create(
+                model="default",
+                messages=data["messages"],
+                temperature=1.0,
+                top_p=1.0,
+                max_tokens=16,
+            )
+            data["messages"] += [
+                {"role": "assistant", "content": comp1.choices[0].message.content},
+                {"role": "user", "content": "How's the weather today?"},
+            ]
+            comp2 = await client.chat.completions.create(
+                model="default",
+                messages=data["messages"],
+                temperature=1.0,
+                top_p=1.0,
+                max_tokens=32,
+            )
+        rewards = {}
+        rewards[comp1.id] = 0.5
+        rewards[comp2.id] = 1.0
+        return rewards
+
+
+@pytest.mark.asyncio
+async def test_offline_multiturn_agent(proxy_server):
+    workflow = OpenAIProxyWorkflow(
+        mode="offline",
+        agent=MultiTurnAgent(),
+        proxy_server=proxy_server,
+    )
+
+    workflow_context.set(workflow_context.WorkflowContext(task_id=1))
+
+    data = {"messages": [{"role": "user", "content": "What is 2+2?"}]}
+    result = await workflow.arun_episode(proxy_server.engine, data)
+
+    assert len(result) == 2
+    interaction1, interaction2 = result.values()
+    assert interaction1.reward == 1.5  # discount=1.0, 0.5 + 1.0 * 1.0 = 1.5
+    assert interaction2.reward == 1.0
+
+    assert interaction1.model_response is not None
+    assert interaction2.model_response is not None
+
+    seq1 = (
+        interaction1.model_response.input_tokens
+        + interaction1.model_response.output_tokens
+    )
+    input_ids2 = interaction2.model_response.input_tokens
+    # At least the first several token ids are identical ("what is 2+2?")
+    assert input_ids2[:10] == seq1[:10]
+
+
+class ResponseAgent(AgentWorkflow):
+    async def run(self, base_url: str, data: dict):
+        from openai import AsyncOpenAI
+
+        global tokenizer
+        async with AsyncOpenAI(base_url=base_url, max_retries=0) as client:
+            resp = await client.responses.create(
+                model="default",
+                input="test",
+                temperature=1.0,
+                top_p=1.0,
+                max_output_tokens=16,
+                tools=[],
+            )
+        return float("4" in resp.output_text)
+
+
+@pytest.mark.asyncio
+async def test_offline_response_agent(proxy_server):
+    workflow = OpenAIProxyWorkflow(
+        mode="offline",
+        agent=ResponseAgent(),
+        proxy_server=proxy_server,
+    )
+
+    workflow_context.set(workflow_context.WorkflowContext(task_id=1))
+
+    data = {"messages": [{"role": "user", "content": "What is 2+2?"}]}
+    result = await workflow.arun_episode(proxy_server.engine, data)
+
+    assert len(result) == 1
+    interaction = next(iter(result.values()))
+    assert interaction.model_response is not None
+    resp = interaction.model_response
+    output_text = resp.tokenizer.decode(resp.output_tokens)
+    reward = interaction.reward
+    assert reward == float("4" in output_text)
 
 
 def test_agent_workflow_integration(proxy_server, inf_engine):
@@ -207,15 +287,13 @@ def test_agent_workflow_integration(proxy_server, inf_engine):
         {"messages": [{"role": "user", "content": "What is 3+1?"}]},
     ]
 
-    with ProcessPoolExecutor(max_workers=2) as pool:
-        workflow = OpenAIProxyWorkflow(
-            mode="offline",
-            agent=SimpleAgent(),
-            proxy_server=proxy_server,
-            process_pool=pool,
-        )
+    workflow = OpenAIProxyWorkflow(
+        mode="offline",
+        agent=SimpleAgent(),
+        proxy_server=proxy_server,
+    )
 
-        result = inf_engine.rollout_batch(data=test_data, workflow=workflow)
+    result = inf_engine.rollout_batch(data=test_data, workflow=workflow)
 
     # Result should be a concatenated tensor dict
     assert "input_ids" in result

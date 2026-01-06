@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import os
 import traceback
 from typing import TYPE_CHECKING
 
@@ -16,28 +14,6 @@ if TYPE_CHECKING:
     from ..client import TRolloutEngine
 
 logger = logging.getLogger("OpenAIProxyWorkflow")
-
-
-def _wrap_run_agent(agent, extra_envs, data):
-    # Save original environment
-    original_env = {key: os.environ.get(key) for key in extra_envs.keys()}
-
-    try:
-        # Set new environment variables
-        for key, value in extra_envs.items():
-            os.environ[key] = value
-
-        return asyncio.run(agent.run(data))
-    except Exception:
-        logger.error(traceback.format_exc())
-        raise
-    finally:
-        # Restore original environment (optional)
-        for key, value in original_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
 
 
 class OpenAIProxyWorkflow(RolloutWorkflow):

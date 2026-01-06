@@ -24,7 +24,6 @@ def main(args):
 
     workflow_kwargs = dict(
         max_completion_tokens=config.gconfig.max_new_tokens,
-        # max_tokens=config.gconfig.max_tokens,
         temperature=config.gconfig.temperature,
         top_p=config.gconfig.top_p,
     )

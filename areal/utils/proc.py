@@ -246,5 +246,5 @@ def get_default_max_workers():
     cpu_count = os.cpu_count() or 1
     device_count = _get_device_count_safely()
     # Heuristic for max_workers: distribute CPU cores across devices,
-    # then halve to be conservative, ensuring at least one worker.
+    # then quarter to be conservative, ensuring at least one worker.
     return max((cpu_count // device_count) // 4, 1)

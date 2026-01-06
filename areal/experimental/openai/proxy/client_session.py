@@ -163,7 +163,13 @@ async def _set_reward(
     url: str = RL_SET_REWARD_PATHNAME,
 ):
     payload = AReaLSetRewardRequest(interaction_id=interaction_id, reward=reward)
-    await post_json_with_retry(http_session, url=url, payload=payload)
+    try:
+        await post_json_with_retry(http_session, url=url, payload=payload)
+    except aiohttp.ClientResponseError as e:
+        if e.status == 400:
+            logger.error(f"[error code {e.status}] Error setting reward: {e.message}")
+        else:
+            raise e
 
 
 async def set_interaction_reward(

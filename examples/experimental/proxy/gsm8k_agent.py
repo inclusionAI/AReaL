@@ -2,6 +2,8 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 from areal.api.workflow_api import AgentWorkflow
+from areal.core import workflow_context
+from areal.utils import stats_tracker
 
 
 class GSM8kAgent(AgentWorkflow):
@@ -9,7 +11,7 @@ class GSM8kAgent(AgentWorkflow):
         self.kwargs = kwargs
 
     async def run(self, base_url: str, data: dict):
-        async with AsyncOpenAI(base_url=base_url) as client:
+        async with AsyncOpenAI(base_url=base_url, max_retries=0) as client:
             comp: ChatCompletion = await client.chat.completions.create(
                 messages=data["messages"], model="default", **self.kwargs
             )
@@ -22,4 +24,5 @@ class GSM8kAgent(AgentWorkflow):
         reward = await AsyncRewardWrapper(gsm8k_reward_fn)(
             None, comp.choices[0].message.content, None, None, answer=data["answer"]
         )
+        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
         return reward

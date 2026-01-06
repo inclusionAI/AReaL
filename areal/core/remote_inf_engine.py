@@ -77,6 +77,8 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, Any] | None:
+        from areal.experimental.openai import InteractionWithTokenLogpReward
+
         results = await asyncio.gather(
             *[self.workflow.arun_episode(engine, data) for _ in range(self.group_size)]
         )

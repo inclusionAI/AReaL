@@ -1,65 +1,39 @@
-import asyncio
-
 from agents import (
     Agent,
     ModelSettings,
+    OpenAIProvider,
     RunConfig,
-    RunResult,
     SQLiteSession,
 )
 from agents import Runner as OpenAIRunner
 
-from areal.api.cli_args import GenerationHyperparameters
-from areal.experimental.openai import run_and_submit_rewards
-from areal.reward import get_math_verify_worker
-from areal.utils import logging
-
-logger = logging.getLogger("AgentWorkflow")
+from areal.api.workflow_api import AgentWorkflow
 
 
-def simplified_gsm8k_reward_fn(completions: str, answer: str):
-    try:
-        worker = get_math_verify_worker()
-        return worker.verify(str(completions), str(answer))
-    except Exception:
-        return 0.0
+class GSM8kAgent(AgentWorkflow):
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
 
+    async def run(self, base_url: str, data: dict):
+        content = data["messages"][-1]["content"]
+        run_config = RunConfig(
+            model_provider=OpenAIProvider(base_url=base_url),
+            model="default",  # no need to pass
+            tracing_disabled=True,
+            model_settings=ModelSettings(**self.kwargs),
+        )
+        agent = Agent(name="Assistant")
+        session = SQLiteSession("math")
+        result = await OpenAIRunner.run(
+            agent, input=content, session=session, run_config=run_config
+        )
 
-async def run_agent(messages: list[dict], run_config: RunConfig) -> RunResult:
-    content = messages[-1]["content"]
-    agent = Agent(name="Assistant")
-    session = SQLiteSession("math")
-    return await OpenAIRunner.run(
-        agent, input=content, session=session, run_config=run_config
-    )
+        # compute reward with areal's existing implementation
+        # Use the following wrapper to suppress the annoying warning of math-verify
+        from areal.api.reward_api import AsyncRewardWrapper
+        from areal.reward.gsm8k import gsm8k_reward_fn
 
-
-async def run_agent_return_reward(data: dict) -> float:
-    messages = data["messages"]
-    answer = data["answer"]
-    gconfig = data.get("gconfig", {})
-    model_settings = GenerationHyperparameters(**gconfig).to_openai_args_dict(
-        api_format="openai-agents"
-    )
-    run_config = RunConfig(
-        model="default",  # no need to pass
-        tracing_disabled=True,
-        model_settings=ModelSettings(**model_settings),
-    )
-
-    result = await run_agent(messages=messages, run_config=run_config)
-    reward = simplified_gsm8k_reward_fn(result.final_output, answer)
-    return reward
-
-
-async def run_and_submit(data: dict):
-    await run_and_submit_rewards(func=run_agent_return_reward, data=data)
-
-
-# Compatible to be run in subprocess mode
-if __name__ == "__main__":
-    import json
-    import sys
-
-    data = json.loads(sys.stdin.readline())
-    asyncio.run(run_and_submit(data))
+        reward = await AsyncRewardWrapper(gsm8k_reward_fn)(
+            None, result.final_output, None, None, answer=data["answer"]
+        )
+        return reward
