@@ -12,7 +12,7 @@ from typing import Any
 
 import torch
 
-from areal.utils import logging
+from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.tree_training.module import BLOCK_SIZE, USE_BLOCK_MASK
@@ -96,34 +96,6 @@ class TrieNode:
             if seq_id in node.sequence_ids:
                 indices.append(node.tree_indices)
         return indices
-
-
-# @dataclass
-# class TrieMicroBatchList(MicroBatchList):
-#     """A batch of packed tree inputs for tree-based training.
-
-#     Inherits from MicroBatchList to provide consistent interface with other
-#     data processing utilities. Adds tree-specific attributes and methods.
-
-#     Attributes:
-#         tries: List of TrieNode root structures, one per packed tree.
-#     """
-
-#     tries: list[TrieNode] = field(default_factory=list)
-
-#     def __len__(self) -> int:
-#         return len(self.tries)
-
-#     def get_trie(self, tree_idx: int) -> TrieNode:
-#         """Get the root TrieNode for a specific tree."""
-#         return self.tries[tree_idx]
-
-#     def to(self, *args, **kwargs):
-#         mbs = super().to(*args, **kwargs)
-#         return TrieMicroBatchList(
-#             **asdict(mbs),
-#             tries=self.tries,
-#         )
 
 
 # =============================================================================
@@ -299,6 +271,13 @@ def build_packed_tree_batch(
     # Prepare templates and metadata
     input_template: torch.Tensor = data["input_ids"]
     mask_template: torch.Tensor = data["attention_mask"]
+
+    # Directly track tree token ratio statistic
+    original_num_tokens = mask_template.sum()
+    total_tree_tokens = sum(num_tokens_list)
+    ratio = total_tree_tokens / original_num_tokens
+    stats_tracker.scalar(tree_token_ratio=ratio)
+    
     sequence_lens = mask_template.sum(dim=1, dtype=torch.int32)
 
     # Identify packable keys (same shape as input_ids)
@@ -369,10 +348,12 @@ def build_packed_tree_batch(
         padding_lengths.append(padded_size - num_tokens)
         padded_to_lengths.append(padded_size)
 
+    # NOTE: mbs is padded data instead of original data 
+    # to avoid duplicate attention mask memory consumption
     batch = MicroBatchList(
         data=data,
         mb_spec=None,  # type: ignore[arg-type]
-        mbs=mbs,  # Already padded
+        mbs=mbs,
         group_lens=[num for num in num_tokens_list],
         padded_mbs=mbs,
         padding_lengths=padding_lengths,
