@@ -156,8 +156,9 @@ def test_rollout(inference_engine, n_samples):
         "messages": [{"role": "user", "content": "Hello, how are you?"}],
     }
     result = engine.rollout_batch([data] * 2, workflow=workflow, group_size=n_samples)
-    assert isinstance(result, dict)
-    bs = get_batch_size(result)
+    assert isinstance(result, list)
+    concatenated = concat_padded_tensors(result)
+    bs = get_batch_size(concatenated)
     assert bs == 2 * n_samples
 
     class NullWorkflow(RolloutWorkflow):
@@ -169,7 +170,7 @@ def test_rollout(inference_engine, n_samples):
         [data] * 2,
         workflow=NullWorkflow(),
     )
-    assert result == {}
+    assert result == []
 
     engine.destroy()
     assert not dist.is_initialized()

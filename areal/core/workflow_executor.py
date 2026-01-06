@@ -1413,7 +1413,7 @@ class WorkflowExecutor:
         workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Submit a batch of requests and wait for results.
 
         This method does not support asynchronous rollout and should be used for offline
@@ -1421,6 +1421,13 @@ class WorkflowExecutor:
 
         See :meth:`~areal.api.engine_api.InferenceEngine.rollout_batch` for
         detailed documentation.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
+            where batch_size can vary per trajectory depending on the workflow output.
         """
         perf_tracer.instant(
             "workflow_executor.rollout_batch",
@@ -1435,8 +1442,8 @@ class WorkflowExecutor:
                 group_size=group_size,
             )
         results = self.wait(count=len(data))
-        # Concatenate into batch tensor format
-        return concat_padded_tensors([r for r in results if r is not None])
+        # Return list of trajectory dicts (filter out None)
+        return [r for r in results if r is not None]
 
     @trace_perf("workflow_executor.prepare_batch", category="scheduler")
     def prepare_batch(
@@ -1447,7 +1454,7 @@ class WorkflowExecutor:
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ):
+    ) -> list[dict[str, Any]]:
         """Prepare a batch with controlled staleness.
 
         Continuously submits from dataloader and waits for results, ensuring at least
@@ -1467,6 +1474,13 @@ class WorkflowExecutor:
             - Using the :meth:`submit` / :meth:`wait` pattern for finer control
 
         See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for parameters.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            A list of trajectory dictionaries, one per accepted rollout result.
+            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
+            where batch_size can vary per trajectory depending on the workflow output.
         """
 
         def task_input_generator():
@@ -1496,9 +1510,8 @@ class WorkflowExecutor:
             self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
         )
 
-        # Extract trajectories and concatenate
-        trajectories = [r.trajectory if r is not None else None for r in results]
-        return concat_padded_tensors([t for t in trajectories if t is not None])
+        # Return list of trajectory dicts (filter out None)
+        return [r.trajectory for r in results if r is not None]
 
     def pause(self):
         """Pause request submission for async rollout.

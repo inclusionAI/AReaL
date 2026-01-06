@@ -13,7 +13,6 @@ from areal.utils.data import (
     all_gather_tensor_container,
     broadcast_tensor_container,
     concat_padded_tensors,
-    get_batch_size,
     tensor_container_to,
 )
 from areal.utils.datapack import ffd_allocate
@@ -27,66 +26,75 @@ class RedistributedData:
     group_indices: list[list[int]]
 
 
-def _slice_tensor_dict(data: dict[str, Any], start: int, end: int) -> dict[str, Any]:
-    """Slices tensors in a dictionary along the first dimension."""
-    sliced_data = {}
-    batch_size = -1
-    if "attention_mask" in data:
-        batch_size = data["attention_mask"].shape[0]
-    for key, value in data.items():
-        if (
-            torch.is_tensor(value)
-            and value.shape[0] == batch_size
-            or isinstance(value, Iterable)
-            and len(value) == batch_size
-        ):
-            sliced_data[key] = value[start:end]
-        else:
-            sliced_data[key] = value
-    return sliced_data
+def _remove_padding_from_trajectory(d: dict[str, Any]) -> dict[str, Any]:
+    """Remove padding from a single trajectory dict based on attention_mask.
 
-
-def redistribute(
-    data: dict[str, Any], granularity: int = 1, group=None
-) -> RedistributedData:
-    """Redistribute a batch across a process group.
-
-    This function only accepts padded data which must have an "attention_mask" field,
-    Each tensor should have shape [bs, seqlen, *] or [bs].
-
-    This function will divide the global batch into segments each with consecutive
-    `granularity` sequences, and then redistribute the segments (e.g., for GRPO).
+    Modifies the dict in-place and returns it.
     """
-    all_gathered = all_gather_tensor_container(data, group=group)
+    if "attention_mask" not in d:
+        return d
+    max_sequence_length = int(d["attention_mask"].sum(-1).max().item())
+    attn_mask_shape = d["attention_mask"].shape
+    for k, v in d.items():
+        if (
+            torch.is_tensor(v)
+            and len(v.shape) >= 2
+            and v.shape[:2] == attn_mask_shape[:2]
+        ):
+            d[k] = v[:, :max_sequence_length]
+    return d
 
+
+def redistribute_trajectories(
+    trajectories: list[dict[str, Any]],
+    group=None,
+) -> RedistributedData:
+    """Redistribute a list of trajectory dicts across a process group.
+
+    Each trajectory dict should contain tensors with shape [batch_size, seqlen, *],
+    where batch_size can vary per trajectory. This function gathers trajectories
+    from all ranks and redistributes them for load balancing based on sequence lengths.
+
+    Parameters
+    ----------
+    trajectories : list[dict[str, Any]]
+        List of trajectory dictionaries from the local rank. Each trajectory
+        contains tensors with shape [batch_size, seqlen, ...].
+    group : dist.ProcessGroup, optional
+        The process group for communication. If None, uses the default group.
+
+    Returns
+    -------
+    RedistributedData
+        Contains:
+        - all_data: All trajectories gathered from all ranks (with padding removed)
+        - data: Concatenated trajectories assigned to the local rank
+        - rank: Local rank in the group
+        - group_indices: Assignment of trajectory indices to each rank
+    """
+    # All-gather trajectories from all ranks
+    all_gathered = all_gather_tensor_container(trajectories, group=group)
+
+    # Flatten the list of lists into a single list of trajectories
     all_data = []
-    for d in all_gathered:
-        bs = get_batch_size(d)
-        assert bs % granularity == 0
-        all_data += [
-            _slice_tensor_dict(d, i, i + granularity) for i in range(0, bs, granularity)
-        ]
+    for traj_list in all_gathered:
+        all_data.extend(traj_list)
 
+    # Compute sequence lengths for load balancing
     seqlens = [d["attention_mask"].sum().item() for d in all_data]
 
-    # Remove pad positions
+    # Remove pad positions from each trajectory
     for d in all_data:
-        max_sequence_length = d["attention_mask"].sum(-1).max().item()
-        attn_mask_shape = d["attention_mask"].shape
-        for k, v in d.items():
-            if (
-                torch.is_tensor(v)
-                and len(v.shape) >= 2
-                and v.shape[:2] == attn_mask_shape[:2]
-            ):
-                d[k] = v[:, :max_sequence_length]
+        _remove_padding_from_trajectory(d)
 
+    # Allocate trajectories to ranks using first-fit-decreasing
     # No capacity limit leads to balanced partition across this group
     group_indices = ffd_allocate(
         seqlens, capacity=int(1e12), min_groups=dist.get_world_size(group)
     )
     local_indices = group_indices[dist.get_rank(group=group)]
 
+    # Concatenate assigned trajectories for this rank
     data = concat_padded_tensors([all_data[i] for i in local_indices])
     return RedistributedData(
         all_data=all_data,
@@ -101,12 +109,11 @@ class DistRolloutCoordinator:
         self.rollout_engine = rollout_engine
         self.train_engine = train_engine
 
-    def _broadcast_and_redistribute_batch(
+    def _broadcast_and_redistribute_trajectories(
         self,
-        batch: dict[str, Any] | None,
-        granularity: int = 1,
+        trajectories: list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
-        """Broadcast and redistribute batch across distributed workers.
+        """Broadcast and redistribute trajectories across distributed workers.
 
         This helper encapsulates:
         1. Redistribution within data parallel group (for load balancing)
@@ -115,26 +122,24 @@ class DistRolloutCoordinator:
 
         Parameters
         ----------
-        batch : Dict[str, Any] | None
-            Batch data from data parallel head, None for other ranks
-        granularity : int, default=1
-            Granularity for redistribution within data parallel group.
-            - For single-turn rollouts: Use group_size (GRPO grouping)
-            - For multi-turn rollouts: Use 1 (default, per-completion redistribution)
-            - For custom scenarios: Use custom value (e.g., n_trajs for agent trajectories)
+        trajectories : list[dict[str, Any]] | None
+            List of trajectory dicts from data parallel head, None for other ranks.
+            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
+            where batch_size can vary per trajectory.
 
         Returns
         -------
-        Dict[str, Any]
-            Redistributed and broadcast batch available on all ranks
+        dict[str, Any]
+            Redistributed and broadcast batch available on all ranks (concatenated)
         """
-        if batch is not None:
-            redist = redistribute(
-                batch,
-                granularity=granularity,
+        if trajectories is not None:
+            redist = redistribute_trajectories(
+                trajectories,
                 group=self.train_engine.data_parallel_group,
             )
             batch = redist.data
+        else:
+            batch = None
 
         current_platform.synchronize()
         dist.barrier(group=self.train_engine.cpu_group)
@@ -190,17 +195,19 @@ class DistRolloutCoordinator:
             If rollout engine not connected via connect_engine()
         """
 
-        batch = None
+        trajectories = None
         if self.train_engine.is_data_parallel_head():
-            batch = self.rollout_engine.rollout_batch(
+            trajectories = self.rollout_engine.rollout_batch(
                 data,
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
                 group_size=group_size,
             )
-            batch = tensor_container_to(batch, current_platform.current_device())
+            trajectories = tensor_container_to(
+                trajectories, current_platform.current_device()
+            )
 
-        return self._broadcast_and_redistribute_batch(batch, granularity=group_size)
+        return self._broadcast_and_redistribute_trajectories(trajectories)
 
     def prepare_batch(
         self,
@@ -245,9 +252,9 @@ class DistRolloutCoordinator:
             If rollout engine not connected via connect_engine()
         """
 
-        batch = None
+        trajectories = None
         if self.train_engine.is_data_parallel_head():
-            batch = self.rollout_engine.prepare_batch(
+            trajectories = self.rollout_engine.prepare_batch(
                 dataloader,
                 workflow=workflow,
                 workflow_kwargs=workflow_kwargs,
@@ -255,6 +262,8 @@ class DistRolloutCoordinator:
                 group_size=group_size,
                 dynamic_bs=dynamic_bs,
             )
-            batch = tensor_container_to(batch, current_platform.current_device())
+            trajectories = tensor_container_to(
+                trajectories, current_platform.current_device()
+            )
 
-        return self._broadcast_and_redistribute_batch(batch, granularity=group_size)
+        return self._broadcast_and_redistribute_trajectories(trajectories)
