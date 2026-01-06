@@ -15,7 +15,7 @@ from safetensors import safe_open
 from areal.models.mcore.registry import unwrap_to_gpt_model
 from areal.platforms import current_platform
 from areal.utils import logging
-from areal.utils.fp8 import dequantize_params
+from areal.utils.fp8 import FP8BlockwiseTensorHelper, dequantize_params
 
 logger = logging.getLogger("HFLoader")
 
@@ -36,46 +36,6 @@ def _get_shape(obj) -> list:
         return obj.get_shape()
 
 
-def _pytorch_fp8_to_te_fp8(
-    pytorch_fp8_tensor: torch.Tensor,
-    scale_inv: torch.Tensor,
-    target_te_tensor: torch.Tensor,
-) -> None:
-    """Convert PyTorch float8 tensor to Transformer Engine Float8BlockwiseQTensor format inplace.
-
-    This function copies the data and scale_inv from a PyTorch float8 tensor
-    to an existing TE Float8BlockwiseQTensor
-
-    Args:
-        pytorch_fp8_tensor: PyTorch float8 tensor (like torch.float8_e4m3fn)
-        scale_inv: Inverse scale tensor (1/scale) with blockwise shape
-        target_te_tensor: Target TE Float8BlockwiseQTensor to copy into
-    """
-    if not is_float8tensor(target_te_tensor):
-        raise ValueError("target_te_tensor must be a Transformer Engine Float8Tensor")
-
-    # For Float8BlockwiseQTensor, copy rowwise_data and rowwise_scale_inv
-    if hasattr(target_te_tensor, "_rowwise_data") and hasattr(
-        target_te_tensor, "_rowwise_scale_inv"
-    ):
-        assert pytorch_fp8_tensor.shape == target_te_tensor._rowwise_data.shape
-        # rowwise_data is stored in uint8 format
-        target_te_tensor._rowwise_data.copy_(
-            pytorch_fp8_tensor.view(torch.uint8), non_blocking=False
-        )
-        scale_inv_shape = scale_inv.shape
-        assert len(scale_inv_shape) == 2
-        target_te_tensor._rowwise_scale_inv[
-            : scale_inv_shape[0], : scale_inv_shape[1]
-        ].copy_(scale_inv, non_blocking=False)
-        with torch.cuda.device(target_te_tensor.device):
-            target_te_tensor._create_columnwise()
-    else:
-        # Fallback for non-blockwise tensors
-        target_te_tensor._data.copy_(pytorch_fp8_tensor.view(torch.uint8))
-        target_te_tensor._scale_inv.copy_(scale_inv)
-
-
 def _weight_to_mcore_tp(
     hf_config,
     mcore_weights_name: str,
@@ -84,9 +44,8 @@ def _weight_to_mcore_tp(
     tp_rank: int,
     tp_size: int,
     dtype: torch.dtype | None = None,
-    hf_scale_invs: list | None = None,
     weight_block_size: int | None = None,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
+) -> torch.Tensor | FP8BlockwiseTensorHelper | None:
     if (
         "self_attention.linear_qkv." in mcore_weights_name
         and "layer_norm" not in mcore_weights_name
@@ -113,52 +72,6 @@ def _weight_to_mcore_tp(
         out_shape = [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
         res = torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
 
-        # Merge scale_inv for FP8: merge along dim 1 (q/k/v -> qkv)
-        scale_inv = None
-        if hf_scale_invs is not None and len(hf_scale_invs) == 3:
-            q_scale_inv, k_scale_inv, v_scale_inv = hf_scale_invs
-            if (
-                q_scale_inv is not None
-                and k_scale_inv is not None
-                and v_scale_inv is not None
-            ):
-                if weight_block_size is not None:
-                    # q, k, v weights are split along dim=0, so scale_inv should be split along dim=0 first
-                    scale_inv_shape = _get_shape(q_scale_inv)
-                    # TP split scale_inv along dim=0
-                    slices = _get_tp_slice(scale_inv_shape, 0, tp_rank, tp_size)
-                    q_scale_inv = q_scale_inv[slices].reshape(
-                        real_num_key_value_heads // tp_size,
-                        group_dim // weight_block_size,
-                        -1,
-                    )
-                    scale_inv_shape = _get_shape(k_scale_inv)
-                    slices = _get_tp_slice(scale_inv_shape, 0, tp_rank, tp_size)
-                    k_scale_inv = k_scale_inv[slices].reshape(
-                        real_num_key_value_heads // tp_size,
-                        head_dim // weight_block_size,
-                        -1,
-                    )
-                    v_scale_inv = v_scale_inv[slices].reshape(
-                        real_num_key_value_heads // tp_size,
-                        head_dim // weight_block_size,
-                        -1,
-                    )
-                    # Then merge along dim=1
-                    scale_inv = torch.cat(
-                        [q_scale_inv, k_scale_inv, v_scale_inv], dim=1
-                    )
-                    out_shape = (
-                        [-1, hidden_dim // weight_block_size]
-                        if ".bias" not in mcore_weights_name
-                        else [-1]
-                    )
-                    scale_inv = scale_inv.view(*out_shape).contiguous()
-                else:
-                    # Per-tensor quantization: take max
-                    raise NotImplementedError(
-                        "Per-tensor quantization is not supported for FP8"
-                    )
     elif (
         "linear_fc1.weight" in mcore_weights_name
         or "linear_fc1.bias" in mcore_weights_name
@@ -173,26 +86,6 @@ def _weight_to_mcore_tp(
         up = up[_get_tp_slice(_get_shape(up), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
         res = torch.cat([gate, up], dim=0)
 
-        # Merge scale_inv for FP8: merge along dim 0 (gate/up -> fc1)
-        scale_inv = None
-        if hf_scale_invs is not None and len(hf_scale_invs) == 2:
-            gate_scale_inv, up_scale_inv = hf_scale_invs
-            if gate_scale_inv is not None and up_scale_inv is not None:
-                if weight_block_size is not None:
-                    slices = _get_tp_slice(
-                        _get_shape(gate_scale_inv), 0, tp_rank, tp_size
-                    )
-                    gate_scale_inv = gate_scale_inv[slices]
-                    slices = _get_tp_slice(
-                        _get_shape(up_scale_inv), 0, tp_rank, tp_size
-                    )
-                    up_scale_inv = up_scale_inv[slices]
-                    scale_inv = torch.cat([gate_scale_inv, up_scale_inv], dim=0)
-                else:
-                    # Per-tensor quantization: take max
-                    raise NotImplementedError(
-                        "Per-tensor quantization is not supported for FP8"
-                    )
     elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
         assert len(hf_weights_safe_slice) == 1
         x = hf_weights_safe_slice[0]
@@ -203,18 +96,6 @@ def _weight_to_mcore_tp(
             _get_tp_slice(shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)
         ]
 
-        # Handle TP split for scale_inv
-        scale_inv = None
-        if (
-            hf_scale_invs is not None
-            and len(hf_scale_invs) == 1
-            and hf_scale_invs[0] is not None
-        ):
-            scale_inv = hf_scale_invs[0]
-            if weight_block_size is not None:
-                scale_inv_shape = _get_shape(scale_inv)
-                slices = _get_tp_slice(scale_inv_shape, partition_dim, tp_rank, tp_size)
-                scale_inv = scale_inv[slices]
     else:
         assert len(hf_weights_safe_slice) == 1
         x = hf_weights_safe_slice[0]
@@ -235,25 +116,9 @@ def _weight_to_mcore_tp(
                 )
             ]
 
-        scale_inv = None
-        if (
-            hf_scale_invs is not None
-            and len(hf_scale_invs) == 1
-            and hf_scale_invs[0] is not None
-        ):
-            scale_inv = hf_scale_invs[0]
-            if weight_block_size is not None:
-                if partition_dim is not None:
-                    scale_inv_shape = _get_shape(scale_inv)
-                    slices = _get_tp_slice(
-                        scale_inv_shape, partition_dim, tp_rank, tp_size
-                    )
-                    scale_inv = scale_inv[slices]
-                else:
-                    scale_inv = scale_inv[:]
-    if dtype is not None:
+    if dtype is not None and not isinstance(res, FP8BlockwiseTensorHelper):
         res = res.to(dtype)
-    return res, scale_inv
+    return res
 
 
 def _load_weight_with_bridge_worker(
@@ -305,7 +170,6 @@ def _load_weight_with_bridge_worker(
         # we need to dequantize FP8 weights before converting to mcore format
         # Now only support FP8 dequantization
         hf_weights_safe_slice = []
-        hf_scale_invs = []
         hf_has_fp8 = False
         hf_all_fp8 = True  # Track if all inputs are FP8
 
@@ -320,8 +184,16 @@ def _load_weight_with_bridge_worker(
                 scale_inv_slice = all_slices[scale_inv_name]
 
                 if is_te_fp8_param and enable_fp8_param:
-                    hf_weights_safe_slice.append(hf_slice)
-                    hf_scale_invs.append(scale_inv_slice)
+                    # Convert to FP8BlockwiseTensorHelper to simplify handling
+                    weight = hf_slice[:]
+                    scale_inv = scale_inv_slice[:]
+                    block_size = (
+                        weight_block_size if weight_block_size is not None else 128
+                    )
+                    weight_helper = FP8BlockwiseTensorHelper(
+                        weight, scale_inv, block_size=block_size
+                    )
+                    hf_weights_safe_slice.append(weight_helper)
                 else:
                     # Dequantize to higher precision (bf16)
                     device = torch.device(current_platform.device_type)
@@ -346,7 +218,7 @@ def _load_weight_with_bridge_worker(
 
         # TODO: check fp type is matched between pytorch and te
 
-        param_to_load, merged_scale_inv = _weight_to_mcore_tp(
+        param_to_load = _weight_to_mcore_tp(
             hf_config=bridge.hf_config,
             mcore_weights_name=local_name,
             mcore_param_shape=list(param.shape),
@@ -355,9 +227,6 @@ def _load_weight_with_bridge_worker(
             tp_size=tp_size,
             dtype=bridge.dtype
             if not (is_te_fp8_param and hf_has_fp8 and hf_all_fp8)
-            else None,
-            hf_scale_invs=hf_scale_invs
-            if (is_te_fp8_param and hf_has_fp8 and hf_all_fp8)
             else None,
             weight_block_size=weight_block_size,
         )
@@ -376,11 +245,7 @@ def _load_weight_with_bridge_worker(
                 raise ValueError(
                     f"Expected {TE_DType_To_Torch[param._fp8_dtype]} tensor for TE FP8 param, got {param_to_load.dtype}"
                 )
-            if merged_scale_inv is None:
-                raise ValueError(
-                    f"Expected scale_inv for FP8 parameter, got {merged_scale_inv}"
-                )
-            _pytorch_fp8_to_te_fp8(param_to_load, merged_scale_inv, param)
+            param_to_load.to_te_fp8_inplace(param)
         else:
             # NOTE: for megatron FP8 param, `param.copy_` will do quantization internally
             param.copy_(param_to_load, non_blocking=True)

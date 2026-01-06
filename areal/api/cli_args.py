@@ -533,6 +533,15 @@ class FP8EngineConfig:
         },
     )
 
+    direct_convert: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use direct FP8 conversion during weight updates and save/load. "
+            "When True, FP8 parameters are directly converted between TE FP8 and PyTorch FP8 "
+            "without intermediate dequantization/quantization."
+        },
+    )
+
 
 @dataclass
 class MegatronEngineConfig:
@@ -1180,7 +1189,6 @@ class SGLangConfig:
     # and passed as `model_loader_extra_config` to SGLang.
     enable_multithread_load: bool = False
     enable_fast_load: bool = False
-    quantization: str | None = None
 
     # Use staticmethod to make OmegaConf happy.
     @staticmethod

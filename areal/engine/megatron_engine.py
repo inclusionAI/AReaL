@@ -18,7 +18,6 @@ from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import finalize_model_grads
-from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -77,6 +76,7 @@ from areal.utils.data import (
     unpad_logits,
 )
 from areal.utils.distributed import init_custom_process_group
+from areal.utils.fp8 import FP8BlockwiseTensorHelper
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
@@ -86,7 +86,6 @@ from areal.utils.mcore.packed_context_parallel import (
 )
 from areal.utils.mcore.pipeline_parallel import configure_pipeline_layer_splits
 from areal.utils.megatron import (
-    FP8BlockwiseTensorHelper,
     all_gather_param,
     convert_to_hf,
     get_named_parameters,
@@ -159,7 +158,11 @@ class MegatronEngine(TrainEngine):
         self.enable_fp8: bool = self.config.megatron.fp8_config is not None
         self.quantization_config: dict[str, int | str | list[str]] | None = None
         self.enable_tree_training: bool = self.mcore_config.enable_tree_training
-        self.fp8_direct_convert: bool = True
+        self.fp8_direct_convert: bool = (
+            self.config.megatron.fp8_config.direct_convert
+            if self.config.megatron.fp8_config is not None
+            else False
+        )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -791,7 +794,7 @@ class MegatronEngine(TrainEngine):
             if hasattr(self.tf_config, tf_field):
                 setattr(self.tf_config, tf_field, getattr(fp8_config, fp8_field))
             else:
-                raise ValueError(f"Unknown FP8 field: {fp8_field}")
+                self.logger.warning(f"Unknown FP8 field: {fp8_field}")
         self.logger.info(
             f"FP8 training enabled: mode={fp8_config.mode}, "
             f"recipe={fp8_config.recipe}, "
@@ -833,62 +836,6 @@ class MegatronEngine(TrainEngine):
         if perf_tracer.is_configured():
             return
         perf_tracer.configure(config, rank=rank, role=role)
-
-    def _check_and_apply_fp8_config(self):
-        if self.mcore_config.fp8 is not None:
-            self.tf_config.fp8 = self.mcore_config.fp8
-            self.tf_config.fp8_recipe = self.mcore_config.fp8_recipe
-            self.tf_config.fp8_param = self.mcore_config.fp8_param
-            self.tf_config.fp8_margin = self.mcore_config.fp8_margin
-            self.tf_config.fp8_amax_history_len = self.mcore_config.fp8_amax_history_len
-            self.tf_config.fp8_amax_compute_algo = (
-                self.mcore_config.fp8_amax_compute_algo
-            )
-            self.tf_config.fp8_wgrad = self.mcore_config.fp8_wgrad
-            self.tf_config.fp8_dot_product_attention = (
-                self.mcore_config.fp8_dot_product_attention
-            )
-            self.tf_config.fp8_multi_head_attention = (
-                self.mcore_config.fp8_multi_head_attention
-            )
-            self.tf_config.tp_only_amax_red = self.mcore_config.tp_only_amax_red
-            self.tf_config.first_last_layers_bf16 = (
-                self.mcore_config.first_last_layers_bf16
-            )
-            self.tf_config.num_layers_at_start_in_bf16 = (
-                self.mcore_config.num_layers_at_start_in_bf16
-            )
-            self.tf_config.num_layers_at_end_in_bf16 = (
-                self.mcore_config.num_layers_at_end_in_bf16
-            )
-            self.logger.info(
-                f"FP8 training enabled: fp8={self.mcore_config.fp8}, "
-                f"fp8_recipe={self.mcore_config.fp8_recipe}, "
-                f"fp8_param={self.mcore_config.fp8_param}"
-            )
-            # fp8_param_gather is passed from make_mcore_model()
-
-    def _validate_fp8_consistency(self):
-        """Validate that FP8 configuration is consistent.
-
-        If either training uses FP8, quantization_config must exist
-        and quant_method must be "fp8" (weights must be FP8).
-        """
-        train_fp8 = self.mcore_config.fp8 is not None
-        weights_fp8 = (
-            self.quantization_config is not None
-            and self.quantization_config.get("quant_method", None) == "fp8"
-        )
-
-        if train_fp8 and not weights_fp8:
-            raise RuntimeError(
-                "FP8 configuration error: "
-                "If training uses FP8, quantization_config must exist "
-                "and quant_method must be 'fp8' (weights must be FP8). "
-                f"Training fp8={train_fp8}, "
-                f"weights fp8={weights_fp8}, "
-                f"quantization_config={self.quantization_config}"
-            )
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
@@ -1020,18 +967,6 @@ class MegatronEngine(TrainEngine):
                 " before using rollout/update_weight methods."
             )
 
-    def _get_inference_ep_config(self) -> dict[str, bool]:
-        inference_enable_ep_moe = False
-
-        if self.alloc_mode is not None:
-            gen_parallel = self.alloc_mode.gen
-            if gen_parallel is not None:
-                inference_enable_ep_moe = gen_parallel.ep_size > 1
-
-        return {
-            "inference_enable_ep_moe": inference_enable_ep_moe,
-        }
-
     def _ensure_ready(self) -> None:
         if self.is_offload:
             self.onload()
@@ -1123,9 +1058,6 @@ class MegatronEngine(TrainEngine):
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             buffer_size = 0
 
-        # Get inference EP configuration
-        inference_ep_config = self._get_inference_ep_config()
-
         converted_named_tensors.extend(
             convert_to_hf(
                 self.tf_config,
@@ -1133,8 +1065,7 @@ class MegatronEngine(TrainEngine):
                 name,
                 param,
                 quantization_config=self.quantization_config,
-                fp8_direct_convert=fp8_direct_convert,
-                **inference_ep_config,
+                fp8_direct_convert=self.fp8_direct_convert,
             )
         )
         buffer_size += param_size
@@ -1197,9 +1128,6 @@ class MegatronEngine(TrainEngine):
 
         gathered_params = sum(gathered_params, [])
 
-        # Get inference EP configuration
-        inference_ep_config = self._get_inference_ep_config()
-
         converted_hf_tensors = []
         for name, param in gathered_params:
             converted_hf_tensors.extend(
@@ -1210,7 +1138,6 @@ class MegatronEngine(TrainEngine):
                     param,
                     quantization_config=self.quantization_config,
                     fp8_direct_convert=self.fp8_direct_convert,
-                    **inference_ep_config,
                 )
             )
 

@@ -8,6 +8,7 @@
 #   - ue8m0.py: UE8M0 format utilities (power-of-2 scales for DeepGEMM)
 #   - deepgemm.py: DeepGEMM detection and configuration
 #   - quantize.py: High-level quantization/dequantization API
+#   - tensor_helper.py: FP8 blockwise tensor helper class
 
 from areal.utils.fp8.deepgemm import (
     DEEPGEMM_BLACKWELL,
@@ -23,6 +24,7 @@ from areal.utils.fp8.quantize import (
     dequantize_params,
     quantize_params,
 )
+from areal.utils.fp8.tensor_helper import FP8BlockwiseTensorHelper
 from areal.utils.fp8.ue8m0 import (
     ceil_to_ue8m0,
     get_tma_aligned_size,
@@ -47,4 +49,6 @@ __all__ = [
     "DEEPGEMM_BLACKWELL",
     "DEEPGEMM_SCALE_UE8M0",
     "should_deepgemm_weight_requant_ue8m0",
+    # Tensor helper
+    "FP8BlockwiseTensorHelper",
 ]
