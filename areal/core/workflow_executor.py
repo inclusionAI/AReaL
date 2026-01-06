@@ -1272,10 +1272,9 @@ class WorkflowExecutor:
         .. warning::
 
             This method caches an internal data generator on the first call.
-            The ``dataloader``, ``workflow``,
-            and ``should_accept_fn`` parameters are captured at the first invocation
-            and reused in all subsequent calls. Passing different arguments in
-            later calls will **not** take effect.
+            The ``dataloader``, ``workflow``, and ``should_accept_fn`` parameters
+            are captured at the first invocation and reused in all subsequent calls.
+            Passing different arguments in later calls will **not** take effect.
 
             If you need to switch configurations mid-training, consider:
 
