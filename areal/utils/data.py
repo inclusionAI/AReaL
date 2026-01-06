@@ -384,10 +384,11 @@ class MicroBatchList:
     data: dict[str, Any]
     mb_spec: MicroBatchSpec
     mbs: list[dict[str, Any]]
-    forward_indices: list[int]
-    backward_indices: list[int]
     group_lens: list[int]
+    forward_indices: list[int] | None = None
+    backward_indices: list[int] | None = None
     padded_mbs: list[dict[str, Any]] | None = None
+    _max_seqlen: int | None = None
     # Batch-level padding information
     padding_lengths: list[int] | None = None
     padded_to_lengths: list[int] | None = None
@@ -400,7 +401,10 @@ class MicroBatchList:
         """Return the maximum sequence length across all padded micro-batches."""
         if self.padded_mbs is None:
             raise ValueError("padded_mbs is None. Call pad_mb_list first.")
-        return max(m["cu_seqlens"][-1].item() for m in self.padded_mbs)
+        if self._max_seqlen is None:
+            assert all("cu_seqlens" in m for m in self.padded_mbs), "cu_seqlens not found in some padded micro-batches." 
+            self._max_seqlen = max(m["cu_seqlens"][-1].item() for m in self.padded_mbs)
+        return self._max_seqlen
 
     def __len__(self) -> int:
         return len(self.mbs)
@@ -449,6 +453,7 @@ class MicroBatchList:
             backward_indices=self.backward_indices,
             group_lens=self.group_lens,
             padded_mbs=padded_mbs,
+            _max_seqlen=self._max_seqlen,
             padding_lengths=self.padding_lengths,
             padded_to_lengths=self.padded_to_lengths,
             old_cu_seqlens_list=old_cu_seqlens_list,

@@ -567,6 +567,11 @@ class MegatronEngineConfig:
     # FP8 Training Configuration
     fp8_config: FP8EngineConfig | None = None
 
+    # Tree training
+    enable_tree_training: bool = field(
+        default=False,
+        metadata={"help": "Enable tree training with flex attention module."},
+    )
 
 class SchedulingStrategyType(str, Enum):
     separation = "separation"

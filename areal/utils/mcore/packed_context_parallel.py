@@ -68,7 +68,7 @@ def preprocess_packed_seqs_context_parallel(
 
 def postprocess_packed_seqs_context_parallel(
     output: torch.Tensor,
-    cu_seqlens: torch.Tensor,
+    cu_seqlens: torch.Tensor | None,
     post_process: bool,
 ) -> torch.Tensor:
     """
@@ -77,7 +77,7 @@ def postprocess_packed_seqs_context_parallel(
     cp_size = mpu.get_context_parallel_world_size()
     if not post_process:
         return output
-    if cp_size <= 1:
+    if cp_size <= 1 or cu_seqlens is None:
         return output.squeeze(0)
     # shape = [batch_size, seq_len] + list(output.shape[2:])
     # [1, packed, dim] -> [batch_size, seq_len, dim]
@@ -125,23 +125,29 @@ def packed_context_parallel_forward(
     input_: dict[str, Any],
 ):
     input_ids = input_["input_ids"]
-    cu_seqlens = input_["cu_seqlens"]
     position_ids = input_["position_ids"]
-    input_ids_rmpad, packed_seq_params = preprocess_packed_seqs_context_parallel(
-        input_ids, cu_seqlens
-    )
-    input_ids_rmpad = input_ids_rmpad.contiguous()
+    cu_seqlens = input_.get("cu_seqlens", None)
+    attention_mask = input_.get("attention_mask", None)
+    packed_seq_params = None
+
+    if cu_seqlens is not None:
+        assert attention_mask is None, "Attention mask should be None when using packed sequences."
+        input_ids, packed_seq_params = preprocess_packed_seqs_context_parallel(
+            input_ids, cu_seqlens
+        )
+        input_ids = input_ids.contiguous()
+    
     try:
-        output_orig = model(
-            input_ids=input_ids_rmpad,
-            attention_mask=None,
+        output = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
             position_ids=position_ids,
             packed_seq_params=packed_seq_params,
         )
     except Exception as e:
         raise RuntimeError(
             f"Error occurred in packed context parallel forward pass on model {model} "
-            f"with input_ids shape {input_ids_rmpad.shape} and packed_seq_params {packed_seq_params}."
+            f"with input_ids shape {input_ids.shape} and packed_seq_params {packed_seq_params}."
         ) from e
 
     model_vp_stage = getattr(model, "vp_stage", None)
@@ -149,6 +155,6 @@ def packed_context_parallel_forward(
         ignore_virtual=False, vp_stage=model_vp_stage
     )
     output = postprocess_packed_seqs_context_parallel(
-        output_orig, cu_seqlens, is_pipeline_last_stage
+        output, cu_seqlens, is_pipeline_last_stage
     )
     return output

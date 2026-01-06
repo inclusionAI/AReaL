@@ -90,6 +90,13 @@ from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
+from areal.utils.tree_training.data import build_packed_tree_batch
+from areal.utils.tree_training.module import patch_bridge_for_tree_training, BLOCK_SIZE
+from areal.utils.tree_training.functional import (
+    _gather_packed_tree_logprobs,
+    gather_packed_tree_logprobs_entropy,
+    merge_packed_tree_results,
+)
 
 if TYPE_CHECKING:
     from areal.engine.ppo.actor import PPOActorConfig
@@ -150,6 +157,7 @@ class MegatronEngine(TrainEngine):
         self.is_offload: bool = False
         self.enable_fp8: bool = self.config.megatron.fp8_config is not None
         self.quantization_config: dict[str, int | str | list[str]] | None = None
+        self.enable_tree_training: bool = self.mcore_config.enable_tree_training
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -218,44 +226,50 @@ class MegatronEngine(TrainEngine):
         self.alloc_mode: AllocationMode | None = kwargs.get("alloc_mode", None)
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
-        self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
-        self.bridge.dtype = self.dtype
-        # Set gradient checkpointing options
-        if self.config.gradient_checkpointing:
-            self.bridge.set_extra_args(
-                recompute_granularity=self.mcore_config.recompute_granularity,
-                recompute_method=self.mcore_config.recompute_method,
-                recompute_num_layers=self.mcore_config.recompute_num_layers,
-                distribute_saved_activations=self.mcore_config.distribute_saved_activations,
-                recompute_modules=self.mcore_config.recompute_modules,
+
+        with patch_bridge_for_tree_training(self.enable_tree_training):
+            self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
+            self.bridge.dtype = self.dtype
+            # Set gradient checkpointing options
+            if self.config.gradient_checkpointing:
+                self.bridge.set_extra_args(
+                    recompute_granularity=self.mcore_config.recompute_granularity,
+                    recompute_method=self.mcore_config.recompute_method,
+                    recompute_num_layers=self.mcore_config.recompute_num_layers,
+                    distribute_saved_activations=self.mcore_config.distribute_saved_activations,
+                    recompute_modules=self.mcore_config.recompute_modules,
+                )
+
+            self.logger.info(
+                "Using mbridge to create models and hf model save/load in MegatronEngine."
             )
 
-        self.logger.info(
-            "Using mbridge to create models and hf model save/load in MegatronEngine."
-        )
-
-        self.hf_config, self.tf_config = make_hf_and_mcore_config(
-            self.config.path, dtype=self.dtype, bridge=self.bridge
-        )
-        self.tf_config = configure_pipeline_layer_splits(
-            self.parallel_strategy, self.hf_config, self.tf_config
-        )
-
-        # Get quantization_config from hf_config if available (for FP8 weight updates)
-        self.quantization_config = getattr(self.hf_config, "quantization_config", None)
-
-        self._check_and_apply_fp8_config()
-        self._validate_fp8_consistency()
-
-        # initialize mcore (DDP Wrapped) GPTModel
-        with self.device:
-            models = make_mcore_model(
-                hf_config=self.hf_config,
-                tf_config=self.tf_config,
-                mcore_config=self.mcore_config,
-                bridge=self.bridge,
-                is_critic=self.config.is_critic,
+            self.logger.info(
+                "Using mbridge to create models and hf model save/load in MegatronEngine."
             )
+
+            self.hf_config, self.tf_config = make_hf_and_mcore_config(
+                self.config.path, dtype=self.dtype, bridge=self.bridge
+            )
+            self.tf_config = configure_pipeline_layer_splits(
+                self.parallel_strategy, self.hf_config, self.tf_config
+            )
+
+            # Get quantization_config from hf_config if available (for FP8 weight updates)
+            self.quantization_config = getattr(self.hf_config, "quantization_config", None)
+
+            self._check_and_apply_fp8_config()
+            self._validate_fp8_consistency()
+
+            # initialize mcore (DDP Wrapped) GPTModel
+            with self.device:
+                models = make_mcore_model(
+                    hf_config=self.hf_config,
+                    tf_config=self.tf_config,
+                    mcore_config=self.mcore_config,
+                    bridge=self.bridge,
+                    is_critic=self.config.is_critic,
+                )
 
         self.model = _MegatronModelList(models)
 
@@ -547,7 +561,7 @@ class MegatronEngine(TrainEngine):
         def forward_step(batch_iter, model):
             mb_input: MicroBatchItem = next(batch_iter)
 
-            cu_seqlens = mb_input.padded_mb["cu_seqlens"]
+            cu_seqlens = mb_input.padded_mb.get("cu_seqlens", None)
             output = packed_context_parallel_forward(model, mb_input.padded_mb)
 
             def _process_output(input_, output_):
@@ -673,6 +687,7 @@ class MegatronEngine(TrainEngine):
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
         assert output_seqlens is not None
+        batch_size = len(output_seqlens)
 
         # Step 2: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_).to(self.device)
@@ -690,9 +705,12 @@ class MegatronEngine(TrainEngine):
         # Step 4: Aggregate, reorder, and broadcast outputs
         res = None
         if mpu.is_pipeline_last_stage():
-            res = reorder_and_pad_outputs(
-                outputs, output_seqlens, mb_list, aggregate_fn
-            )
+            if self.enable_tree_training:
+                res = merge_packed_tree_results(outputs, batch_size)
+            else:
+                res = reorder_and_pad_outputs(
+                    outputs, output_seqlens, mb_list, aggregate_fn
+                )
         res = broadcast_tensor(
             res,
             src_rank=mpu.get_pipeline_model_parallel_last_rank(),
@@ -1302,11 +1320,35 @@ class MegatronEngine(TrainEngine):
 
     def _prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
-        input_ = amend_position_ids(input_)
         # Parallel sizes
         pp_size = self.parallel_strategy.pipeline_parallel_size
         cp_size = self.parallel_strategy.context_parallel_size
         tp_size = self.parallel_strategy.tensor_parallel_size
+        if self.enable_tree_training:
+            assert cp_size == 1, "Context parallelism is not supported in tree training."
+            # Build tree inputs
+            assert BLOCK_SIZE % tp_size == 0, (
+                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by tensor parallel size ({tp_size})."
+            )
+            mb_list = build_packed_tree_batch(
+                input_, 
+                max_tokens_per_tree=self.config.mb_spec.max_tokens_per_mb,
+                pad_to_maximum=self.config.pad_to_maximum,
+                pad_to_multiple_of=BLOCK_SIZE,
+            )
+            recommended_min_n_mbs = 2 * pp_size if pp_size > 1 else 1
+            self.logger.info(
+                f"Packed tree #microbatch: {len(mb_list)}, microbatch #tokens: {mb_list.group_lens}, "
+                f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}."
+            )
+            if len(mb_list) < recommended_min_n_mbs:
+                self.logger.warning(
+                    f"Number of tree micro-batches ({len(mb_list)}) is less than recommended"
+                    f" minimum ({recommended_min_n_mbs}) to avoid pipeline bubbles."
+                )
+            return mb_list
+        # Amend position ids
+        input_ = amend_position_ids(input_)
         # Split the input into micro-batches
         # NOTE: Here we use 2*pp_size in forward to align logprob precision
         # TODO: Performance check
@@ -1373,16 +1415,30 @@ class MegatronEngine(TrainEngine):
         total_loss_weight: torch.Tensor,
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
+        assert not (self.config.is_critic and self.enable_tree_training), (
+            "Tree training with critic model is not supported."
+        )
         if not self.config.is_critic:
-            labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
-            logprobs, entropy = gather_logprobs_entropy(
-                output,
-                labels,
-                temperature=self.config.temperature,
-                tp_group=mpu.get_tensor_model_parallel_group()
-                if mpu.get_tensor_model_parallel_world_size() > 1
-                else None,
-            )
+            if self.enable_tree_training:
+                logprobs, entropy = gather_packed_tree_logprobs_entropy(
+                    output,
+                    inputs["trie_node"],
+                    inputs["input_ids"],
+                    temperature=self.config.temperature,
+                    tp_group=mpu.get_tensor_model_parallel_group()
+                    if mpu.get_tensor_model_parallel_world_size() > 1
+                    else None,
+                )
+            else:
+                labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+                logprobs, entropy = gather_logprobs_entropy(
+                    output,
+                    labels,
+                    temperature=self.config.temperature,
+                    tp_group=mpu.get_tensor_model_parallel_group()
+                    if mpu.get_tensor_model_parallel_world_size() > 1
+                    else None,
+                )
             loss = loss_fn(logprobs, entropy, inputs)
         else:
             values = output.squeeze(-1)
@@ -1396,7 +1452,21 @@ class MegatronEngine(TrainEngine):
         output: torch.Tensor,
         inputs: dict[str, Any],
     ) -> torch.Tensor:
+        assert not (self.config.is_critic and self.enable_tree_training), (
+            "Tree training with critic model is not supported."
+        )
         if not self.config.is_critic:
+            if self.enable_tree_training:
+                logprobs = _gather_packed_tree_logprobs(
+                    output,
+                    inputs["trie_node"],
+                    inputs["input_ids"],
+                    temperature=self.config.temperature,
+                    tp_group=mpu.get_tensor_model_parallel_group()
+                    if mpu.get_tensor_model_parallel_world_size() > 1
+                    else None,
+                )
+                return logprobs
             labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
             logprobs = gather_logprobs(
                 output,
