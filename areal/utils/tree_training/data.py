@@ -277,7 +277,7 @@ def build_packed_tree_batch(
     total_tree_tokens = sum(num_tokens_list)
     ratio = total_tree_tokens / original_num_tokens
     stats_tracker.scalar(tree_token_ratio=ratio)
-    
+
     sequence_lens = mask_template.sum(dim=1, dtype=torch.int32)
 
     # Identify packable keys (same shape as input_ids)
@@ -348,7 +348,7 @@ def build_packed_tree_batch(
         padding_lengths.append(padded_size - num_tokens)
         padded_to_lengths.append(padded_size)
 
-    # NOTE: mbs is padded data instead of original data 
+    # NOTE: mbs is padded data instead of original data
     # to avoid duplicate attention mask memory consumption
     batch = MicroBatchList(
         data=data,
