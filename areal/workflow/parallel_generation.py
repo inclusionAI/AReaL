@@ -4,7 +4,7 @@ Parallel Generation Workflow for Multiverse Structured Generation with Multi-Tur
 This workflow implements structured parallel generation where the model generates:
 1. A Goal with multiple Outlines
 2. Multiple Paths (one for each outline) in parallel
-3. A Conclusion that synthesizes the paths
+3. A <Conclusion> marker (conclusion content is NOT generated, allowing continuation)
 4. (Optional) Continue with additional goal-paths-conclusion cycles
 
 The generation structure follows (for multi-turn with max_turns=2):
@@ -16,17 +16,23 @@ The generation structure follows (for multi-turn with max_turns=2):
 <Path>[Path 1]</Path>
 <Path>[Path 2]</Path>
 ...
-<Conclusion>[Conclusion]</Conclusion>
+<Conclusion>
+[Model continues from here in next turn...]
 <Goal>
   <Outline>[Goal 1]</Outline>
   ...
 </Goal>
 <Path>[Path 1]</Path>
 ...
-<Conclusion>[Conclusion]</Conclusion>
+<Conclusion>
+...
 
-All paths see the same context and are generated independently without attention masking.
-Each subsequent turn uses the full sequence (prompt + all previous generations) as context.
+Key Features:
+- String-based context: Rebuilds the full prompt each time (system + user + assistant content)
+- All paths see the same context (prompt + goal), NOT other paths
+- No conclusion generation: Just adds <Conclusion>\\n marker for continuation
+- Logprobs tracking: Maintains logprobs for RL training despite string-based approach
+- Each subsequent turn uses the accumulated assistant content as context
 """
 MAX_POS_ENCODING = 30000
 import asyncio
@@ -81,6 +87,29 @@ def default_format_prompt_fn(user_content: str, enable_thinking: bool) -> str:
     # Default implementation: simple format
     # TODO: Customize this function to match your desired format
     formatted = f"<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
+    return formatted
+
+
+def format_prompt_with_context(user_content: str, assistant_content: str = "") -> str:
+    """
+    Format the full prompt with optional assistant content (for string-based generation).
+    
+    This function rebuilds the complete prompt each time, including any previously
+    generated assistant content. This approach is similar to generation_new.py's
+    format_chat_template function.
+    
+    Args:
+        user_content: The user's input content (e.g., the math problem)
+        assistant_content: Previously generated assistant content to include
+    
+    Returns:
+        Formatted string ready for tokenization
+    
+    Example:
+        Input: user_content="Solve: 2+2=?", assistant_content="<Goal>...</Goal>"
+        Output: "<|im_start|>system\n...<|im_end|>\n<|im_start|>user\nSolve: 2+2=?<|im_end|>\n<|im_start|>assistant\n<Goal>...</Goal>"
+    """
+    formatted = f"<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n{assistant_content}"
     return formatted
 
 
@@ -312,15 +341,31 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
     async def _generate_until_goal(
         self,
         engine: InferenceEngine,
-        input_ids: list[int],
+        user_content: str,
+        assistant_context: str,
         version: int = -1,
         sample_idx: int = -1,
         qid: str = "unknown",
     ) -> ModelResponse | None:
         """Generate until </Goal> tag is encountered.
         
+        Uses string-based context: rebuilds the full prompt each time from
+        user_content and assistant_context.
+        
+        Args:
+            engine: The inference engine
+            user_content: The original user problem/question
+            assistant_context: Previously generated assistant content
+            version: Model version for tracking
+            sample_idx: Sample index for logging
+            qid: Query ID for logging
+        
         Returns None if context already exceeds MAX_POS_ENCODING.
         """
+        # Build full prompt from strings
+        full_prompt = format_prompt_with_context(user_content, assistant_context)
+        input_ids = self.tokenizer.encode(full_prompt, add_special_tokens=False)
+        
         # Check if we have room to generate
         remaining_tokens = MAX_POS_ENCODING - len(input_ids)
         if remaining_tokens <= 0:
@@ -350,7 +395,8 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
     async def _generate_path(
         self,
         engine: InferenceEngine,
-        context_ids: list[int],
+        user_content: str,
+        shared_context: str,
         path_prefix: str,
         version: int = -1,
         sample_idx: int = -1,
@@ -359,12 +405,26 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
     ) -> ModelResponse | None:
         """Generate a single path given context and prefix.
         
+        Uses string-based context: rebuilds the full prompt each time.
+        Each path sees the same shared_context (prompt + goal), NOT other paths.
+        
+        Args:
+            engine: The inference engine
+            user_content: The original user problem/question
+            shared_context: Context up to (and including) the Goal, shared by all paths
+            path_prefix: The prefix for this path (e.g., "1", "2")
+            version: Model version for tracking
+            sample_idx: Sample index for logging
+            qid: Query ID for logging
+            path_idx: Index of this path for logging
+        
         Returns None if context already exceeds MAX_POS_ENCODING.
         """
-        # Tokenize path prefix and add to context
-        path_start = f"<Path>\n{path_prefix}"
-        path_start_ids = self.tokenizer.encode(path_start, add_special_tokens=False)
-        full_input_ids = context_ids + path_start_ids
+        # Build the prompt with context + path start
+        # Each path sees: shared_context + "<Path>\n{prefix}"
+        assistant_content = shared_context + f"<Path>\n{path_prefix}"
+        full_prompt = format_prompt_with_context(user_content, assistant_content)
+        full_input_ids = self.tokenizer.encode(full_prompt, add_special_tokens=False)
         
         # Check if we have room to generate
         remaining_tokens = MAX_POS_ENCODING - len(full_input_ids)
@@ -401,6 +461,10 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         qid: str = "unknown",
     ) -> ModelResponse | None:
         """Generate conclusion given full context with all paths.
+        
+        NOTE: This method is currently UNUSED. The workflow now skips conclusion
+        generation and only adds a <Conclusion>\\n marker for continuation.
+        Kept for potential future use or if conclusion generation is re-enabled.
         
         Returns None if context already exceeds MAX_POS_ENCODING.
         """
@@ -458,7 +522,8 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
     async def _process_parallel_stage(
         self,
         engine: InferenceEngine,
-        initial_input_ids: list[int],
+        user_content: str,
+        goal_context: str,
         goal_resp: ModelResponse,
         task_data: dict[str, Any],
         version: int = -1,
@@ -466,7 +531,21 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         qid: str = "unknown",
     ) -> tuple[list[int], list[float], list[int], str, int, int]:
         """
-        Process a parallel stage by generating paths and conclusion.
+        Process a parallel stage by generating paths (no conclusion).
+        
+        Uses string-based context: rebuilds the full prompt for each path.
+        Each path sees the same shared context (goal_context), NOT other paths.
+        Conclusion is skipped - only adds <Conclusion>\\n marker for continuation.
+        
+        Args:
+            engine: The inference engine
+            user_content: The original user problem/question
+            goal_context: Context up to and including </Goal> (string)
+            goal_resp: The ModelResponse from goal generation (for logprobs)
+            task_data: Task data (unused, kept for compatibility)
+            version: Model version for tracking
+            sample_idx: Sample index for logging
+            qid: Query ID for logging
         
         Returns:
             Tuple of (all_tokens, all_logprobs, all_versions, full_completion_str, 
@@ -476,7 +555,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         """
         # logger.info("Entering parallel stage")
         
-        # Build context up to goal
+        # Build goal tokens
         goal_tokens = goal_resp.output_tokens
         goal_str = self.tokenizer.decode(goal_tokens)
         
@@ -486,6 +565,9 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             goal_tokens = goal_tokens + goal_close_ids
             goal_str = self.tokenizer.decode(goal_tokens)
         
+        # Check token count using tokenized full context
+        initial_prompt = format_prompt_with_context(user_content, "")
+        initial_input_ids = self.tokenizer.encode(initial_prompt, add_special_tokens=False)
         context_ids = initial_input_ids + goal_tokens
         
         # Check if we've already exceeded MAX_POS_ENCODING after goal generation
@@ -501,16 +583,16 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         # Extract outline prefixes from goal
         outline_prefixes = extract_outline_prefixes(goal_str)
         if not outline_prefixes:
-            # nd in goal. Using default prefix '1'")
             outline_prefixes = ["1"]
         
         num_paths = len(outline_prefixes)
         # logger.info(f"Generating {num_paths} paths")
         
-        # Generate all paths in parallel
+        # Generate all paths - each path sees the same shared context (goal_context)
+        # This is string-based: we pass user_content and goal_context to _generate_path
         async with atrace_session_phase("generate_paths"):
             path_tasks = [
-                self._generate_path(engine, context_ids, prefix, version, sample_idx, qid, i)
+                self._generate_path(engine, user_content, goal_context, prefix, version, sample_idx, qid, i)
                 for i, prefix in enumerate(outline_prefixes)
             ]
             path_resps = await asyncio.gather(*path_tasks)
@@ -549,32 +631,13 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         # Find the longest path in this stage
         longest_path_tokens = max(path_token_lengths) if path_token_lengths else 0
         
-        context_with_paths_ids = context_ids + all_path_tokens
-        
-        # Generate conclusion (may return None if exceeded MAX_POS_ENCODING)
-        conclusion_resp = None
-        async with atrace_session_phase("generate_conclusion"):
-            conclusion_resp = await self._generate_conclusion(engine, context_with_paths_ids, version, sample_idx, qid)
-        
-        # Add conclusion markers and content (only if we got a response)
+        # Skip conclusion generation - just add <Conclusion>\n marker
+        # This matches generation_new.py behavior
         conclusion_open = "<Conclusion>\n"
         conclusion_open_ids = self.tokenizer.encode(conclusion_open, add_special_tokens=False)
         
-        if conclusion_resp is not None:
-            conclusion_content_ids = conclusion_resp.output_tokens
-            
-            # Add closing </Conclusion> tag
-            conclusion_str = self.tokenizer.decode(conclusion_content_ids)
-            if not conclusion_str.strip().endswith("</Conclusion>"):
-                conclusion_close_ids = self.tokenizer.encode("</Conclusion>", add_special_tokens=False)
-                conclusion_content_ids = conclusion_content_ids + conclusion_close_ids
-        else:
-            # No conclusion generated due to length limits
-            conclusion_content_ids = []
-            conclusion_str = ""
-        
-        # Assemble full sequence
-        all_tokens = goal_tokens + all_path_tokens + conclusion_open_ids + conclusion_content_ids
+        # Assemble full sequence (goal + paths + conclusion marker, NO conclusion content)
+        all_tokens = goal_tokens + all_path_tokens + conclusion_open_ids
         
         # Build logprobs and versions arrays
         # Goal tokens
@@ -582,7 +645,6 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         all_versions = goal_resp.output_versions + [-1] * (len(goal_tokens) - len(goal_resp.output_versions))
         
         # Path tokens (we only have logprobs for actual generated content, not markers)
-        path_token_idx = 0
         for prefix, path_resp in valid_path_data:
             path_open = f"<Path>\n{prefix}"
             path_open_ids = self.tokenizer.encode(path_open, add_special_tokens=False)
@@ -605,27 +667,19 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             all_logprobs.extend([0.0] * len(path_close_ids))
             all_versions.extend([-1] * len(path_close_ids))
         
-        # Conclusion tokens
+        # Conclusion marker tokens (no conclusion content)
         all_logprobs.extend([0.0] * len(conclusion_open_ids))
         all_versions.extend([-1] * len(conclusion_open_ids))
-        if conclusion_resp is not None:
-            all_logprobs.extend(conclusion_resp.output_logprobs)
-            all_versions.extend(conclusion_resp.output_versions)
-            
-            # Add closing tag logprobs/versions if needed
-            if not conclusion_str.strip().endswith("</Conclusion>"):
-                conclusion_close_ids = self.tokenizer.encode("</Conclusion>", add_special_tokens=False)
-                all_logprobs.extend([0.0] * len(conclusion_close_ids))
-                all_versions.extend([-1] * len(conclusion_close_ids))
         
         full_completion_str = self.tokenizer.decode(all_tokens)
-        # logger.info(f"Parallel stage complete: {num_paths} paths, {len(all_tokens)} tokens")
+        # logger.info(f"Parallel stage complete: {num_paths} paths, {len(all_tokens)} tokens (no conclusion)")
         
         return all_tokens, all_logprobs, all_versions, full_completion_str, total_path_tokens_in_stage, longest_path_tokens
     
     async def _generate_single_trajectory(
         self,
         engine: InferenceEngine,
+        user_content: str,
         input_ids: list[int],
         prompt_str: str,
         data: dict[str, Any],
@@ -635,9 +689,13 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         """
         Generate a single trajectory for one sample with multi-turn support.
         
+        Uses string-based context: tracks assistant_context as a string and rebuilds
+        the full prompt each time. This matches generation_new.py behavior.
+        
         Args:
             engine: The inference engine
-            input_ids: Tokenized prompt
+            user_content: The original user problem/question (extracted from data)
+            input_ids: Tokenized initial prompt (for building final trajectory)
             prompt_str: Decoded prompt string
             data: Task data including answer
             version: Current model version
@@ -664,35 +722,53 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         total_path_tokens = 0  # Total tokens in all <Path>...</Path> across all stages
         sum_longest_path_per_stage = 0  # Sum of longest path tokens per stage (for latency calculation)
         
-        # Current context starts with the initial prompt
-        current_context_ids = input_ids
+        # String-based context tracking (like generation_new.py)
+        # This is the accumulated assistant response content
+        assistant_context = ""
         
         # Multi-turn loop
         for turn_idx in range(self.max_turns):
+            # Check token count using current context
+            current_prompt = format_prompt_with_context(user_content, assistant_context)
+            current_context_ids = self.tokenizer.encode(current_prompt, add_special_tokens=False)
+            
             # Check if we still have room to generate
-            if len(current_context_ids) >= MAX_POS_ENCODING or "".join(all_completion_strs).endswith("<|im_end|>") or "</think>" in "".join(all_completion_strs):
+            completion_so_far = "".join(all_completion_strs)
+            if len(current_context_ids) >= MAX_POS_ENCODING or completion_so_far.endswith("<|im_end|}") or "</think>" in completion_so_far:
                 # No more room, stop generating
                 break
             
             # Step 1: Generate until </Goal>
             async with atrace_session_phase(f"generate_goal_{sample_idx}_turn{turn_idx}"):
-                goal_resp = await self._generate_until_goal(engine, current_context_ids, version, sample_idx, qid)
-                if goal_resp.output_tokens[-1] == 151645:
-                    # Model generated <|im_end|>, stop here
-                    all_output_tokens.extend(goal_resp.output_tokens)
-                    all_output_logprobs.extend(goal_resp.output_logprobs)
-                    all_output_versions.extend(goal_resp.output_versions)
-                    all_completion_strs.append(self.tokenizer.decode(goal_resp.output_tokens))
-                    break
+                goal_resp = await self._generate_until_goal(engine, user_content, assistant_context, version, sample_idx, qid)
+            
             # Handle case where goal generation was not possible (exceeded MAX_POS_ENCODING)
             if goal_resp is None:
                 # Cannot continue, stop here
                 break
-            if current_context_ids[-1] == 151645 or "".join(all_completion_strs).endswith("<|im_end|>")  or "</think>" in "".join(all_completion_strs):
+            
+            # Check if model generated <|im_end|>, stop here
+            if goal_resp.output_tokens and goal_resp.output_tokens[-1] == 151645:
+                all_output_tokens.extend(goal_resp.output_tokens)
+                all_output_logprobs.extend(goal_resp.output_logprobs)
+                all_output_versions.extend(goal_resp.output_versions)
+                all_completion_strs.append(self.tokenizer.decode(goal_resp.output_tokens))
                 break
-            # Step 2: Process parallel stage (paths + conclusion)
+            
+            # Decode goal and update string context
+            goal_str = self.tokenizer.decode(goal_resp.output_tokens)
+            
+            # Add closing </Goal> tag if stopped at </Outline>
+            if goal_str.strip().endswith("</Outline>") and not goal_str.strip().endswith("</Goal>"):
+                goal_str = goal_str + "</Goal>"
+            
+            # Update string context with goal (this is the shared context for paths)
+            goal_context = assistant_context + goal_str
+            
+            # Step 2: Process parallel stage (paths only, no conclusion)
+            # Pass string-based context to _process_parallel_stage
             turn_output_tokens, turn_output_logprobs, turn_output_versions, turn_completion_str, stage_path_tokens, stage_longest_path = await self._process_parallel_stage(
-                engine, current_context_ids, goal_resp, data, version, sample_idx, qid
+                engine, user_content, goal_context, goal_resp, data, version, sample_idx, qid
             )
             
             # Accumulate parallel metrics
@@ -705,14 +781,15 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             all_output_versions.extend(turn_output_versions)
             all_completion_strs.append(turn_completion_str)
             
-            # Update context for next turn: full sequence so far
-            current_context_ids = input_ids + all_output_tokens
+            # Update string context for next turn: add the full turn output
+            assistant_context += turn_completion_str
             
-            # Check if "\boxed{" appears in the completion
+            # Check stopping conditions
             completion_so_far = "".join(all_completion_strs)
+            current_prompt = format_prompt_with_context(user_content, assistant_context)
+            current_context_ids = self.tokenizer.encode(current_prompt, add_special_tokens=False)
             
-            # Check if we've hit the length limit
-            if len(current_context_ids) >= MAX_POS_ENCODING or current_context_ids[-1] == 151645 or completion_so_far.endswith("<|im_end|>") or "</think>" in "".join(all_completion_strs):
+            if len(current_context_ids) >= MAX_POS_ENCODING or completion_so_far.endswith("<|im_end|>") or "</think>" in completion_so_far:
                 break
         
         # Combine all turns into a single completion string
@@ -771,11 +848,11 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         """
         Run a single episode of parallel generation with GRPO support.
         
-        This generates n_samples trajectories per problem for GRPO:
-        1. For each sample, generates Goal with outlines
-        2. For each sample, generates parallel paths (one per outline)
-        3. For each sample, generates conclusion
-        4. Computes rewards and returns concatenated trajectories
+        Uses string-based context tracking. For each sample:
+        1. Generates Goal with outlines
+        2. Generates parallel paths (one per outline), each seeing the same context
+        3. Adds <Conclusion>\\n marker (skips conclusion generation)
+        4. Continues to next turn or finishes
         
         Returns trajectory dict with keys (batch size = n_samples):
             - input_ids: Full sequences (prompt + generation) for all samples
@@ -790,9 +867,19 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
             self.reward_fn = import_from_string(self.reward_fn)
             self.async_reward_fn = AsyncRewardWrapper(self.reward_fn, 60)
         
+        # Extract user content for string-based generation
+        prompt_data = self.data_extract_prompt_fn(data)
+        if isinstance(prompt_data, str):
+            user_content = prompt_data
+        elif isinstance(prompt_data, list) and len(prompt_data) > 0 and isinstance(prompt_data[0], dict):
+            # Extract from messages format - get the user message content
+            user_content = prompt_data[0].get("content", "")
+        else:
+            user_content = str(prompt_data)
+        
         # Get input_ids
         input_ids = self.get_input_ids_fn(
-            self.data_extract_prompt_fn(data),
+            prompt_data,
             self.tokenizer,
             self.enable_thinking,
             self.format_prompt_fn,
@@ -808,7 +895,7 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
         async with atrace_session_phase("generate_group"):
             trajectory_tasks = [
                 self._generate_single_trajectory(
-                    engine, input_ids, prompt_str, data, version, i
+                    engine, user_content, input_ids, prompt_str, data, version, i
                 )
                 for i in range(n_samples)
             ]
@@ -915,3 +1002,190 @@ class ParallelGenerationWorkflow(RolloutWorkflow):
                 await f.write("=" * 80 + "\n")
         
         return final_result
+
+
+# Define reward function at module level (must be picklable for multiprocessing)
+def simple_reward_fn(prompt, completion, input_tokens, output_tokens, answer, **kwargs):
+    """
+    Simple reward function that checks if the answer appears in the completion.
+    For real use, you should use a proper math answer parser.
+    """
+    # Check if the expected answer appears in the completion
+    if answer in completion:
+        return 1.0
+    else:
+        return 0.0
+
+
+async def test_main():
+    """
+    Test function for ParallelGenerationWorkflow with a local SGLang backend.
+    
+    This function demonstrates how to:
+    1. Connect to a running SGLang server (localhost:30000)
+    2. Create a ParallelGenerationWorkflow instance
+    3. Generate structured parallel completions for a test problem
+    4. Display the results
+    
+    Prerequisites:
+    - SGLang server running at localhost:30000
+    - Example: python -m sglang.launch_server --model-path <your-model> --port 30000
+    """
+    import os
+    
+    # Import required modules
+    from areal.api.cli_args import InferenceEngineConfig, GenerationHyperparameters
+    from areal.engine.sglang_remote import RemoteSGLangEngine
+    from areal.utils.hf_utils import load_hf_tokenizer
+    
+    # ========== Configuration ==========
+    
+    # SGLang server address (change if your server is at a different address)
+    server_addr = "localhost:30000"
+    
+    # Set environment variable for server discovery
+    os.environ["AREAL_LLM_SERVER_ADDRS"] = server_addr
+    
+    # Tokenizer path (should match your model)
+    # TODO: Change this to your actual tokenizer path
+    tokenizer_path = "/storage/openpsi/models/zzy/Qwen3-4B-s1-parallel-only-5"
+    
+    # Test problem
+    test_problem = {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Solve the following math problem step by step:\n\nJanet's ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?"
+            }
+        ],
+        "answer": "18",  # The correct answer
+        "query_id": "test_001",
+    }
+    
+    # ========== Setup Engine ==========
+    
+    print("=" * 80)
+    print("Testing Parallel Generation Workflow")
+    print("=" * 80)
+    print(f"\n[1/5] Connecting to SGLang server at {server_addr}...")
+    
+    # Create inference engine config
+    engine_config = InferenceEngineConfig(
+        experiment_name="test_parallel_gen",
+        trial_name="trial_0",
+        setup_timeout=120,
+    )
+    
+    # Create and initialize the engine
+    engine = RemoteSGLangEngine(engine_config)
+    engine.initialize(addr=server_addr)
+    
+    print(f"✓ Connected to SGLang server")
+    
+    # ========== Setup Workflow ==========
+    
+    print(f"\n[2/5] Setting up ParallelGenerationWorkflow...")
+    
+    # Load tokenizer
+    tokenizer = load_hf_tokenizer(tokenizer_path)
+    
+    # Generation hyperparameters
+    gconfig = GenerationHyperparameters(
+        n_samples=1,  # Generate 1 sample only
+        temperature=0.7,
+        top_p=0.9,
+        max_new_tokens=2048,
+    )
+    
+    # Create workflow
+    workflow = ParallelGenerationWorkflow(
+        reward_fn=simple_reward_fn,
+        gconfig=gconfig,
+        tokenizer=tokenizer,
+        enable_thinking=False,
+        max_goal_tokens=32768,
+        max_path_tokens=32768,
+        max_conclusion_tokens=32768,
+        max_turns=2,  # Allow up to 2 goal-paths-conclusion cycles
+        dump_dir="./test_parallel_gen_output",  # Save outputs here
+        format_prompt_fn=None,  # Use default chat template
+        reward_shaping_mode=None,  # No reward shaping for testing
+    )
+    
+    print(f"✓ Workflow created with {gconfig.n_samples} samples per problem")
+    
+    # ========== Run Generation ==========
+    
+    print(f"\n[3/5] Generating structured parallel completions...")
+    print(f"Problem: {test_problem['messages'][0]['content'][:100]}...")
+    
+    # Run the workflow
+    result = await workflow.arun_episode(engine, test_problem)
+    
+    print(f"✓ Generation complete!")
+    
+    # ========== Display Results ==========
+    
+    print(f"\n[4/5] Results Summary:")
+    print("=" * 80)
+    
+    # Extract results
+    input_ids = result["input_ids"]  # Shape: [n_samples, seq_len]
+    rewards = result["rewards"]  # Shape: [n_samples]
+    loss_mask = result["loss_mask"]  # Shape: [n_samples, seq_len]
+    
+    n_samples = input_ids.shape[0]
+    
+    for i in range(n_samples):
+        print(f"\n--- Sample {i+1}/{n_samples} ---")
+        
+        # Decode full sequence
+        full_seq = tokenizer.decode(input_ids[i].tolist(), skip_special_tokens=False)
+        
+        # Find where generation starts (where loss_mask becomes 1)
+        gen_start_idx = (loss_mask[i] == 1).nonzero(as_tuple=True)[0][0].item()
+        
+        # Decode prompt and generation separately
+        prompt = tokenizer.decode(input_ids[i][:gen_start_idx].tolist(), skip_special_tokens=True)
+        generation = tokenizer.decode(input_ids[i][gen_start_idx:].tolist(), skip_special_tokens=False)
+        
+        print(f"Reward: {rewards[i].item():.2f}")
+        print(f"Sequence length: {len(input_ids[i])} tokens")
+        print(f"Generated tokens: {(loss_mask[i] == 1).sum().item()} tokens")
+        print(f"\nPrompt (first 200 chars):\n{prompt[:200]}...")
+        print(f"\nGeneration (first 500 chars):\n{generation[:500]}...")
+        
+        # Count goal/path/conclusion blocks
+        n_goals = generation.count("<Goal>")
+        n_paths = generation.count("<Path>")
+        n_conclusions = generation.count("<Conclusion>")
+        print(f"\nStructure: {n_goals} Goal(s), {n_paths} Path(s), {n_conclusions} Conclusion(s)")
+    
+    # ========== Cleanup ==========
+    
+    print(f"\n[5/5] Cleaning up...")
+    engine.destroy()
+    print(f"✓ Engine destroyed")
+    
+    print("\n" + "=" * 80)
+    print("Test completed successfully!")
+    print(f"Full outputs saved to: ./test_parallel_gen_output")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    """
+    Run this script to test the ParallelGenerationWorkflow.
+    
+    Usage:
+        python parallel_generation.py
+    
+    Prerequisites:
+        1. Start SGLang server:
+           python -m sglang.launch_server --model-path <your-model> --port 30000
+        
+        2. Run this script:
+           python parallel_generation.py
+    """
+    import asyncio
+    asyncio.run(test_main())
