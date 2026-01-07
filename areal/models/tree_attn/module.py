@@ -162,7 +162,7 @@ class PytorchFlexAttention(torch.nn.Module):
 
 
 @contextmanager
-def patch_bridge_for_tree_attn(enable: bool = True):
+def patch_bridge_for_tree_training(enable: bool = True):
     """Context manager to patch LLMBridge for tree training with arbitrary attention mask.
 
     Parameters
