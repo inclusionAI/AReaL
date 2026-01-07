@@ -5,6 +5,8 @@ from areal.utils import logging
 logger = logging.getLogger(__name__)
 
 
+# Helper function for visualizing attention masks
+# Used for debugging and performance optimization
 def visualize_attention_mask(mask_tensor: torch.Tensor, granularity: int = 128) -> None:
     """Visualize an attention mask as a text grid with configurable granularity.
 
