@@ -467,7 +467,16 @@ class RayScheduler(Scheduler):
         logger.info(f"Successfully deleted workers for role '{role}'")
 
     def _cleanup_workers(self, workers: list[RayWorkerInfo]):
-        # Kill actors first
+        # Call destroy first for any engines that launch external processes (such as infer server)
+        # as ray actor destroy may not kill them properly
+        try:
+            ray.get([wi.actor.call.remote("destroy") for wi in workers])
+        except Exception:
+            logger.warning(
+                "Some workers could not call destroy. Skipping and killing ray actors"
+            )
+
+        # Kill actors
         for wi in workers:
             actor = wi.actor
             try:
