@@ -16,7 +16,7 @@ from areal.api.cli_args import MicroBatchSpec
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
-from areal.utils.tree_training.module import BLOCK_SIZE, USE_BLOCK_MASK
+from areal.models.tree_attn.module import BLOCK_SIZE, USE_BLOCK_MASK
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ def _insert_sequence(
     current.is_end = True
 
 
-@trace_perf("tree_training._compress_trie")
+@trace_perf("tree_attn._compress_trie")
 def _compress_trie(root: _BuildNode) -> TrieNode:
     """Compress a trie by merging linear chains into single TrieNodes."""
     trie_root = TrieNode(tree_id=root.tree_id)
@@ -213,7 +213,7 @@ def _compress_trie(root: _BuildNode) -> TrieNode:
 # =============================================================================
 
 
-@trace_perf("tree_training.build_packed_tree_batch")
+@trace_perf("tree_attn.build_packed_tree_batch")
 def build_packed_tree_batch(
     data: dict[str, Any],
     mb_spec: MicroBatchSpec,
@@ -315,7 +315,7 @@ def build_packed_tree_batch(
         )
 
         # Pack input_ids
-        with trace_scope("tree_training.pack_input_ids"):
+        with trace_scope("tree_attn.pack_input_ids"):
             input_ids = _pack_input_ids(
                 trie,
                 input_template,
@@ -323,7 +323,7 @@ def build_packed_tree_batch(
             )
 
         # Build attention mask
-        with trace_scope("tree_training.build_attention_mask"):
+        with trace_scope("tree_attn.build_attention_mask"):
             attention_mask = _build_attention_mask(
                 trie,
                 padded_size,
@@ -331,14 +331,14 @@ def build_packed_tree_batch(
             )
 
         # Amend position_ids
-        with trace_scope("tree_training.get_position_ids"):
+        with trace_scope("tree_attn.get_position_ids"):
             position_ids = get_packed_tree_position_ids(
                 input_ids,
                 attention_mask,
             )
 
         # Pack extra data
-        with trace_scope("tree_training.pack_extra_data"):
+        with trace_scope("tree_attn.pack_extra_data"):
             extra_data = _pack_extra_data(
                 trie,
                 data,
@@ -404,7 +404,7 @@ def _compute_padded_size(
         return num_tokens
 
 
-@trace_perf("tree_training._greedy_build_tries")
+@trace_perf("tree_attn._greedy_build_tries")
 def _greedy_build_tries(
     data: dict[str, Any],
     max_tokens_per_tree: int,

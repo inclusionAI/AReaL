@@ -90,13 +90,13 @@ from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
-from areal.utils.tree_training.data import build_packed_tree_batch
-from areal.utils.tree_training.functional import (
+from areal.models.tree_attn.tree import build_packed_tree_batch
+from areal.models.tree_attn.functional import (
     _gather_packed_tree_logprobs,
     gather_packed_tree_logprobs_entropy,
     merge_packed_tree_results,
 )
-from areal.utils.tree_training.module import BLOCK_SIZE, patch_bridge_for_tree_training
+from areal.models.tree_attn.module import BLOCK_SIZE, patch_bridge_for_tree_training
 
 if TYPE_CHECKING:
     from areal.engine.ppo.actor import PPOActorConfig

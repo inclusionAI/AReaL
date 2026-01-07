@@ -17,7 +17,7 @@ from areal.utils.functional.vocab_parallel import (
 )
 
 if TYPE_CHECKING:
-    from areal.utils.tree_training.data import TrieNode
+    from areal.models.tree_attn.tree import TrieNode
 
 
 def _compute_internal_node_logprobs(
