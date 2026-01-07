@@ -44,6 +44,12 @@ def find_free_ports(
     """
     Find multiple free ports within a specified range.
 
+    .. warning::
+        TOCTOU Race Condition: There is an inherent race between checking if a
+        port is free and actually binding to it. The port may become occupied
+        by another process between the check and use. Callers should implement
+        retry logic if they cannot tolerate bind failures.
+
     Args:
         count: Number of free ports to find
         port_range: Tuple of (min_port, max_port) to search within
@@ -102,6 +108,8 @@ def find_free_ports(
 def is_port_free(port: int) -> bool:
     """
     Check if a port is free by attempting to bind to it.
+
+    Note: Subject to the same TOCTOU race condition as :func:`find_free_ports`.
 
     Args:
         port: Port number to check

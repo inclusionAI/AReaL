@@ -293,6 +293,7 @@ class RemoteInfEngine(InferenceEngine):
         self._workflow_executor: WorkflowExecutor | None = None
         self._initialized = False
         self.local_server_processes: list[LocalInfServerInfo] = []
+        self.max_port_retries = 5  # Retries for TOCTOU race in port allocation
 
     def _create_session(self) -> aiohttp.ClientSession:
         """Create a ClientSession for the current asyncio coroutine.
@@ -987,33 +988,73 @@ class RemoteInfEngine(InferenceEngine):
         uvloop.run(_fn())
 
     def launch_server(self, server_args: dict[str, Any]) -> LocalInfServerInfo:
-        """Launch a local inference server."""
+        """Launch a local inference server.
+
+        Automatically retries with different ports if the server fails to start
+        due to port conflicts (TOCTOU race condition in port allocation).
+        The number of retries is controlled by ``self.max_port_retries``.
+
+        Args:
+            server_args: Server configuration arguments.
+
+        Returns:
+            LocalInfServerInfo with server details.
+
+        Raises:
+            TimeoutError: If server fails to start after all retries.
+        """
         server_args["host"] = gethostip()
-        server_args["port"] = find_free_ports(1)[0]
-        process = self.backend.launch_server(server_args)
-        address = f"{server_args['host']}:{server_args['port']}"
-        server_info = LocalInfServerInfo(
-            host=server_args["host"],
-            port=server_args["port"],
-            process=process,
-        )
-        try:
-            self._wait_for_server(address)
-            self.local_server_processes.append(server_info)
-            if ray.is_initialized():
-                # do not return with process for ray as it is not picklable
-                return LocalInfServerInfo(
-                    host=server_args["host"],
-                    port=server_args["port"],
-                    process=None,
-                )
-            return server_info
-        except TimeoutError:
-            logger.warning(
-                f"Launch local server timeouted at {address} after {self.config.setup_timeout}s."
+        tried_ports: set[int] = set()
+        last_error: Exception | None = None
+
+        for attempt in range(self.max_port_retries):
+            # Find a port, excluding previously failed ones
+            port = find_free_ports(1, exclude_ports=tried_ports)[0]
+            tried_ports.add(port)
+            server_args["port"] = port
+
+            process = self.backend.launch_server(server_args)
+            address = f"{server_args['host']}:{port}"
+            server_info = LocalInfServerInfo(
+                host=server_args["host"],
+                port=port,
+                process=process,
             )
-            self._shutdown_one_server(server_info)
-            raise
+
+            try:
+                self._wait_for_server(address)
+                self.local_server_processes.append(server_info)
+                if ray.is_initialized():
+                    # do not return with process for ray as it is not picklable
+                    return LocalInfServerInfo(
+                        host=server_args["host"],
+                        port=port,
+                        process=None,
+                    )
+                return server_info
+            except TimeoutError as e:
+                last_error = e
+                # Check if server died quickly (likely port conflict)
+                if process.poll() is not None:
+                    logger.warning(
+                        f"Server failed to start on port {port} "
+                        f"(attempt {attempt + 1}/{self.max_port_retries}), "
+                        f"retrying with different port..."
+                    )
+                    continue
+                # Server is still running but not responding - don't retry
+                logger.warning(
+                    f"Launch local server timed out at {address} "
+                    f"after {self.config.setup_timeout}s."
+                )
+                self._shutdown_one_server(server_info)
+                raise
+
+        # All retries exhausted
+        raise TimeoutError(
+            f"Failed to launch server after {self.max_port_retries} attempts. "
+            f"Tried ports: {sorted(tried_ports)}"
+        ) from last_error
 
     def _shutdown_one_server(self, server_info: LocalInfServerInfo):
         addr = f"{server_info.host}:{server_info.port}"
