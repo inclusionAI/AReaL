@@ -166,6 +166,8 @@ def test_tree_training_forward(engine, mock_tree_input):
     logprob_tree = tree_engine.forward(input_=mock_tree_input)
 
     # Check if results match with detailed error reporting
+    # The tolenrance values are high due to precision problems introduced
+    # by flex attention with customized attention masks.
     rtol, atol = 0.2, 0.2
     is_close = torch.isclose(logprob_tree, logprob_baseline, rtol=rtol, atol=atol)
     if not is_close.all():
