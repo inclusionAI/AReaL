@@ -16,13 +16,14 @@ from areal.api.io_struct import FinetuneSpec
 from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
 from areal.utils import logging
+from areal.tests.utils import get_model_path
 
 logger = logging.getLogger("MegatronEngine Test")
 
 
-MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen2-1.5B-Instruct/"
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "Qwen/Qwen2-1.5B-Instruct"
+MODEL_PATH = get_model_path(
+    "/storage/openpsi/models/Qwen__Qwen2-1.5B-Instruct/", "Qwen/Qwen2-1.5B-Instruct"
+)
 
 
 @pytest.fixture(scope="module")
