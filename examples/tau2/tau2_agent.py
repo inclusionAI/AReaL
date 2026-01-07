@@ -115,7 +115,8 @@ class Tau2Runner:
                 llm_args=self.gen_args,
                 completion_fn=_acompletion,
             )
-
+            print(f"[debug] User llm: {self.econfig.user_llm}")
+            print(f"[debug] User llm args: {self.econfig.user_llm_args}")
             user = UserSimulator(
                 tools=user_tools if len(user_tools) > 0 else None,
                 instructions=str(task.user_scenario),
