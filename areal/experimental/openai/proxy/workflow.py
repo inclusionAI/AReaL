@@ -62,6 +62,9 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 else:
                     raise ValueError(f"Invalid reward type: {type(rewards)}")
 
+            # Pop a session id from the server queue and ignore it.
+            _ = await self.proxy_server.fetch_next_session()
+
         return await self.proxy_server.wait_for_session(
             session_id, discount=self.discount, style=self.export_style
         )

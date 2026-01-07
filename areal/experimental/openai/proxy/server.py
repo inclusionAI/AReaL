@@ -134,20 +134,20 @@ def build_app(
                     status_code=429,
                     detail="No available capacity to start a new session",
                 )
-            state.capacity -= 1
 
             idx = 0
             while (session_id := f"{task_id}-{idx}") in state.session_cache:
                 idx += 1
 
+            queue = state.active_sessions
+            try:
+                queue.put_nowait(session_id)
+            except Full:
+                raise HTTPException(status_code=503, detail="Queue is full")
+
+            state.capacity -= 1
             session_cache = state.session_cache
             session_cache[session_id] = SessionData(session_id=session_id)
-
-        queue = state.active_sessions
-        try:
-            queue.put_nowait(session_id)
-        except Full:
-            raise HTTPException(status_code=503, detail="Queue is full")
 
         return {"session_id": session_id}
 
