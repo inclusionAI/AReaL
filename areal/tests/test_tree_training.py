@@ -15,8 +15,8 @@ from areal.api.cli_args import (
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
-from areal.utils import logging
 from areal.tests.utils import get_model_path
+from areal.utils import logging
 
 logger = logging.getLogger("MegatronEngine Test")
 
