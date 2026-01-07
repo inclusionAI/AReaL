@@ -176,7 +176,7 @@ def patch_bridge_for_tree_training(enable: bool = True):
 
     Examples
     --------
-    >>> with patch_bridge_for_tree_attn(enable=True):
+    >>> with patch_bridge_for_tree_training(enable=True):
     ...     # LLMBridge is patched here
     ...     model = create_model()
     ... # Patch is reverted after exiting the context
