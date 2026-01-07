@@ -15,8 +15,6 @@
   `pyproject.toml`. Surface any formatting gaps you cannot auto-fix.
 - **Docs**: Source lives under `docs/` (Jupyter Book). Coordinate doc edits with the
   docs build pipeline.
-- **Legacy code**: `realhf/` is deprecated—do not modify or import from it; migrate uses
-  into `areal/` equivalents instead.
 - **Collaboration**: Before editing code, outline the proposed plan and confirm it with
   the user.
 
@@ -59,11 +57,7 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
     multi-turn, RLVR, vision RLVR workflows, plus `openai_agent/` for OpenAI Agent-style
     implementations.
 - `assets/` — Figures and other static assets referenced across docs and blogs.
-- `benchmark/` — Regression baselines, benchmark snapshots, and reference metrics (e.g.,
-  `verl_v0_3_0_post1_*`).
 - `blog/` — Release notes and update write-ups documenting project progress.
-- `csrc/` — CUDA/C++ extensions (run `build_ext --inplace` or reinstall editable wheels
-  after edits).
 - `docs/` — Jupyter Book source for https://inclusionai.github.io/AReaL/ plus CLI
   reference generators.
 - `evaluation/` — Offline scoring pipelines (math, code, Elo) and shared
@@ -77,8 +71,6 @@ When unsure, leave a `TODO(agent)` comment and note the constraint in your respo
   experimentation.
 - `patch/` — In-tree patches applied to third-party dependencies (e.g., SGLang
   hotfixes).
-- `realhf/` — **Legacy, read-only.** Do not modify or import; migrate any `realhf` call
-  sites to `areal/` equivalents. Flag lingering usage in reviews/issues.
 - `recipe/` — Deployment recipes and higher-level orchestration configs per target
   environment.
 
@@ -322,8 +314,8 @@ skipped.
 - **Docs portal** (`https://inclusionai.github.io/AReaL/`): Hosted Jupyter Book with the
   full table of contents; use it to cross-check rendered diagrams, formulas, and links.
 - **Tutorials & quickstart** (`docs/tutorial/quickstart.md`): End-to-end GSM8K GRPO run
-  covering single-node LocalLauncher flows, Ray/Slurm deployment knobs, SkyPilot
-  recipes, and the legacy→lite config converter.
+  covering single-node LocalLauncher flows, Ray/Slurm deployment knobs, and SkyPilot
+  recipes.
 - **Lite deep dive** (`docs/lite/gsm8k_grpo.md`): Architecture-level walkthrough of how
   launchers, RemoteSGLangEngine, workflows, and FSDP PPO actors coordinate during
   asynchronous GRPO on GSM8K; great for understanding control flow before editing

@@ -755,7 +755,7 @@ Like `Saver`, it automatically handles scheduling based on configuration.
 ### Tracking Metrics with `stats_tracker`
 
 The
-[`stats_tracker`](https://github.com/inclusionAI/AReaL/blob/main/realhf/base/stats_tracker.py)
+[`stats_tracker`](https://github.com/inclusionAI/AReaL/blob/main/areal/utils/stats_tracker.py)
 collects and aggregates training statistics across parallel ranks.
 
 #### Recording Scalars

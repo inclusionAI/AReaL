@@ -422,8 +422,8 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
     )
 
     # Verify conversation history
-    stored_messages_c2 = openai_client.get_completions(c2.id).messages
-    stored_messages_c3 = openai_client.get_completions(c3.id).messages
+    stored_messages_c2 = openai_client.get_interaction(c2.id).messages
+    stored_messages_c3 = openai_client.get_interaction(c3.id).messages
 
     # Verify thinking tags are stripped from assistant messages
     for msg_list in [stored_messages_c2, stored_messages_c3]:
@@ -464,7 +464,7 @@ async def test_multi_round_conversation_with_thinking_and_tool_calling(openai_cl
 async def test_multi_step_tool_calling_concat_style(openai_client):
     """Test multi-round conversation with tool calling and concat-style export.
 
-    This test ensures that when using `export_completions(style="concat")`,
+    This test ensures that when using `export_interactions(style="concat")`,
     the conversation history correctly handles tool calls while stripping
     <think> tags, and the resulting loss masks are correct for the
     concatenated trajectories.
@@ -534,8 +534,8 @@ async def test_multi_step_tool_calling_concat_style(openai_client):
     openai_client.set_reward(c_b1.id, 3.0)
 
     # Export completions
-    leaf_completions = openai_client.export_completions(style="concat")
-    all_completions = openai_client.export_completions(style="individual")
+    leaf_completions = openai_client.export_interactions(style="concat")
+    all_completions = openai_client.export_interactions(style="individual")
 
     # Verify exports
     assert set(leaf_completions.keys()) == {c_a1.id, c_b1.id}

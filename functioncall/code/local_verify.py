@@ -12,11 +12,11 @@ from io import StringIO
 from typing import Dict, List
 
 from functioncall.base.utils import load_jsonl, logger
-from realhf.base import logging
+from areal.utils import logging
 
 SINGLE_CASE_EXEC_TIMEOUT = 6
 
-logger = logging.getLogger("function call")
+logger = logging.getLogger("FunctionCall")
 
 
 def capture_stdout(code):

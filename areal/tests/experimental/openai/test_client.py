@@ -218,8 +218,8 @@ async def test_multi_round_conversation_with_thinking(openai_client):
     c3 = await openai_client.chat.completions.create(messages=messages, max_tokens=2048)
 
     # Verify conversation history
-    stored_messages_c2 = openai_client.get_completions(c2.id).messages
-    stored_messages_c3 = openai_client.get_completions(c3.id).messages
+    stored_messages_c2 = openai_client.get_interaction(c2.id).messages
+    stored_messages_c3 = openai_client.get_interaction(c3.id).messages
 
     # Verify thinking tags are stripped from assistant messages
     for msg_list in [stored_messages_c2, stored_messages_c3]:
