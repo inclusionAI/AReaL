@@ -1,3 +1,60 @@
+这是 AReaL 跑 gem minesweeper 的代码
+
+# 一些准备
+
+需要事先编译好 `multitask_agent/gem_train/minesweeper/a.cpp`，并且把可执行文件的路径放到训练脚本里。
+
+gem 目前有一个 bug，他判断游戏结束的标准是所以安全的格子开了，所有有雷的格子标记了。但是他只会在你开一个格子的时候进行这个判断，标记格子的时候不会进行判断。所以我对 gem 的代码做了一点修改，只要开了所有安全的格子游戏就结束。
+
+```
+diff --git a/gem/envs/game_env/minesweeper.py b/gem/envs/game_env/minesweeper.py
+index 06b5791..31f8be8 100644
+--- a/gem/envs/game_env/minesweeper.py
++++ b/gem/envs/game_env/minesweeper.py
+@@ -260,7 +260,7 @@ class MinesweeperEnv(Env):
+             bool: True if the board is in a solved state, False otherwise.
+         """
+         return all(
+-            (self.grid[r][c] == -1 and self.flags[r][c])
++            self.grid[r][c] == -1
+             or (self.grid[r][c] != -1 and self.revealed[r][c])
+             for r in range(self.rows)
+             for c in range(self.cols)
+```
+
+# 训练
+
+```bash
+bash scripts/launch/minesweeper-1.7b-local.sh
+# or, in a ray cluster
+bash scripts/launch/minesweeper-1.7b-ray-2nodes.sh
+```
+
+# 测试
+
+## 生成 Rollout
+
+修改 `scripts/launch/eval.sh`，填入你的 checkpoint 的路径。
+
+```bash
+bash scripts/launch/eval.sh
+```
+
+## 计算 success rate
+
+在 log 目录下运行
+```bash
+python3 /path/to/project/scripts/utils/gem_sr.py generated/0
+```
+
+# 一些事情
+
+训练使用的环境是 `+env_name=game:Minesweeper-v0-easy-with-template`，`-with-template` 的环境，同一个 group 会使用同样的开局，且开局就是走了一步的状态，固定开中间的格子。如果设置 `+minesweeper_random_first_move=True`，开局走的那一步就是随机的，但是同一个 group 里会是同一个。如果直接使用 gem 原本的环境，即 `+env_name=game:Minesweeper-v0-easy`，那么开局不会固定走一步，且同一个 group 里的 setup 也是不一样的。
+
+我试了一下，1.7b 直接跑的话，模型会学会生成一堆不合法的 action，比如开一个已经开过的格子，开边界外的格子，导致 traj 过长。所以我在脚本里加上了 `+invalid_action_reward=-0.05`，给不合法的 action 一个 penalty。
+
+---
+
 <h1 align="center">
 <em>AReaL</em>: A Large-Scale Asynchronous Reinforcement Learning System
 </h1>
