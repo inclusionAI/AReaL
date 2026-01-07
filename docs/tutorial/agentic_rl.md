@@ -153,7 +153,7 @@ response = await agent.astep("Solve: 2 + 2 = ?")
 
 # Evaluate and set reward
 reward = math_reward_fn(response.msg.content, "4")
-client.set_final_reward(reward)
+client.set_last_reward(reward)
 ```
 
 #### Step 4: Wrapping the Agent in a Reusable Class
@@ -194,7 +194,7 @@ class CamelMathAgent:
 
         # Evaluate reward and set reward on client for RL training
         reward = await self.async_reward_fn(result=content, answer=data["answer"])
-        client.set_final_reward(reward)
+        client.set_last_reward(reward)
 
         return reward
 ```
@@ -506,7 +506,7 @@ class OpenAIAgentWrapper:
             prompt_ids=None,
             completion_ids=None,
         )
-        client.set_final_reward(reward)
+        client.set_last_reward(reward)
 
         return reward
 ```
