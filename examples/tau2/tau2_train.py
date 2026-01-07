@@ -286,7 +286,7 @@ def main(args):
                 max_total_tokens=config.gconfig.max_tokens,
             )
             server.start(wait_until_ready=True)
-            workflow = Tau2Workflow(
+            workflow_kwargs = dict(
                 proxy_server=server,
                 gconfig=config.gconfig.new(temperature=temperature),
                 econfig=config.econfig,
@@ -302,20 +302,25 @@ def main(args):
                     dump_dir,
                 ),
             )
-            return server, workflow
+            return server, workflow_kwargs
 
-        proxy_server, workflow = _get_server_and_workflow(
+        proxy_server, workflow_kwargs = _get_server_and_workflow(
             trainer.rollout, is_eval=False
         )
 
         if config.do_eval:
-            eval_proxy_server, eval_workflow = _get_server_and_workflow(
+            eval_proxy_server, eval_workflow_kwargs = _get_server_and_workflow(
                 trainer.eval_rollout, is_eval=True
             )
         else:
-            eval_proxy_server, eval_workflow = None, None
+            eval_proxy_server, eval_workflow_kwargs = None, None
 
-        trainer.train(workflow, eval_workflow, granularity=1)
+        trainer.train(
+            workflow="examples.tau2.tau2_train.Tau2Workflow",
+            workflow_kwargs=workflow_kwargs,
+            eval_workflow="examples.tau2.tau2_train.Tau2Workflow",
+            eval_workflow_kwargs=eval_workflow_kwargs,
+        )
         proxy_server.close()
         if eval_proxy_server is not None:
             eval_proxy_server.close()
