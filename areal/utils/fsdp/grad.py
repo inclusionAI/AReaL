@@ -116,11 +116,12 @@ def get_grad_norm_fp32(
                 op=dist.ReduceOp.MAX,
                 group=data_parallel_group,
             )
-        dist.all_reduce(
-            total_norm_cuda,
-            op=dist.ReduceOp.MAX,
-            group=model_parallel_group,
-        )
+        if model_parallel_group is not None:
+            dist.all_reduce(
+                total_norm_cuda,
+                op=dist.ReduceOp.MAX,
+                group=model_parallel_group,
+            )
         total_norm = float(total_norm_cuda.item())
     else:
         if norm_type == 2.0 and not offload_params:
@@ -151,11 +152,12 @@ def get_grad_norm_fp32(
                 op=dist.ReduceOp.SUM,
                 group=data_parallel_group,
             )
-        dist.all_reduce(
-            total_norm_cuda,
-            op=dist.ReduceOp.SUM,
-            group=model_parallel_group,
-        )
+        if model_parallel_group is not None:
+            dist.all_reduce(
+                total_norm_cuda,
+                op=dist.ReduceOp.SUM,
+                group=model_parallel_group,
+            )
         total_norm = float(total_norm_cuda.item()) ** (1.0 / norm_type)
 
     return total_norm
@@ -222,8 +224,9 @@ def clip_grad_by_total_norm_fp32(
 
 def fsdp2_clip_grad_norm(
     parameters: list[nn.Parameter],
-    nd_device_mesh: DeviceMesh,
     max_norm: float,
+    fsdp_group: ProcessGroup,
+    tp_group: ProcessGroup | None = None,
     norm_type: float = 2.0,
     offload_params: bool = False,
 ) -> float:
@@ -232,10 +235,7 @@ def fsdp2_clip_grad_norm(
             f"Invalid norm_type {norm_type}. Must be a positive float or inf."
         )
 
-    # These dims are guaranteed to exist by FSDPParallelDims
-    fsdp_group = nd_device_mesh["dp_sp"].get_group()
-    tp_group = nd_device_mesh["tp"].get_group()
-    tensor_parallel_rank = dist.get_rank(tp_group)
+    tensor_parallel_rank = dist.get_rank(tp_group) if tp_group is not None else 0
 
     grads_for_norm = get_main_grads_for_grad_norm(parameters, tensor_parallel_rank)
 

@@ -195,7 +195,7 @@ class TrainEngine(abc.ABC):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> list[dict[str, Any]]:
@@ -210,8 +210,8 @@ class TrainEngine(abc.ABC):
         ----------
         data : list[dict[str, Any]]
             A list of input data dictionaries.
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str | None, optional
-            The workflow to use for rollout generation, by default None.
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+            The workflow to use for rollout generation.
         workflow_kwargs : dict[str, Any] | None, optional
             Keyword arguments to pass to the workflow constructor, by default None.
         group_size : int, optional
@@ -230,7 +230,7 @@ class TrainEngine(abc.ABC):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
@@ -242,8 +242,8 @@ class TrainEngine(abc.ABC):
         ----------
         dataloader : StatefulDataLoader
             The dataloader to fetch data from.
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str | None, optional
-            The workflow to use for rollout generation, by default None.
+        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+            The workflow to use for rollout generation.
         workflow_kwargs : dict[str, Any] | None, optional
             Keyword arguments to pass to the workflow constructor, by default None.
         should_accept_fn : Callable[[dict[str, Any]], bool] | str | None, optional

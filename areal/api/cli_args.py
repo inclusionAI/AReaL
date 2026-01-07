@@ -378,6 +378,42 @@ class FSDPEngineConfig:
     )
 
 
+@dataclass
+class ArchonEngineConfig:
+    """Configuration for Archon Engine training backend."""
+
+    # Attention backend
+    attn_type: str = field(
+        default="sdpa",
+        metadata={
+            "help": "Attention backend type.",
+            "choices": ["sdpa", "varlen"],
+        },
+    )
+
+    # CPU offloading for FSDP
+    offload_params: bool = field(
+        default=False,
+        metadata={"help": "Whether to offload FSDP parameters to CPU."},
+    )
+
+    # Activation Checkpointing (Gradient Checkpointing)
+    recompute_granularity: str = field(
+        default="full",
+        metadata={
+            "help": "Activation checkpointing granularity.",
+            "choices": ["none", "full", "selective"],
+        },
+    )
+    recompute_num_layers: int = field(
+        default=1,
+        metadata={
+            "help": "For selective recompute: checkpoint every N layers. "
+            "Set to 0 for op-level selective checkpointing."
+        },
+    )
+
+
 # These configurations are used by Megatron Bridge to build Megatron models.
 @dataclass
 class DistributedDataParallelConfig:
@@ -712,6 +748,7 @@ class TrainEngineConfig:
         metadata={"help": "Weight update backend type.", "choices": ["disk", "xccl"]},
     )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
+    archon: ArchonEngineConfig = field(default_factory=ArchonEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
 
     # Lora

@@ -535,7 +535,7 @@ class TrainController:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: str,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
         group_size: int = 1,

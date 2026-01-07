@@ -430,7 +430,7 @@ class MegatronEngine(TrainEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> dict[str, Any]:
@@ -445,7 +445,7 @@ class MegatronEngine(TrainEngine):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,

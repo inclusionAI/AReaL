@@ -252,7 +252,7 @@ class ModelAllocation:
     Parameters
     ----------
     backend : str
-        Backend type ("sglang", "vllm", "fsdp", "megatron")
+        Backend type ("sglang", "vllm", "fsdp", "megatron", "archon")
     name : str, optional
         Component name for referencing via allocation_mode[name]
     parallel : ParallelStrategy
@@ -265,7 +265,7 @@ class ModelAllocation:
     >>> ModelAllocation("sglang", "rollout", ParallelStrategy(dp=2), SchedulingStrategy("separation"))
     """
 
-    backend: Literal["fsdp", "megatron", "vllm", "sglang", "cpu"]
+    backend: Literal["fsdp", "megatron", "archon", "vllm", "sglang", "cpu"]
     name: str | None
     parallel: ParallelStrategy | None
     scheduling_strategy: SchedulingStrategy
@@ -295,6 +295,23 @@ class ModelAllocation:
                 raise AllocationValidationError(
                     f"FSDP backend only supports data/tensor/context parallelism. "
                     f"Got strategy: {self.parallel}"
+                )
+
+        if self.backend == "archon":
+            if self.parallel.pipeline_parallel_size > 1:
+                raise AllocationValidationError(
+                    f"Archon backend does not support pipeline parallelism. "
+                    f"Got pp={self.parallel.pipeline_parallel_size}"
+                )
+            if self.parallel.context_parallel_size > 1:
+                raise AllocationValidationError(
+                    f"Archon backend does not support context parallelism. "
+                    f"Got cp={self.parallel.context_parallel_size}"
+                )
+            if self.parallel.expert_parallel_size > 1:
+                raise AllocationValidationError(
+                    f"Archon backend does not support expert parallelism. "
+                    f"Got ep={self.parallel.expert_parallel_size}"
                 )
 
     @property
@@ -443,8 +460,10 @@ class AllocationMode:
         return [a for a in self.allocations if a.backend in ("sglang", "vllm")]
 
     def _get_training_allocations(self) -> list[ModelAllocation]:
-        """Get all training allocations (fsdp, megatron backends)."""
-        return [a for a in self.allocations if a.backend in ("fsdp", "megatron")]
+        """Get all training allocations (fsdp, megatron, archon backends)."""
+        return [
+            a for a in self.allocations if a.backend in ("fsdp", "megatron", "archon")
+        ]
 
     ########### Legacy Attributes for Backward Compatiblity ###########
     @property
@@ -587,7 +606,7 @@ ALLOCATION_GRAMMAR = """
 
     EVAL: "cpu" | "eval"
     INFER_BACKEND: "sglang" | "vllm"
-    TRAIN_BACKEND: "fsdp" | "megatron"
+    TRAIN_BACKEND: "fsdp" | "megatron" | "archon"
 
     NAME: /[a-zA-Z_][a-zA-Z0-9_]*/
     NUMBER: /[1-9][0-9]*/
