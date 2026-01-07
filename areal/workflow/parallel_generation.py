@@ -1153,7 +1153,7 @@ async def test_main():
         print(f"Sequence length: {len(input_ids[i])} tokens")
         print(f"Generated tokens: {(loss_mask[i] == 1).sum().item()} tokens")
         print(f"\nPrompt (first 200 chars):\n{prompt[:200]}...")
-        print(f"\nGeneration (first 500 chars):\n{generation[:500]}...")
+        print(f"\nGeneration (first 500 chars):\n{generation[:50000]}...")
         
         # Count goal/path/conclusion blocks
         n_goals = generation.count("<Goal>")
