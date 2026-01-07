@@ -9,7 +9,7 @@ ignore_data_skip: true
 overwrite_output_dir: true
 save_only_model: true
 save_safetensors: true
-gradient_accumulation_steps: 1
+gradient_accumulation_steps: 2
 gradient_checkpointing: true
 learning_rate: 0.00001
 logging_steps: 1

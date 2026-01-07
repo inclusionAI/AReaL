@@ -31,13 +31,13 @@ import re
 
 
 # Configuration
-# MODEL_PATH = "models/zzy/Qwen3-ins-4b-5-test"
+MODEL_PATH = "Qwen/Qwen3-4b-instruct-2507"
 
 # System prompt
 SYSTEM_PROMPT = """You are Qwen, created by Alibaba Cloud. You are a helpful assistant."""
 def format_chat_template(system_prompt: str, user_content: str, assistant_start: str = "") -> str:
     """Format content using ChatML template"""
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4b-instruct-2507")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},

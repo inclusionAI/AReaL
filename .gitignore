@@ -1,3 +1,8 @@
+LLaMA-Factory-direct-conversation/.sglang/
+LLaMA-Factory-direct-conversation/models/
+LLaMA-Factory-direct-conversation/s1-parallel/
+
+
 # Legacy codes
 .legacy/
 .data/
@@ -193,3 +198,5 @@ wandb/
 outputs/
 sympy/
 !/docs/figures/*
+
+LLaMA-Factory-direct-conversation/s1-parallel/AIME24.jsonl
