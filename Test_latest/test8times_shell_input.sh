@@ -19,7 +19,7 @@ if [ -z "$MODEL" ]; then
   exit 1
 fi
 
-INPUT_FILE="/storage/openpsi/users/zzy/parallel_thinking/parallel-thinking-main/Test/AIME24.jsonl"
+ INPUT_FILE="/path/to/your/aime24.jsonl"  # Replace with your actual input file path
 
 # OUTPUT_DIR set to MODEL path
 OUTPUT_DIR=$MODEL
