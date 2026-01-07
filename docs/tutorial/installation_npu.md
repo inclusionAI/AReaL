@@ -22,8 +22,9 @@ The following hardware configuration has been extensively tested:
 | Ascend HDK       |                                                                                                 25.2.1                                                                                                 |
 | CANN             |                                                                                                8.3.RC2                                                                                                 |
 | Git LFS          | Required for downloading models, datasets, and AReaL code. See [installation guide](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage) |
-| Docker           |                                                                                                 27.5.1                                                                                                 |
-| AReaL Image      |                                                            `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0rc1` (see details below)                                                            |
+| Docker           |                                                                                                 27.2.0                                                                                                 |
+| AReaL Image (A2) |                                                            `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a2` (see details below)                                                            |
+| AReaL Image (A3) |                                                            `swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a3` (see details below)                                                            |
 
 **Note**: This tutorial does not cover the installation of CANN, or shared storage
 mounting, as these depend on your specific node configuration and system version. Please
@@ -33,7 +34,8 @@ vLLM-Ascend community at
 
 ## Runtime Environment
 
-We recommend using Docker with our provided image for NPU.
+We recommend using Docker with our provided image for NPU, which contains CANN and
+pre-built vLLM and vLLM-Ascend.
 
 ### Create Container
 
@@ -41,7 +43,9 @@ We recommend using Docker with our provided image for NPU.
 WORK_DIR=<your_workspace>
 CONTAINER_WORK_DIR=<your_container_workspace>
 
-IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0rc1
+# Use A2/A3 image depending on your hardware type
+# IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a2
+IMAGE=swr.cn-north-9.myhuaweicloud.com/areal/areal_npu:v0.5.0-a3
 CONTAINER_NAME=areal_npu
 
 cd ${WORK_DIR}
@@ -96,7 +100,7 @@ cd AReaL
 git checkout ascend
 
 # Install AReaL
-pip install -e .
+uv pip install -e .[all_npu] --system
 ```
 
 ## (Optional) Launch Ray Cluster for Distributed Training
@@ -126,9 +130,8 @@ Check the [quickstart section](quickstart.md) to launch your first AReaL job. To
 NPU, make the following changes:
 
 - **Training script:** use `examples/math/gsm8k_rl.py`
-- **Configuration file:** change the `allocation_mode` inside
-  `examples/math/gsm8k_grpo.yaml` from `sglang:d4p1t1+d4p1t1` to `vllm:d4p1t1+d4p1t1` to
-  use vLLM with vLLM-Ascend as the rollout engine
+- **Configuration file:** use the provided NPU configuration file
+  `examples/math/gsm8k_grpo_npu.yaml`
 
 Follow the instructions there. If you want to run multi-node training with Ray, make
 sure your Ray cluster is started as described above before launching the job.
