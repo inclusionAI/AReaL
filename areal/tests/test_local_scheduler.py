@@ -391,6 +391,9 @@ class TestWorkerCreation:
             # Verify default spec was used
             assert mock_popen.call_count == 2
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local.find_free_ports")
@@ -439,6 +442,9 @@ class TestWorkerCreation:
         # All workers should use the same spec
         for worker_info in scheduler._workers["actor"]:
             assert len(worker_info.worker.worker_ports) == 3
+
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
@@ -493,6 +499,9 @@ class TestWorkerCreation:
         assert len(scheduler._workers["critic"][0].worker.worker_ports) == 1
         assert len(scheduler._workers["critic"][1].worker.worker_ports) == 2
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local.find_free_ports")
@@ -543,6 +552,9 @@ class TestWorkerCreation:
         assert popen_call[1]["shell"] is True
         # Verify that subprocess.Popen was called
         mock_popen.assert_called_once()
+
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
@@ -597,6 +609,9 @@ class TestWorkerCreation:
         assert "CUDA_VISIBLE_DEVICES=0" in cmd_str
         # Verify shell=True is used since cmd is a string
         assert popen_call[1]["shell"] is True
+
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
@@ -673,6 +688,9 @@ class TestWorkerCreation:
         assert "critic" in scheduler._colocated_roles
         assert scheduler._colocated_roles["critic"] == "actor"
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     def test_create_workers_duplicate_role_error(self, tmp_path):
         """Should raise WorkerCreationError when attempting to create workers for existing role."""
         scheduler = LocalScheduler(
@@ -704,6 +722,9 @@ class TestWorkerCreation:
 
             assert "Worker group already exists" in str(exc_info.value)
             assert exc_info.value.worker_key == "test"
+
+            # Clean up workers while mock is still active
+            scheduler.delete_workers(None)
 
     def test_create_workers_zero_replicas_error(self, tmp_path):
         """Should raise WorkerCreationError when replicas is 0."""
@@ -1786,6 +1807,9 @@ class TestEdgeCases:
             "worker/4",
         ]
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     def test_empty_workers_dict_operations(self, tmp_path):
         """Should handle operations on empty workers dictionary gracefully."""
         scheduler = LocalScheduler(
@@ -1883,6 +1907,9 @@ class TestColocationBehavior:
         assert len(workers) == 1
         assert workers[0].id == "actor/0"
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local.find_free_ports")
@@ -1937,6 +1964,9 @@ class TestColocationBehavior:
         assert "actor" in scheduler._workers
         assert len(scheduler._workers["actor"]) == 1
 
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
+
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
     @patch("areal.scheduler.local.find_free_ports")
@@ -1979,6 +2009,9 @@ class TestColocationBehavior:
             scheduler.create_workers(ref_job)
 
         assert "replica count" in str(exc_info.value).lower()
+
+        # Clean up workers while mock is still active
+        scheduler.delete_workers(None)
 
     @patch("areal.scheduler.local.gethostip")
     @patch("areal.scheduler.local.subprocess.Popen")
