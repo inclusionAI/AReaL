@@ -7,7 +7,7 @@ total_train_epochs: 50
 tokenizer_path: ${actor.path}
 
 do_eval: false
-export_style: concat
+export_style: individual
 
 cluster:
   n_nodes: 3
@@ -19,6 +19,9 @@ cluster:
 
 allocation_mode: sglang:d16+megatron:d2p4
 
+scheduler:
+  type: null
+
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -27,6 +30,9 @@ rollout:
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
 
 gconfig:
   n_samples: 16
@@ -55,7 +61,6 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-  group_size: ${gconfig.n_samples}
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -65,12 +70,19 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  dynamic_sampling: false
   reward_norm: null
   adv_norm:
     mean_level: batch
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars: {}
 
 ref:
   experiment_name: ${experiment_name}
@@ -163,9 +175,3 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
-
-launcher:
-  inference_server_cpus_per_gpu: 4
-  inference_server_mem_per_gpu: 32768
-  trainer_cpus_per_gpu: 4
-  trainer_mem_per_gpu: 32768
