@@ -58,7 +58,7 @@ from areal.models.tree_attn.functional import (
     gather_packed_tree_logprobs_entropy,
     merge_packed_tree_results,
 )
-from areal.models.tree_attn.module import BLOCK_SIZE, patch_bridge_for_tree_attn
+from areal.models.tree_attn.module import BLOCK_SIZE, patch_bridge_for_tree_training
 from areal.models.tree_attn.tree import build_packed_tree_batch
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
@@ -227,7 +227,7 @@ class MegatronEngine(TrainEngine):
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
-        with patch_bridge_for_tree_attn(self.enable_tree_training):
+        with patch_bridge_for_tree_training(self.enable_tree_training):
             self.bridge = mbridge.AutoBridge.from_pretrained(self.config.path)
             self.bridge.dtype = self.dtype
             # Set gradient checkpointing options
