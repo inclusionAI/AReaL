@@ -572,7 +572,7 @@ def _pack_extra_data(
 def get_packed_tree_position_ids(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
-) -> dict[str, Any]:
+) -> torch.Tensor:
     """Generate position IDs for packed tree inputs.
 
     Position IDs are computed from the attention mask by counting the number
