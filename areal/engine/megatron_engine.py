@@ -53,6 +53,13 @@ from areal.engine.core import (
 from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
+from areal.models.tree_attn.functional import (
+    _gather_packed_tree_logprobs,
+    gather_packed_tree_logprobs_entropy,
+    merge_packed_tree_results,
+)
+from areal.models.tree_attn.module import BLOCK_SIZE, patch_bridge_for_tree_training
+from areal.models.tree_attn.tree import build_packed_tree_batch
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
 from areal.utils.constants import (
@@ -90,13 +97,6 @@ from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
-from areal.models.tree_attn.tree import build_packed_tree_batch
-from areal.models.tree_attn.functional import (
-    _gather_packed_tree_logprobs,
-    gather_packed_tree_logprobs_entropy,
-    merge_packed_tree_results,
-)
-from areal.models.tree_attn.module import BLOCK_SIZE, patch_bridge_for_tree_training
 
 if TYPE_CHECKING:
     from areal.engine.ppo.actor import PPOActorConfig
@@ -1416,7 +1416,9 @@ class MegatronEngine(TrainEngine):
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         if self.config.is_critic and self.enable_tree_training:
-            raise NotImplementedError("Tree training with critic model is not supported yet.")
+            raise NotImplementedError(
+                "Tree training with critic model is not supported yet."
+            )
         if not self.config.is_critic:
             if self.enable_tree_training:
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
@@ -1452,7 +1454,9 @@ class MegatronEngine(TrainEngine):
         inputs: dict[str, Any],
     ) -> torch.Tensor | dict[int, torch.Tensor]:
         if self.config.is_critic and self.enable_tree_training:
-            raise NotImplementedError("Tree training with critic model is not supported yet.")
+            raise NotImplementedError(
+                "Tree training with critic model is not supported yet."
+            )
         if not self.config.is_critic:
             if self.enable_tree_training:
                 logprobs = _gather_packed_tree_logprobs(

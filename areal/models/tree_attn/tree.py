@@ -13,10 +13,10 @@ from typing import Any
 import torch
 
 from areal.api.cli_args import MicroBatchSpec
+from areal.models.tree_attn.module import BLOCK_SIZE, USE_BLOCK_MASK
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
-from areal.models.tree_attn.module import BLOCK_SIZE, USE_BLOCK_MASK
 
 logger = logging.getLogger(__name__)
 
@@ -398,7 +398,7 @@ def _compute_padded_size(
     pad_to_maximum: bool,
     pad_to_multiple_of: int,
 ) -> int:
-    """Compute the padded size for a tree based on padding options. """
+    """Compute the padded size for a tree based on padding options."""
     if pad_to_maximum:
         return max_tokens_per_tree
     elif pad_to_multiple_of > 1:
