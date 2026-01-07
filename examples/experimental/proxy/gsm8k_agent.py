@@ -11,7 +11,7 @@ class GSM8kAgent(AgentWorkflow):
         self.kwargs = kwargs
 
     async def run(self, base_url: str, data: dict):
-        async with AsyncOpenAI(base_url=base_url, max_retries=0) as client:
+        async with AsyncOpenAI(base_url=base_url) as client:
             comp: ChatCompletion = await client.chat.completions.create(
                 messages=data["messages"], model="default", **self.kwargs
             )
