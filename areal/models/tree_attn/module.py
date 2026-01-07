@@ -165,17 +165,21 @@ class PytorchFlexAttention(torch.nn.Module):
 def patch_bridge_for_tree_attn(enable: bool = True):
     """Context manager to patch LLMBridge for tree training with arbitrary attention mask.
 
-    Args:
-        enable: If True, apply the patch. If False, the context manager is a no-op.
+    Parameters
+    ----------
+    enable : bool, default=True
+        If True, apply the patch. If False, the context manager is a no-op.
 
-    Yields:
-        None
+    Yields
+    ------
+    None
 
-    Example:
-        with patch_bridge_for_tree_attn(enable=True):
-            # LLMBridge is patched here
-            model = create_model()
-        # Patch is reverted after exiting the context
+    Examples
+    --------
+    >>> with patch_bridge_for_tree_attn(enable=True):
+    ...     # LLMBridge is patched here
+    ...     model = create_model()
+    ... # Patch is reverted after exiting the context
     """
     if not enable:
         yield

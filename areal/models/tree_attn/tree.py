@@ -36,15 +36,24 @@ class TrieNode:
     For root nodes, start_idx and end_idx are -1, and the node contains no tokens.
     Root nodes use the `nodes` list to track all descendant nodes in pre-order.
 
-    Attributes:
-        tree_id: Identifier of the tree this node belongs to.
-        start_idx: Starting index in the flattened tree representation (-1 for root).
-        end_idx: Ending index (inclusive) in the flattened tree representation (-1 for root).
-        tokens: List of token IDs stored in this node (empty for root).
-        sequence_ids: IDs of sequences that pass through this node.
-        children: Child nodes keyed by the first diverging token.
-        ancestors: List of ancestor nodes from root to parent (empty for root).
-        nodes: All descendant nodes in pre-order traversal (only used by root).
+    Attributes
+    ----------
+    tree_id : int
+        Identifier of the tree this node belongs to.
+    start_idx : int
+        Starting index in the flattened tree representation (-1 for root).
+    end_idx : int
+        Ending index (inclusive) in the flattened tree representation (-1 for root).
+    tokens : list[int]
+        List of token IDs stored in this node (empty for root).
+    sequence_ids : list[int]
+        IDs of sequences that pass through this node.
+    children : dict[int, TrieNode]
+        Child nodes keyed by the first diverging token.
+    ancestors : list[TrieNode]
+        List of ancestor nodes from root to parent (empty for root).
+    nodes : list[TrieNode]
+        All descendant nodes in pre-order traversal (only used by root).
     """
 
     tree_id: int
@@ -225,24 +234,33 @@ def build_packed_tree_batch(
     This function constructs tries from input sequences using a greedy packing
     strategy, then converts them into tree-packed format suitable for training.
 
-    Args:
-        data: Dictionary containing 'input_ids' and 'attention_mask' tensors
-            describing the batch of sequences. Shape: [batch_size, seq_len].
-        mb_spec: MicroBatchSpec containing max_tokens_per_mb for tree packing.
-            Note: n_mbs, granularity, and n_mbs_divisor are not used in tree
-            training and will trigger warnings if set to non-default values.
-        pad_to_maximum: If True, pad all trees to max_tokens_per_mb.
-            If False, padding is determined by pad_to_multiple_of.
-        pad_to_multiple_of: When pad_to_maximum=False, pad to the nearest
-            multiple of this value. If <= 1, no padding is applied.
-            No padding raises error if USE_BLOCK_MASK=True.
+    Parameters
+    ----------
+    data : dict[str, Any]
+        Dictionary containing 'input_ids' and 'attention_mask' tensors
+        describing the batch of sequences. Shape: [batch_size, seq_len].
+    mb_spec : MicroBatchSpec
+        MicroBatchSpec containing max_tokens_per_mb for tree packing.
+        Note: n_mbs, granularity, and n_mbs_divisor are not used in tree
+        training and will trigger warnings if set to non-default values.
+    pad_to_maximum : bool, default=True
+        If True, pad all trees to max_tokens_per_mb.
+        If False, padding is determined by pad_to_multiple_of.
+    pad_to_multiple_of : int, default=1
+        When pad_to_maximum=False, pad to the nearest multiple of this value.
+        If <= 1, no padding is applied. No padding raises error if
+        USE_BLOCK_MASK=True.
 
-    Returns:
+    Returns
+    -------
+    MicroBatchList
         MicroBatchList containing all packed tree data.
 
-    Raises:
-        ValueError: If max_tokens_per_mb is None or not positive, or if padding
-            constraints are violated, or if a sequence exceeds max_tokens_per_mb.
+    Raises
+    ------
+    ValueError
+        If max_tokens_per_mb is None or not positive, or if padding
+        constraints are violated, or if a sequence exceeds max_tokens_per_mb.
     """
     # Warn about non-effective attributes
     if mb_spec.n_mbs != 1 or mb_spec.granularity != 1 or mb_spec.n_mbs_divisor != 1:
@@ -253,7 +271,7 @@ def build_packed_tree_batch(
     max_tokens_per_tree = mb_spec.max_tokens_per_mb
     if max_tokens_per_tree is None or max_tokens_per_tree <= 0:
         raise ValueError(
-            "MicroBatchSpec.max_tokens_per_mb must be a postive value for tree training."
+            "MicroBatchSpec.max_tokens_per_mb must be a positive value for tree training."
         )
 
     # Validate padding constraints when using block masks
@@ -380,18 +398,7 @@ def _compute_padded_size(
     pad_to_maximum: bool,
     pad_to_multiple_of: int,
 ) -> int:
-    """Compute the padded size for a tree based on padding options.
-
-    Args:
-        num_tokens: Actual number of tokens in the tree.
-        max_tokens_per_tree: Maximum tokens allowed per tree.
-        pad_to_maximum: If True, return max_tokens_per_tree.
-        pad_to_multiple_of: If pad_to_maximum=False and this is > 1,
-            round up to the nearest multiple.
-
-    Returns:
-        The padded size for the tree.
-    """
+    """Compute the padded size for a tree based on padding options. """
     if pad_to_maximum:
         return max_tokens_per_tree
     elif pad_to_multiple_of > 1:
@@ -574,16 +581,8 @@ def get_packed_tree_position_ids(
     attention_mask: torch.Tensor,
 ) -> torch.Tensor:
     """Generate position IDs for packed tree inputs.
-
     Position IDs are computed from the attention mask by counting the number
     of ancestors each token can attend to (minus 1 for 0-indexing).
-
-    Args:
-        input_ids: 1D tensor of input IDs for the packed tree.
-        attention_mask: 2D attention mask tensor for the packed tree.
-
-    Returns:
-        position_ids: Tensor of position IDs aligned with input_ids.
     """
     input_ids = input_ids.squeeze()
     if input_ids.ndim != 1:

@@ -10,11 +10,14 @@ logger = logging.getLogger(__name__)
 def visualize_attention_mask(mask_tensor: torch.Tensor, granularity: int = 128) -> None:
     """Visualize an attention mask as a text grid with configurable granularity.
 
-    Args:
-        mask_tensor: A 2D boolean or numeric tensor representing the attention mask.
-        granularity: Maximum number of cells to display in each dimension.
-            If the mask is larger than this, it will be downsampled by aggregating
-            blocks. Each cell shows the density of attention in that block.
+    Parameters
+    ----------
+    mask_tensor : torch.Tensor
+        A 2D boolean or numeric tensor representing the attention mask.
+    granularity : int, default=128
+        Maximum number of cells to display in each dimension.
+        If the mask is larger than this, it will be downsampled by aggregating
+        blocks. Each cell shows the density of attention in that block.
     """
     mask = mask_tensor.bool().cpu().float()
     n = mask.shape[0]

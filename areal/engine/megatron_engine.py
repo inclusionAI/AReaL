@@ -1415,9 +1415,8 @@ class MegatronEngine(TrainEngine):
         total_loss_weight: torch.Tensor,
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
-        assert not (self.config.is_critic and self.enable_tree_training), (
-            "Tree training with critic model is not supported."
-        )
+        if self.config.is_critic and self.enable_tree_training:
+            raise NotImplementedError("Tree training with critic model is not supported yet.")
         if not self.config.is_critic:
             if self.enable_tree_training:
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
@@ -1451,10 +1450,9 @@ class MegatronEngine(TrainEngine):
         self,
         output: torch.Tensor,
         inputs: dict[str, Any],
-    ) -> torch.Tensor:
-        assert not (self.config.is_critic and self.enable_tree_training), (
-            "Tree training with critic model is not supported."
-        )
+    ) -> torch.Tensor | dict[int, torch.Tensor]:
+        if self.config.is_critic and self.enable_tree_training:
+            raise NotImplementedError("Tree training with critic model is not supported yet.")
         if not self.config.is_critic:
             if self.enable_tree_training:
                 logprobs = _gather_packed_tree_logprobs(

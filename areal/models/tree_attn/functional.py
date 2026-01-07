@@ -35,18 +35,28 @@ def _compute_internal_node_logprobs(
     tokens at positions [start_idx+1, ..., end_idx] given positions
     [start_idx, ..., end_idx-1].
 
-    Args:
-        logits: Full logits tensor of shape (T, vocab_size) or (T, vocab_size/tp).
-        input_ids: Full input IDs tensor of shape (T,).
-        start_idx: Start index of the node.
-        end_idx: End index of the node (inclusive).
-        temperature: Softmax temperature scaling.
-        chunk_size: Maximum chunk size for memory-efficient processing.
-        tp_group: Tensor parallel process group for vocab-parallel computation.
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Full logits tensor of shape (T, vocab_size) or (T, vocab_size/tp).
+    input_ids : torch.Tensor
+        Full input IDs tensor of shape (T,).
+    start_idx : int
+        Start index of the node.
+    end_idx : int
+        End index of the node (inclusive).
+    temperature : float, default=1.0
+        Softmax temperature scaling.
+    chunk_size : int, default=1024
+        Maximum chunk size for memory-efficient processing.
+    tp_group : dist.ProcessGroup or None, default=None
+        Tensor parallel process group for vocab-parallel computation.
 
-    Returns:
-        Logprobs tensor of shape (end_idx - start_idx,) for internal predictions.
-        Empty tensor if node has only one token.
+    Returns
+    -------
+    torch.Tensor
+        Logprobs tensor of shape (end_idx - start_idx,) for internal
+        predictions. Empty tensor if node has only one token.
     """
     num_internal = end_idx - start_idx
     if num_internal <= 0:
@@ -75,17 +85,28 @@ def _compute_internal_node_logprobs_entropy(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute logprobs and entropy for internal predictions within a node.
 
-    Args:
-        logits: Full logits tensor of shape (T, vocab_size) or (T, vocab_size/tp).
-        input_ids: Full input IDs tensor of shape (T,).
-        start_idx: Start index of the node.
-        end_idx: End index of the node (inclusive).
-        temperature: Softmax temperature scaling.
-        chunk_size: Maximum chunk size for memory-efficient processing.
-        tp_group: Tensor parallel process group for vocab-parallel computation.
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Full logits tensor of shape (T, vocab_size) or (T, vocab_size/tp).
+    input_ids : torch.Tensor
+        Full input IDs tensor of shape (T,).
+    start_idx : int
+        Start index of the node.
+    end_idx : int
+        End index of the node (inclusive).
+    temperature : float, default=1.0
+        Softmax temperature scaling.
+    chunk_size : int, default=1024
+        Maximum chunk size for memory-efficient processing.
+    tp_group : dist.ProcessGroup or None, default=None
+        Tensor parallel process group for vocab-parallel computation.
 
-    Returns:
-        Tuple of (logprobs, entropy) tensors, each of shape (end_idx - start_idx,).
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor]
+        Tuple of (logprobs, entropy) tensors, each of shape
+        (end_idx - start_idx,).
     """
     num_internal = end_idx - start_idx
     if num_internal <= 0:
@@ -113,15 +134,24 @@ def _compute_transition_logprob(
 ) -> torch.Tensor:
     """Compute logprob for a single transition between nodes.
 
-    Args:
-        logits: Full logits tensor of shape (T, vocab_size) or (T, vocab_size/tp).
-        input_ids: Full input IDs tensor of shape (T,).
-        pred_pos: Position of the prediction logit (last position of parent node).
-        label_pos: Position of the label token (first position of child node).
-        temperature: Softmax temperature scaling.
-        tp_group: Tensor parallel process group for vocab-parallel computation.
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Full logits tensor of shape (T, vocab_size) or (T, vocab_size/tp).
+    input_ids : torch.Tensor
+        Full input IDs tensor of shape (T,).
+    pred_pos : int
+        Position of the prediction logit (last position of parent node).
+    label_pos : int
+        Position of the label token (first position of child node).
+    temperature : float, default=1.0
+        Softmax temperature scaling.
+    tp_group : dist.ProcessGroup or None, default=None
+        Tensor parallel process group for vocab-parallel computation.
 
-    Returns:
+    Returns
+    -------
+    torch.Tensor
         Scalar logprob tensor.
     """
     pred_logit = logits[pred_pos : pred_pos + 1]  # (1, vocab_size)
@@ -141,15 +171,24 @@ def _compute_transition_logprob_entropy(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute logprob and entropy for a single transition between nodes.
 
-    Args:
-        logits: Full logits tensor of shape (T, vocab_size) or (T, vocab_size/tp).
-        input_ids: Full input IDs tensor of shape (T,).
-        pred_pos: Position of the prediction logit (last position of parent node).
-        label_pos: Position of the label token (first position of child node).
-        temperature: Softmax temperature scaling.
-        tp_group: Tensor parallel process group for vocab-parallel computation.
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Full logits tensor of shape (T, vocab_size) or (T, vocab_size/tp).
+    input_ids : torch.Tensor
+        Full input IDs tensor of shape (T,).
+    pred_pos : int
+        Position of the prediction logit (last position of parent node).
+    label_pos : int
+        Position of the label token (first position of child node).
+    temperature : float, default=1.0
+        Softmax temperature scaling.
+    tp_group : dist.ProcessGroup or None, default=None
+        Tensor parallel process group for vocab-parallel computation.
 
-    Returns:
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor]
         Tuple of (logprob, entropy), both scalar tensors.
     """
     pred_logit = logits[pred_pos : pred_pos + 1]
@@ -176,40 +215,54 @@ def _gather_packed_tree_logprobs(
     and compute logprobs based on the correct next-token labels.
 
     This implementation includes two optimizations:
+
     1. Chunked computation: Processes logprobs in chunks to reduce peak memory.
     2. Node-level caching: Caches internal node logprobs and transition logprobs
        since sequences sharing prefixes will have identical logprobs for those
        shared portions.
 
-    Args:
-        logits: Model output logits of shape (T, vocab_size) or (T, vocab_size/tp)
-            when tensor parallelism is enabled. T is the padded tree size.
-            Output logits[i] corresponds to input_ids[i].
-        trie: Root TrieNode of the packed tree structure.
-        input_ids: Packed input IDs of shape (T,).
-        temperature: Softmax temperature scaling. Default is 1.0.
-        chunk_size: Maximum chunk size for memory-efficient processing.
-        tp_group: Tensor parallel process group for vocab-parallel computation.
-            If provided with tp_size > 1, uses vocab-parallel computation.
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Model output logits of shape (T, vocab_size) or (T, vocab_size/tp)
+        when tensor parallelism is enabled. T is the padded tree size.
+        Output logits[i] corresponds to input_ids[i].
+    trie : TrieNode
+        Root TrieNode of the packed tree structure.
+    input_ids : torch.Tensor
+        Packed input IDs of shape (T,).
+    temperature : float, default=1.0
+        Softmax temperature scaling.
+    chunk_size : int, default=1024
+        Maximum chunk size for memory-efficient processing.
+    tp_group : dist.ProcessGroup or None, default=None
+        Tensor parallel process group for vocab-parallel computation.
+        If provided with tp_size > 1, uses vocab-parallel computation.
 
-    Returns:
+    Returns
+    -------
+    dict[int, torch.Tensor]
         Dictionary mapping sequence_id to logprobs tensor.
         Each logprobs tensor has shape (seq_len - 1,) where seq_len is the
         length of that sequence. The logprobs are aligned such that logprobs[i]
-        is the log probability of predicting the (i+1)-th token given tokens 0..i.
+        is the log probability of predicting the (i+1)-th token given tokens
+        0..i.
 
-    Example:
-        For sequences [A, B, C, D] and [A, B, E, F] packed into a tree:
-        - Shared prefix [A, B] at positions [0, 1]
-        - Sequence 0: [A, B, C, D] at positions [0, 1, 2, 4]
-        - Sequence 1: [A, B, E, F] at positions [0, 1, 3, 5]
+    Examples
+    --------
+    For sequences [A, B, C, D] and [A, B, E, F] packed into a tree:
 
-        For sequence 0, logprobs are computed as:
-        - logprobs[0] = log P(B | A) using logits[0]
-        - logprobs[1] = log P(C | A, B) using logits[1]
-        - logprobs[2] = log P(D | A, B, C) using logits[2]
+    - Shared prefix [A, B] at positions [0, 1]
+    - Sequence 0: [A, B, C, D] at positions [0, 1, 2, 4]
+    - Sequence 1: [A, B, E, F] at positions [0, 1, 3, 5]
 
-        The logprob for P(B | A) is cached and reused for sequence 1.
+    For sequence 0, logprobs are computed as:
+
+    - logprobs[0] = log P(B | A) using logits[0]
+    - logprobs[1] = log P(C | A, B) using logits[1]
+    - logprobs[2] = log P(D | A, B, C) using logits[2]
+
+    The logprob for P(B | A) is cached and reused for sequence 1.
     """
     results: dict[int, torch.Tensor] = {}
     device = logits.device
@@ -272,17 +325,26 @@ def _gather_packed_tree_logprobs_entropy(
     Similar to gather_packed_tree_logprobs but also computes entropy.
     Includes chunked computation and node-level caching optimizations.
 
-    Args:
-        logits: Model output logits of shape (T, vocab_size) or (T, vocab_size/tp)
-            when tensor parallelism is enabled.
-        trie: Root TrieNode of the packed tree structure.
-        input_ids: Packed input IDs of shape (T,).
-        temperature: Softmax temperature scaling. Default is 1.0.
-        chunk_size: Maximum chunk size for memory-efficient processing.
-        tp_group: Tensor parallel process group for vocab-parallel computation.
-            If provided with tp_size > 1, uses vocab-parallel computation.
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Model output logits of shape (T, vocab_size) or (T, vocab_size/tp)
+        when tensor parallelism is enabled.
+    trie : TrieNode
+        Root TrieNode of the packed tree structure.
+    input_ids : torch.Tensor
+        Packed input IDs of shape (T,).
+    temperature : float, default=1.0
+        Softmax temperature scaling.
+    chunk_size : int, default=1024
+        Maximum chunk size for memory-efficient processing.
+    tp_group : dist.ProcessGroup or None, default=None
+        Tensor parallel process group for vocab-parallel computation.
+        If provided with tp_size > 1, uses vocab-parallel computation.
 
-    Returns:
+    Returns
+    -------
+    tuple[dict[int, torch.Tensor], dict[int, torch.Tensor]]
         Tuple of (logprobs_dict, entropy_dict), where each dictionary maps
         sequence_id to the corresponding tensor of shape (seq_len - 1,).
     """
@@ -399,17 +461,30 @@ def merge_packed_tree_results(
     this function merges them back into a single tensor with the original batch
     ordering.
 
-    Args:
-        results_list: List of dictionaries from gather_packed_tree_logprobs,
-            one per microbatch. Each dict maps sequence_id to tensor.
-        batch_size: Original batch size (number of sequences).
-        max_seq_len: Maximum sequence length for output tensor. If None,
-            inferred from the maximum length in results.
-        padding_value: Value to use for padding shorter sequences.
+    Parameters
+    ----------
+    results_list : list[dict[int, torch.Tensor]]
+        List of dictionaries from gather_packed_tree_logprobs,
+        one per microbatch. Each dict maps sequence_id to tensor.
+    batch_size : int
+        Original batch size (number of sequences).
+    max_seq_len : int or None, default=None
+        Maximum sequence length for output tensor. If None,
+        inferred from the maximum length in results.
+    padding_value : float, default=0.0
+        Value to use for padding shorter sequences.
 
-    Returns:
+    Returns
+    -------
+    torch.Tensor
         Tensor of shape (batch_size, max_seq_len) with merged results.
         Sequences are placed at their original positions (sequence_id).
+
+    Raises
+    ------
+    ValueError
+        If duplicate sequence_id is found across microbatches or if
+        sequence_id exceeds batch_size.
     """
     # Combine all results from all microbatches
     combined: dict[int, torch.Tensor] = {}
