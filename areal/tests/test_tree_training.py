@@ -22,15 +22,15 @@ logger = logging.getLogger("MegatronEngine Test")
 
 
 MODEL_PATH = get_model_path(
-    "/storage/openpsi/models/Qwen__Qwen2-1.5B-Instruct/", "Qwen/Qwen2-1.5B-Instruct"
+    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
 )
 
 
 @pytest.fixture(scope="module")
 def mock_tree_input(
-    batch_size=8,
-    tree_tokens=1024,
-    total_tokens=2048,
+    batch_size=4,
+    tree_tokens=128,
+    total_tokens=256,
     device=current_platform.device_type,
 ):
     if batch_size <= 0:
