@@ -65,8 +65,16 @@ class TestWorkerCreationAndDeletion:
 
         scheduler._ping_workers("train")
 
-        # delete workers
-        scheduler.delete_workers()
+        # mock call since engine is not initialized
+        mock_call = Mock()
+        mock_call.call.remote.return_value = None
+
+        for wi_list in scheduler._workers.values():
+            for wi in wi_list:
+                wi.actor.call = mock_call
+        with patch("areal.scheduler.ray.ray.get", return_value=None):
+            # delete workers
+            scheduler.delete_workers()
         assert len(scheduler._workers["train"]) == 0
 
         actor_summary = summarize_actors()
