@@ -17,7 +17,6 @@ from megatron.core.transformer.transformer_layer import (
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
 from areal.utils import logging
-from areal.utils.perf_tracer import trace_perf
 
 logger = logging.getLogger(__name__)
 
@@ -207,4 +206,3 @@ def patch_bridge_for_tree_training(enable: bool = True):
     finally:
         # Revert patch
         LLMBridge._get_transformer_layer_spec = original_layer_spec_getter
-

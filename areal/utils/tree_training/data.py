@@ -255,7 +255,7 @@ def build_packed_tree_batch(
         raise ValueError(
             "MicroBatchSpec.max_tokens_per_mb must be a postive value for tree training."
         )
-    
+
     # Validate padding constraints when using block masks
     if USE_BLOCK_MASK:
         no_padding = not pad_to_maximum and pad_to_multiple_of <= 1
