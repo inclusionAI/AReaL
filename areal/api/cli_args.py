@@ -527,6 +527,14 @@ class FP8EngineConfig:
         },
     )
 
+    fp8_direct_convert: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use direct FP8 conversion during weight updates. "
+            "When True, FP8 parameters are directly converted without intermediate dequantization."
+        },
+    )
+
 
 @dataclass
 class MegatronEngineConfig:

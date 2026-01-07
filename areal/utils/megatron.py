@@ -3,25 +3,88 @@ import re
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
+from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from torch import Tensor
 from torch.nn.parameter import Parameter
 
-from areal.utils.fp8 import quantize_params
+from areal.utils.fp8 import FP8BlockwiseTensorHelper, quantize_params
+
+
+def _all_gather_and_concat(
+    tensor: torch.Tensor,
+    tp_size: int,
+    tp_group,
+    partition_dim: int,
+    name: str,
+) -> torch.Tensor:
+    """All-gather tensor partitions and concatenate along partition dimension."""
+    partitions = [torch.empty_like(tensor) for _ in range(tp_size)]
+    dist.all_gather(partitions, tensor, group=tp_group)
+
+    # TODO: here we did an extra copy during concat, maybe merge this with convert_to_hf is better?
+    # TODO: check only GLU is used.
+    if "linear_fc1.weight" in name:
+        partitions = [p.chunk(2, dim=0) for p in partitions]
+        partitions = [p[0] for p in partitions] + [p[1] for p in partitions]
+
+    # this is bug in megatron's grouped moe.
+    partition_dim = (
+        1 if "linear_fc2.weight" in name and partition_dim == 0 else partition_dim
+    )
+
+    return torch.cat(partitions, dim=partition_dim)
+
+
+def _all_gather_fp8_tensor_and_concat(
+    tensor,
+    tp_size: int,
+    tp_group,
+    partition_dim: int,
+    name: str,
+    block_size: int = 128,
+) -> FP8BlockwiseTensorHelper:
+    """All-gather a Float8BlockwiseQTensor along the partition dimension.
+
+    Returns FP8BlockwiseTensorHelper that wraps rowwise_data and rowwise_scale_inv.
+    This allows conversion functions to work with FP8 tensors as regular tensors.
+    """
+    gathered_rowwise_data = _all_gather_and_concat(
+        tensor._rowwise_data, tp_size, tp_group, partition_dim, name
+    )
+    gathered_rowwise_scale_inv = _all_gather_and_concat(
+        tensor._rowwise_scale_inv, tp_size, tp_group, partition_dim, name
+    )
+
+    return FP8BlockwiseTensorHelper(
+        gathered_rowwise_data, gathered_rowwise_scale_inv, block_size
+    )
 
 
 # Adapted from slime
-def all_gather_param(name: str, param: Parameter | Tensor):
+def all_gather_param(
+    name: str, param: Parameter | Tensor, fp8_direct_convert: bool = False
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
     if "expert_bias" in name:
         return param
 
     if not hasattr(param, "tensor_model_parallel"):
         raise ValueError(f"{name} does not have tensor_model_parallel attribute")
+
+    param_is_fp8 = is_float8tensor(param)
+
     if (
         not param.tensor_model_parallel
         or getattr(param, "parallel_mode", None) == "duplicated"
     ):
+        # For FP8 tensors, return the tensor directly without accessing .data
+        # because accessing .data on QuantizedTensor triggers __torch_dispatch__
+        # which dequantizes the tensor to bfloat16
+        if param_is_fp8 and fp8_direct_convert:
+            return param
+        # If param is TE FP8, .data will implicitly convert TE FP8 to bf16,
+        # and then be converted to PyTorch FP8 later in convert_to_hf
         return param.data
 
     if ".experts." in name:
@@ -31,22 +94,20 @@ def all_gather_param(name: str, param: Parameter | Tensor):
         tp_size = mpu.get_tensor_model_parallel_world_size()
         tp_group = mpu.get_tensor_model_parallel_group()
 
-    param_partitions = [torch.empty_like(param.data) for _ in range(tp_size)]
-    dist.all_gather(param_partitions, param.data, group=tp_group)
     partition_dim = param.partition_dim
     assert param.partition_stride == 1, "partition_stride != 1 is not supported"
-    # TODO: here we did an extra copy during concat, maybe merge this with convert_to_hf is better?
-    # TODO: check only GLU is used.
-    if "linear_fc1.weight" in name:
-        param_partitions = [p.chunk(2, dim=0) for p in param_partitions]
-        param_partitions = [p[0] for p in param_partitions] + [
-            p[1] for p in param_partitions
-        ]
-    # this is bug in megatron's grouped moe.
-    if "linear_fc2.weight" in name:
-        if partition_dim == 0:
-            partition_dim = 1
-    param = torch.cat(param_partitions, dim=partition_dim)
+
+    # Handle FP8 tensors specially
+    if param_is_fp8 and fp8_direct_convert:
+        # Get block_size from quantization config if available
+        # Default to 128 if not specified
+        block_size = 128  # TODO: get from quantization_config if available
+        return _all_gather_fp8_tensor_and_concat(
+            param, tp_size, tp_group, partition_dim, name, block_size
+        )
+
+    # bf16/fp32
+    param = _all_gather_and_concat(param.data, tp_size, tp_group, partition_dim, name)
     return param
 
 
@@ -469,8 +530,9 @@ def convert_to_hf(
     tf_config: TransformerConfig,
     model_name: str,
     name: str,
-    param: Parameter | Tensor,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
     quantization_config: dict[str, int | str | list[str]] | None = None,
+    fp8_direct_convert: bool = False,
 ):
     """Convert Megatron parameter to HuggingFace format, optionally with FP8 quantization.
 
@@ -478,12 +540,14 @@ def convert_to_hf(
         tf_config: Transformer configuration
         model_name: Model name (e.g., "qwen2", "qwen3_moe")
         name: Parameter name in Megatron format
-        param: Parameter tensor
+        param: Parameter tensor or FP8BlockwiseTensorHelper
         quantization_config: Optional quantization config dict with keys:
             - quant_method: "fp8"
             - fmt: "e4m3"
             - activation_scheme: "dynamic"
             - weight_block_size: Optional tuple/list of [block_m, block_n] for blockwise quantization
+        fp8_direct_convert: If True, directly convert TE FP8 tensors to PyTorch FP8 format.
+            If False, dequantize TE FP8 to bf16 first, then quantize to PyTorch FP8.
 
     Returns:
         List of (name, tensor) tuples in HuggingFace format. For FP8 quantization,
@@ -493,9 +557,26 @@ def convert_to_hf(
         if key in model_name:
             converted_named_tensors = conversion_fn(tf_config, name, param)
             if quantization_config:
-                return quantize_params(
-                    name, converted_named_tensors, quantization_config
-                )
+                if fp8_direct_convert:
+                    converted_fp8_named_tensors = []
+                    for hf_name, hf_tensor in converted_named_tensors:
+                        if isinstance(hf_tensor, FP8BlockwiseTensorHelper):
+                            # FP8BlockwiseTensorHelper from all_gather
+                            weight, scale_inv = hf_tensor.to_pytorch_fp8()
+                            converted_fp8_named_tensors.append((hf_name, weight))
+                            scale_inv_name = f"{hf_name}_scale_inv"
+                            converted_fp8_named_tensors.append(
+                                (scale_inv_name, scale_inv)
+                            )
+                        else:
+                            # Keep non-FP8 or non-weight tensors as is
+                            converted_fp8_named_tensors.append((hf_name, hf_tensor))
+                    return converted_fp8_named_tensors
+                else:
+                    # Quantize from bf16 to PyTorch FP8
+                    return quantize_params(
+                        name, converted_named_tensors, quantization_config
+                    )
             return converted_named_tensors
 
     raise ValueError(f"Unsupported model for HF conversion: {model_name}")

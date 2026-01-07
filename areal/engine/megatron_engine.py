@@ -18,7 +18,6 @@ from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import finalize_model_grads
-from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -70,6 +69,7 @@ from areal.utils.data import (
     unpad_logits,
 )
 from areal.utils.distributed import init_custom_process_group
+from areal.utils.fp8 import FP8BlockwiseTensorHelper
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
@@ -150,6 +150,11 @@ class MegatronEngine(TrainEngine):
         self.is_offload: bool = False
         self.enable_fp8: bool = self.config.megatron.fp8_config is not None
         self.quantization_config: dict[str, int | str | list[str]] | None = None
+        self.fp8_direct_convert: bool = (
+            self.config.megatron.fp8_config.fp8_direct_convert
+            if self.config.megatron.fp8_config is not None
+            else False
+        )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -995,6 +1000,7 @@ class MegatronEngine(TrainEngine):
         self,
         name: str,
         param: nn.Parameter | torch.Tensor,
+        fp8_direct_convert: bool = False,
     ) -> tuple[nn.Parameter | torch.Tensor, int]:
         """Collect and prepare a parameter for conversion.
 
@@ -1007,14 +1013,12 @@ class MegatronEngine(TrainEngine):
         Returns:
             Tuple of (prepared_param, param_size_in_bytes)
         """
-        param = all_gather_param(name, param)
+        param = all_gather_param(name, param, fp8_direct_convert)
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
-        if is_float8tensor(param):
+        if isinstance(param, FP8BlockwiseTensorHelper):
             # FP8 is stored as uint8, so element_size is 1 byte
             param_size = param.numel()
-            # Convert TE FP8 to bf16 before convert_to_hf (which will convert to PyTorch FP8)
-            param = param.dequantize()
         else:
             param_size = param.numel() * param.element_size()
 
@@ -1029,7 +1033,7 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
-        param, param_size = self._collect_param(name, param)
+        param, param_size = self._collect_param(name, param, self.fp8_direct_convert)
 
         if not self.is_pipeline_parallel_head():
             return buffer_size
@@ -1045,6 +1049,7 @@ class MegatronEngine(TrainEngine):
                 name,
                 param,
                 quantization_config=self.quantization_config,
+                fp8_direct_convert=self.fp8_direct_convert,
             )
         )
         buffer_size += param_size
@@ -1116,6 +1121,7 @@ class MegatronEngine(TrainEngine):
                     name,
                     param,
                     quantization_config=self.quantization_config,
+                    fp8_direct_convert=self.fp8_direct_convert,
                 )
             )
 
@@ -1130,7 +1136,7 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
-        param, param_size = self._collect_param(name, param)
+        param, param_size = self._collect_param(name, param, self.fp8_direct_convert)
 
         if (
             buffer_size + param_size
@@ -1298,6 +1304,7 @@ class MegatronEngine(TrainEngine):
             weights_path=path,
             max_workers=None,
             is_critic=self.config.is_critic,
+            fp8_direct_convert=self.fp8_direct_convert,
         )
 
     def _prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
