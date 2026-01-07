@@ -12,6 +12,7 @@ from typing import Any
 
 import torch
 
+from areal.api.cli_args import MicroBatchSpec
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
@@ -215,7 +216,7 @@ def _compress_trie(root: _BuildNode) -> TrieNode:
 @trace_perf("tree_training.build_packed_tree_batch")
 def build_packed_tree_batch(
     data: dict[str, Any],
-    max_tokens_per_tree: int,
+    mb_spec: MicroBatchSpec,
     pad_to_maximum: bool = True,
     pad_to_multiple_of: int = 1,
 ) -> MicroBatchList:
@@ -227,9 +228,10 @@ def build_packed_tree_batch(
     Args:
         data: Dictionary containing 'input_ids' and 'attention_mask' tensors
             describing the batch of sequences. Shape: [batch_size, seq_len].
-        max_tokens_per_tree: Maximum number of tokens allowed per tree.
-            Must be a multiple of BLOCK_SIZE when pad_to_maximum=True.
-        pad_to_maximum: If True, pad all trees to max_tokens_per_tree.
+        mb_spec: MicroBatchSpec containing max_tokens_per_mb for tree packing.
+            Note: n_mbs, granularity, and n_mbs_divisor are not used in tree
+            training and will trigger warnings if set to non-default values.
+        pad_to_maximum: If True, pad all trees to max_tokens_per_mb.
             If False, padding is determined by pad_to_multiple_of.
         pad_to_multiple_of: When pad_to_maximum=False, pad to the nearest
             multiple of this value. If <= 1, no padding is applied.
@@ -239,12 +241,21 @@ def build_packed_tree_batch(
         MicroBatchList containing all packed tree data.
 
     Raises:
-        ValueError: If max_tokens_per_tree is not positive, or if padding
-            constraints are violated, or if a sequence exceeds max_tokens_per_tree.
+        ValueError: If max_tokens_per_mb is None or not positive, or if padding
+            constraints are violated, or if a sequence exceeds max_tokens_per_mb.
     """
-    if max_tokens_per_tree <= 0:
-        raise ValueError("max_tokens_per_tree must be positive")
+    # Warn about non-effective attributes
+    if mb_spec.n_mbs != 1 or mb_spec.granularity != 1 or mb_spec.n_mbs_divisor != 1:
+        logger.warning(
+            "`n_mbs`, `granularity` and `n_mbs_divisor` is currently not effective for tree packing."
+        )
 
+    max_tokens_per_tree = mb_spec.max_tokens_per_mb
+    if max_tokens_per_tree is None or max_tokens_per_tree <= 0:
+        raise ValueError(
+            "MicroBatchSpec.max_tokens_per_mb must be a postive value for tree training."
+        )
+    
     # Validate padding constraints when using block masks
     if USE_BLOCK_MASK:
         no_padding = not pad_to_maximum and pad_to_multiple_of <= 1
@@ -352,7 +363,7 @@ def build_packed_tree_batch(
     # to avoid duplicate attention mask memory consumption
     batch = MicroBatchList(
         data=data,
-        mb_spec=None,  # type: ignore[arg-type]
+        mb_spec=mb_spec,
         mbs=mbs,
         group_lens=[num for num in num_tokens_list],
         padded_mbs=mbs,

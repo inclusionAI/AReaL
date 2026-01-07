@@ -1336,7 +1336,7 @@ class MegatronEngine(TrainEngine):
             )
             mb_list = build_packed_tree_batch(
                 input_,
-                max_tokens_per_tree=self.config.mb_spec.max_tokens_per_mb,
+                mb_spec=self.config.mb_spec,
                 pad_to_maximum=self.config.pad_to_maximum,
                 pad_to_multiple_of=BLOCK_SIZE,
             )
