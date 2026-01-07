@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from areal.engine.megatron_engine import MegatronPPOActor, MegatronPPOCritic
     from areal.engine.ppo.actor import PPOActorController
     from areal.engine.ppo.critic import PPOCriticController
+    from areal.experimental.engine.archon_engine import ArchonPPOActor, ArchonPPOCritic
 
 logger = logging.getLogger("RLTrainer")
 
@@ -475,7 +476,7 @@ class PPOTrainer:
 
     def _create_actor(
         self, actor_config: PPOActorConfig
-    ) -> FSDPPPOActor | MegatronPPOActor | PPOActorController:
+    ) -> FSDPPPOActor | MegatronPPOActor | ArchonPPOActor | PPOActorController:
         if self.allocation_mode.train_backend == "fsdp":
             from areal.engine.fsdp_engine import FSDPPPOActor
 
@@ -484,9 +485,13 @@ class PPOTrainer:
             from areal.engine.megatron_engine import MegatronPPOActor
 
             actor_cls = MegatronPPOActor
+        elif self.allocation_mode.train_backend == "archon":
+            from areal.experimental.engine.archon_engine import ArchonPPOActor
+
+            actor_cls = ArchonPPOActor
         else:
             raise ValueError(
-                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
+                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp, megatron or archon"
             )
         if is_single_controller():
             actor = actor_cls.as_controller(actor_config, self.scheduler)
@@ -497,7 +502,7 @@ class PPOTrainer:
 
     def _create_critic(
         self, critic_config: PPOCriticConfig
-    ) -> FSDPPPOCritic | MegatronPPOCritic | PPOCriticController:
+    ) -> FSDPPPOCritic | MegatronPPOCritic | ArchonPPOCritic | PPOCriticController:
         if self.allocation_mode.train_backend == "fsdp":
             from areal.engine.fsdp_engine import FSDPPPOCritic
 
@@ -506,9 +511,13 @@ class PPOTrainer:
             from areal.engine.megatron_engine import MegatronPPOCritic
 
             critic_cls = MegatronPPOCritic
+        elif self.allocation_mode.train_backend == "archon":
+            from areal.experimental.engine.archon_engine import ArchonPPOCritic
+
+            critic_cls = ArchonPPOCritic
         else:
             raise ValueError(
-                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp or megatron"
+                f"Invalid backend: {self.allocation_mode.train_backend}, expected fsdp, megatron or archon"
             )
         if is_single_controller():
             critic = critic_cls.as_controller(critic_config, self.scheduler)
@@ -598,7 +607,7 @@ class PPOTrainer:
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
         # Save recoverable checkpoints
-        to_save = dict(default=self.actor)
+        to_save: dict = dict(default=self.actor)
         if self.critic is not None:
             to_save["critic"] = self.critic
         step_info = StepInfo(
@@ -623,7 +632,7 @@ class PPOTrainer:
 
     def _evaluate_fn(
         self,
-        eval_workflow: RolloutWorkflow,
+        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         eval_workflow_kwargs,
     ):
         if self.actor.is_data_parallel_head():
@@ -645,7 +654,7 @@ class PPOTrainer:
 
     def _evaluate(
         self,
-        eval_workflow: RolloutWorkflow | None,
+        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None,
         eval_workflow_kwargs,
         epoch: int,
         epoch_step: int,

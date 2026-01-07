@@ -1,0 +1,283 @@
+# Adapted from torchtitan: torchtitan/models/qwen3/model/state_dict_adapter.py
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING, Any
+
+import torch
+from torch.distributed.tensor import DTensor
+
+from areal.experimental.models.archon.base import BaseStateDictAdapter
+
+if TYPE_CHECKING:
+    from transformers import PretrainedConfig
+
+
+class Qwen3StateDictAdapter(BaseStateDictAdapter):
+    """State dict adapter for Qwen3 Dense and MoE models.
+
+    Handles:
+    - Key name mapping between HF and Archon conventions
+    - MoE expert weights: HF uses list of 2D weights, Archon uses 3D weights
+    - No weight permutation needed (unlike Llama3)
+    """
+
+    def __init__(self, model_config: PretrainedConfig):
+        super().__init__(model_config)
+
+        # HuggingFace -> Archon key mapping
+        # Use {} as placeholder for layer numbers and expert ids
+        self.from_hf_map = {
+            # Embedding
+            "model.embed_tokens.weight": "tok_embeddings.weight",
+            # Attention projections
+            "model.layers.{}.self_attn.q_proj.weight": "layers.{}.attention.wq.weight",
+            "model.layers.{}.self_attn.k_proj.weight": "layers.{}.attention.wk.weight",
+            "model.layers.{}.self_attn.v_proj.weight": "layers.{}.attention.wv.weight",
+            "model.layers.{}.self_attn.o_proj.weight": "layers.{}.attention.wo.weight",
+            # Qwen3 Q/K Norm
+            "model.layers.{}.self_attn.q_norm.weight": "layers.{}.attention.q_norm.weight",
+            "model.layers.{}.self_attn.k_norm.weight": "layers.{}.attention.k_norm.weight",
+            # Skip rotary_emb (computed at runtime)
+            "model.layers.{}.self_attn.rotary_emb.inv_freq": None,
+            # Dense MLP
+            "model.layers.{}.mlp.gate_proj.weight": "layers.{}.feed_forward.w1.weight",
+            "model.layers.{}.mlp.up_proj.weight": "layers.{}.feed_forward.w3.weight",
+            "model.layers.{}.mlp.down_proj.weight": "layers.{}.feed_forward.w2.weight",
+            # LayerNorm
+            "model.layers.{}.input_layernorm.weight": "layers.{}.attention_norm.weight",
+            "model.layers.{}.post_attention_layernorm.weight": "layers.{}.ffn_norm.weight",
+            # MoE experts (HF: 2D per expert, Archon: 3D combined)
+            "model.layers.{}.mlp.experts.{}.gate_proj.weight": "layers.{}.moe.experts.w1",
+            "model.layers.{}.mlp.experts.{}.up_proj.weight": "layers.{}.moe.experts.w3",
+            "model.layers.{}.mlp.experts.{}.down_proj.weight": "layers.{}.moe.experts.w2",
+            # MoE shared expert (dense)
+            "model.layers.{}.mlp.shared_expert.gate_proj.weight": "layers.{}.moe.shared_expert.w1.weight",
+            "model.layers.{}.mlp.shared_expert.up_proj.weight": "layers.{}.moe.shared_expert.w3.weight",
+            "model.layers.{}.mlp.shared_expert.down_proj.weight": "layers.{}.moe.shared_expert.w2.weight",
+            # MoE router
+            "model.layers.{}.mlp.gate.weight": "layers.{}.moe.router.gate.weight",
+            "model.layers.{}.mlp.shared_expert_gate.weight": "layers.{}.moe.shared_expert_gate.weight",
+            # Final norm and output
+            "model.norm.weight": "norm.weight",
+            "lm_head.weight": "output.weight",
+        }
+
+        # Build reverse mapping (Archon -> HF), excluding None values and MoE experts
+        self.to_hf_map = {}
+        for hf_key, archon_key in self.from_hf_map.items():
+            if archon_key is not None:
+                self.to_hf_map[archon_key] = hf_key
+
+        # MoE configuration
+        self.moe_enabled = getattr(model_config, "num_local_experts", 0) > 0
+        if self.moe_enabled:
+            self.num_experts = model_config.num_local_experts
+
+        # Weight tying configuration
+        self.enable_weight_tying = getattr(model_config, "tie_word_embeddings", False)
+
+    def to_hf(self, state_dict: dict[str, Any]) -> dict[str, Any]:
+        """Convert Archon state dict to HuggingFace format.
+
+        Main transformations:
+        1. Key renaming: Archon names -> HF names
+        2. MoE: 3D weights (num_experts, out, in) -> list of 2D weights
+        3. Weight tying: skip output.weight if enabled (shared with embeddings)
+        """
+        hf_state_dict = {}
+
+        for key, value in state_dict.items():
+            # Skip output.weight when weight tying is enabled
+            if self.enable_weight_tying and key == "output.weight":
+                continue
+
+            if "moe.experts.w" in key:
+                # Split 3D expert weight into list of 2D weights
+                hf_pairs = self._split_moe_experts(key, value)
+                hf_state_dict.update(hf_pairs)
+            else:
+                # Regular key mapping
+                hf_key = self._convert_key_to_hf(key)
+                if hf_key is not None:
+                    hf_state_dict[hf_key] = value
+
+        return hf_state_dict
+
+    def from_hf(self, hf_state_dict: dict[str, Any]) -> dict[str, Any]:
+        """Convert HuggingFace state dict to Archon format.
+
+        Main transformations:
+        1. Key renaming: HF names -> Archon names
+        2. MoE: list of 2D weights -> 3D weights (num_experts, out, in)
+        3. Weight tying: copy embed_tokens to lm_head if missing
+        """
+        # Handle weight tying: if lm_head.weight is missing, use embed_tokens.weight
+        if (
+            self.enable_weight_tying
+            and "lm_head.weight" not in hf_state_dict
+            and "model.embed_tokens.weight" in hf_state_dict
+        ):
+            hf_state_dict = dict(hf_state_dict)  # Copy to avoid modifying input
+            hf_state_dict["lm_head.weight"] = hf_state_dict["model.embed_tokens.weight"]
+
+        state_dict = {}
+        expert_buffer: dict[str, dict[int, torch.Tensor]] = {}
+
+        for key, value in hf_state_dict.items():
+            if ".mlp.experts." in key:
+                # Collect expert weights, merge later
+                self._collect_expert_weight(key, value, expert_buffer, state_dict)
+            else:
+                # Regular key mapping
+                archon_key = self._convert_key_from_hf(key)
+                if archon_key is not None:
+                    state_dict[archon_key] = value
+
+        return state_dict
+
+    def convert_single_to_hf(
+        self, name: str, tensor: torch.Tensor
+    ) -> list[tuple[str, torch.Tensor]]:
+        """Convert a single Archon (name, tensor) pair to HuggingFace format.
+
+        Used for incremental weight updates.
+        """
+        # Strip activation checkpoint wrapper prefix if present
+        # e.g., "layers.0._checkpoint_wrapped_module.attention.wq.weight"
+        #    -> "layers.0.attention.wq.weight"
+        name = name.replace("._checkpoint_wrapped_module", "")
+
+        if "moe.experts.w" in name:
+            # 3D -> list of 2D
+            hf_dict = self._split_moe_experts(name, tensor)
+            return list(hf_dict.items())
+        else:
+            hf_key = self._convert_key_to_hf(name)
+            if hf_key is not None:
+                return [(hf_key, tensor)]
+            return []
+
+    def _convert_key_to_hf(self, archon_key: str) -> str | None:
+        """Convert a Archon key to HuggingFace key."""
+        # Try direct match first
+        if archon_key in self.to_hf_map:
+            return self.to_hf_map[archon_key]
+
+        # Try pattern match for layer-specific keys
+        # Extract layer number and create abstract key
+        match = re.search(r"layers\.(\d+)\.", archon_key)
+        if match:
+            layer_num = match.group(1)
+            abstract_key = re.sub(r"layers\.\d+\.", "layers.{}.", archon_key)
+            if abstract_key in self.to_hf_map:
+                hf_abstract = self.to_hf_map[abstract_key]
+                return hf_abstract.replace("{}", layer_num, 1)
+
+        return None
+
+    def _convert_key_from_hf(self, hf_key: str) -> str | None:
+        """Convert a HuggingFace key to Archon key."""
+        # Try direct match first
+        if hf_key in self.from_hf_map:
+            result = self.from_hf_map[hf_key]
+            return result if result is not None else None
+
+        # Try pattern match for layer-specific keys
+        match = re.search(r"layers\.(\d+)\.", hf_key)
+        if match:
+            layer_num = match.group(1)
+            abstract_key = re.sub(r"layers\.\d+\.", "layers.{}.", hf_key)
+            if abstract_key in self.from_hf_map:
+                archon_abstract = self.from_hf_map[abstract_key]
+                if archon_abstract is None:
+                    return None
+                return archon_abstract.replace("{}", layer_num, 1)
+
+        return None
+
+    def _split_moe_experts(
+        self, archon_key: str, weight_3d: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        """Split 3D expert weight into HuggingFace format 2D weights.
+
+        Args:
+            archon_key: e.g., "layers.0.moe.experts.w1"
+            weight_3d: shape (num_experts, out_dim, in_dim)
+
+        Returns:
+            Dict mapping HF keys to 2D weights.
+        """
+        # Handle DTensor
+        if isinstance(weight_3d, DTensor):
+            weight_3d = weight_3d.full_tensor()
+
+        # Extract layer number
+        match = re.search(r"layers\.(\d+)\.", archon_key)
+        if not match:
+            return {}
+        layer_num = match.group(1)
+
+        # Determine which weight type (w1, w2, w3)
+        if ".w1" in archon_key:
+            hf_proj = "gate_proj"
+        elif ".w2" in archon_key:
+            hf_proj = "down_proj"
+        elif ".w3" in archon_key:
+            hf_proj = "up_proj"
+        else:
+            return {}
+
+        result = {}
+        num_experts = weight_3d.shape[0]
+        for expert_id in range(num_experts):
+            hf_key = (
+                f"model.layers.{layer_num}.mlp.experts.{expert_id}.{hf_proj}.weight"
+            )
+            result[hf_key] = weight_3d[expert_id].clone()
+
+        return result
+
+    def _collect_expert_weight(
+        self,
+        hf_key: str,
+        weight_2d: torch.Tensor,
+        buffer: dict[str, dict[int, torch.Tensor]],
+        state_dict: dict[str, Any],
+    ):
+        """Collect expert weights and merge into 3D when complete.
+
+        Args:
+            hf_key: e.g., "model.layers.0.mlp.experts.0.gate_proj.weight"
+            weight_2d: shape (out_dim, in_dim)
+            buffer: Temporary storage for collecting expert weights
+            state_dict: Output state dict to write merged 3D weights
+        """
+        # Parse key: extract layer_num, expert_num, and proj type
+        match = re.match(
+            r"model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight",
+            hf_key,
+        )
+        if not match:
+            return
+
+        layer_num = match.group(1)
+        expert_num = int(match.group(2))
+        proj_type = match.group(3)
+
+        # Map proj type to Archon weight name
+        proj_map = {"gate_proj": "w1", "up_proj": "w3", "down_proj": "w2"}
+        archon_key = f"layers.{layer_num}.moe.experts.{proj_map[proj_type]}"
+
+        # Store in buffer
+        if archon_key not in buffer:
+            buffer[archon_key] = {}
+        buffer[archon_key][expert_num] = weight_2d
+
+        # Check if all experts collected
+        if len(buffer[archon_key]) == self.num_experts:
+            # Stack into 3D tensor
+            weights = [buffer[archon_key][i] for i in range(self.num_experts)]
+            state_dict[archon_key] = torch.stack(weights, dim=0)
+            del buffer[archon_key]

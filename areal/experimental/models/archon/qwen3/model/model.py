@@ -1,0 +1,320 @@
+# Adapted from torchtitan: torchtitan/models/qwen3/model/model.py
+
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch.distributed.tensor import DTensor
+
+from areal.experimental.models.archon.attention import (
+    SDPAWrapper,
+    VarlenAttentionWrapper,
+)
+from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
+from areal.experimental.models.archon.qwen3.model.rope import (
+    apply_rotary_emb,
+    precompute_rope_cache,
+    repeat_kv,
+)
+
+
+def maybe_to_local(x: torch.Tensor) -> torch.Tensor:
+    """Convert DTensor to local tensor if needed."""
+    if isinstance(x, DTensor):
+        return x.to_local()
+    return x
+
+
+class RMSNorm(nn.Module):
+    """RMSNorm with float32 intermediate computation."""
+
+    def __init__(
+        self, hidden_size: int, eps: float = 1e-6, elementwise_affine: bool = True
+    ):
+        super().__init__()
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+        if elementwise_affine:
+            self.weight = nn.Parameter(torch.ones(hidden_size))
+        else:
+            self.register_parameter("weight", None)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        input_dtype = x.dtype
+        x = x.to(torch.float32)
+        variance = x.pow(2).mean(-1, keepdim=True)
+        x = x * torch.rsqrt(variance + self.eps)
+        if self.weight is not None:
+            return self.weight * x.to(input_dtype)
+        return x.to(input_dtype)
+
+    def reset_parameters(self):
+        if self.weight is not None:
+            nn.init.ones_(self.weight)
+
+
+class Attention(nn.Module):
+    """Multi-head attention module with Q/K norm and GQA support."""
+
+    q_norm: RMSNorm | None
+    k_norm: RMSNorm | None
+
+    def __init__(self, model_args: Qwen3ModelArgs):
+        super().__init__()
+        self.n_heads = model_args.n_heads
+        self.n_kv_heads = (
+            model_args.n_heads
+            if model_args.n_kv_heads is None
+            else model_args.n_kv_heads
+        )
+        self.n_rep = self.n_heads // self.n_kv_heads
+        self.head_dim = model_args.head_dim
+        self.scaling = self.head_dim**-0.5
+
+        # Q/K normalization
+        if model_args.qk_norm:
+            self.q_norm = RMSNorm(
+                self.head_dim, eps=model_args.norm_eps, elementwise_affine=True
+            )
+            self.k_norm = RMSNorm(
+                self.head_dim, eps=model_args.norm_eps, elementwise_affine=True
+            )
+        else:
+            self.q_norm = None
+            self.k_norm = None
+
+        # Linear projections
+        self.wq = nn.Linear(
+            model_args.dim, model_args.n_heads * self.head_dim, bias=False
+        )
+        self.wk = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
+        self.wv = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
+        self.wo = nn.Linear(
+            model_args.n_heads * self.head_dim, model_args.dim, bias=False
+        )
+
+        # Select attention backend
+        if model_args.attn_type == "varlen":
+            self.packed_attn = VarlenAttentionWrapper()
+        else:
+            self.packed_attn = SDPAWrapper()
+
+    def init_weights(self, init_std: float):
+        for linear in (self.wq, self.wk, self.wv):
+            nn.init.trunc_normal_(linear.weight, mean=0.0, std=0.02)
+        nn.init.trunc_normal_(self.wo.weight, mean=0.0, std=init_std)
+        if self.q_norm is not None:
+            self.q_norm.reset_parameters()
+        if self.k_norm is not None:
+            self.k_norm.reset_parameters()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        rope_cache: torch.Tensor,
+        positions: torch.Tensor | None = None,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seqlen: int | None = None,
+    ) -> torch.Tensor:
+        bs, seqlen, _ = x.shape
+        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+
+        # Reshape for multi-head attention
+        xq = xq.view(bs, seqlen, -1, self.head_dim)
+        xk = xk.view(bs, seqlen, -1, self.head_dim)
+        xv = xv.view(bs, seqlen, -1, self.head_dim)
+
+        # Apply Q/K normalization and convert to local tensor
+        if self.q_norm:
+            xq = maybe_to_local(self.q_norm(xq))
+        if self.k_norm:
+            xk = maybe_to_local(self.k_norm(xk))
+        xv = maybe_to_local(xv)
+
+        # Apply rotary embedding
+        xq, xk = apply_rotary_emb(xq, xk, rope_cache, positions)
+
+        # Repeat KV heads for GQA
+        keys = repeat_kv(xk, self.n_rep)
+        values = repeat_kv(xv, self.n_rep)
+
+        # Transpose for attention: [bs, n_heads, seqlen, head_dim]
+        xq = xq.transpose(1, 2)
+        xk = keys.transpose(1, 2)
+        xv = values.transpose(1, 2)
+
+        # Packed sequences - use SDPA
+        output = self.packed_attn(
+            xq,
+            xk,
+            xv,
+            scale=self.scaling,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
+        )
+        output = output.transpose(1, 2).contiguous()
+        output = output.view(bs, seqlen, -1)
+
+        return self.wo(output)
+
+
+class FeedForward(nn.Module):
+    """SwiGLU feedforward module."""
+
+    def __init__(self, dim: int, hidden_dim: int):
+        super().__init__()
+        self.w1 = nn.Linear(dim, hidden_dim, bias=False)
+        self.w2 = nn.Linear(hidden_dim, dim, bias=False)
+        self.w3 = nn.Linear(dim, hidden_dim, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+    def init_weights(self, init_std: float):
+        nn.init.trunc_normal_(self.w1.weight, mean=0.0, std=0.02)
+        for linear in (self.w2, self.w3):
+            nn.init.trunc_normal_(linear.weight, mean=0.0, std=init_std)
+
+
+class TransformerBlock(nn.Module):
+    """Pre-norm transformer block with attention and feedforward."""
+
+    def __init__(self, layer_id: int, model_args: Qwen3ModelArgs):
+        super().__init__()
+        self.n_heads = model_args.n_heads
+        self.dim = model_args.dim
+
+        self.attention = Attention(model_args)
+        self.feed_forward = FeedForward(
+            dim=model_args.dim, hidden_dim=model_args.hidden_dim
+        )
+        self.attention_norm = RMSNorm(model_args.dim, eps=model_args.norm_eps)
+        self.ffn_norm = RMSNorm(model_args.dim, eps=model_args.norm_eps)
+
+        if model_args.depth_init:
+            self.weight_init_std = 0.02 / (2 * (layer_id + 1)) ** 0.5
+        else:
+            self.weight_init_std = 0.02 / (2 * model_args.n_layers) ** 0.5
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        rope_cache: torch.Tensor,
+        positions: torch.Tensor | None = None,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seqlen: int | None = None,
+    ) -> torch.Tensor:
+        x = x + self.attention(
+            self.attention_norm(x), rope_cache, positions, cu_seqlens, max_seqlen
+        )
+        x = x + self.feed_forward(self.ffn_norm(x))
+        return x
+
+    def init_weights(self, buffer_device: torch.device):
+        for norm in (self.attention_norm, self.ffn_norm):
+            norm.reset_parameters()
+        self.attention.init_weights(self.weight_init_std)
+        self.feed_forward.init_weights(self.weight_init_std)
+
+
+class Qwen3Model(nn.Module):
+    """Qwen3 transformer model."""
+
+    def __init__(self, model_args: Qwen3ModelArgs):
+        super().__init__()
+        self.model_args = model_args
+        self.vocab_size = model_args.vocab_size
+        self.n_layers = model_args.n_layers
+        self.eos_id = model_args.eos_id
+        self.head_dim = model_args.head_dim
+        self.is_critic = model_args.is_critic
+
+        self.tok_embeddings = nn.Embedding(model_args.vocab_size, model_args.dim)
+
+        self.register_buffer(
+            "rope_cache", self._precompute_rope_cache(), persistent=False
+        )
+
+        self.layers = torch.nn.ModuleDict()
+        for layer_id in range(model_args.n_layers):
+            self.layers[str(layer_id)] = TransformerBlock(layer_id, model_args)
+
+        self.norm = RMSNorm(model_args.dim, eps=model_args.norm_eps)
+
+        if model_args.is_critic:
+            self.output = None
+            self.score = nn.Linear(model_args.dim, model_args.num_labels, bias=False)
+        else:
+            self.output = nn.Linear(model_args.dim, model_args.vocab_size, bias=False)
+            self.score = None
+
+    def _precompute_rope_cache(self) -> torch.Tensor:
+        return precompute_rope_cache(
+            self.model_args.head_dim,
+            self.model_args.max_seq_len,
+            self.model_args.rope_theta,
+        )
+
+    def init_weights(self, buffer_device: torch.device | None = None):
+        buffer_device = buffer_device or self.rope_cache.device
+        with torch.device(buffer_device):
+            self.rope_cache = self._precompute_rope_cache()
+
+        if self.tok_embeddings is not None:
+            nn.init.normal_(self.tok_embeddings.weight)
+
+        for layer in self.layers.values():
+            if layer is not None:
+                layer.init_weights(buffer_device)
+
+        if self.norm is not None:
+            self.norm.reset_parameters()
+
+        final_out_std = self.model_args.dim**-0.5
+        cutoff_factor = 3
+
+        if self.output is not None:
+            nn.init.trunc_normal_(
+                self.output.weight,
+                mean=0.0,
+                std=final_out_std,
+                a=-cutoff_factor * final_out_std,
+                b=cutoff_factor * final_out_std,
+            )
+
+        if self.score is not None:
+            nn.init.trunc_normal_(
+                self.score.weight,
+                mean=0.0,
+                std=final_out_std,
+                a=-cutoff_factor * final_out_std,
+                b=cutoff_factor * final_out_std,
+            )
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        positions: torch.Tensor | None = None,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seqlen: int | None = None,
+    ) -> torch.Tensor:
+        h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
+
+        for layer in self.layers.values():
+            h = layer(h, self.rope_cache, positions, cu_seqlens, max_seqlen)
+
+        h = self.norm(h) if self.norm else h
+
+        if self.is_critic:
+            output = self.score(h) if self.score else h
+        else:
+            output = self.output(h) if self.output else h
+        return output
+
+
+__all__ = [
+    "Qwen3ModelArgs",
+    "Attention",
+    "FeedForward",
+    "TransformerBlock",
+    "Qwen3Model",
+]

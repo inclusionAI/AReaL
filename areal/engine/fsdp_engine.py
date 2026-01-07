@@ -357,7 +357,7 @@ class FSDPEngine(TrainEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> dict[str, Any]:
@@ -372,7 +372,7 @@ class FSDPEngine(TrainEngine):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
@@ -444,8 +444,9 @@ class FSDPEngine(TrainEngine):
 
         grad_norm = fsdp2_clip_grad_norm(
             list(self.model.parameters()),
-            self.world_mesh,
             max_norm=self.optimizer_config.gradient_clipping,
+            fsdp_group=self.world_mesh["dp_sp"].get_group(),
+            tp_group=self.world_mesh["tp"].get_group(),
             offload_params=self.config.fsdp.offload_params,
         )
 
@@ -578,6 +579,7 @@ class FSDPEngine(TrainEngine):
         cu_seqlens = pack_tensor_dict(input_)["cu_seqlens"]
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
+        assert output_seqlens is not None
 
         # Step 2: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_).to(self.device)
