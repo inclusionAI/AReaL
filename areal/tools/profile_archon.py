@@ -1,23 +1,26 @@
-"""Forward pass profiling tool for Archon models.
+"""Profiling tool for Archon models (forward + backward).
 
-A simple forward profiling tool to analyze op-level performance bottlenecks
-in Archon model forward passes using torch.profiler.
+A profiling tool to analyze op-level performance bottlenecks
+in Archon model forward and backward passes using torch.profiler.
 
 Usage:
-    python -m areal.tools.profile_archon_forward [OPTIONS]
+    python -m areal.tools.profile_archon [OPTIONS]
 
 Examples:
-    # Default configuration
-    python -m areal.tools.profile_archon_forward
+    # Default: forward + backward
+    python -m areal.tools.profile_archon
+
+    # Forward only
+    python -m areal.tools.profile_archon --mode forward
 
     # Variable-length sequences
-    python -m areal.tools.profile_archon_forward --seq-lens 128,256,512,128
+    python -m areal.tools.profile_archon --seq-lens 128,256,512,128
 
     # Custom output path
-    python -m areal.tools.profile_archon_forward --output /tmp/my_trace.json
+    python -m areal.tools.profile_archon --output /tmp/my_trace.json
 
     # Long sequence test
-    python -m areal.tools.profile_archon_forward --batch-size 1 --total-len 16384
+    python -m areal.tools.profile_archon --batch-size 1 --total-len 16384
 """
 
 from __future__ import annotations
@@ -39,11 +42,12 @@ from areal.platforms import current_platform
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Profile Archon model forward pass to identify performance bottlenecks.",
+        description="Profile Archon model forward/backward to identify performance bottlenecks.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                              # Use default configuration
+  %(prog)s                              # Forward + backward (default)
+  %(prog)s --mode forward               # Forward only
   %(prog)s --seq-lens 128,256,512,128   # Specify variable sequence lengths
   %(prog)s --output /tmp/trace.json     # Custom output path
   %(prog)s --batch-size 1 --total-len 16384  # Long sequence test
@@ -54,6 +58,13 @@ Examples:
         type=str,
         default=None,
         help="Path to model. Defaults to Qwen/Qwen2.5-0.5B-Instruct",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["forward", "backward", "both"],
+        default="both",
+        help="Profiling mode: forward, backward, or both (default: both)",
     )
     parser.add_argument(
         "--batch-size",
@@ -98,12 +109,17 @@ Examples:
         type=str,
         default=None,
         help="Output path for Chrome trace JSON. "
-        "Defaults to ./profile_archon_forward_<timestamp>.json",
+        "Defaults to ./profile_archon_<timestamp>.json",
     )
     parser.add_argument(
         "--no-memory",
         action="store_true",
         help="Disable memory profiling",
+    )
+    parser.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Enable gradient checkpointing (activation checkpointing)",
     )
     return parser.parse_args(argv)
 
@@ -118,12 +134,12 @@ def get_dtype(dtype_str: str) -> torch.dtype:
     return dtype_map[dtype_str]
 
 
-def get_output_path(output: str | None) -> Path:
+def get_output_path(output: str | None, mode: str) -> Path:
     """Get output path for Chrome trace."""
     if output:
         return Path(output)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return Path(f"./profile_archon_forward_{timestamp}.json")
+    return Path(f"./profile_archon_{mode}_{timestamp}.json")
 
 
 def create_packed_input(
@@ -146,18 +162,9 @@ def create_packed_input(
         dict with input_ids, cu_seqlens, max_seqlen, and seq_lens.
     """
     if seq_lens is None:
-        # Generate random variable lengths that sum to approximately total_len
-        seq_lens = []
-        remaining = total_len
-        for i in range(batch_size - 1):
-            # Random length between 64 and remaining / (batch_size - i)
-            avg_remaining = remaining // (batch_size - i)
-            min_len = max(64, avg_remaining // 2)
-            max_len = min(remaining - 64 * (batch_size - i - 1), avg_remaining * 2)
-            length = random.randint(min_len, max_len)
-            seq_lens.append(length)
-            remaining -= length
-        seq_lens.append(remaining)
+        from areal.tools.profile.utils import generate_random_seq_lens
+
+        seq_lens = generate_random_seq_lens(batch_size, total_len)
 
     actual_total_len = sum(seq_lens)
     input_ids = torch.randint(
@@ -180,6 +187,36 @@ def create_packed_input(
     }
 
 
+def run_forward(model: torch.nn.Module, inputs: dict) -> torch.Tensor:
+    """Run forward pass only."""
+    with torch.no_grad():
+        logits = model(
+            inputs["input_ids"],
+            positions=None,
+            cu_seqlens=inputs["cu_seqlens"],
+            max_seqlen=inputs["max_seqlen"],
+        )
+    return logits
+
+
+def run_forward_backward(model: torch.nn.Module, inputs: dict) -> None:
+    """Run forward + backward pass."""
+    # Forward
+    logits = model(
+        inputs["input_ids"],
+        positions=None,
+        cu_seqlens=inputs["cu_seqlens"],
+        max_seqlen=inputs["max_seqlen"],
+    )
+
+    # Compute loss and backward
+    loss = logits.sum()
+    loss.backward()
+
+    # Clear gradients for next iteration
+    model.zero_grad(set_to_none=True)
+
+
 def run_profile(args: argparse.Namespace) -> None:
     """Run profiling with given configuration."""
     # Setup environment
@@ -200,8 +237,14 @@ def run_profile(args: argparse.Namespace) -> None:
         seq_lens = [int(x.strip()) for x in args.seq_lens.split(",")]
         args.batch_size = len(seq_lens)
 
+    mode_str = {
+        "forward": "FORWARD ONLY",
+        "backward": "BACKWARD ONLY",
+        "both": "FORWARD + BACKWARD",
+    }[args.mode]
+
     print("\n" + "=" * 70)
-    print("ARCHON FORWARD PROFILING")
+    print(f"ARCHON PROFILING ({mode_str})")
     print("=" * 70)
     print(f"Model path: {model_path}")
     print(f"Dtype: {args.dtype}")
@@ -213,11 +256,24 @@ def run_profile(args: argparse.Namespace) -> None:
     print(f"Warmup iterations: {args.warmup_iters}")
     print(f"Profile iterations: {args.profile_iters}")
     print(f"Memory profiling: {'disabled' if args.no_memory else 'enabled'}")
+    print(
+        f"Gradient checkpointing: {'enabled' if args.gradient_checkpointing else 'disabled'}"
+    )
     print("=" * 70)
 
     # Load model
     print("\n[Profile] Loading Archon model...")
     model, _ = load_archon_model(model_path, dtype=dtype)
+
+    # Enable gradient checkpointing if requested
+    if args.gradient_checkpointing:
+        from areal.experimental.models.archon.activation_checkpoint import (
+            ActivationCheckpointConfig,
+            apply_activation_checkpointing,
+        )
+
+        ac_config = ActivationCheckpointConfig(mode="full")
+        apply_activation_checkpointing(model, ac_config)
 
     # Get vocab size from model config
     from transformers import AutoConfig
@@ -242,18 +298,22 @@ def run_profile(args: argparse.Namespace) -> None:
     print(f"  Total tokens: {sum(inputs['seq_lens'])}")
     print(f"  Max sequence length: {inputs['max_seqlen']}")
 
+    # Select run function based on mode
+    def run_fn():
+        if args.mode == "forward":
+            return run_forward(model, inputs)
+        else:
+            return run_forward_backward(model, inputs)
+
     # Warmup
     print(f"\n[Profile] Running warmup ({args.warmup_iters} iterations)...")
     for i in range(args.warmup_iters):
-        with torch.no_grad():
-            _ = model(
-                inputs["input_ids"],
-                positions=None,
-                cu_seqlens=inputs["cu_seqlens"],
-                max_seqlen=inputs["max_seqlen"],
-            )
+        run_fn()
         torch.cuda.synchronize()
         print(f"  Warmup {i + 1}/{args.warmup_iters} done")
+
+    # Reset memory stats before profiling
+    torch.cuda.reset_peak_memory_stats()
 
     # Profile
     print(f"\n[Profile] Running profiler ({args.profile_iters} iterations)...")
@@ -264,28 +324,39 @@ def run_profile(args: argparse.Namespace) -> None:
         profile_memory=not args.no_memory,
     ) as prof:
         for _ in range(args.profile_iters):
-            with torch.no_grad():
-                _ = model(
-                    inputs["input_ids"],
-                    positions=None,
-                    cu_seqlens=inputs["cu_seqlens"],
-                    max_seqlen=inputs["max_seqlen"],
-                )
+            run_fn()
             torch.cuda.synchronize()
+
+    # Calculate summary stats
+    key_averages = prof.key_averages()
+    total_cuda_time_us = sum(
+        evt.device_time_total for evt in key_averages if evt.device_time_total > 0
+    )
+    total_cuda_time_ms = total_cuda_time_us / 1000 / args.profile_iters
+
+    peak_memory_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
 
     # Print results - sorted by CUDA time
     print("\n" + "=" * 80)
-    print("PROFILING RESULTS (sorted by CUDA time)")
+    print(f"PROFILING RESULTS - {mode_str} (sorted by CUDA time)")
     print("=" * 80)
     print(
-        prof.key_averages().table(
+        key_averages.table(
             sort_by="cuda_time_total",
             row_limit=30,
         )
     )
 
+    # Print summary
+    print("\n" + "=" * 80)
+    print("SUMMARY")
+    print("=" * 80)
+    print(f"Average iteration time (CUDA): {total_cuda_time_ms:.2f} ms")
+    print(f"Peak memory usage: {peak_memory_mb:.2f} MB")
+    print(f"Profile iterations: {args.profile_iters}")
+
     # Export Chrome trace
-    output_path = get_output_path(args.output)
+    output_path = get_output_path(args.output, args.mode)
     prof.export_chrome_trace(str(output_path))
     print(f"\n[Profile] Chrome trace exported to: {output_path}")
     print("[Profile] View with: chrome://tracing or https://ui.perfetto.dev/")
@@ -293,10 +364,10 @@ def run_profile(args: argparse.Namespace) -> None:
     # Print memory stats if enabled
     if not args.no_memory:
         print("\n" + "=" * 80)
-        print("MEMORY STATS")
+        print("MEMORY STATS (sorted by self CUDA memory usage)")
         print("=" * 80)
         print(
-            prof.key_averages().table(
+            key_averages.table(
                 sort_by="self_cuda_memory_usage",
                 row_limit=10,
             )

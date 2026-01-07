@@ -35,17 +35,19 @@ def parallelize_qwen2(
     cpu_offload: bool = False,
     reshard_after_forward: bool = True,
     ac_config: ActivationCheckpointConfig | None = None,
+    enable_compile: bool = True,
 ) -> nn.Module:
     """Apply parallelization to Qwen2 model.
 
     This is the main entry point for parallelizing a Qwen2 model.
     It applies TP (if tp_mesh provided), AC (if ac_config provided),
-    and FSDP (if dp_mesh provided).
+    torch.compile (if enable_compile), and FSDP (if dp_mesh provided).
 
     Order of operations:
     1. Apply TP (Tensor Parallelism)
     2. Apply AC (Activation Checkpointing) - must be after TP
-    3. Apply FSDP (Fully Sharded Data Parallelism)
+    3. Apply torch.compile - must be after AC, before FSDP
+    4. Apply FSDP (Fully Sharded Data Parallelism)
 
     Args:
         model: The Qwen2 model to parallelize.
@@ -57,6 +59,7 @@ def parallelize_qwen2(
         cpu_offload: Whether to enable CPU offloading for FSDP.
         reshard_after_forward: Whether to reshard after forward pass.
         ac_config: Activation checkpointing configuration. If None, AC is not applied.
+        enable_compile: Whether to apply torch.compile to TransformerBlocks.
 
     Returns:
         The parallelized model.
@@ -72,12 +75,18 @@ def parallelize_qwen2(
     # Step 2: Apply activation checkpointing (must be after TP)
     if ac_config is not None and ac_config.mode != "none":
         from areal.experimental.models.archon.activation_checkpoint import (
-            apply_activation_checkpoint,
+            apply_activation_checkpointing,
         )
 
-        apply_activation_checkpoint(model, ac_config)
+        apply_activation_checkpointing(model, ac_config)
 
-    # Step 3: Apply FSDP
+    # Step 3: Apply torch.compile (must be after AC, before FSDP)
+    if enable_compile:
+        from areal.experimental.models.archon.compile import apply_compile
+
+        apply_compile(model)
+
+    # Step 4: Apply FSDP
     if dp_mesh is not None:
         apply_fsdp(
             model,
@@ -88,7 +97,7 @@ def parallelize_qwen2(
             reshard_after_forward=reshard_after_forward,
         )
 
-    # Step 4: Enable weight tying after applying parallelisms
+    # Step 5: Enable weight tying after applying parallelisms
     if getattr(model.model_args, "enable_weight_tying", False):
         if model.output is not None and model.tok_embeddings is not None:
             model.output.weight = model.tok_embeddings.weight

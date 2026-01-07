@@ -779,12 +779,13 @@ Configuration for Weights & Biases experiment tracking.
 
 Configuration for Archon Engine training backend.
 
-| Parameter               | Type    | Default  | Description                                                                                        |
-| ----------------------- | ------- | -------- | -------------------------------------------------------------------------------------------------- |
-| `attn_type`             | string  | `"sdpa"` | Attention backend type. **Choices:** `sdpa`, `varlen`                                              |
-| `offload_params`        | boolean | `False`  | Whether to offload FSDP parameters to CPU.                                                         |
-| `recompute_granularity` | string  | `"full"` | Activation checkpointing granularity. **Choices:** `none`, `full`, `selective`                     |
-| `recompute_num_layers`  | integer | `1`      | For selective recompute: checkpoint every N layers. Set to 0 for op-level selective checkpointing. |
+| Parameter               | Type    | Default    | Description                                                                                        |
+| ----------------------- | ------- | ---------- | -------------------------------------------------------------------------------------------------- |
+| `attn_type`             | string  | `"varlen"` | Attention backend type. **Choices:** `varlen`, `sdpa`                                              |
+| `offload_params`        | boolean | `False`    | Whether to offload FSDP parameters to CPU.                                                         |
+| `enable_compile`        | boolean | `True`     | Enable torch.compile for TransformerBlocks.                                                        |
+| `recompute_granularity` | string  | `"full"`   | Activation checkpointing granularity. **Choices:** `none`, `full`, `selective`                     |
+| `recompute_num_layers`  | integer | `1`        | For selective recompute: checkpoint every N layers. Set to 0 for op-level selective checkpointing. |
 
 (section-distributed-data-parallel)=
 

@@ -33,6 +33,7 @@ class ParallelizeFn(Protocol):
         cpu_offload: bool = False,
         reshard_after_forward: bool = True,
         ac_config: ActivationCheckpointConfig | None = None,
+        enable_compile: bool = True,
     ) -> nn.Module: ...
 
 
