@@ -1,5 +1,5 @@
 #/bin/bash
-
+set -euo pipefail
 MODEL=${1:-"models/zzy/Qwen3-ins-4b-5-test"}
 OUTPUT_DIR=${2:-"logs/eval/output"}
 INPUT_FILE="/home/ligengz/workspace/AReaL/LLaMA-Factory-direct-conversation/s1-parallel/AIME24.jsonl"
@@ -32,5 +32,6 @@ python new_batch_inference_new.py \
 wait 
 
 exit 0
-./eval.sh models/zzy/Qwen3-ins-4b-5-test output-qwen3-ins-4b-5-test
-eai-run -i --pty bash ./eval.sh models/zzy/Qwen3-ins-4b-5-test output-qwen3-ins-4b-5-test
+./eval.sh models/zzy/Qwen3-ins-4b-5-test ./logs/eval/output-qwen3-ins-4b-5-test
+eai-run -i --pty bash ./eval.sh models/zzy/Qwen3-ins-4b-5-test ./logs/eval/output-qwen3-ins-4b-5-test
+eai-run -i --pty bash ./eval.sh Qwen/Qwen3-4b-instruct-2507 ./logs/eval/qwen3-4b-instruct-2507
