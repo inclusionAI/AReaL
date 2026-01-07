@@ -243,11 +243,7 @@ class MegatronEngine(TrainEngine):
             self.logger.info(
                 "Using mbridge to create models and hf model save/load in MegatronEngine."
             )
-
-            self.logger.info(
-                "Using mbridge to create models and hf model save/load in MegatronEngine."
-            )
-
+            
             self.hf_config, self.tf_config = make_hf_and_mcore_config(
                 self.config.path, dtype=self.dtype, bridge=self.bridge
             )
