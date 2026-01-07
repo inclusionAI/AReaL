@@ -170,6 +170,9 @@ class Tau2Runner:
             simulation = await orchestrator.arun()
             run_info.messages = simulation.messages
         except Exception as e:
+            import traceback
+            traceback.print_exc()
+        
             logger.error(
                 f"ERROR RUNNING SIMULATION: Domain: {domain}, Task: {task.id}, "
                 f"Agent: {agent.__class__.__name__}, User: {user.__class__.__name__}. "
