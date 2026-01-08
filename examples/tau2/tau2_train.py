@@ -35,6 +35,9 @@ from areal.utils.stats_logger import StatsLogger
 
 logger = logging.getLogger("Tau2 Example")
 
+import warnings
+warnings.simplefilter('error', UserWarning)
+
 
 # ================================ dataset ================================
 def get_tau2_dataset(
