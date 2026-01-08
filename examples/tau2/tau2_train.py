@@ -35,9 +35,6 @@ from areal.utils.stats_logger import StatsLogger
 
 logger = logging.getLogger("Tau2 Example")
 
-import warnings
-warnings.simplefilter('error', UserWarning)
-
 
 # ================================ dataset ================================
 def get_tau2_dataset(
@@ -241,6 +238,10 @@ class Tau2PPOConfig(PPOConfig):
 
 
 def main(args):
+    import warnings
+    # TODO: figure out why pydantic UserWarning happens
+    warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+    
     config, _ = load_expr_config(args, Tau2PPOConfig)
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
     domain = config.econfig.domain
