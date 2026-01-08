@@ -50,7 +50,7 @@ actor:
   gradient_checkpointing: true
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 32000
+    max_tokens_per_mb: 32768
   optimizer:
     type: adam
     lr: 5e-6
@@ -92,7 +92,7 @@ ref:
   disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
-    max_tokens_per_mb: 32000
+    max_tokens_per_mb: 32768
   optimizer: null
 
 econfig:
