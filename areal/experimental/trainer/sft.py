@@ -17,7 +17,7 @@ from areal.api.cli_args import (
 from areal.api.io_struct import FinetuneSpec, StepInfo
 from areal.api.scheduler_api import Scheduler
 from areal.platforms import current_platform
-from areal.scheduler import LocalScheduler, SlurmScheduler
+from areal.scheduler import LocalScheduler, RayScheduler, SlurmScheduler
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.data import (
     broadcast_tensor_container,
@@ -255,6 +255,8 @@ class SFTTrainer:
         cfg = self.config.scheduler
         if cfg.type == "local":
             return LocalScheduler(exp_config=self.config)
+        elif cfg.type == "ray":
+            return RayScheduler(exp_config=self.config)
         elif cfg.type == "slurm":
             return SlurmScheduler(exp_config=self.config)
         raise NotImplementedError(f"Unknown scheduler type: {cfg.type}")
