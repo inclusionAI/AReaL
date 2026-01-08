@@ -16,7 +16,7 @@ class BaseModelArgs(ABC):
     """Base class for model arguments."""
 
     # Attention backend type: "sdpa" or "varlen"
-    attn_type: str = "sdpa"
+    attn_type: str = "varlen"
 
     @classmethod
     @abstractmethod

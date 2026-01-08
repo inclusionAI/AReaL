@@ -207,7 +207,13 @@ class ArchonEngine(TrainEngine):
             cpu_offload=self.config.archon.offload_params,
             reshard_after_forward=True,
             ac_config=ac_config,
+            enable_compile=self.config.archon.enable_compile,
         )
+
+        # Synchronize all ranks after parallelization (especially after torch.compile)
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+
         self.logger.info(
             f"Applied parallelism in {time.perf_counter() - tik:.2f} seconds"
         )
@@ -867,6 +873,10 @@ class ArchonEngine(TrainEngine):
         self.model = model
 
     def _build_ac_config(self) -> ActivationCheckpointConfig | None:
+        # First check if gradient checkpointing is enabled
+        if not self.config.gradient_checkpointing:
+            return None
+
         archon_config = self.config.archon
         granularity = archon_config.recompute_granularity
 

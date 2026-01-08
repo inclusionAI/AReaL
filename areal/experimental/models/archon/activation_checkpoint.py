@@ -62,7 +62,7 @@ class ActivationCheckpointConfig:
                 )
 
 
-def apply_activation_checkpoint(
+def apply_activation_checkpointing(
     model: nn.Module,
     ac_config: ActivationCheckpointConfig,
 ) -> None:
@@ -223,5 +223,5 @@ def _apply_op_sac(
 
 __all__ = [
     "ActivationCheckpointConfig",
-    "apply_activation_checkpoint",
+    "apply_activation_checkpointing",
 ]

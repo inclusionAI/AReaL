@@ -384,10 +384,10 @@ class ArchonEngineConfig:
 
     # Attention backend
     attn_type: str = field(
-        default="sdpa",
+        default="varlen",
         metadata={
             "help": "Attention backend type.",
-            "choices": ["sdpa", "varlen"],
+            "choices": ["varlen", "sdpa"],
         },
     )
 
@@ -395,6 +395,12 @@ class ArchonEngineConfig:
     offload_params: bool = field(
         default=False,
         metadata={"help": "Whether to offload FSDP parameters to CPU."},
+    )
+
+    # Whether to enable torch.compile
+    enable_compile: bool = field(
+        default=True,
+        metadata={"help": "Enable torch.compile for TransformerBlocks."},
     )
 
     # Activation Checkpointing (Gradient Checkpointing)
