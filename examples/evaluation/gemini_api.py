@@ -6,6 +6,8 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
+
+
 def call_model(prompt, model="claude-3-7-sonnet-20250219", image_path=None, **kwargs):
     url = 'https://matrixllm.alipay.com/v1/chat/completions'
     api_key = ""  
@@ -43,6 +45,7 @@ def call_model(prompt, model="claude-3-7-sonnet-20250219", image_path=None, **kw
                 "content": content, 
             }
         ],
+        "extra_body": {"google": {"thinking_config": {"include_thoughts": True,"thinking_level":"high"}, "thought_tag_marker": "think"}},
         **kwargs,
     }
 
@@ -64,5 +67,4 @@ if __name__ == "__main__":
         prompt=prompt_text, 
         model="gemini-3-pro-preview", 
         image_path="84edit.jpg",
-        include_thought=True
     )

@@ -18,7 +18,6 @@ echo "Split: $split"
 
 # 2. 准备输出目录
 out_dir="outputs/${model_name}"
-mkdir -p "$out_dir"
 pred_file="${out_dir}/mathvision_preds.jsonl"
 score_file="${out_dir}/mathvision_score.json"
 
@@ -32,7 +31,7 @@ python examples/evaluation/mathvision/mathvision_api.py \
   --base-url "https://matrixllm.alipay.com/v1" \
   --api-key "$api_key" \
   --split "$split" \
-  --concurrency 32 \
+  --concurrency 64 \
   --output "$pred_file" \
   --score-json "$score_file"
 
