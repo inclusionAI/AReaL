@@ -22,7 +22,7 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 from areal.dataset import get_custom_dataset
-from grounding_reward import compute_score 
+from areal.reward.grounding_reward import compute_score 
 
 def main(args):
     config, _ = load_expr_config(args, GRPOConfig)
