@@ -122,7 +122,8 @@ async def test_session_lifecycle(proxy_server):
             assert resp.status == 200
 
     # 3. after end session, can fetch results with `wait_for_session`
-    interactions = await proxy_server.wait_for_session(session_id)
+    session_data = await proxy_server.wait_for_session(session_id)
+    interactions = session_data.completions.export_interactions
     assert len(interactions) >= 1
 
 

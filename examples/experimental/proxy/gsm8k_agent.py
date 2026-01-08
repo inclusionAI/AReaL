@@ -1,9 +1,8 @@
+from math_verify import parse, verify
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 from areal.api.workflow_api import AgentWorkflow
-from areal.core import workflow_context
-from areal.utils import stats_tracker
 
 
 class GSM8kAgent(AgentWorkflow):
@@ -11,18 +10,15 @@ class GSM8kAgent(AgentWorkflow):
         self.kwargs = kwargs
 
     async def run(self, base_url: str, data: dict):
-        async with AsyncOpenAI(base_url=base_url) as client:
+        # custom_timeout = httpx.Timeout(30.0, read=600.0)
+        # async with AsyncOpenAI(base_url=base_url, max_retries=0,
+        # timeout=custom_timeout) as client:
+        async with AsyncOpenAI(max_retries=0) as client:
             comp: ChatCompletion = await client.chat.completions.create(
                 messages=data["messages"], model="default", **self.kwargs
             )
 
-        # compute reward with areal's existing implementation
-        # Use the following wrapper to suppress the annoying warning of math-verify
-        from areal.api.reward_api import AsyncRewardWrapper
-        from areal.reward.gsm8k import gsm8k_reward_fn
-
-        reward = await AsyncRewardWrapper(gsm8k_reward_fn)(
-            None, comp.choices[0].message.content, None, None, answer=data["answer"]
-        )
-        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
-        return reward
+        ans = parse(comp.choices[0].message.content)
+        gold = parse(data["answer"])
+        reward = verify(ans, gold)
+        return float(reward)

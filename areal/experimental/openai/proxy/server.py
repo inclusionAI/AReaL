@@ -318,7 +318,12 @@ class OpenAIProxyServer:
         self.host_ip = gethostip()
         self._localhost = "0.0.0.0"
         self.server_config = uvicorn.Config(
-            self.app, host=self._localhost, port=self.port, log_level=uvicorn_log_level
+            self.app,
+            host=self._localhost,
+            port=self.port,
+            log_level=uvicorn_log_level,
+            timeout_keep_alive=300,
+            workers=4,
         )
         self.server = uvicorn.Server(self.server_config)
         self.thread = threading.Thread(target=self.server.run, daemon=True)
@@ -378,15 +383,12 @@ class OpenAIProxyServer:
             except Empty:
                 await asyncio.sleep(0.1)
 
-    async def wait_for_session(
-        self, session_id: str, discount: float = 1.0, style: str = "individual"
-    ) -> SessionData:
+    async def wait_for_session(self, session_id: str) -> SessionData:
         if session_id not in self.session_cache:
             raise KeyError(f"Session {session_id} not found")
         # Wait for session to be completed using event
         await self.session_cache[session_id].wait_for_finish()
-        session = self.session_cache.pop(session_id)
-        return session.export_interactions(discount=discount, style=style)
+        return self.session_cache.pop(session_id)
 
     def set_reward(self, session_id: str, completion_id: str, reward: float):
         """Set reward for a specific completion/response by its ID."""
