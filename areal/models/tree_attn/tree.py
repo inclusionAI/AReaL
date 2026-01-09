@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import torch
+import torch.distributed as dist
 
 from areal.api.cli_args import MicroBatchSpec
 from areal.models.tree_attn.module import BLOCK_SIZE, USE_BLOCK_MASK
@@ -228,6 +229,7 @@ def build_packed_tree_batch(
     mb_spec: MicroBatchSpec,
     pad_to_maximum: bool = True,
     pad_to_multiple_of: int = 1,
+    dp_group: dist.ProcessGroup | None = None,
 ) -> MicroBatchList:
     """Build a MicroBatchList from input data using greedy trie packing.
 
@@ -254,6 +256,11 @@ def build_packed_tree_batch(
         When pad_to_maximum=False, pad to the nearest multiple of this value.
         If <= 1, no padding is applied. No padding raises error if
         USE_BLOCK_MASK=True.
+    dp_group : dist.ProcessGroup | None, default=None
+        Data parallel process group. If provided, synchronizes the number of
+        trees across all ranks by finding the maximum tree count and rerunning
+        `_greedy_build_tries` with `min_trees=max_num_trees` on ranks with
+        fewer trees.
 
     Returns
     -------
@@ -265,6 +272,9 @@ def build_packed_tree_batch(
     ValueError
         If max_tokens_per_mb is None or not positive, or if padding
         constraints are violated, or if a sequence exceeds max_tokens_per_mb.
+    RuntimeError
+        If trees cannot be split to meet n_mbs, n_mbs_divisor, or dp_group
+        synchronization requirements.
     """
     # Warn about non-effective attributes (only granularity now)
     if mb_spec.granularity != 1:
@@ -298,13 +308,45 @@ def build_packed_tree_batch(
                 f"when USE_BLOCK_MASK=True"
             )
 
+    # Get min_trees and n_trees_divisor from mb_spec
+    min_trees = mb_spec.n_mbs if mb_spec.n_mbs is not None else 1
+    n_trees_divisor = mb_spec.n_mbs_divisor if mb_spec.n_mbs_divisor is not None else 1
+
     # Build tries using greedy packing
     tries, num_tokens_list = _greedy_build_tries(
         data,
         max_tokens_per_tree,
-        min_trees=mb_spec.n_mbs if mb_spec.n_mbs is not None else 1,
-        n_trees_divisor=mb_spec.n_mbs_divisor if mb_spec.n_mbs_divisor is not None else 1,
+        min_trees=min_trees,
+        n_trees_divisor=n_trees_divisor,
     )
+
+    # Synchronize number of trees across dp_group if provided
+    if dp_group is not None:
+        num_trees = len(tries)
+        input_template: torch.Tensor = data["input_ids"]
+
+        # All-gather tree counts from all ranks
+        local_count = torch.tensor([num_trees], dtype=torch.int64, device=input_template.device)
+        world_size = dist.get_world_size(dp_group)
+        all_counts = [
+            torch.zeros(1, dtype=torch.int64, device=input_template.device)
+            for _ in range(world_size)
+        ]
+        dist.all_gather(all_counts, local_count, group=dp_group)
+
+        # Find the maximum tree count across all ranks
+        max_num_trees = max(c.item() for c in all_counts)
+
+        # If this rank has fewer trees, rerun with min_trees=max_num_trees
+        if num_trees < max_num_trees:
+            # Rerun _greedy_build_tries with updated min_trees
+            # Also ensure n_trees_divisor is still satisfied
+            tries, num_tokens_list = _greedy_build_tries(
+                data,
+                max_tokens_per_tree,
+                min_trees=max_num_trees,
+                n_trees_divisor=n_trees_divisor,
+            )
 
     # Prepare templates and metadata
     input_template: torch.Tensor = data["input_ids"]
