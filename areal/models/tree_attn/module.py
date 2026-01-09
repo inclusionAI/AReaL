@@ -49,6 +49,11 @@ logger.info(
 )
 
 
+# Global cache for block mask (size 1)
+# Stores: {"key": (mask_data_ptr, q_len, device), "block_mask": block_mask}
+_block_mask_cache: dict = {"key": None, "block_mask": None}
+
+
 class PytorchFlexAttention(torch.nn.Module):
     """Pytorch flex attention implementation that supports arbitrary attention mask type."""
 
@@ -113,32 +118,41 @@ class PytorchFlexAttention(torch.nn.Module):
 
         q_len = attention_mask.shape[0]
 
-        def arbitrary_mask(
-            batch: torch.Tensor,
-            head: torch.Tensor,
-            q_idx: torch.Tensor,
-            k_idx: torch.Tensor,
-        ):
-            return attention_mask[q_idx, k_idx]
-
-        def arbitrary_score_mod(score, b, h, q_idx, k_idx):
-            mask_value = attention_mask[q_idx, k_idx]
-            score = score.masked_fill(~mask_value, float("-inf"))
-            return score
-
         if USE_BLOCK_MASK:
-            block_mask = create_block_mask(
-                arbitrary_mask,
-                B=1,  # Broadcast across batch
-                H=1,  # Broadcast across heads
-                Q_LEN=q_len,
-                KV_LEN=q_len,
-                BLOCK_SIZE=BLOCK_SIZE,
-                device=query.device,
-                _compile=False,
-            )
+            # Check cache for existing block mask
+            cache_key = (attention_mask.data_ptr(), q_len, query.device)
+            if _block_mask_cache["key"] == cache_key:
+                block_mask = _block_mask_cache["block_mask"]
+            else:
+                def arbitrary_mask(
+                    batch: torch.Tensor,
+                    head: torch.Tensor,
+                    q_idx: torch.Tensor,
+                    k_idx: torch.Tensor,
+                ):
+                    return attention_mask[q_idx, k_idx]
+
+                block_mask = create_block_mask(
+                    arbitrary_mask,
+                    B=1,  # Broadcast across batch
+                    H=1,  # Broadcast across heads
+                    Q_LEN=q_len,
+                    KV_LEN=q_len,
+                    BLOCK_SIZE=BLOCK_SIZE,
+                    device=query.device,
+                    _compile=False,
+                )
+                # Update cache
+                _block_mask_cache["key"] = cache_key
+                _block_mask_cache["block_mask"] = block_mask
+
             score_mod = None
         else:
+            def arbitrary_score_mod(score, b, h, q_idx, k_idx):
+                mask_value = attention_mask[q_idx, k_idx]
+                score = score.masked_fill(~mask_value, float("-inf"))
+                return score
+
             block_mask = None
             score_mod = arbitrary_score_mod
 
