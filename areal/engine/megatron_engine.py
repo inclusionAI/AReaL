@@ -1335,6 +1335,7 @@ class MegatronEngine(TrainEngine):
                 mb_spec=self.config.mb_spec,
                 pad_to_maximum=self.config.pad_to_maximum,
                 pad_to_multiple_of=BLOCK_SIZE,
+                dp_group=self.data_parallel_group,
             )
             recommended_min_n_mbs = 2 * pp_size if pp_size > 1 else 1
             self.logger.info(
