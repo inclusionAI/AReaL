@@ -85,6 +85,7 @@ from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
+from areal.models.tree_attn.tree import TrieNode
 from areal.models.tree_attn.functional import (
     _gather_packed_tree_logprobs,
     gather_packed_tree_logprobs_entropy,
@@ -132,12 +133,15 @@ class FSDPTrainContext:
         Number of padding tokens added for sequence packing.
     ulysses_pad_size
         Extra padding added for Ulysses sequence parallel alignment.
+    trie_node
+        The root TrieNode for tree training (if applicable).
     """
 
     model_inputs: dict[str, Any]
     mb_input: dict[str, Any]
     pad_length: int = 0
     ulysses_pad_size: int = 0
+    trie_node: TrieNode | None = None
 
 
 class FSDPEngine(TrainEngine):
@@ -1339,8 +1343,10 @@ class FSDPEngine(TrainEngine):
                 ulysses_position_ids,
                 self.parallel_helper.sp_size,
             )
+            trie_node = inputs.pop("trie_node", None)
         else:
             inputs = mb_item.padded_mb
+            trie_node = inputs.pop("trie_node", None)
             ulysses_pad_size = 0
 
         ctx = FSDPTrainContext(
@@ -1348,6 +1354,7 @@ class FSDPEngine(TrainEngine):
             mb_input=mb_item.orig_mb,
             pad_length=mb_item.padding_length,
             ulysses_pad_size=ulysses_pad_size,
+            trie_node=trie_node,
         )
         return inputs, ctx
 
