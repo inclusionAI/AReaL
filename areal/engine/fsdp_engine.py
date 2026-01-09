@@ -508,6 +508,7 @@ class FSDPEngine(TrainEngine):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
 
+            print(ctx)
             ctx_dict = dataclasses.asdict(ctx)
             ctx.trie_node = trie_node
             loss = process_output_fn(logits, ctx_dict)
