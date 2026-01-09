@@ -2,7 +2,14 @@
   "identity": {
     "file_name": "identity.json"
   },
-  "direct_conversation": {
+  "parallel_sft": {
+    "file_name": "s1-parallel/Qwen-4B-dataset/parallel-only-3-conv.jsonl",
+    "columns": {
+      "prompt": "input",
+      "response": "output"
+    }
+  },
+  "sequential_sft": {
     "file_name": "s1-parallel/Qwen-4B-dataset/json-only-1-conv.jsonl",
     "columns": {
       "prompt": "input",

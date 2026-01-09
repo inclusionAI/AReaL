@@ -1,6 +1,8 @@
 bf16: true
 cutoff_len: 24576
-dataset: direct_conversation
+dataset: parallel_sft
+model_name_or_path: Qwen/Qwen3-4b-instruct-2507
+output_dir: ./models/parallel_sft/Qwen3-ins-4b-5-test
 deepspeed: deepspeed_config.json
 do_sample: true
 do_train: true
@@ -18,9 +20,7 @@ mask_history: true
 max_grad_norm: 0.5
 max_new_tokens: 32768
 resume_from_checkpoint: false
-model_name_or_path: Qwen/Qwen3-4b-instruct-2507
 num_train_epochs: 5
-output_dir: ./models/zzy/Qwen3-ins-4b-5-test
 per_device_train_batch_size: 1
 save_steps: 1000
 save_strategy: steps
