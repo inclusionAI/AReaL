@@ -498,8 +498,10 @@ class FSDPEngine(TrainEngine):
             # XXX: temp hack
             for k, v in inputs.items():
                 print(f"[debug fsdp] input {k}: {v.shape if torch.is_tensor(v) else type(v)}")
+
             if inputs["position_ids"].dim() == 1:
                 inputs["position_ids"] = inputs["position_ids"].unsqueeze(0)
+                inputs["full_attention_mask"] = inputs["attention_mask"].clone()
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)

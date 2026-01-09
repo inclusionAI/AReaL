@@ -195,6 +195,8 @@ def _tree_attn_fwd_func(
     *args,
     **kwargs
 ):
+    assert "full_attention_mask" in kwargs, "full_attention_mask is required for tree attention"
+    attention_mask = kwargs["full_attention_mask"]
     # [B, S, H, D] -> [B, H, S, D]
     query = query.permute(0, 2, 1, 3).contiguous()
     key = key.permute(0, 2, 1, 3).contiguous()
