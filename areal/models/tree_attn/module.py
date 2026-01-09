@@ -14,7 +14,7 @@ from megatron.core.transformer.transformer_layer import (
     TransformerLayer,
     TransformerLayerSubmodules,
 )
-from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+from torch.nn.attention.flex_attention import create_block_mask, flex_attention, BlockMask
 
 from areal.utils import logging
 
@@ -48,7 +48,30 @@ logger.info(
     BLOCK_SIZE,
 )
 
-
+def _create_block_mask(
+    attention_mask: torch.Tensor,
+):  
+    def arbitrary_mask(
+        batch: torch.Tensor,
+        head: torch.Tensor,
+        q_idx: torch.Tensor,
+        k_idx: torch.Tensor,
+    ):
+        return attention_mask[q_idx, k_idx]
+    
+    q_len = attention_mask.shape[0]
+    block_mask = create_block_mask(
+        arbitrary_mask,
+        B=1,  # Broadcast across batch
+        H=1,  # Broadcast across heads
+        Q_LEN=q_len,
+        KV_LEN=q_len,
+        BLOCK_SIZE=BLOCK_SIZE,
+        device=attention_mask.device,
+        _compile=False,
+    )
+    return block_mask
+    
 class PytorchFlexAttention(torch.nn.Module):
     """Pytorch flex attention implementation that supports arbitrary attention mask type."""
 
@@ -85,7 +108,7 @@ class PytorchFlexAttention(torch.nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        attention_mask: torch.Tensor,
+        attention_mask: BlockMask | torch.Tensor,
         attn_mask_type: AttnMaskType,
         attention_bias: torch.Tensor = None,
         packed_seq_params: PackedSeqParams = None,
@@ -111,34 +134,21 @@ class PytorchFlexAttention(torch.nn.Module):
         value = value.permute(1, 2, 0, 3)
         enable_gqa = query.shape[1] != key.shape[1]
 
-        q_len = attention_mask.shape[0]
-
-        def arbitrary_mask(
-            batch: torch.Tensor,
-            head: torch.Tensor,
-            q_idx: torch.Tensor,
-            k_idx: torch.Tensor,
-        ):
-            return attention_mask[q_idx, k_idx]
-
-        def arbitrary_score_mod(score, b, h, q_idx, k_idx):
-            mask_value = attention_mask[q_idx, k_idx]
-            score = score.masked_fill(~mask_value, float("-inf"))
-            return score
-
-        if USE_BLOCK_MASK:
-            block_mask = create_block_mask(
-                arbitrary_mask,
-                B=1,  # Broadcast across batch
-                H=1,  # Broadcast across heads
-                Q_LEN=q_len,
-                KV_LEN=q_len,
-                BLOCK_SIZE=BLOCK_SIZE,
-                device=query.device,
-                _compile=False,
-            )
+        if isinstance(attention_mask, BlockMask):
+            if not USE_BLOCK_MASK:
+                raise ValueError(
+                    "attention_mask should not be BlockMask when USE_BLOCK_MASK is False."
+                )
+            block_mask = attention_mask
+            score_mod = None
+        elif USE_BLOCK_MASK:
+            block_mask = _create_block_mask(attention_mask)
             score_mod = None
         else:
+            def arbitrary_score_mod(score, b, h, q_idx, k_idx):
+                mask_value = attention_mask[q_idx, k_idx]
+                score = score.masked_fill(~mask_value, float("-inf"))
+                return score
             block_mask = None
             score_mod = arbitrary_score_mod
 
