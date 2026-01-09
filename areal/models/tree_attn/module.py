@@ -121,10 +121,8 @@ class PytorchFlexAttention(torch.nn.Module):
             # Check cache for existing block mask
             cache_key = (attention_mask.data_ptr(), q_len, query.device)
             if _block_mask_cache["key"] == cache_key:
-                print(f"[debug] cache hit for block mask in layer {self.layer_number}")
                 block_mask = _block_mask_cache["block_mask"]
             else:
-                print(f"[debug] cache miss for block mask in layer {self.layer_number}")
                 def arbitrary_mask(
                     batch: torch.Tensor,
                     head: torch.Tensor,
