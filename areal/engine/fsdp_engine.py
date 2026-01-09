@@ -496,9 +496,7 @@ class FSDPEngine(TrainEngine):
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
             # XXX: temp hack
-            if inputs["position_ids"].dim() == 1:
-                # inputs["position_ids"] = inputs["position_ids"].unsqueeze(0)
-                inputs["full_attention_mask"] = inputs["attention_mask"].clone()
+            inputs["full_attention_mask"] = inputs["attention_mask"].clone()
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
