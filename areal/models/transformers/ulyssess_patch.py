@@ -145,6 +145,44 @@ def patch_vlm_for_ulysses_input_slicing(model_class: type):
     logger.info(f"Patched {model_class.__name__}.forward")
 
 
+def _ulysses_flash_attention_forward_tree_attn(
+    query_states: torch.Tensor,
+    key_states: torch.Tensor,
+    value_states: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+    *args,
+    **kwargs,
+):
+    ulysses_sp_size = get_ulysses_sequence_parallel_world_size()
+    if ulysses_sp_size > 1:
+        repeats = max(ulysses_sp_size // key_states.size(2), 1)
+        key_states = repeat_kv(key_states, repeats)
+        value_states = repeat_kv(value_states, repeats)
+
+        # (1, total_seqlen / sp_size, num_heads, head_dim)
+        # -> (1, total_seqlen, num_heads / sp_size, head_dim)
+        query_states = gather_seq_scatter_heads(query_states, seq_dim=1, head_dim=2)
+        key_states = gather_seq_scatter_heads(key_states, seq_dim=1, head_dim=2)
+        value_states = gather_seq_scatter_heads(value_states, seq_dim=1, head_dim=2)
+
+    # (1, total_seqlen, num_heads / sp_size, head_dim)
+    attn_output = _tree_attn_fwd_func(
+        query_states,
+        key_states,
+        value_states,
+        attention_mask,
+        **kwargs,
+    )
+
+    if ulysses_sp_size > 1:
+        # (1, total_seqlen, num_heads / sp_size, head_dim)
+        # -> (1, total_seqlen / sp_size, num_heads, head_dim)
+        attn_output = gather_heads_scatter_seq(attn_output, seq_dim=1, head_dim=2)
+
+    return attn_output
+
+
+
 def apply_monkey_patch(
     model: PreTrainedModel,
     ulysses_sp_size: int = 1,
@@ -240,9 +278,7 @@ def apply_monkey_patch(
         from transformers.integrations import flash_attention
 
         if ulysses_sp_size > 1 and enable_tree_training:
-            raise NotImplementedError(
-                "Ulysses sequence parallelism with tree training is not supported together yet."
-            )
+            patch_func = _ulysses_flash_attention_forward_tree_attn
         elif ulysses_sp_size > 1:
             patch_func = _ulysses_flash_attention_forward
         elif enable_tree_training:

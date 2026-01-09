@@ -503,6 +503,13 @@ class FSDPEngine(TrainEngine):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
 
+            # TODO: handle logprobs instead of logits
+            
+            if self.parallel_helper.sp_size > 1 and self.enable_tree_training:
+                sp_group = self.parallel_helper.sp_group
+                gathered_logits = dist_F.all_gather(logits, group=sp_group)
+                logits = torch.cat(gathered_logits, dim=0)
+
             # ctx_dict = dataclasses.asdict(ctx)
             ctx_dict = {
                 "model_inputs": ctx.model_inputs,
@@ -1199,7 +1206,9 @@ class FSDPEngine(TrainEngine):
             mb_list = build_packed_tree_batch(
                 input_,
                 mb_spec=self.config.mb_spec,
-                pad_to_maximum=self.config.pad_to_maximum,
+                # TODO: Fix this as an option
+                pad_to_maximum=True,
+                # pad_to_maximum=self.config.pad_to_maximum,
                 pad_to_multiple_of=BLOCK_SIZE,
                 dp_group=self.data_parallel_group,
             )
@@ -1520,7 +1529,7 @@ class FSDPEngine(TrainEngine):
             )
         if not self.config.is_critic:
             if self.enable_tree_training:
-                logprobs = _gather_packed_tree_logprobs(
+                result = _gather_packed_tree_logprobs(
                     logits,
                     ctx.trie_node,
                     ctx.mb_input["input_ids"],
@@ -1529,7 +1538,7 @@ class FSDPEngine(TrainEngine):
                     if self.parallel_helper.tp_size > 1
                     else None,
                 )
-                return logprobs
+                return result
             result = self._compute_logprobs(
                 logits, ctx.model_inputs, ctx.ulysses_pad_size
             )
