@@ -253,6 +253,7 @@ class FSDPEngine(TrainEngine):
         # Monkey patch: replace attention's forward() with
         # Ulysses-compatible version if Ulysses SP is enabled
         # or tree attention based on flex attention.
+        print(f"[debug] enable_tree_training={self.enable_tree_training}", flush=True)
         apply_monkey_patch(
             model=self.model,
             ulysses_sp_size=self.parallel_helper.sp_size,

@@ -245,8 +245,10 @@ def apply_monkey_patch(
             )
         elif ulysses_sp_size > 1:
             patch_func = _ulysses_flash_attention_forward
+            print(f"[debug] applying ulysses flash attention patch", flush=True)
         elif enable_tree_training:
             patch_func = _tree_attn_fwd_func
+            print(f"[debug] applying tree attention patch", flush=True)
 
         flash_attention._flash_attention_forward = patch_func
         logger.info(
