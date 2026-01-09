@@ -495,7 +495,6 @@ class FSDPEngine(TrainEngine):
     ) -> None:
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
-            trie_node = inputs.pop("trie_node", None)
 
             # XXX: temp hack
             for k, v in inputs.items():
@@ -508,9 +507,14 @@ class FSDPEngine(TrainEngine):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
 
-            print(ctx)
-            ctx_dict = dataclasses.asdict(ctx)
-            ctx.trie_node = trie_node
+            # ctx_dict = dataclasses.asdict(ctx)
+            ctx_dict = {
+                "model_inputs": ctx.model_inputs,
+                "mb_input": ctx.mb_input,
+                "pad_length": ctx.pad_length,
+                "ulysses_pad_size": ctx.ulysses_pad_size,
+                "trie_node": ctx.trie_node,
+            }
             loss = process_output_fn(logits, ctx_dict)
 
             if not forward_only and loss is not None:
@@ -1354,8 +1358,10 @@ class FSDPEngine(TrainEngine):
                 ulysses_position_ids,
                 self.parallel_helper.sp_size,
             )
+            trie_node = inputs.pop("trie_node", None)
         else:
             inputs = mb_item.padded_mb
+            trie_node = inputs.pop("trie_node", None)
             ulysses_pad_size = 0
 
         ctx = FSDPTrainContext(
@@ -1363,6 +1369,7 @@ class FSDPEngine(TrainEngine):
             mb_input=mb_item.orig_mb,
             pad_length=mb_item.padding_length,
             ulysses_pad_size=ulysses_pad_size,
+            trie_node=trie_node,
         )
         return inputs, ctx
 
