@@ -337,16 +337,15 @@ def build_packed_tree_batch(
         # Find the maximum tree count across all ranks
         max_num_trees = max(c.item() for c in all_counts)
 
-        # If this rank has fewer trees, rerun with min_trees=max_num_trees
+        # If this rank has fewer trees, append dummy trees
         if num_trees < max_num_trees:
-            # Rerun _greedy_build_tries with updated min_trees
-            # Also ensure n_trees_divisor is still satisfied
-            tries, num_tokens_list = _greedy_build_tries(
-                data,
-                max_tokens_per_tree,
-                min_trees=max_num_trees,
-                n_trees_divisor=n_trees_divisor,
-            )
+            num_dummy_trees = max_num_trees - num_trees
+            for _ in range(num_dummy_trees):
+                # Create an empty dummy trie
+                dummy_tree_id = len(tries)
+                dummy_trie = TrieNode(tree_id=dummy_tree_id)
+                tries.append(dummy_trie)
+                num_tokens_list.append(0)
 
     # Prepare templates and metadata
     input_template: torch.Tensor = data["input_ids"]
