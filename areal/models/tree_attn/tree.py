@@ -14,7 +14,7 @@ import torch
 import torch.distributed as dist
 
 from areal.api.cli_args import MicroBatchSpec
-from areal.models.tree_attn.module import BLOCK_SIZE, USE_BLOCK_MASK, _create_block_mask
+from areal.models.tree_attn.module import BLOCK_SIZE, USE_BLOCK_MASK
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
@@ -398,11 +398,6 @@ def build_packed_tree_batch(
                 padded_size,
                 mask_template.device,
             )
-            block_mask = None
-            # pre-compile flex attention block mask
-            if USE_BLOCK_MASK:
-                block_mask = _create_block_mask(attention_mask)
-
 
         # Amend position_ids
         with trace_scope("tree_attn.get_position_ids"):
@@ -424,7 +419,7 @@ def build_packed_tree_batch(
         # Build micro-batch dict
         mb = {
             "input_ids": input_ids,
-            "attention_mask": attention_mask if block_mask is None else block_mask,
+            "attention_mask": attention_mask,
             "position_ids": position_ids,
             "trie_node": trie,
             **extra_data,
