@@ -545,7 +545,7 @@ def test_build_packed_tree_batch_n_mbs_minimum():
         n_mbs_divisor=1,
     )
 
-    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=True)
 
     assert len(result) >= 4, (
         f"Expected at least 4 trees (n_mbs=4), got {len(result)}"
@@ -568,7 +568,7 @@ def test_build_packed_tree_batch_n_mbs_divisor():
         n_mbs_divisor=2,
     )
 
-    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=True)
 
     assert len(result) % 2 == 0, (
         f"Expected tree count divisible by 2 (n_mbs_divisor=2), got {len(result)}"
@@ -591,7 +591,7 @@ def test_build_packed_tree_batch_n_mbs_and_divisor_combined():
         n_mbs_divisor=3,
     )
 
-    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=True)
 
     assert len(result) >= 5, (
         f"Expected at least 5 trees (n_mbs=5), got {len(result)}"
@@ -615,7 +615,7 @@ def test_build_packed_tree_batch_default_values():
         # n_mbs and n_mbs_divisor default to 1
     )
 
-    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=True)
 
     # With shared prefix, all sequences should pack into 1 tree
     assert len(result) >= 1, f"Expected at least 1 tree, got {len(result)}"
@@ -637,7 +637,7 @@ def test_build_packed_tree_batch_cannot_split_warning():
     )
 
     # Should not raise, but will log a warning
-    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=True)
 
     # Can only have at most 2 trees (one per sequence)
     assert len(result) <= 2, (
@@ -660,7 +660,7 @@ def test_build_packed_tree_batch_max_tokens_still_respected():
         n_mbs_divisor=1,
     )
 
-    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=True)
 
     # Each tree should respect max_tokens_per_mb
     for i, mb in enumerate(result.mbs):
