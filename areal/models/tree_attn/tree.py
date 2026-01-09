@@ -240,9 +240,13 @@ def build_packed_tree_batch(
         Dictionary containing 'input_ids' and 'attention_mask' tensors
         describing the batch of sequences. Shape: [batch_size, seq_len].
     mb_spec : MicroBatchSpec
-        MicroBatchSpec containing max_tokens_per_mb for tree packing.
-        Note: n_mbs, granularity, and n_mbs_divisor are not used in tree
-        training and will trigger warnings if set to non-default values.
+        MicroBatchSpec containing:
+        - max_tokens_per_mb: Maximum tokens per tree.
+        - n_mbs: Minimum number of trees to produce. Trees will be split
+          if needed to meet this requirement.
+        - n_mbs_divisor: Final number of trees must be divisible by this value.
+        Note: granularity is not used in tree training and will trigger
+        a warning if set to non-default values.
     pad_to_maximum : bool, default=True
         If True, pad all trees to max_tokens_per_mb.
         If False, padding is determined by pad_to_multiple_of.
@@ -262,10 +266,10 @@ def build_packed_tree_batch(
         If max_tokens_per_mb is None or not positive, or if padding
         constraints are violated, or if a sequence exceeds max_tokens_per_mb.
     """
-    # Warn about non-effective attributes
-    if mb_spec.n_mbs != 1 or mb_spec.granularity != 1 or mb_spec.n_mbs_divisor != 1:
+    # Warn about non-effective attributes (only granularity now)
+    if mb_spec.granularity != 1:
         logger.warning(
-            "`n_mbs`, `granularity` and `n_mbs_divisor` is currently not effective for tree packing."
+            "`granularity` is currently not effective for tree packing."
         )
 
     max_tokens_per_tree = mb_spec.max_tokens_per_mb
@@ -295,7 +299,12 @@ def build_packed_tree_batch(
             )
 
     # Build tries using greedy packing
-    tries, num_tokens_list = _greedy_build_tries(data, max_tokens_per_tree)
+    tries, num_tokens_list = _greedy_build_tries(
+        data,
+        max_tokens_per_tree,
+        min_trees=mb_spec.n_mbs if mb_spec.n_mbs is not None else 1,
+        n_trees_divisor=mb_spec.n_mbs_divisor if mb_spec.n_mbs_divisor is not None else 1,
+    )
 
     # Prepare templates and metadata
     input_template: torch.Tensor = data["input_ids"]
@@ -411,12 +420,134 @@ def _compute_padded_size(
         return num_tokens
 
 
+def _get_tree_sequence_ids(tree: dict[str, Any]) -> set[int]:
+    """Get all sequence IDs in a tree."""
+    seq_ids: set[int] = set()
+    for node in tree["all_nodes"]:
+        seq_ids.update(node.sequence_ids)
+    return seq_ids
+
+
+def _find_splittable_tree_idx(forests: list[dict[str, Any]]) -> int | None:
+    """Find the index of a tree that can be split.
+
+    A tree can be split if it has at least 2 sequences.
+    Returns the index of the tree with the most sequences, or None if no tree can be split.
+    """
+    best_idx = None
+    best_seq_count = 1  # Must have at least 2 sequences to split
+    for i, tree in enumerate(forests):
+        seq_ids = _get_tree_sequence_ids(tree)
+        if len(seq_ids) > best_seq_count:
+            best_seq_count = len(seq_ids)
+            best_idx = i
+    return best_idx
+
+
+def _extract_sequences_from_tree(
+    node: _BuildNode,
+    current_tokens: list[int],
+    seq_tokens: dict[int, list[int]],
+) -> None:
+    """Recursively extract all sequences from a tree."""
+    if node.token_id != -1:  # Not root
+        current_tokens = current_tokens + [node.token_id]
+
+    if node.is_end:
+        # This node marks the end of at least one sequence
+        for seq_id in node.sequence_ids:
+            if seq_id not in seq_tokens:
+                seq_tokens[seq_id] = current_tokens.copy()
+
+    for child in node.children.values():
+        _extract_sequences_from_tree(child, current_tokens, seq_tokens)
+
+
+def _split_tree_by_sequences(
+    forests: list[dict[str, Any]],
+    tree_idx: int,
+) -> list[dict[str, Any]]:
+    """Split a tree into two by moving half of its sequences to a new tree.
+
+    This rebuilds both trees from scratch using the sequence data.
+    """
+    tree = forests[tree_idx]
+    seq_ids = sorted(_get_tree_sequence_ids(tree))
+
+    if len(seq_ids) < 2:
+        return forests  # Cannot split
+
+    # Split sequences in half
+    mid = len(seq_ids) // 2
+    seq_ids_first = set(seq_ids[:mid])
+    seq_ids_second = set(seq_ids[mid:])
+
+    # Rebuild first tree with first half of sequences
+    new_tree_id_1 = tree["root"].tree_id
+    new_root_1 = _BuildNode(new_tree_id_1, -1, -1)
+    all_nodes_1: list[_BuildNode] = []
+
+    # Rebuild second tree with second half of sequences
+    new_tree_id_2 = len(forests)  # New tree ID
+    new_root_2 = _BuildNode(new_tree_id_2, -1, -1)
+    all_nodes_2: list[_BuildNode] = []
+
+    # Extract sequences from original tree nodes and re-insert
+    seq_tokens: dict[int, list[int]] = {}
+    _extract_sequences_from_tree(tree["root"], [], seq_tokens)
+
+    nodes_1 = 0
+    nodes_2 = 0
+    for seq_id, tokens in seq_tokens.items():
+        if seq_id in seq_ids_first:
+            _insert_sequence(new_root_1, all_nodes_1, tokens, new_tree_id_1, seq_id)
+            nodes_1 = len(all_nodes_1)
+        else:
+            _insert_sequence(new_root_2, all_nodes_2, tokens, new_tree_id_2, seq_id)
+            nodes_2 = len(all_nodes_2)
+
+    # Replace the original tree with the first new tree
+    forests[tree_idx] = {
+        "root": new_root_1,
+        "all_nodes": all_nodes_1,
+        "nodes": nodes_1,
+    }
+
+    # Append the second new tree
+    forests.append({
+        "root": new_root_2,
+        "all_nodes": all_nodes_2,
+        "nodes": nodes_2,
+    })
+
+    return forests
+
+
 @trace_perf("tree_attn._greedy_build_tries")
 def _greedy_build_tries(
     data: dict[str, Any],
     max_tokens_per_tree: int,
+    min_trees: int = 1,
+    n_trees_divisor: int = 1,
 ) -> tuple[list[TrieNode], list[int]]:
-    """Build tries using greedy packing strategy."""
+    """Build tries using greedy packing strategy.
+
+    Parameters
+    ----------
+    data : dict[str, Any]
+        Dictionary containing 'input_ids' and 'attention_mask' tensors.
+    max_tokens_per_tree : int
+        Maximum tokens allowed per tree.
+    min_trees : int, default=1
+        Minimum number of trees to produce. Trees will be split if needed.
+    n_trees_divisor : int, default=1
+        Final number of trees must be divisible by this value.
+
+    Returns
+    -------
+    tuple[list[TrieNode], list[int]]
+        List of compressed TrieNodes and list of token counts per tree.
+    """
     sequences = _extract_sequences(data)
     forests: list[dict[str, Any]] = []
 
@@ -453,6 +584,28 @@ def _greedy_build_tries(
         all_nodes: list[_BuildNode] = []
         _insert_sequence(new_root, all_nodes, seq, new_tree_id, seq_id)
         forests.append({"root": new_root, "all_nodes": all_nodes, "nodes": len(seq)})
+
+    # Ensure min_trees is at least n_trees_divisor
+    if min_trees < n_trees_divisor:
+        min_trees = n_trees_divisor
+
+    # Split trees until min count and divisor requirements are met
+    while len(forests) < min_trees or len(forests) % n_trees_divisor != 0:
+        # Find tree with most sequences (can be split)
+        best_idx = _find_splittable_tree_idx(forests)
+        if best_idx is None:
+            # Cannot split further - log warning and break
+            logger.warning(
+                f"Cannot split trees to meet n_mbs={min_trees} or n_mbs_divisor={n_trees_divisor}. "
+                f"Current tree count: {len(forests)}"
+            )
+            break
+        # Split the tree
+        forests = _split_tree_by_sequences(forests, best_idx)
+
+        # Update min_trees to next valid divisor multiple if needed
+        if len(forests) >= min_trees and len(forests) % n_trees_divisor != 0:
+            min_trees = ((len(forests) // n_trees_divisor) + 1) * n_trees_divisor
 
     # Compress all trees
     tries = [_compress_trie(f["root"]) for f in forests]
