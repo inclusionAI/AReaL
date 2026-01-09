@@ -85,6 +85,13 @@ from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
+from areal.models.tree_attn.functional import (
+    _gather_packed_tree_logprobs,
+    gather_packed_tree_logprobs_entropy,
+    merge_packed_tree_results,
+)
+from areal.models.tree_attn.module import BLOCK_SIZE
+from areal.models.tree_attn.tree import build_packed_tree_batch
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
     disable_dropout_in_model,
@@ -584,6 +591,7 @@ class FSDPEngine(TrainEngine):
         if output_seqlens is None:
             output_seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().numpy().tolist()
         assert output_seqlens is not None
+        batch_size = len(output_seqlens)
 
         # Step 2: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_).to(self.device)
@@ -600,6 +608,8 @@ class FSDPEngine(TrainEngine):
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
 
         # Step 4: Aggregate and reorder outputs
+        if self.enable_tree_training:
+            return merge_packed_tree_results(outputs, batch_size)
         return reorder_and_pad_outputs(outputs, output_seqlens, mb_list, aggregate_fn)
 
     def export_stats(self) -> dict[str, float]:
@@ -1160,6 +1170,30 @@ class FSDPEngine(TrainEngine):
         assert "attention_mask" in input_ and "input_ids" in input_
         input_ = input_.copy()
 
+        # Tree training path
+        if self.enable_tree_training:
+            sp_size = self.parallel_helper.sp_size
+            tp_size = self.parallel_helper.tp_size
+            assert sp_size == 1, (
+                "Sequence parallelism is not supported in tree training."
+            )
+            # Build tree inputs
+            assert BLOCK_SIZE % tp_size == 0, (
+                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by tensor parallel size ({tp_size})."
+            )
+            mb_list = build_packed_tree_batch(
+                input_,
+                mb_spec=self.config.mb_spec,
+                pad_to_maximum=self.config.pad_to_maximum,
+                pad_to_multiple_of=BLOCK_SIZE,
+                dp_group=self.data_parallel_group,
+            )
+            self.logger.info(
+                f"Packed tree #microbatch: {len(mb_list)}, microbatch #tokens: {mb_list.group_lens}, "
+                f"padded to: {mb_list.padded_to_lengths}, padding lengths: {mb_list.padding_lengths}."
+            )
+            return mb_list
+
         if is_qwen_vl_model(self.model_config.model_type):
             attn_mask = input_["attention_mask"]
             input_ids = input_["input_ids"]
@@ -1415,24 +1449,37 @@ class FSDPEngine(TrainEngine):
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
+        if self.config.is_critic and self.enable_tree_training:
+            raise NotImplementedError(
+                "Tree training with critic model is not supported yet."
+            )
         if not self.config.is_critic:
-            logprobs, entropy = self._compute_logprobs_entropy(
-                logits, ctx.model_inputs, ctx.ulysses_pad_size
-            )
-            vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
-                logits, ctx.ulysses_pad_size
-            )
-            if ctx.pad_length > 0:
-                logprobs = logprobs[: -ctx.pad_length]
-                entropy = entropy[: -ctx.pad_length]
-                vocab_min_logits = vocab_min_logits[: -ctx.pad_length]
-                vocab_max_logits = vocab_max_logits[: -ctx.pad_length]
+            if self.enable_tree_training:
+                logprobs, entropy = gather_packed_tree_logprobs_entropy(
+                    logits,
+                    ctx.mb_input["trie_node"],
+                    ctx.mb_input["input_ids"],
+                    temperature=self.config.temperature,
+                    tp_group=self.parallel_helper.tp_group
+                    if self.parallel_helper.tp_size > 1
+                    else None,
+                )
+            else:
+                logprobs, entropy = self._compute_logprobs_entropy(
+                    logits, ctx.model_inputs, ctx.ulysses_pad_size
+                )
+                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
+                    logits, ctx.ulysses_pad_size
+                )
+                if ctx.pad_length > 0:
+                    logprobs = logprobs[: -ctx.pad_length]
+                    entropy = entropy[: -ctx.pad_length]
+                    vocab_min_logits = vocab_min_logits[: -ctx.pad_length]
+                    vocab_max_logits = vocab_max_logits[: -ctx.pad_length]
             loss = loss_fn(
                 logprobs,
                 entropy,
                 ctx.mb_input,
-                vocab_min_logits=vocab_min_logits,
-                vocab_max_logits=vocab_max_logits,
             )
         else:
             values = self._compute_values(logits.squeeze(-1), ctx.ulysses_pad_size)
@@ -1447,9 +1494,24 @@ class FSDPEngine(TrainEngine):
         self,
         logits: torch.Tensor,
         ctx: FSDPTrainContext,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | dict[int, torch.Tensor]:
         """Compute forward output (logprobs or values)."""
+        if self.config.is_critic and self.enable_tree_training:
+            raise NotImplementedError(
+                "Tree training with critic model is not supported yet."
+            )
         if not self.config.is_critic:
+            if self.enable_tree_training:
+                logprobs = _gather_packed_tree_logprobs(
+                    logits,
+                    ctx.mb_input["trie_node"],
+                    ctx.mb_input["input_ids"],
+                    temperature=self.config.temperature,
+                    tp_group=self.parallel_helper.tp_group
+                    if self.parallel_helper.tp_size > 1
+                    else None,
+                )
+                return logprobs
             result = self._compute_logprobs(
                 logits, ctx.model_inputs, ctx.ulysses_pad_size
             )

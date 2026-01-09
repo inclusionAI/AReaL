@@ -7,12 +7,14 @@ import torch.distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
+    FSDPEngineConfig,
     MegatronEngineConfig,
     MicroBatchSpec,
     OptimizerConfig,
     TrainEngineConfig,
 )
 from areal.api.io_struct import FinetuneSpec
+from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
 from areal.models.tree_attn.tree import build_packed_tree_batch
 from areal.platforms import current_platform
@@ -121,7 +123,7 @@ def engine():
         experiment_name="test",
         trial_name="test",
         path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=32768),
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
         optimizer=OptimizerConfig(),
         megatron=MegatronEngineConfig(
             use_deterministic_algorithms=True,
@@ -150,11 +152,12 @@ def test_tree_training_forward(engine, mock_tree_input):
         experiment_name="test",
         trial_name="test",
         path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=32768),
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
         optimizer=OptimizerConfig(),
         megatron=MegatronEngineConfig(
-            enable_tree_training=True, use_deterministic_algorithms=True
+            use_deterministic_algorithms=True
         ),
+        enable_tree_training=True,
     )
     tree_engine = MegatronEngine(config)
     alloc_mode = AllocationMode.from_str("d1p1t1")
@@ -262,7 +265,7 @@ def test_tree_training_forward_backward(mock_tree_input):
         experiment_name="test_baseline",
         trial_name="test",
         path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=32768),
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
         optimizer=OptimizerConfig(),
         megatron=MegatronEngineConfig(
             use_deterministic_algorithms=True,
@@ -307,12 +310,12 @@ def test_tree_training_forward_backward(mock_tree_input):
         experiment_name="test_tree",
         trial_name="test",
         path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=32768),
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
         optimizer=OptimizerConfig(),
         megatron=MegatronEngineConfig(
-            enable_tree_training=True,
             use_deterministic_algorithms=True,
         ),
+        enable_tree_training=True,
     )
 
     tree_engine = MegatronEngine(tree_config)
@@ -873,4 +876,332 @@ def test_build_packed_tree_batch_dp_group_sync():
         assert r["all_tree_counts"] == tree_counts, (
             f"Rank {r['rank']} all_tree_counts mismatch: {r['all_tree_counts']} vs {tree_counts}"
         )
+
+
+# =============================================================================
+# FSDP Engine Tree Training Tests
+# =============================================================================
+
+fsdp_logger = logging.getLogger("FSDPEngine Test")
+
+
+@pytest.fixture
+def fsdp_engine():
+    fsdp_logger.info(f"torch version={torch.__version__}")
+    os.environ.update(
+        {
+            "WORLD_SIZE": "1",
+            "RANK": "0",
+            "LOCAL_RANK": "0",
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": "7780",
+        }
+    )
+    config = TrainEngineConfig(
+        experiment_name="test",
+        trial_name="test",
+        path=MODEL_PATH,
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
+        optimizer=OptimizerConfig(),
+        fsdp=FSDPEngineConfig(),
+    )
+    alloc_mode = AllocationMode.from_str("d1p1t1")
+    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
+    engine = FSDPEngine(config)
+    engine.create_process_group(alloc_mode.train)
+    engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
+    fsdp_logger.info(f"FSDP Model initialized: {engine.model}")
+    try:
+        yield engine
+    finally:
+        engine.destroy()
+        assert not dist.is_initialized()
+
+
+def _collect_fsdp_gradients(engine: FSDPEngine) -> dict[str, torch.Tensor]:
+    """Collect gradients from FSDP engine."""
+    grads = {}
+    for name, param in engine.model.named_parameters():
+        if param.grad is not None:
+            grads[name] = param.grad.clone()
+    return grads
+
+
+def _collect_fsdp_parameters(engine: FSDPEngine) -> dict[str, torch.Tensor]:
+    """Collect parameters from FSDP engine."""
+    params = {}
+    for name, param in engine.model.named_parameters():
+        params[name] = param.data.clone()
+    return params
+
+
+def test_fsdp_tree_training_forward(fsdp_engine, mock_tree_input):
+    """Test FSDP tree training forward pass produces correct logprobs."""
+    fsdp_engine.eval()
+    logprob_baseline = fsdp_engine.forward_batch(
+        input_=mock_tree_input,
+        aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
+    )
+
+    # Create tree training FSDP engine
+    os.environ.update(
+        {
+            "WORLD_SIZE": "1",
+            "RANK": "0",
+            "LOCAL_RANK": "0",
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": "7781",
+        }
+    )
+    config = TrainEngineConfig(
+        experiment_name="test",
+        trial_name="test",
+        path=MODEL_PATH,
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
+        optimizer=OptimizerConfig(),
+        fsdp=FSDPEngineConfig(),
+        enable_tree_training=True,
+    )
+    tree_engine = FSDPEngine(config)
+    alloc_mode = AllocationMode.from_str("d1p1t1")
+    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
+    tree_engine.create_process_group(alloc_mode.train)
+    tree_engine.initialize(
+        addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train
+    )
+    tree_engine.eval()
+    logprob_tree = tree_engine.forward_batch(input_=mock_tree_input)
+
+    # Check if results match with detailed error reporting
+    # The tolerance values are high due to precision problems introduced
+    # by flex attention with customized attention masks.
+    rtol, atol = 0.2, 0.2
+    is_close = torch.isclose(logprob_tree, logprob_baseline, rtol=rtol, atol=atol)
+    if not is_close.all():
+        mismatched_mask = ~is_close
+        num_mismatched = mismatched_mask.sum().item()
+        total_elements = mismatched_mask.numel()
+        mismatch_percentage = 100.0 * num_mismatched / total_elements
+
+        # Get mismatched positions
+        mismatched_indices = torch.nonzero(mismatched_mask, as_tuple=False)
+
+        # Get values at mismatched positions (limit to first 10 for readability)
+        num_to_show = min(10, num_mismatched)
+        fsdp_logger.error(
+            f"Assertion failed: {num_mismatched}/{total_elements} elements mismatched ({mismatch_percentage:.2f}%)"
+        )
+        fsdp_logger.error(f"First {num_to_show} mismatched positions and values:")
+        for i in range(num_to_show):
+            idx = tuple(mismatched_indices[i].tolist())
+            tree_val = logprob_tree[idx].item()
+            baseline_val = logprob_baseline[idx].item()
+            abs_diff = abs(tree_val - baseline_val)
+            rel_diff = abs_diff / (abs(baseline_val) + 1e-8)
+            fsdp_logger.error(
+                f"  Position {idx}: tree={tree_val:.6f}, baseline={baseline_val:.6f}, "
+                f"abs_diff={abs_diff:.6f}, rel_diff={rel_diff:.6f}"
+            )
+
+        # Summary statistics
+        abs_diff_all = (logprob_tree - logprob_baseline).abs()
+        fsdp_logger.error(
+            f"Overall abs diff: max={abs_diff_all.max().item():.6f}, "
+            f"mean={abs_diff_all.mean().item():.6f}, median={abs_diff_all.median().item():.6f}"
+        )
+
+    tree_engine.destroy()
+
+    assert is_close.all(), (
+        f"logprob_tree and logprob_baseline differ: "
+        f"{(~is_close).sum().item()}/{is_close.numel()} elements mismatched "
+        f"({100.0 * (~is_close).sum().item() / is_close.numel():.2f}%)"
+    )
+
+
+def test_fsdp_tree_training_forward_backward(mock_tree_input):
+    """Test FSDP tree training forward-backward pass produces correct gradients."""
+    def loss_fn(logprobs, entropy, input_data):
+        return logprobs.sum()
+
+    # ========== Setup baseline FSDP engine ==========
+    os.environ.update(
+        {
+            "WORLD_SIZE": "1",
+            "RANK": "0",
+            "LOCAL_RANK": "0",
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": "7782",
+        }
+    )
+    baseline_config = TrainEngineConfig(
+        experiment_name="test_baseline",
+        trial_name="test",
+        path=MODEL_PATH,
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
+        optimizer=OptimizerConfig(),
+        fsdp=FSDPEngineConfig(),
+    )
+    alloc_mode = AllocationMode.from_str("d1p1t1")
+    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
+
+    baseline_engine = FSDPEngine(baseline_config)
+    baseline_engine.create_process_group(alloc_mode.train)
+    baseline_engine.initialize(
+        addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train
+    )
+    baseline_engine.train()
+
+    # Run baseline forward-backward
+    _ = baseline_engine.train_batch(
+        mock_tree_input,
+        loss_fn=loss_fn,
+        loss_weight_fn=lambda x: torch.tensor(1.0, device=baseline_engine.device),
+    )
+
+    # Collect baseline gradients and parameters
+    baseline_grads = _collect_fsdp_gradients(baseline_engine)
+    baseline_params = _collect_fsdp_parameters(baseline_engine)
+
+    fsdp_logger.info(f"Collected {len(baseline_grads)} gradients from baseline FSDP engine")
+    fsdp_logger.info(f"Collected {len(baseline_params)} parameters from baseline FSDP engine")
+    baseline_engine.destroy()
+
+    # ========== Setup tree training FSDP engine ==========
+    os.environ.update(
+        {
+            "WORLD_SIZE": "1",
+            "RANK": "0",
+            "LOCAL_RANK": "0",
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": "7783",
+        }
+    )
+    tree_config = TrainEngineConfig(
+        experiment_name="test_tree",
+        trial_name="test",
+        path=MODEL_PATH,
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
+        optimizer=OptimizerConfig(),
+        fsdp=FSDPEngineConfig(),
+        enable_tree_training=True,
+    )
+
+    tree_engine = FSDPEngine(tree_config)
+    tree_engine.create_process_group(alloc_mode.train)
+    tree_engine.initialize(
+        addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train
+    )
+    tree_engine.train()
+
+    # Run tree training forward-backward
+    _ = tree_engine.train_batch(
+        mock_tree_input,
+        loss_fn=loss_fn,
+        loss_weight_fn=lambda x: torch.tensor(1.0, device=tree_engine.device),
+    )
+
+    # Collect tree training gradients and parameters
+    tree_grads = _collect_fsdp_gradients(tree_engine)
+    tree_params = _collect_fsdp_parameters(tree_engine)
+
+    fsdp_logger.info(f"Collected {len(tree_grads)} gradients from tree training FSDP engine")
+    fsdp_logger.info(f"Collected {len(tree_params)} parameters from tree training FSDP engine")
+    tree_engine.destroy()
+
+    # ========== Compare gradients ==========
+    baseline_keys = set(baseline_grads.keys())
+    tree_keys = set(tree_grads.keys())
+
+    # Check for missing keys
+    only_in_baseline = baseline_keys - tree_keys
+    only_in_tree = tree_keys - baseline_keys
+
+    if only_in_baseline:
+        fsdp_logger.warning(f"Gradients only in baseline: {only_in_baseline}")
+    if only_in_tree:
+        fsdp_logger.warning(f"Gradients only in tree training: {only_in_tree}")
+
+    common_keys = baseline_keys & tree_keys
+    fsdp_logger.info(f"Comparing {len(common_keys)} common gradient tensors")
+
+    # Check for NaN and zero gradients
+    nan_in_baseline = []
+    nan_in_tree = []
+    zero_in_baseline = []
+    zero_in_tree = []
+
+    for name in sorted(common_keys):
+        if torch.isnan(baseline_grads[name]).any():
+            nan_in_baseline.append(name)
+        if torch.isnan(tree_grads[name]).any():
+            nan_in_tree.append(name)
+        if (baseline_grads[name] == 0).all():
+            zero_in_baseline.append(name)
+        if (tree_grads[name] == 0).all():
+            zero_in_tree.append(name)
+
+    if nan_in_baseline:
+        fsdp_logger.info(f"\n⚠ NaN gradients in BASELINE ({len(nan_in_baseline)}):")
+        for name in nan_in_baseline:
+            nan_count = torch.isnan(baseline_grads[name]).sum().item()
+            total_count = baseline_grads[name].numel()
+            fsdp_logger.info(f"  {name}: {nan_count}/{total_count} NaN values")
+
+    if nan_in_tree:
+        fsdp_logger.info(f"\n⚠ NaN gradients in TREE TRAINING ({len(nan_in_tree)}):")
+        for name in nan_in_tree:
+            nan_count = torch.isnan(tree_grads[name]).sum().item()
+            total_count = tree_grads[name].numel()
+            fsdp_logger.info(f"  {name}: {nan_count}/{total_count} NaN values")
+
+    # Check for NaN in updated parameters
+    nan_params_baseline = _check_nan_params(baseline_params, "BASELINE FSDP PARAMS")
+    nan_params_tree = _check_nan_params(tree_params, "TREE TRAINING FSDP PARAMS")
+
+    mismatched_params = []
+    max_diff_overall = 0.0
+
+    for name in sorted(common_keys):
+        baseline_grad = baseline_grads[name]
+        tree_grad = tree_grads[name]
+
+        if baseline_grad.shape != tree_grad.shape:
+            mismatched_params.append(
+                (name, f"shape mismatch: {baseline_grad.shape} vs {tree_grad.shape}")
+            )
+            continue
+
+        diff = (baseline_grad - tree_grad).abs()
+        max_diff = diff.max().item()
+        mean_diff = diff.mean().item()
+        max_diff_overall = max(max_diff_overall, max_diff)
+
+        if mean_diff > 1e-3:
+            mismatched_params.append(
+                (name, f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}")
+            )
+            fsdp_logger.info(
+                f"Gradient mismatch for {name}: "
+                f"Shape: {baseline_grad.shape}, "
+                f"Baseline grad mean: {baseline_grad.float().mean().item():.6e}, "
+                f"Tree grad mean: {tree_grad.float().mean().item():.6e}, "
+                f"Max diff: {max_diff:.6e}, Mean diff: {mean_diff:.6e}"
+            )
+
+    assert len(only_in_baseline) == 0, (
+        f"Gradients missing in tree training: {only_in_baseline}"
+    )
+    assert len(only_in_tree) == 0, f"Gradients missing in baseline: {only_in_tree}"
+    assert len(nan_in_baseline) == 0, f"NaN gradients in baseline: {nan_in_baseline}"
+    assert len(nan_in_tree) == 0, f"NaN gradients in tree training: {nan_in_tree}"
+    assert len(nan_params_baseline) == 0, (
+        f"NaN parameters in baseline: {nan_params_baseline}"
+    )
+    assert len(nan_params_tree) == 0, (
+        f"NaN parameters in tree training: {nan_params_tree}"
+    )
+    assert len(mismatched_params) == 0, (
+        f"Gradient mismatches found: {mismatched_params}"
+    )
 
