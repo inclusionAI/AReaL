@@ -793,4 +793,5 @@ def get_packed_tree_position_ids(
         ancestor_counts = attention_mask.bool().sum(dim=-1, dtype=torch.long)
         position_ids = torch.clamp_min(ancestor_counts - 1, 0)
 
-    return position_ids
+    # TODO: check if work for megatron engine
+    return position_ids.unsqueeze(0)
