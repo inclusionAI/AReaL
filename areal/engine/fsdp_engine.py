@@ -1196,11 +1196,8 @@ class FSDPEngine(TrainEngine):
         if self.enable_tree_training:
             sp_size = self.parallel_helper.sp_size
             tp_size = self.parallel_helper.tp_size
-            assert sp_size == 1, (
-                "Sequence parallelism is not supported in tree training."
-            )
             # Build tree inputs
-            assert BLOCK_SIZE % tp_size == 0, (
+            assert BLOCK_SIZE % (tp_size * sp_size) == 0, (
                 f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by tensor parallel size ({tp_size})."
             )
             mb_list = build_packed_tree_batch(
