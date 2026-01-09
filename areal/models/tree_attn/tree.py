@@ -594,12 +594,13 @@ def _greedy_build_tries(
         # Find tree with most sequences (can be split)
         best_idx = _find_splittable_tree_idx(forests)
         if best_idx is None:
-            # Cannot split further - log warning and break
-            logger.warning(
+            # Cannot split further - raise error
+            raise RuntimeError(
                 f"Cannot split trees to meet n_mbs={min_trees} or n_mbs_divisor={n_trees_divisor}. "
-                f"Current tree count: {len(forests)}"
+                f"Current tree count: {len(forests)}. "
+                f"Each tree has only 1 sequence and cannot be split further. "
+                f"Consider reducing n_mbs/n_mbs_divisor or increasing the number of sequences."
             )
-            break
         # Split the tree
         forests = _split_tree_by_sequences(forests, best_idx)
 

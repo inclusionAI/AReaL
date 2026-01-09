@@ -554,16 +554,18 @@ def test_build_packed_tree_batch_n_mbs_minimum():
 
 def test_build_packed_tree_batch_n_mbs_divisor():
     """Test that n_mbs_divisor ensures tree count is divisible."""
-    # Create input with 5 sequences - would naturally create odd number of trees
+    # Create input with 5 sequences that can be grouped together
+    # Each sequence has unique tokens to avoid prefix sharing
     data = _create_test_input(
         batch_size=5,
         seq_lengths=[100, 100, 100, 100, 100],
     )
 
-    # With max_tokens_per_mb=128, we'd get 5 trees (one per sequence)
-    # n_mbs_divisor=2 should force an even number (6 trees)
+    # With max_tokens_per_mb=512, sequences can be grouped (up to 5 per tree)
+    # This would naturally create 1 tree with all 5 sequences
+    # n_mbs_divisor=2 should force splitting to get an even number (2 trees)
     mb_spec = MicroBatchSpec(
-        max_tokens_per_mb=128,  # 1 * 128
+        max_tokens_per_mb=512,  # 4 * 128
         n_mbs=1,
         n_mbs_divisor=2,
     )
@@ -621,8 +623,8 @@ def test_build_packed_tree_batch_default_values():
     assert len(result) >= 1, f"Expected at least 1 tree, got {len(result)}"
 
 
-def test_build_packed_tree_batch_cannot_split_warning():
-    """Test that warning is logged when trees cannot be split further."""
+def test_build_packed_tree_batch_cannot_split_raises_error():
+    """Test that RuntimeError is raised when trees cannot be split to meet requirements."""
     # Create input with only 2 sequences - can only split to 2 trees max
     data = _create_test_input(
         batch_size=2,
@@ -630,19 +632,36 @@ def test_build_packed_tree_batch_cannot_split_warning():
     )
 
     # Request 4 trees, but only 2 sequences available
+    # This should raise RuntimeError since we can't create 4 trees from 2 sequences
     mb_spec = MicroBatchSpec(
         max_tokens_per_mb=128,  # 1 * 128
         n_mbs=4,
         n_mbs_divisor=1,
     )
 
-    # Should not raise, but will log a warning
-    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=True)
+    with pytest.raises(RuntimeError, match="Cannot split trees to meet n_mbs"):
+        build_packed_tree_batch(data, mb_spec, pad_to_maximum=True)
 
-    # Can only have at most 2 trees (one per sequence)
-    assert len(result) <= 2, (
-        f"Expected at most 2 trees (only 2 sequences), got {len(result)}"
+
+def test_build_packed_tree_batch_cannot_split_divisor_raises_error():
+    """Test that RuntimeError is raised when n_mbs_divisor cannot be satisfied."""
+    # Create input with 3 sequences, each getting its own tree
+    data = _create_test_input(
+        batch_size=3,
+        seq_lengths=[100, 100, 100],
     )
+
+    # With max_tokens_per_mb=128, each sequence gets its own tree (3 trees)
+    # n_mbs_divisor=2 requires even number, but 3 trees can't be split (1 seq each)
+    # This should raise RuntimeError
+    mb_spec = MicroBatchSpec(
+        max_tokens_per_mb=128,  # 1 * 128
+        n_mbs=1,
+        n_mbs_divisor=2,
+    )
+
+    with pytest.raises(RuntimeError, match="Cannot split trees to meet"):
+        build_packed_tree_batch(data, mb_spec, pad_to_maximum=True)
 
 
 def test_build_packed_tree_batch_max_tokens_still_respected():
