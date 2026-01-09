@@ -414,6 +414,10 @@ def gather_packed_tree_logprobs(
     chunk_size: int = 1024,
     tp_group: dist.ProcessGroup | None = None,
 ) -> torch.Tensor:
+    # Handle empty/dummy trie
+    if not trie.all_sequence_ids:
+        return torch.empty(0, device=logits.device, dtype=logits.dtype)
+
     logprob_results = _gather_packed_tree_logprobs(
         logits,
         trie,
@@ -435,6 +439,11 @@ def gather_packed_tree_logprobs_entropy(
     chunk_size: int = 1024,
     tp_group: dist.ProcessGroup | None = None,
 ):
+    # Handle empty/dummy trie
+    if not trie.all_sequence_ids:
+        empty = torch.empty(0, device=logits.device, dtype=logits.dtype)
+        return empty, empty
+
     logprob_results, entropy_results = _gather_packed_tree_logprobs_entropy(
         logits,
         trie,
