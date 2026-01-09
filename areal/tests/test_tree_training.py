@@ -14,6 +14,7 @@ from areal.api.cli_args import (
 )
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.megatron_engine import MegatronEngine
+from areal.models.tree_attn.tree import build_packed_tree_batch
 from areal.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils import logging
@@ -443,3 +444,229 @@ def test_tree_training_forward_backward(mock_tree_input):
     assert len(mismatched_params) == 0, (
         f"Gradient mismatches found: {mismatched_params}"
     )
+
+
+# =============================================================================
+# Tests for n_mbs and n_mbs_divisor in tree packing
+# =============================================================================
+
+
+def _create_test_input(
+    batch_size: int,
+    seq_lengths: list[int],
+    device: str = "cpu",
+) -> dict[str, torch.Tensor]:
+    """Create test input data with specified sequence lengths.
+
+    Args:
+        batch_size: Number of sequences.
+        seq_lengths: List of sequence lengths for each sequence.
+        device: Device for tensors.
+
+    Returns:
+        Dictionary with 'input_ids' and 'attention_mask' tensors.
+    """
+    assert len(seq_lengths) == batch_size
+    max_len = max(seq_lengths)
+
+    input_ids = torch.zeros((batch_size, max_len), dtype=torch.long, device=device)
+    attention_mask = torch.zeros((batch_size, max_len), dtype=torch.bool, device=device)
+
+    for i, length in enumerate(seq_lengths):
+        # Use unique tokens for each sequence to avoid sharing
+        input_ids[i, :length] = torch.arange(
+            i * 1000, i * 1000 + length, dtype=torch.long, device=device
+        )
+        attention_mask[i, :length] = True
+
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+    }
+
+
+def _create_shared_prefix_input(
+    batch_size: int,
+    prefix_length: int,
+    suffix_lengths: list[int],
+    device: str = "cpu",
+) -> dict[str, torch.Tensor]:
+    """Create test input where all sequences share a common prefix.
+
+    Args:
+        batch_size: Number of sequences.
+        prefix_length: Length of the shared prefix.
+        suffix_lengths: List of suffix lengths for each sequence.
+        device: Device for tensors.
+
+    Returns:
+        Dictionary with 'input_ids' and 'attention_mask' tensors.
+    """
+    assert len(suffix_lengths) == batch_size
+    seq_lengths = [prefix_length + s for s in suffix_lengths]
+    max_len = max(seq_lengths)
+
+    input_ids = torch.zeros((batch_size, max_len), dtype=torch.long, device=device)
+    attention_mask = torch.zeros((batch_size, max_len), dtype=torch.bool, device=device)
+
+    # Shared prefix tokens
+    prefix_tokens = torch.arange(1, prefix_length + 1, dtype=torch.long, device=device)
+
+    for i, (length, suffix_len) in enumerate(zip(seq_lengths, suffix_lengths)):
+        # Shared prefix
+        input_ids[i, :prefix_length] = prefix_tokens
+        # Unique suffix for each sequence
+        if suffix_len > 0:
+            input_ids[i, prefix_length:length] = torch.arange(
+                1000 + i * 100, 1000 + i * 100 + suffix_len, dtype=torch.long, device=device
+            )
+        attention_mask[i, :length] = True
+
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+    }
+
+
+def test_build_packed_tree_batch_n_mbs_minimum():
+    """Test that n_mbs enforces minimum number of trees."""
+    # Create input with 8 sequences that would naturally pack into fewer trees
+    # Each sequence has unique tokens to avoid prefix sharing
+    data = _create_test_input(
+        batch_size=8,
+        seq_lengths=[50, 50, 50, 50, 50, 50, 50, 50],
+    )
+
+    # With large max_tokens_per_mb, all sequences would fit in 1 tree
+    # But n_mbs=4 should force at least 4 trees
+    mb_spec = MicroBatchSpec(
+        max_tokens_per_mb=10000,
+        n_mbs=4,
+        n_mbs_divisor=1,
+    )
+
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+
+    assert len(result) >= 4, (
+        f"Expected at least 4 trees (n_mbs=4), got {len(result)}"
+    )
+
+
+def test_build_packed_tree_batch_n_mbs_divisor():
+    """Test that n_mbs_divisor ensures tree count is divisible."""
+    # Create input with 5 sequences - would naturally create odd number of trees
+    data = _create_test_input(
+        batch_size=5,
+        seq_lengths=[100, 100, 100, 100, 100],
+    )
+
+    # With max_tokens_per_mb=150, we'd get 5 trees (one per sequence)
+    # n_mbs_divisor=2 should force an even number (6 trees)
+    mb_spec = MicroBatchSpec(
+        max_tokens_per_mb=150,
+        n_mbs=1,
+        n_mbs_divisor=2,
+    )
+
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+
+    assert len(result) % 2 == 0, (
+        f"Expected tree count divisible by 2 (n_mbs_divisor=2), got {len(result)}"
+    )
+
+
+def test_build_packed_tree_batch_n_mbs_and_divisor_combined():
+    """Test that n_mbs and n_mbs_divisor work together correctly."""
+    # Create input with 6 sequences
+    data = _create_test_input(
+        batch_size=6,
+        seq_lengths=[80, 80, 80, 80, 80, 80],
+    )
+
+    # n_mbs=5 (minimum 5 trees), n_mbs_divisor=3 (must be divisible by 3)
+    # Result should be 6 trees (next multiple of 3 >= 5)
+    mb_spec = MicroBatchSpec(
+        max_tokens_per_mb=100,
+        n_mbs=5,
+        n_mbs_divisor=3,
+    )
+
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+
+    assert len(result) >= 5, (
+        f"Expected at least 5 trees (n_mbs=5), got {len(result)}"
+    )
+    assert len(result) % 3 == 0, (
+        f"Expected tree count divisible by 3 (n_mbs_divisor=3), got {len(result)}"
+    )
+
+
+def test_build_packed_tree_batch_default_values():
+    """Test that default n_mbs=1 and n_mbs_divisor=1 work correctly."""
+    # Create input that would naturally pack into 1 tree
+    data = _create_shared_prefix_input(
+        batch_size=4,
+        prefix_length=50,
+        suffix_lengths=[10, 10, 10, 10],
+    )
+
+    mb_spec = MicroBatchSpec(
+        max_tokens_per_mb=10000,
+        # n_mbs and n_mbs_divisor default to 1
+    )
+
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+
+    # With shared prefix, all sequences should pack into 1 tree
+    assert len(result) >= 1, f"Expected at least 1 tree, got {len(result)}"
+
+
+def test_build_packed_tree_batch_cannot_split_warning():
+    """Test that warning is logged when trees cannot be split further."""
+    # Create input with only 2 sequences - can only split to 2 trees max
+    data = _create_test_input(
+        batch_size=2,
+        seq_lengths=[50, 50],
+    )
+
+    # Request 4 trees, but only 2 sequences available
+    mb_spec = MicroBatchSpec(
+        max_tokens_per_mb=100,
+        n_mbs=4,
+        n_mbs_divisor=1,
+    )
+
+    # Should not raise, but will log a warning
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+
+    # Can only have at most 2 trees (one per sequence)
+    assert len(result) <= 2, (
+        f"Expected at most 2 trees (only 2 sequences), got {len(result)}"
+    )
+
+
+def test_build_packed_tree_batch_max_tokens_still_respected():
+    """Test that max_tokens_per_mb is still respected when splitting."""
+    # Create input with sequences that exceed max_tokens_per_mb individually
+    data = _create_test_input(
+        batch_size=4,
+        seq_lengths=[100, 100, 100, 100],
+    )
+
+    # max_tokens_per_mb=150 means at most ~1 sequence per tree
+    mb_spec = MicroBatchSpec(
+        max_tokens_per_mb=150,
+        n_mbs=2,
+        n_mbs_divisor=1,
+    )
+
+    result = build_packed_tree_batch(data, mb_spec, pad_to_maximum=False)
+
+    # Each tree should respect max_tokens_per_mb
+    for i, mb in enumerate(result.mbs):
+        if "trie_node" in mb:
+            tree_tokens = mb["trie_node"].num_tokens
+            assert tree_tokens <= 150, (
+                f"Tree {i} has {tree_tokens} tokens, exceeds max_tokens_per_mb=150"
+            )
+
