@@ -53,6 +53,50 @@ logger.info(
 # Stores: {"key": (mask_data_ptr, q_len, device), "block_mask": block_mask}
 _block_mask_cache: dict = {"key": None, "block_mask": None}
 
+def make_block_mask_or_score_mod(
+    attention_mask: torch.Tensor,
+    q_len: int,
+    device: torch.device,
+):
+    if USE_BLOCK_MASK:
+        # Check cache for existing block mask
+        cache_key = (attention_mask.data_ptr(), q_len, device)
+        if _block_mask_cache["key"] == cache_key:
+            block_mask = _block_mask_cache["block_mask"]
+        else:
+            def arbitrary_mask(
+                batch: torch.Tensor,
+                head: torch.Tensor,
+                q_idx: torch.Tensor,
+                k_idx: torch.Tensor,
+            ):
+                return attention_mask[q_idx, k_idx]
+
+            block_mask = create_block_mask(
+                arbitrary_mask,
+                B=1,  # Broadcast across batch
+                H=1,  # Broadcast across heads
+                Q_LEN=q_len,
+                KV_LEN=q_len,
+                BLOCK_SIZE=BLOCK_SIZE,
+                device=device,
+                _compile=False,
+            )
+            # Update cache
+            _block_mask_cache["key"] = cache_key
+            _block_mask_cache["block_mask"] = block_mask
+
+        score_mod = None
+    else:
+        def arbitrary_score_mod(score, b, h, q_idx, k_idx):
+            mask_value = attention_mask[q_idx, k_idx]
+            score = score.masked_fill(~mask_value, float("-inf"))
+            return score
+
+        block_mask = None
+        score_mod = arbitrary_score_mod
+    return block_mask, score_mod
+
 class PytorchFlexAttention(torch.nn.Module):
     """Pytorch flex attention implementation that supports arbitrary attention mask type."""
 
@@ -117,43 +161,11 @@ class PytorchFlexAttention(torch.nn.Module):
 
         q_len = attention_mask.shape[0]
 
-        if USE_BLOCK_MASK:
-            # Check cache for existing block mask
-            cache_key = (attention_mask.data_ptr(), q_len, query.device)
-            if _block_mask_cache["key"] == cache_key:
-                block_mask = _block_mask_cache["block_mask"]
-            else:
-                def arbitrary_mask(
-                    batch: torch.Tensor,
-                    head: torch.Tensor,
-                    q_idx: torch.Tensor,
-                    k_idx: torch.Tensor,
-                ):
-                    return attention_mask[q_idx, k_idx]
-
-                block_mask = create_block_mask(
-                    arbitrary_mask,
-                    B=1,  # Broadcast across batch
-                    H=1,  # Broadcast across heads
-                    Q_LEN=q_len,
-                    KV_LEN=q_len,
-                    BLOCK_SIZE=BLOCK_SIZE,
-                    device=query.device,
-                    _compile=False,
-                )
-                # Update cache
-                _block_mask_cache["key"] = cache_key
-                _block_mask_cache["block_mask"] = block_mask
-
-            score_mod = None
-        else:
-            def arbitrary_score_mod(score, b, h, q_idx, k_idx):
-                mask_value = attention_mask[q_idx, k_idx]
-                score = score.masked_fill(~mask_value, float("-inf"))
-                return score
-
-            block_mask = None
-            score_mod = arbitrary_score_mod
+        block_mask, score_mod = make_block_mask_or_score_mod(
+            attention_mask,
+            q_len,
+            query.device,
+        )
 
         output = _flex_attention(
             query,
@@ -172,6 +184,43 @@ class PytorchFlexAttention(torch.nn.Module):
             .view(output.shape[2], output.shape[0], -1)
         )
         return output
+
+
+def _tree_attn_fwd_func(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+    softmax_scale: float | None = None,
+    *args,
+    **kwargs
+):
+    # [B, S, H, D] -> [B, H, S, D]
+    query = query.permute(0, 2, 1, 3).contiguous()
+    key = key.permute(0, 2, 1, 3).contiguous()
+    value = value.permute(0, 2, 1, 3).contiguous()
+
+    enable_gqa = query.shape[1] != key.shape[1]
+
+    q_len = attention_mask.shape[0]
+    block_mask, score_mod = make_block_mask_or_score_mod(
+        attention_mask,
+        q_len,
+        query.device,
+    )
+    
+    output = _flex_attention(
+        query,
+        key,
+        value,
+        block_mask=block_mask,
+        score_mod=score_mod,
+        scale=softmax_scale,
+        enable_gqa=enable_gqa,
+    )
+    # [B, H, S, D] -> [B, S, H, D]
+    output = output.permute(0, 2, 1, 3).contiguous()
+    return output
 
 
 @contextmanager
@@ -223,3 +272,5 @@ def patch_bridge_for_tree_training(enable: bool = True):
     finally:
         # Revert patch
         LLMBridge._get_transformer_layer_spec = original_layer_spec_getter
+
+

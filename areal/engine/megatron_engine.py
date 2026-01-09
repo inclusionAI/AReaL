@@ -157,7 +157,7 @@ class MegatronEngine(TrainEngine):
         self.is_offload: bool = False
         self.enable_fp8: bool = self.config.megatron.fp8_config is not None
         self.quantization_config: dict[str, int | str | list[str]] | None = None
-        self.enable_tree_training: bool = self.mcore_config.enable_tree_training
+        self.enable_tree_training: bool = self.enable_tree_training
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:

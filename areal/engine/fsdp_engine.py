@@ -178,6 +178,7 @@ class FSDPEngine(TrainEngine):
         self.dp_rank: int
 
         self.is_offload: bool = False
+        self.enable_tree_training: bool = self.config.enable_tree_training
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -238,10 +239,13 @@ class FSDPEngine(TrainEngine):
         # Create device model
         self._create_device_model()
 
-        # Monkey patch: replace attention's forward() with Ulysses variant.
+        # Monkey patch: replace attention's forward() with
+        # Ulysses-compatible version if Ulysses SP is enabled
+        # or tree attention based on flex attention.
         apply_monkey_patch(
             model=self.model,
             ulysses_sp_size=self.parallel_helper.sp_size,
+            enable_tree_training=self.enable_tree_training,
         )
 
         if self.config.use_lora:

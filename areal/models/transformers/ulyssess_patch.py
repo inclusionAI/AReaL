@@ -12,6 +12,7 @@ from areal.utils.ulysses import (
     get_ulysses_sequence_parallel_world_size,
     slice_input_tensor,
 )
+from areal.models.tree_attn.module import _tree_attn_fwd_func
 
 logger = logging.getLogger("UlyssesPatch")
 
@@ -147,6 +148,7 @@ def patch_vlm_for_ulysses_input_slicing(model_class: type):
 def apply_monkey_patch(
     model: PreTrainedModel,
     ulysses_sp_size: int = 1,
+    enable_tree_training: bool = False,
 ):
     try:
         num_attention_heads, num_key_value_heads = (
@@ -197,10 +199,14 @@ def apply_monkey_patch(
         },
     }
 
-    if ulysses_sp_size <= 1:
+    if ulysses_sp_size <= 1 or not enable_tree_training:
         return
 
     if model.config.model_type in vl_model_mappings:
+        if enable_tree_training:
+            raise NotImplementedError(
+                "Tree training is not supported for vision-language models yet."
+            )
         # NOTE: The following code segment will patch only TextModel's attention and forward methods
         mapping = vl_model_mappings[model.config.model_type]
         module_name = mapping["module"]
@@ -230,10 +236,20 @@ def apply_monkey_patch(
 
         patch_vlm_for_ulysses_input_slicing(model_class)
         logger.info(f"Patched {model_class_name}.forward")
-    else:
+    elif ulysses_sp_size > 1:
         from transformers.integrations import flash_attention
 
-        flash_attention._flash_attention_forward = _ulysses_flash_attention_forward
+        if ulysses_sp_size > 1 and enable_tree_training:
+            raise NotImplementedError(
+                "Ulysses sequence parallelism with tree training is not supported together yet."
+            )
+        elif ulysses_sp_size > 1:
+            patch_func = _ulysses_flash_attention_forward
+        elif enable_tree_training:
+            patch_func = _tree_attn_fwd_func
+
+        flash_attention._flash_attention_forward = patch_func
         logger.info(
             "Patched transformers.integrations.flash_attention._flash_attention_forward"
         )
+
