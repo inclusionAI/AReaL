@@ -195,6 +195,7 @@ def _tree_attn_fwd_func(
     *args,
     **kwargs
 ):
+    print(f"[debug tree attn] inside _tree_attn_fwd_func", flush=True)
     assert "full_attention_mask" in kwargs, "full_attention_mask is required for tree attention"
     attention_mask = kwargs["full_attention_mask"]
     # [B, S, H, D] -> [B, H, S, D]
