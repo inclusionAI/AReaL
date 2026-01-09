@@ -630,6 +630,14 @@ class SchedulingStrategy:
     target: str | None = field(
         default=None, metadata={"help": "The target role to be colocated with"}
     )
+    fork: bool = field(
+        default=True,
+        metadata={
+            "help": "When True with colocation, the target worker spawns a new "
+            "process on the same node/GPUs instead of sharing its process. "
+            "Provides process isolation while sharing GPU resources."
+        },
+    )
 
 
 @dataclass

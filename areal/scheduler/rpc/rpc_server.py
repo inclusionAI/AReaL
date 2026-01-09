@@ -1,14 +1,20 @@
 import argparse
+import getpass
 import logging as stdlib_logging
 import os
+import subprocess
+import sys
+import time
 import traceback
 from collections.abc import Callable
 from concurrent.futures import Future
+from pathlib import Path
 from queue import Queue
 from threading import Lock, Thread
 from typing import Any
 
 import orjson
+import requests
 from flask import Flask, Response, jsonify, request
 from werkzeug.serving import make_server
 
@@ -28,6 +34,7 @@ from areal.utils.data import (
 )
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, gethostip
+from areal.utils.proc import kill_process_tree, run_with_streaming_logs
 
 logger = logging.getLogger("SyncRPCServer")
 
@@ -48,6 +55,18 @@ _server_host: str = "0.0.0.0"
 _server_port: int = 8000
 
 _allocated_ports: set[int] = set()
+
+# Forked child processes - tracked for cleanup
+_forked_children: list[subprocess.Popen] = []
+_forked_children_lock = Lock()
+
+# Server config (needed for /fork endpoint to spawn children with same config)
+_experiment_name: str | None = None
+_trial_name: str | None = None
+_name_resolve_type: str = "nfs"
+_nfs_record_root: str = "/tmp/areal/name_resolve"
+_etcd3_addr: str = "localhost:2379"
+_fileroot: str | None = None  # Log file directory root
 
 # Create Flask app
 app = Flask(__name__)
@@ -147,6 +166,169 @@ def alloc_ports():
 
     except Exception as e:
         logger.error(f"Error in alloc_ports: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
+def _wait_for_worker_ready(host: str, port: int, timeout: float = 60) -> bool:
+    """Wait for a worker to be ready by polling its health endpoint.
+
+    Args:
+        host: The host address of the worker.
+        port: The port of the worker.
+        timeout: Maximum time to wait in seconds (default: 60).
+
+    Returns:
+        True if the worker is ready, False if timeout is reached.
+    """
+    url = f"http://{host}:{port}/health"
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            resp = requests.get(url, timeout=2)
+            if resp.status_code == 200:
+                return True
+        except requests.exceptions.RequestException:
+            pass
+        time.sleep(0.5)
+
+    return False
+
+
+@app.route("/fork", methods=["POST"])
+def fork_worker():
+    """Fork a new worker process on the same node.
+
+    This endpoint spawns a new RPC server process as a child of this worker.
+    The child inherits the same environment (including CUDA_VISIBLE_DEVICES)
+    but runs as an independent process with its own engine registry.
+
+    Expected JSON payload:
+    {
+        "role": "ref",           # Role name for the forked worker
+        "worker_index": 0,       # Worker index
+    }
+
+    Returns:
+    {
+        "status": "success",
+        "host": "192.168.1.10",
+        "port": 8001,
+        "pid": 12345
+    }
+    """
+    global _forked_children, _allocated_ports
+
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON in request body"}), 400
+
+        role = data.get("role")
+        worker_index = data.get("worker_index")
+
+        if role is None:
+            return jsonify({"error": "Missing 'role' field in request"}), 400
+        if worker_index is None:
+            return jsonify({"error": "Missing 'worker_index' field in request"}), 400
+
+        # Allocate a free port for the child process
+        ports = find_free_ports(1, exclude_ports=_allocated_ports)
+        child_port = ports[0]
+        _allocated_ports.add(child_port)
+
+        # Build command for child process
+        # Reuse most arguments from this server, but change role/index/port
+        cmd = [
+            sys.executable,
+            "-m",
+            "areal.scheduler.rpc.rpc_server",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(child_port),
+            "--experiment-name",
+            _experiment_name,
+            "--trial-name",
+            _trial_name,
+            "--role",
+            role,
+            "--worker-index",
+            str(worker_index),
+            "--name-resolve-type",
+            _name_resolve_type,
+            "--nfs-record-root",
+            _nfs_record_root,
+            "--etcd3-addr",
+            _etcd3_addr,
+            "--fileroot",
+            _fileroot,
+        ]
+
+        logger.info(
+            f"Forking new worker process for role '{role}' index {worker_index} "
+            f"on port {child_port}"
+        )
+
+        # Build shell command with tee/sed for streaming logs to terminal and files
+        # This matches LocalScheduler's logging pattern
+        log_dir = (
+            Path(_fileroot)
+            / "logs"
+            / getpass.getuser()
+            / _experiment_name
+            / _trial_name
+        )
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"{role}.log"
+        merged_log = log_dir / "merged.log"
+
+        logger.info(f"Forked worker logs will be written to: {log_file}")
+
+        # Use streaming log utility for terminal, role log, and merged log output
+        child_process = run_with_streaming_logs(
+            cmd,
+            log_file,
+            merged_log,
+            role,
+            env=os.environ.copy(),
+        )
+
+        with _forked_children_lock:
+            _forked_children.append(child_process)
+
+        # Wait for child to be ready
+        child_host = _server_host
+        if not _wait_for_worker_ready(child_host, child_port):
+            # Cleanup on failure
+            try:
+                kill_process_tree(child_process.pid, timeout=3, graceful=True)
+            except Exception:
+                pass
+            with _forked_children_lock:
+                if child_process in _forked_children:
+                    _forked_children.remove(child_process)
+            _allocated_ports.discard(child_port)
+            return jsonify(
+                {"error": "Forked worker failed to start within timeout"}
+            ), 500
+
+        logger.info(
+            f"Forked worker for role '{role}' index {worker_index} ready at "
+            f"{child_host}:{child_port} (pid={child_process.pid})"
+        )
+
+        return jsonify(
+            {
+                "status": "success",
+                "host": child_host,
+                "port": child_port,
+                "pid": child_process.pid,
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error in fork: {e}\n{traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
@@ -616,6 +798,25 @@ def clear_batch_data():
 # ==================== Cleanup ====================
 
 
+def cleanup_forked_children():
+    """Clean up all forked child processes."""
+    global _forked_children
+
+    with _forked_children_lock:
+        if not _forked_children:
+            return
+
+        logger.info(f"Cleaning up {len(_forked_children)} forked child processes")
+        for child in _forked_children:
+            try:
+                if child.poll() is None:  # Still running
+                    kill_process_tree(child.pid, timeout=3, graceful=True)
+                    logger.info(f"Killed forked child process {child.pid}")
+            except Exception as e:
+                logger.error(f"Error killing forked child {child.pid}: {e}")
+        _forked_children.clear()
+
+
 def cleanup_engines():
     """Clean up all engines on shutdown."""
     global _engines
@@ -678,6 +879,12 @@ def main():
         "--nfs-record-root", type=str, default="/tmp/areal/name_resolve"
     )
     parser.add_argument("--etcd3-addr", type=str, default="localhost:2379")
+    parser.add_argument(
+        "--fileroot",
+        type=str,
+        default=None,
+        help="Root directory for log files. If set, forked worker logs are written here.",
+    )
 
     args, _ = parser.parse_known_args()
 
@@ -687,10 +894,25 @@ def main():
 
     # Set global server address variables
     global _server_host, _server_port, _role
+    global \
+        _experiment_name, \
+        _trial_name, \
+        _name_resolve_type, \
+        _nfs_record_root, \
+        _etcd3_addr, \
+        _fileroot
     _server_host = args.host
     if _server_host == "0.0.0.0":
         _server_host = gethostip()
     _role = args.role
+
+    # Set global config for fork endpoint
+    _experiment_name = args.experiment_name
+    _trial_name = args.trial_name
+    _name_resolve_type = args.name_resolve_type
+    _nfs_record_root = args.nfs_record_root
+    _etcd3_addr = args.etcd3_addr
+    _fileroot = args.fileroot
 
     # Get worker identity
     worker_role = args.role
@@ -732,6 +954,7 @@ def main():
         logger.info("Shutting down sync RPC server")
     finally:
         perf_tracer.save(force=True)
+        cleanup_forked_children()
         cleanup_engine_thread()
         cleanup_engines()
         server.shutdown()

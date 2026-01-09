@@ -13,6 +13,7 @@ import orjson
 import ray
 import torch
 
+from areal.utils.concurrent import run_async_task
 from areal.utils.datapack import ffd_allocate, flat2d
 
 
@@ -98,7 +99,7 @@ class HttpTensorBackend:
                     ]
                 )
 
-        return asyncio.run(_fetch_all())
+        return run_async_task(_fetch_all)
 
     async def _fetch_tensor(
         self, session: aiohttp.ClientSession, shard_id: str, node_addr: str

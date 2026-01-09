@@ -36,13 +36,13 @@ from areal.scheduler.exceptions import (
 )
 from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import logging, name_resolve, names
+from areal.utils.concurrent import run_async_task
 from areal.utils.http import get_default_connector
 from areal.utils.launcher import (
     get_env_vars,
 )
-from areal.utils.logging import LOG_PREFIX_WIDTH
 from areal.utils.network import find_free_ports, gethostip
-from areal.utils.proc import kill_process_tree
+from areal.utils.proc import kill_process_tree, run_with_streaming_logs
 
 logger = logging.getLogger("LocalScheduler")
 
@@ -50,7 +50,7 @@ logger = logging.getLogger("LocalScheduler")
 @dataclass
 class WorkerInfo:
     worker: Worker
-    process: subprocess.Popen
+    process: subprocess.Popen | None  # None for forked workers (managed by parent)
     role: str
     gpu_devices: list[int]
     created_at: float
@@ -239,6 +239,132 @@ class LocalScheduler(Scheduler):
             f"schedulings length ({len(schedulings)}) must be 1 or equal to replicas ({num_workers})",
         )
 
+    async def _fork_single_worker(
+        self,
+        session: aiohttp.ClientSession,
+        role: str,
+        idx: int,
+        target_wi: WorkerInfo,
+        target_role: str,
+    ) -> WorkerInfo:
+        """Fork a single worker asynchronously."""
+        worker_id = f"{role}/{idx}"
+        target_url = (
+            f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/fork"
+        )
+
+        try:
+            async with session.post(
+                target_url,
+                json={"role": role, "worker_index": idx},
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise WorkerCreationError(
+                        role,
+                        f"Fork failed for worker {idx}",
+                        f"HTTP {response.status}: {error_text}",
+                    )
+
+                result = await response.json()
+
+                if result.get("status") != "success":
+                    raise WorkerCreationError(
+                        role,
+                        f"Fork failed for worker {idx}",
+                        result.get("error", "Unknown error"),
+                    )
+
+                forked_host = result["host"]
+                forked_port = result["port"]
+                forked_pid = result.get("pid")
+
+                logger.info(
+                    f"Forked worker {worker_id} created at {forked_host}:{forked_port} "
+                    f"(pid={forked_pid}) from {target_role}/{idx}"
+                )
+
+        except aiohttp.ClientError as e:
+            raise WorkerCreationError(
+                role,
+                f"Failed to fork worker {idx} from {target_role}/{idx}",
+                str(e),
+            ) from e
+
+        worker = Worker(
+            id=worker_id,
+            ip=forked_host,
+            worker_ports=[str(forked_port)],
+            engine_ports=[],
+        )
+        port_cnt = len(self._workers[target_role][0].worker.worker_ports)
+        if port_cnt > 1:
+            worker.worker_ports += self._allocate_ports(port_cnt - 1)
+
+        return WorkerInfo(
+            worker=worker,
+            process=None,  # Managed by parent worker
+            role=role,
+            gpu_devices=target_wi.gpu_devices,  # Inherited from target
+            created_at=time.time(),
+            log_file=str(self.log_dir / f"{role}.log"),
+            env_vars=target_wi.env_vars.copy(),  # Inherited from target
+        )
+
+    async def _create_forked_workers_async(
+        self,
+        role: str,
+        target_role: str,
+        target_workers: list[WorkerInfo],
+    ) -> list[str]:
+        """Create forked workers concurrently using async requests."""
+        timeout = aiohttp.ClientTimeout(total=120.0)
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=get_default_connector(),
+        ) as session:
+            # Launch all fork requests concurrently
+            tasks = [
+                self._fork_single_worker(session, role, idx, target_wi, target_role)
+                for idx, target_wi in enumerate(target_workers)
+            ]
+            workers = await asyncio.gather(*tasks)
+
+        self._workers[role] = list(workers)
+        self._colocated_roles[role] = target_role
+        worker_ids = [w.worker.id for w in workers]
+
+        logger.info(
+            f"Role '{role}' forked from '{target_role}': "
+            f"created {len(workers)} new worker processes"
+        )
+
+        # Configure forked workers if exp_config is available
+        if self.exp_config is not None:
+            for worker_rank, worker_info in enumerate(workers):
+                self._configure_worker(worker_info, worker_rank)
+
+        return worker_ids
+
+    def _create_forked_workers(
+        self,
+        role: str,
+        target_role: str,
+        target_workers: list[WorkerInfo],
+    ) -> list[str]:
+        """Create forked workers by calling /fork on target workers concurrently."""
+        try:
+            return run_async_task(
+                self._create_forked_workers_async, role, target_role, target_workers
+            )
+        except Exception:
+            # Cleanup on failure
+            if role in self._workers:
+                del self._workers[role]
+            if role in self._colocated_roles:
+                del self._colocated_roles[role]
+            raise
+
     def create_workers(self, job: Job, *args, **kwargs) -> list[str]:
         """Create worker subprocesses.
 
@@ -311,8 +437,15 @@ class LocalScheduler(Scheduler):
                     f"({num_workers} != {len(target_workers)})",
                 )
 
-            # Reuse existing workers - no new processes spawned
-            worker_ids = [w.worker.id for w in target_workers]
+            # Check if fork mode is enabled
+            if strategy.fork:
+                # Fork mode: spawn new processes on same GPUs via /fork endpoint
+                worker_ids = self._create_forked_workers(
+                    role, colocate_role, target_workers
+                )
+            else:
+                # Reuse existing workers - no new processes spawned
+                worker_ids = [w.worker.id for w in target_workers]
             self._colocated_roles[role] = colocate_role
 
             logger.info(
@@ -387,28 +520,19 @@ class LocalScheduler(Scheduler):
                     ["--nfs-record-root", self.name_resolve_config.nfs_record_root]
                 )
                 cmd.extend(["--etcd3-addr", self.name_resolve_config.etcd3_addr])
+                cmd.extend(["--fileroot", str(self.fileroot)])
 
                 logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
                 if cmd[0].startswith("python"):
                     cmd[0] = sys.executable
 
-                cmd = (
-                    " ".join(str(k) + "=" + str(v) for k, v in env.items())
-                    + " stdbuf -oL "
-                    + " ".join(cmd)
-                )
-                # Tee to role log file (no prefix) and merged log (with prefix)
-                # Uses process substitution to add prefix only for merged.log
-                # stdbuf -oL ensures line-buffered streaming for both outputs
-                prefix = f"[{role}]".ljust(LOG_PREFIX_WIDTH)
-                cmd = f"{cmd} 2>&1 | tee -a {log_file} >(stdbuf -oL sed 's/^/{prefix}/' >> {merged_log})"
                 try:
-                    process = subprocess.Popen(
+                    process = run_with_streaming_logs(
                         cmd,
-                        shell=True,
-                        executable="/bin/bash",  # Required for process substitution >(...)
-                        stdout=sys.stdout,
-                        stderr=sys.stdout,
+                        log_file,
+                        merged_log,
+                        role,
+                        env_vars_in_cmd=env,
                     )
                 except Exception as e:
                     self._cleanup_workers(workers)
@@ -494,14 +618,18 @@ class LocalScheduler(Scheduler):
         WorkerTimeoutError
             If timeout exceeded waiting for workers
         """
-        # Handle colocated roles: delegate to target role's workers
+        # Handle colocated/forked roles
         if role in self._colocated_roles:
-            target_role = self._colocated_roles[role]
-            logger.debug(
-                f"Role '{role}' is colocated with '{target_role}', "
-                "returning target role's workers"
-            )
-            return self.get_workers(target_role, timeout)
+            # Forked roles have their own workers in _workers
+            if role not in self._workers:
+                # Colocated roles delegate to target role's workers
+                target_role = self._colocated_roles[role]
+                logger.debug(
+                    f"Role '{role}' is colocated with '{target_role}', "
+                    "returning target role's workers"
+                )
+                return self.get_workers(target_role, timeout)
+            # Forked roles fall through to normal worker handling below
 
         if role not in self._workers:
             raise WorkerNotFoundError(role)
@@ -525,7 +653,11 @@ class LocalScheduler(Scheduler):
                 if worker_info.worker.id in ready_workers:
                     continue
 
-                if worker_info.process.poll() is not None:
+                # Forked workers have process=None - skip process check for them
+                if (
+                    worker_info.process is not None
+                    and worker_info.process.poll() is not None
+                ):
                     stderr = self._read_log_tail(worker_info.log_file)
                     raise WorkerFailedError(
                         worker_info.worker.id,
@@ -594,7 +726,10 @@ class LocalScheduler(Scheduler):
                 )
 
         except requests.exceptions.ConnectionError as e:
-            if worker_info.process.poll() is not None:
+            if (
+                worker_info.process is not None
+                and worker_info.process.poll() is not None
+            ):
                 stderr = self._read_log_tail(worker_info.log_file)
                 raise WorkerFailedError(
                     worker_id, worker_info.process.returncode, stderr
@@ -619,6 +754,9 @@ class LocalScheduler(Scheduler):
             return
 
         for worker_info in self._workers[role]:
+            # Forked workers have process=None - skip process check for them
+            if worker_info.process is None:
+                continue
             returncode = worker_info.process.poll()
             if returncode is not None:
                 stderr = self._read_log_tail(worker_info.log_file)
@@ -647,9 +785,19 @@ class LocalScheduler(Scheduler):
                 self.delete_workers(r)
             return
 
-        # Handle colocated role: just remove mapping, don't kill processes
+        # Handle colocated/forked role
         if role in self._colocated_roles:
-            logger.info(f"Removing colocated role '{role}' mapping")
+            # Forked roles have their own workers that need port cleanup
+            if role in self._workers:
+                logger.info(f"Removing forked role '{role}' (managed by parent worker)")
+                workers = self._workers[role]
+                self._cleanup_workers(
+                    workers
+                )  # Release ports, but process=None skips kill
+                del self._workers[role]
+            else:
+                # Colocated roles don't have their own workers
+                logger.info(f"Removing colocated role '{role}' mapping")
             del self._colocated_roles[role]
             return
 
@@ -672,7 +820,9 @@ class LocalScheduler(Scheduler):
                 for port_str in worker_info.worker.worker_ports:
                     self._allocated_ports.discard(int(port_str))
 
-                kill_process_tree(worker_info.process.pid, timeout=3, graceful=True)
+                # Only kill process if we own it (non-forked workers)
+                if worker_info.process is not None:
+                    kill_process_tree(worker_info.process.pid, timeout=3, graceful=True)
 
                 logger.debug(f"Cleaned up worker {worker_info.worker.id}")
             except Exception as e:
@@ -835,7 +985,10 @@ class LocalScheduler(Scheduler):
                         )
 
         except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:
-            if worker_info.process.poll() is not None:
+            if (
+                worker_info.process is not None
+                and worker_info.process.poll() is not None
+            ):
                 stderr = self._read_log_tail(worker_info.log_file)
                 raise WorkerFailedError(
                     worker_id, worker_info.process.returncode, stderr
@@ -924,8 +1077,11 @@ class LocalScheduler(Scheduler):
         last_error = None
 
         for attempt in range(1, max_retries + 1):
-            # Check worker health before each attempt
-            if worker_info.process.poll() is not None:
+            # Check worker health before each attempt (forked workers have process=None)
+            if (
+                worker_info.process is not None
+                and worker_info.process.poll() is not None
+            ):
                 stderr = self._read_log_tail(worker_info.log_file)
                 raise WorkerFailedError(
                     worker_id,
@@ -1047,8 +1203,11 @@ class LocalScheduler(Scheduler):
         last_error = None
 
         for attempt in range(1, max_retries + 1):
-            # Check worker health before each attempt
-            if worker_info.process.poll() is not None:
+            # Check worker health before each attempt (forked workers have process=None)
+            if (
+                worker_info.process is not None
+                and worker_info.process.poll() is not None
+            ):
                 stderr = self._read_log_tail(worker_info.log_file)
                 raise WorkerFailedError(
                     worker_id,
@@ -1109,8 +1268,11 @@ class LocalScheduler(Scheduler):
                             last_error = f"HTTP {response.status}: {response_text}"
 
             except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:
-                # Check if worker died
-                if worker_info.process.poll() is not None:
+                # Check if worker died (forked workers have process=None)
+                if (
+                    worker_info.process is not None
+                    and worker_info.process.poll() is not None
+                ):
                     stderr = self._read_log_tail(worker_info.log_file)
                     raise WorkerFailedError(
                         worker_id,
@@ -1156,8 +1318,8 @@ class LocalScheduler(Scheduler):
         if worker_info is None:
             raise WorkerNotFoundError(worker_id)
 
-        # Check if process has exited
-        if worker_info.process.poll() is not None:
+        # Check if process has exited (forked workers have process=None)
+        if worker_info.process is not None and worker_info.process.poll() is not None:
             stderr = self._read_log_tail(worker_info.log_file)
             raise WorkerFailedError(
                 worker_id,
@@ -1194,8 +1356,11 @@ class LocalScheduler(Scheduler):
         self, e: Exception, worker_info: WorkerInfo, worker_id: str
     ) -> str:
         if isinstance(e, requests.exceptions.ConnectionError):
-            # Check if worker died
-            if worker_info.process.poll() is not None:
+            # Check if worker died (forked workers have process=None)
+            if (
+                worker_info.process is not None
+                and worker_info.process.poll() is not None
+            ):
                 stderr = self._read_log_tail(worker_info.log_file)
                 raise WorkerFailedError(
                     worker_id,

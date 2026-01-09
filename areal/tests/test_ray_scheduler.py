@@ -1,10 +1,11 @@
 import asyncio
+import time
 from unittest.mock import Mock, patch
 
 import pytest
 from ray.util.state import summarize_actors
 
-from areal.api.cli_args import BaseExperimentConfig
+from areal.api.cli_args import BaseExperimentConfig, SchedulingStrategy
 from areal.api.scheduler_api import Job, SchedulingSpec, Worker
 from areal.scheduler.ray import RayScheduler, RayWorkerInfo, ray_resource_type
 
@@ -47,13 +48,18 @@ class TestWorkerCreationAndDeletion:
                     gpu=1,
                 ),
             ],
-            shared_placement_group=True,
         )
 
         # create workers
         worker_ids = scheduler.create_workers(job)
         assert len(worker_ids) == 2
         assert len(scheduler._workers["train"]) == 2
+
+        # Verify each worker has its own placement group with bundle_index=0
+        pgs = [wi.placement_group for wi in scheduler._workers["train"]]
+        assert pgs[0] != pgs[1], "Each worker should have its own placement group"
+        for wi in scheduler._workers["train"]:
+            assert wi.bundle_index == 0, "bundle_index should always be 0"
 
         actor_summary = summarize_actors()
 
@@ -170,3 +176,214 @@ class TestUtilityFunctions:
         assert len(bundle_list) == 2
         for bundle in bundle_list:
             assert bundle[ray_resource_type()] <= _num_gpu_per_node
+
+
+class TestForkColocation:
+    """Tests for fork-based colocation in RayScheduler."""
+
+    def test_fork_creates_workers_on_same_placement_group(self):
+        """Test that forked workers are created on the same placement group."""
+        config = BaseExperimentConfig()
+
+        scheduler = RayScheduler(startup_timeout=60.0, exp_config=config)
+
+        # First create target workers (each gets its own PG with bundle_index=0)
+        actor_job = Job(
+            replicas=2,
+            role="actor",
+            tasks=[
+                SchedulingSpec(cpu=1, mem=1, gpu=1),
+                SchedulingSpec(cpu=1, mem=1, gpu=1),
+            ],
+        )
+
+        # Create actor workers
+        actor_worker_ids = scheduler.create_workers(actor_job)
+        assert len(actor_worker_ids) == 2
+        assert len(scheduler._workers["actor"]) == 2
+
+        # Create forked ref workers
+        ref_job = Job(
+            replicas=2,
+            role="ref",
+            tasks=[SchedulingSpec(cpu=1, mem=1, gpu=1)],
+            scheduling_strategy=SchedulingStrategy(
+                type="colocation", target="actor", fork=True
+            ),
+        )
+
+        ref_worker_ids = scheduler.create_workers(ref_job)
+
+        # Verify forked workers were created
+        assert len(ref_worker_ids) == 2
+        assert "ref" in scheduler._workers
+        assert len(scheduler._workers["ref"]) == 2
+
+        # Verify forked workers use same placement groups
+        for i in range(2):
+            actor_pg = scheduler._workers["actor"][i].placement_group
+            ref_pg = scheduler._workers["ref"][i].placement_group
+            assert actor_pg == ref_pg, "Forked worker should use same placement group"
+            # Verify both have bundle_index=0
+            assert scheduler._workers["actor"][i].bundle_index == 0
+            assert scheduler._workers["ref"][i].bundle_index == 0
+
+        # Verify ref role is tracked as colocated
+        assert "ref" in scheduler._colocated_roles
+        assert scheduler._colocated_roles["ref"] == "actor"
+
+        # Verify actors summary shows 4 actors (2 actor + 2 ref)
+        actor_summary = summarize_actors()
+        assert (
+            actor_summary["cluster"]["summary"]["RayRPCServer"]["state_counts"]["ALIVE"]
+            == 4
+        )
+
+        # Clean up
+        scheduler.delete_workers()
+
+    def test_fork_get_workers_returns_forked_workers(self):
+        """Test that get_workers returns forked workers directly."""
+        config = BaseExperimentConfig()
+        scheduler = RayScheduler(startup_timeout=60.0, exp_config=config)
+
+        # Create target workers
+        actor_job = Job(
+            replicas=2,
+            role="actor",
+            tasks=[SchedulingSpec(cpu=1, mem=1, gpu=1)],
+        )
+        scheduler.create_workers(actor_job)
+
+        # Create forked workers
+        ref_job = Job(
+            replicas=2,
+            role="ref",
+            tasks=[SchedulingSpec(cpu=1, mem=1, gpu=1)],
+            scheduling_strategy=SchedulingStrategy(
+                type="colocation", target="actor", fork=True
+            ),
+        )
+        scheduler.create_workers(ref_job)
+
+        # Get workers for ref role should return ref workers, not actor workers
+        ref_workers = scheduler.get_workers("ref")
+        assert len(ref_workers) == 2
+        assert all(w.id.startswith("ref/") for w in ref_workers)
+
+        # Clean up
+        scheduler.delete_workers()
+
+    def test_fork_delete_cleans_up_forked_actors(self):
+        """Test that deleting forked role cleans up its actors."""
+        config = BaseExperimentConfig()
+        scheduler = RayScheduler(startup_timeout=60.0, exp_config=config)
+
+        # Create target workers
+        actor_job = Job(
+            replicas=2,
+            role="actor",
+            tasks=[SchedulingSpec(cpu=1, mem=1, gpu=1)],
+        )
+        scheduler.create_workers(actor_job)
+
+        # Create forked workers
+        ref_job = Job(
+            replicas=2,
+            role="ref",
+            tasks=[SchedulingSpec(cpu=1, mem=1, gpu=1)],
+            scheduling_strategy=SchedulingStrategy(
+                type="colocation", target="actor", fork=True
+            ),
+        )
+        scheduler.create_workers(ref_job)
+
+        # Verify we have 4 actors total
+        actor_summary = summarize_actors()
+        assert (
+            actor_summary["cluster"]["summary"]["RayRPCServer"]["state_counts"]["ALIVE"]
+            == 4
+        )
+
+        # Delete only the ref role
+        scheduler.delete_workers("ref")
+
+        # Verify ref role is cleaned up
+        assert "ref" not in scheduler._workers
+        assert "ref" not in scheduler._colocated_roles
+
+        # Verify actor workers still exist
+        assert "actor" in scheduler._workers
+        assert len(scheduler._workers["actor"]) == 2
+
+        # Verify only 2 actors remain alive
+        # Wait for actors to be terminated (actor.destroy.remote() is async)
+
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            actor_summary = summarize_actors()
+            alive_count = (
+                actor_summary["cluster"]["summary"]
+                .get("RayRPCServer", {})
+                .get("state_counts", {})
+                .get("ALIVE", 0)
+            )
+            if alive_count == 2:
+                break
+            time.sleep(1)
+
+        actor_summary = summarize_actors()
+        assert (
+            actor_summary["cluster"]["summary"]["RayRPCServer"]["state_counts"]["ALIVE"]
+            == 2
+        )
+
+        # Clean up
+        scheduler.delete_workers()
+
+    def test_non_fork_colocation_reuses_workers(self):
+        """Test that non-fork colocation reuses target workers."""
+        config = BaseExperimentConfig()
+        scheduler = RayScheduler(startup_timeout=60.0, exp_config=config)
+
+        # Create target workers
+        actor_job = Job(
+            replicas=2,
+            role="actor",
+            tasks=[SchedulingSpec(cpu=1, mem=1, gpu=1)],
+        )
+        scheduler.create_workers(actor_job)
+
+        # Create colocated workers without fork
+        ref_job = Job(
+            replicas=2,
+            role="ref",
+            tasks=[SchedulingSpec(cpu=1, mem=1, gpu=1)],
+            scheduling_strategy=SchedulingStrategy(
+                type="colocation", target="actor", fork=False
+            ),
+        )
+        ref_worker_ids = scheduler.create_workers(ref_job)
+
+        # Ref should reuse actor worker IDs
+        assert all(w.startswith("actor/") for w in ref_worker_ids)
+
+        # Ref role should NOT have its own workers
+        assert "ref" not in scheduler._workers
+
+        # But ref should be tracked as colocated
+        assert "ref" in scheduler._colocated_roles
+
+        # get_workers for ref should return actor workers
+        ref_workers = scheduler.get_workers("ref")
+        assert all(w.id.startswith("actor/") for w in ref_workers)
+
+        # Only 2 actors total (no new actors for ref)
+        actor_summary = summarize_actors()
+        assert (
+            actor_summary["cluster"]["summary"]["RayRPCServer"]["state_counts"]["ALIVE"]
+            == 2
+        )
+
+        # Clean up
+        scheduler.delete_workers()

@@ -516,7 +516,7 @@ class DistRolloutCoordinator:
             batch = tensor_container_to(batch, current_platform.current_device())
 
         # Broadcast and redistribute to all data parallel ranks
-        return self._broadcast_and_redistribute_batch(batch, granularity=group_size)
+        return self._broadcast_and_redistribute_batch(batch)
 ```
 
 **Key Design**:
