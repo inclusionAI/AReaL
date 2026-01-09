@@ -282,14 +282,11 @@ def load_weights_from_hf_with_mbridge_fast(
                 with safe_open(safetensor_file, framework="pt", device="cpu") as f:
                     for k in f.keys():
                         index[k] = safetensor_file
-                if (
-                    "model.embed_tokens.weight" in index
-                    and "lm_head.weight" not in index
-                ):
-                    manual_tie_word_embedding = True
-                    index["lm_head.weight"] = index["model.embed_tokens.weight"]
         else:
             raise FileNotFoundError("No safetensors found in the model path to load.")
+    if "model.embed_tokens.weight" in index and "lm_head.weight" not in index:
+        manual_tie_word_embedding = True
+        index["lm_head.weight"] = index["model.embed_tokens.weight"]
 
     # Calling model.state_dict() is very expensive
     # We call it in advance
