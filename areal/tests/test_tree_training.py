@@ -689,3 +689,188 @@ def test_build_packed_tree_batch_max_tokens_still_respected():
                 f"Tree {i} has {tree_tokens} tokens, exceeds max_tokens_per_mb=128"
             )
 
+
+# =============================================================================
+# Multiprocessing test for dp_group synchronization
+# =============================================================================
+
+
+def _dp_group_worker(
+    rank: int,
+    world_size: int,
+    backend: str,
+    result_queue,
+    data_per_rank: list[dict[str, torch.Tensor]],
+    max_tokens_per_mb: int,
+):
+    """Worker function for distributed dp_group test.
+
+    Each rank runs build_packed_tree_batch with different input data
+    and validates that the number of trees is synchronized across ranks.
+    """
+    import torch.multiprocessing as mp
+
+    try:
+        # Set environment variables for distributed
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = "29500"
+        os.environ["RANK"] = str(rank)
+        os.environ["WORLD_SIZE"] = str(world_size)
+        os.environ["LOCAL_RANK"] = str(rank)
+
+        # Initialize process group
+        dist.init_process_group(
+            backend=backend,
+            rank=rank,
+            world_size=world_size,
+        )
+
+        # Set device
+        device = f"cuda:{rank}"
+        torch.cuda.set_device(device)
+
+        # Get data for this rank and move to GPU
+        data = {
+            k: v.to(device) for k, v in data_per_rank[rank].items()
+        }
+
+        # Create mb_spec
+        mb_spec = MicroBatchSpec(
+            max_tokens_per_mb=max_tokens_per_mb,
+            n_mbs=1,
+            n_mbs_divisor=1,
+        )
+
+        # Get the default process group as dp_group
+        dp_group = dist.distributed_c10d._get_default_group()
+
+        # Run build_packed_tree_batch with dp_group
+        result = build_packed_tree_batch(
+            data,
+            mb_spec,
+            pad_to_maximum=True,
+            dp_group=dp_group,
+        )
+
+        num_trees = len(result)
+
+        # All-gather to verify all ranks have same number of trees
+        local_count = torch.tensor([num_trees], dtype=torch.int64, device=device)
+        all_counts = [
+            torch.zeros(1, dtype=torch.int64, device=device)
+            for _ in range(world_size)
+        ]
+        dist.all_gather(all_counts, local_count)
+
+        all_tree_counts = [c.item() for c in all_counts]
+
+        # Put result in queue
+        result_queue.put({
+            "rank": rank,
+            "num_trees": num_trees,
+            "all_tree_counts": all_tree_counts,
+            "success": True,
+            "error": None,
+        })
+
+    except Exception as e:
+        import traceback
+        result_queue.put({
+            "rank": rank,
+            "num_trees": -1,
+            "all_tree_counts": [],
+            "success": False,
+            "error": f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}",
+        })
+
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.cuda.device_count() < 2,
+    reason="Requires at least 2 GPUs"
+)
+def test_build_packed_tree_batch_dp_group_sync():
+    """Test that dp_group synchronizes tree count across ranks.
+
+    This test spawns 2 processes (one per GPU) with different input data:
+    - Rank 0: 2 sequences that fit in 1 tree
+    - Rank 1: 4 sequences that require 2 trees
+
+    With dp_group synchronization, both ranks should produce 2 trees.
+    """
+    import torch.multiprocessing as mp
+
+    world_size = 2
+    backend = "nccl"
+    max_tokens_per_mb = 256  # 2 * 128
+
+    # Create different data for each rank on CPU (will be moved to GPU in worker)
+    # Rank 0: 2 sequences, total ~100 tokens -> fits in 1 tree
+    data_rank0 = _create_test_input(
+        batch_size=2,
+        seq_lengths=[50, 50],
+        device="cpu",
+    )
+
+    # Rank 1: 4 sequences, total ~400 tokens -> needs 2 trees (256 max per tree)
+    data_rank1 = _create_test_input(
+        batch_size=4,
+        seq_lengths=[100, 100, 100, 100],
+        device="cpu",
+    )
+
+    data_per_rank = [data_rank0, data_rank1]
+
+    # Use spawn context for CUDA
+    ctx = mp.get_context("spawn")
+    result_queue = ctx.Queue()
+
+    processes = []
+    for rank in range(world_size):
+        p = ctx.Process(
+            target=_dp_group_worker,
+            args=(rank, world_size, backend, result_queue, data_per_rank, max_tokens_per_mb),
+        )
+        p.start()
+        processes.append(p)
+
+    # Collect results
+    results = []
+    for _ in range(world_size):
+        results.append(result_queue.get(timeout=60))
+
+    # Wait for processes to finish
+    for p in processes:
+        p.join(timeout=30)
+        if p.is_alive():
+            p.terminate()
+            p.join()
+
+    # Sort results by rank
+    results.sort(key=lambda r: r["rank"])
+
+    # Check for errors
+    for r in results:
+        if not r["success"]:
+            pytest.fail(f"Rank {r['rank']} failed: {r['error']}")
+
+    # Verify all ranks have the same number of trees
+    tree_counts = [r["num_trees"] for r in results]
+    assert len(set(tree_counts)) == 1, (
+        f"Tree counts should be identical across ranks, got {tree_counts}"
+    )
+
+    # Verify the synchronized count is the maximum (rank 1 needed 2 trees)
+    assert tree_counts[0] >= 2, (
+        f"Expected at least 2 trees after sync, got {tree_counts[0]}"
+    )
+
+    # Verify all_tree_counts are consistent
+    for r in results:
+        assert r["all_tree_counts"] == tree_counts, (
+            f"Rank {r['rank']} all_tree_counts mismatch: {r['all_tree_counts']} vs {tree_counts}"
+        )
+
