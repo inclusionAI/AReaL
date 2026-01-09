@@ -496,7 +496,10 @@ class FSDPEngine(TrainEngine):
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
             # XXX: temp hack
-            inputs["position_ids"] = inputs["position_ids"].unsqueeze(0)
+            for k, v in inputs.items():
+                print(f"[debug fsdp] input {k}: {v.shape if torch.is_tensor(v) else type(v)}")
+            if inputs["position_ids"].dim() == 1:
+                inputs["position_ids"] = inputs["position_ids"].unsqueeze(0)
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
