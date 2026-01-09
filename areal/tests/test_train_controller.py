@@ -705,28 +705,6 @@ class TestTrainControllerExportStats:
             assert result[k] == expected_stats[k]
 
 
-class TestTrainControllerAsyncMethods:
-    """Tests for async method handling."""
-
-    def test_run_async_task(self, train_controller):
-        """Test _run_async_task correctly runs async tasks."""
-
-        async def async_task():
-            return 42
-
-        result = train_controller._run_async_task(async_task())
-        assert result == 42
-
-    def test_run_async_task_with_exception(self, train_controller):
-        """Test _run_async_task propagates exceptions."""
-
-        async def failing_task():
-            raise ValueError("Test error")
-
-        with pytest.raises(ValueError, match="Test error"):
-            train_controller._run_async_task(failing_task())
-
-
 class TestTrainControllerDispatchInputs:
     """Tests for input dispatching across DP groups."""
 

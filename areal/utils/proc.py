@@ -1,13 +1,130 @@
+from __future__ import annotations
+
 import os
+import shlex
 import signal
+import subprocess
 import sys
 import threading
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import psutil
 
 from areal.utils import logging
+from areal.utils.logging import LOG_PREFIX_WIDTH
 
 logger = logging.getLogger("ProcUtils")
+
+if TYPE_CHECKING:
+    from typing import IO
+
+
+def build_streaming_log_cmd(
+    cmd: str | list[str],
+    log_file: str | Path,
+    merged_log: str | Path,
+    role: str,
+    *,
+    env_vars: dict[str, str] | None = None,
+) -> str:
+    """Build a shell command that streams output to stdout and log files.
+
+    The command uses tee/sed pattern:
+    - stdout streams to terminal in real-time
+    - Output appends to role-specific log file (no prefix)
+    - Output appends to merged log with [role] prefix
+
+    Parameters
+    ----------
+    cmd : str | list[str]
+        Command to execute. If list, will be shell-escaped and joined.
+    log_file : str | Path
+        Path to role-specific log file (appended with -a)
+    merged_log : str | Path
+        Path to merged log file (appended with prefix)
+    role : str
+        Role name for log prefix (e.g., "actor", "master")
+    env_vars : dict[str, str] | None
+        Optional environment variables to prefix the command with KEY=VALUE
+
+    Returns
+    -------
+    str
+        Shell command string ready for execution with bash
+    """
+    # Escape command if it's a list
+    if isinstance(cmd, list):
+        cmd_str = " ".join(shlex.quote(str(c)) for c in cmd)
+    else:
+        cmd_str = cmd
+
+    # Build prefix with env vars if provided
+    prefix_parts = []
+    if env_vars:
+        prefix_parts.append(
+            " ".join(f"{k}={shlex.quote(str(v))}" for k, v in env_vars.items())
+        )
+    prefix_parts.append(f"stdbuf -oL {cmd_str}")
+    full_cmd = " ".join(prefix_parts)
+
+    # Build log prefix for merged log
+    log_prefix = f"[{role}]".ljust(LOG_PREFIX_WIDTH)
+
+    # Construct tee/sed pipeline
+    shell_cmd = (
+        f"{full_cmd} 2>&1 "
+        f"| tee -a {log_file} >(stdbuf -oL sed 's/^/{log_prefix}/' >> {merged_log})"
+    )
+    return shell_cmd
+
+
+def run_with_streaming_logs(
+    cmd: str | list[str],
+    log_file: str | Path,
+    merged_log: str | Path,
+    role: str,
+    *,
+    env: dict[str, str] | None = None,
+    env_vars_in_cmd: dict[str, str] | None = None,
+    stdout: IO | None = None,
+) -> subprocess.Popen:
+    """Run a command with streaming output to stdout and log files.
+
+    Parameters
+    ----------
+    cmd : str | list[str]
+        Command to execute
+    log_file : str | Path
+        Path to role-specific log file
+    merged_log : str | Path
+        Path to merged log file
+    role : str
+        Role name for log prefix
+    env : dict[str, str] | None
+        Environment dict for Popen (passed to subprocess)
+    env_vars_in_cmd : dict[str, str] | None
+        Environment variables to prefix in the shell command (KEY=VALUE format)
+    stdout : IO | None
+        File object for stdout. Defaults to sys.stdout
+
+    Returns
+    -------
+    subprocess.Popen
+        The spawned process
+    """
+    shell_cmd = build_streaming_log_cmd(
+        cmd, str(log_file), str(merged_log), role, env_vars=env_vars_in_cmd
+    )
+
+    return subprocess.Popen(
+        shell_cmd,
+        shell=True,
+        executable="/bin/bash",
+        env=env,
+        stdout=stdout or sys.stdout,
+        stderr=stdout or sys.stdout,
+    )
 
 
 def kill_process_tree(

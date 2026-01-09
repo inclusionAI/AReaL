@@ -14,6 +14,7 @@ from areal.utils.data import (
     tensor_container_to,
 )
 from areal.utils.dynamic_import import import_from_string
+from areal.utils.network import find_free_ports
 
 
 @ray.remote
@@ -33,6 +34,7 @@ class RayRPCServer:
     def __init__(self):
         self._engines: dict[str, TrainEngine | InferenceEngine] = {}
         self._default_engine_name: str | None = None  # For backward compatibility
+        self._allocated_port = set()
         self.logger = logging.getLogger("RayRPCServer")
 
     def _get_device(self):
@@ -43,6 +45,11 @@ class RayRPCServer:
 
     def ping(self) -> str:
         return "ok"
+
+    def alloc_ports(self, count: int):
+        ports = find_free_ports(count, exclude_ports=self._allocated_port)
+        self._allocated_port.update(ports)
+        return ports
 
     def configure(self, config: BaseExperimentConfig, role: str, rank: int) -> None:
         name_resolve.reconfigure(config.cluster.name_resolve)

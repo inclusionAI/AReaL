@@ -1,6 +1,4 @@
-import atexit
-import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,38 +7,9 @@ import requests
 from areal.api.io_struct import ParamSpec, WeightUpdateMeta
 from areal.scheduler.rpc.serialization import serialize_value
 from areal.utils import logging
+from areal.utils.concurrent import get_executor
 
 logger = logging.getLogger(__name__)
-
-# Lazy-initialized thread pool for async HTTP requests
-_executor: ThreadPoolExecutor | None = None
-_executor_lock = threading.Lock()
-
-
-def _get_executor() -> ThreadPoolExecutor:
-    """Get or create the shared thread pool executor."""
-    global _executor
-    if _executor is None:
-        with _executor_lock:
-            if _executor is None:
-                _executor = ThreadPoolExecutor(
-                    max_workers=4, thread_name_prefix="rollout_callback"
-                )
-                # Register cleanup on process exit
-                atexit.register(_shutdown_executor)
-    return _executor
-
-
-def _shutdown_executor() -> None:
-    """Shutdown the shared thread pool executor if it exists.
-
-    Called via atexit at process exit, when no other threads should be
-    accessing the executor.
-    """
-    global _executor
-    if _executor is not None:
-        _executor.shutdown(wait=False)
-        _executor = None
 
 
 @dataclass
@@ -110,7 +79,7 @@ class RolloutCallback:
         Future[dict]
             Future that completes when the HTTP response is received
         """
-        return _get_executor().submit(self._post, endpoint, payload)
+        return get_executor().submit(self._post, endpoint, payload)
 
     def _post_nowait_void(
         self, endpoint: str, payload: dict[str, Any] | None = None

@@ -981,6 +981,7 @@ def _flatten_pad_to_max_numel(x, shapes):
 
 
 def all_gather_tensor_container(data, group=None) -> list:
+    world_size = dist.get_world_size(group)
     if torch.is_tensor(data):
         local_shape = list(data.shape)
         shapes = [None for _ in range(dist.get_world_size(group))]
@@ -994,10 +995,25 @@ def all_gather_tensor_container(data, group=None) -> list:
         return [_unpad_unflatten(y, shape) for y, shape in zip(ys, shapes)]
 
     if isinstance(data, list):
+        lengths = [None for _ in range(world_size)]
+        dist.all_gather_object(lengths, len(data), group=group)
+        if not len(set(lengths)) == 1:
+            raise RuntimeError(
+                f"Trying to all-gather lists with mismatched lengths: {lengths}"
+            )
+
         data = [all_gather_tensor_container(d, group=group) for d in data]
         return list(zip(*data))
 
     if isinstance(data, dict):
+        all_keys = [None for _ in range(world_size)]
+        local_keys = set(data.keys())
+        dist.all_gather_object(all_keys, local_keys, group=group)
+        if any(keys != local_keys for keys in all_keys):
+            raise RuntimeError(
+                f"Trying to all-gather dicts with mismatched keys: {all_keys}"
+            )
+
         results = {
             k: all_gather_tensor_container(v, group=group) for k, v in data.items()
         }
