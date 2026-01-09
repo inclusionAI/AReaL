@@ -99,7 +99,7 @@ class DistributedStatsTracker:
                         f"`{key}` must be a pytorch bool tensor: {value.dtype}"
                     )
                 if value.numel() == 0:
-                    raise ValueError(f"`{key}` must be non-empty")
+                    return
                 full_key = self._get_full_key(key)
                 self._set_reduce_type(full_key, ReduceType.SUM)
                 self.stats[full_key].append(value.detach().clone())
@@ -125,7 +125,7 @@ class DistributedStatsTracker:
                         f"`{key}` should be a pytorch float tensor: {value.dtype}"
                     )
                 if value.numel() == 0:
-                    raise ValueError(f"`{key}` should be non-empty")
+                    return
                 if reduce_type == ReduceType.SCALAR:
                     raise ValueError("Cannot use the scalar reduce type for a tensor")
                 full_key = self._get_full_key(key)
