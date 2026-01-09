@@ -199,7 +199,7 @@ def apply_monkey_patch(
         },
     }
 
-    if ulysses_sp_size <= 1 or not enable_tree_training:
+    if ulysses_sp_size <= 1 and not enable_tree_training:
         return
 
     if model.config.model_type in vl_model_mappings:
