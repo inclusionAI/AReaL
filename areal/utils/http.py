@@ -116,3 +116,9 @@ def response_ok(http_code: int) -> bool:
 
 def response_retryable(http_code: int) -> bool:
     return http_code == HTTPStatus.REQUEST_TIMEOUT
+
+
+def ensure_end_with_slash(url: str) -> str:
+    if not url.endswith("/"):
+        return url + "/"
+    return url

@@ -22,7 +22,7 @@ from areal.api.io_struct import (
 )
 
 if TYPE_CHECKING:
-    from areal.api.workflow_api import RolloutWorkflow
+    from areal.api.workflow_api import WorkflowLike
     from areal.core.workflow_executor import WorkflowExecutor
     from areal.utils.data import MicroBatchList
 
@@ -195,7 +195,7 @@ class TrainEngine(abc.ABC):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> list[dict[str, Any]]:
@@ -210,7 +210,7 @@ class TrainEngine(abc.ABC):
         ----------
         data : list[dict[str, Any]]
             A list of input data dictionaries.
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation.
         workflow_kwargs : dict[str, Any] | None, optional
             Keyword arguments to pass to the workflow constructor, by default None.
@@ -230,7 +230,7 @@ class TrainEngine(abc.ABC):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
@@ -242,7 +242,7 @@ class TrainEngine(abc.ABC):
         ----------
         dataloader : StatefulDataLoader
             The dataloader to fetch data from.
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation.
         workflow_kwargs : dict[str, Any] | None, optional
             Keyword arguments to pass to the workflow constructor, by default None.
@@ -703,7 +703,7 @@ class InferenceEngine(abc.ABC):
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable | None = None,
         group_size: int = 1,
@@ -718,13 +718,14 @@ class InferenceEngine(abc.ABC):
         ----------
         data : dict[str, Any]
             The input data for rollout. Used by the user's customized workflow implementation.
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation. Can be:
 
             - An instance of RolloutWorkflow (for sharing resources between rollouts)
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
+            - An AgentWorkflow instance or class (will be wrapped in OpenAIProxyWorkflow)
         workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
@@ -808,7 +809,7 @@ class InferenceEngine(abc.ABC):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> list[dict[str, Any]]:
@@ -823,13 +824,14 @@ class InferenceEngine(abc.ABC):
         ----------
         data : list[dict[str, Any]]
             A list of input data dictionaries for rollout
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation. Can be:
 
             - An instance of RolloutWorkflow (for sharing resources between rollouts)
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
+            - An AgentWorkflow instance or class (will be wrapped in OpenAIProxyWorkflow)
         workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.
@@ -850,7 +852,7 @@ class InferenceEngine(abc.ABC):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable | None = None,
         group_size: int = 1,
@@ -877,13 +879,14 @@ class InferenceEngine(abc.ABC):
         ----------
         dataloader : StatefulDataLoader
             The data loader to pull data from for batch preparation
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             The workflow to use for rollout generation. Can be:
 
             - An instance of RolloutWorkflow (for sharing resources between rollouts)
             - A RolloutWorkflow class type (will be instantiated with workflow_kwargs)
             - A string module path like "areal.workflow.rlvr.RLVRWorkflow" (will be imported
               and instantiated with workflow_kwargs)
+            - An AgentWorkflow instance or class (will be wrapped in OpenAIProxyWorkflow)
         workflow_kwargs : dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor when workflow is a type or string.
             Required when workflow is a type or string, ignored when workflow is an instance.

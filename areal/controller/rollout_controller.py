@@ -5,6 +5,7 @@ import shutil
 import threading
 from collections import defaultdict
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from threading import Lock
 from typing import Any
@@ -24,7 +25,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow, WorkflowLike
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 from areal.scheduler.rpc.serialization import deserialize_value
@@ -198,6 +199,9 @@ class RolloutController:
 
         # Create and initialize engines on workers
         logger.info("Creating engines...")
+        engine_config = deepcopy(self.config)
+        # Disable engine's staleness control
+        engine_config.max_head_offpolicyness = int(1e12)
         tasks = [
             self.scheduler.create_engine(
                 worker_id=worker.id,
@@ -241,12 +245,11 @@ class RolloutController:
         logger.info("All engines are initialized...")
 
     def destroy(self):
-        # Stop callback server first
-        self._stop_callback_server()
-
         # Stop background threads and shutdown the async task runner
         if self._dispatcher is not None:
             self._dispatcher.destroy()
+
+        self._stop_callback_server()
 
         self._collective_rpc("destroy", http_timeout=60.0)
 
@@ -409,14 +412,21 @@ class RolloutController:
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
         return worker, rank
 
-    def _resolve_workflow_str(
-        self, workflow: RolloutWorkflow | type[RolloutWorkflow] | str
-    ) -> str:
+    def _resolve_workflow_str(self, workflow: WorkflowLike) -> str:
+        """Resolve workflow to a string import path.
+
+        Handles RolloutWorkflow, AgentWorkflow instances/classes, and string paths.
+        """
+
         if isinstance(workflow, str):
             return workflow
         elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
             return f"{workflow.__module__}.{workflow.__name__}"
         elif isinstance(workflow, RolloutWorkflow):
+            return f"{workflow.__module__}.{workflow.__class__.__name__}"
+        elif isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
+            return f"{workflow.__module__}.{workflow.__name__}"
+        elif isinstance(workflow, AgentWorkflow):
             return f"{workflow.__module__}.{workflow.__class__.__name__}"
         else:
             raise ValueError(f"Invalid workflow type: {type(workflow)}")
@@ -533,7 +543,7 @@ class RolloutController:
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         task_id: int | None = None,
@@ -579,7 +589,7 @@ class RolloutController:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         group_size: int = 1,
@@ -605,7 +615,7 @@ class RolloutController:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         group_size: int = 1,

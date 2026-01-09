@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from agents import Agent as OpenAIAgent
+from agents import Agent as AgentWorkflow
 from agents import ModelSettings, OpenAIProvider, RunConfig
 from agents import Runner as OpenAIRunner
 from transformers import PreTrainedTokenizerFast
@@ -33,7 +33,7 @@ class OpenAIAgentWrapper:
         self.max_tokens = max_tokens
 
     async def run_agent(self, data, client: ArealOpenAI):
-        agent: OpenAIAgent = self.agent_builder(**self.agent_builder_kwargs)
+        agent: AgentWorkflow = self.agent_builder(**self.agent_builder_kwargs)
         run_config = RunConfig(
             model_provider=OpenAIProvider(openai_client=client),
             tracing_disabled=True,

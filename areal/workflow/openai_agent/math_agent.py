@@ -1,13 +1,13 @@
-from agents import Agent as OpenAIAgent
+from agents import Agent as AgentWorkflow
 from agents import handoff
 from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 
 
-def build_math_agent() -> OpenAIAgent:
+def build_math_agent() -> AgentWorkflow:
     """Create a multi-agent workflow using handoffs for different reasoning stages."""
 
     # Create specialized agents for different stages
-    problem_analyzer = OpenAIAgent(
+    problem_analyzer = AgentWorkflow(
         name="Problem Analyzer",
         instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
         You are a math problem analyzer. Your job is to:
@@ -21,7 +21,7 @@ def build_math_agent() -> OpenAIAgent:
         Focus on understanding and analyzing the problem structure.""",
     )
 
-    solution_specialist = OpenAIAgent(
+    solution_specialist = AgentWorkflow(
         name="Solution Specialist",
         instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
         You are a math solution specialist. Your job is to:
@@ -35,7 +35,7 @@ def build_math_agent() -> OpenAIAgent:
         Focus on creating accurate, well-explained solutions.""",
     )
 
-    refinement_agent = OpenAIAgent(
+    refinement_agent = AgentWorkflow(
         name="Refinement Agent",
         instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
         You are a refinement specialist. Your job is to:
@@ -49,7 +49,7 @@ def build_math_agent() -> OpenAIAgent:
         Focus on accuracy, thoroughness, and fixing any mistakes from the previous attempt.""",
     )
 
-    verification_agent = OpenAIAgent(
+    verification_agent = AgentWorkflow(
         name="Verification Agent",
         instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
         You are a verification specialist. Your job is to:
@@ -63,7 +63,7 @@ def build_math_agent() -> OpenAIAgent:
     )
 
     # Create the main orchestrator agent with handoffs
-    main_agent = OpenAIAgent(
+    main_agent = AgentWorkflow(
         name="Math Problem Solver",
         instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
         You are a math problem solving coordinator. Your job is to:

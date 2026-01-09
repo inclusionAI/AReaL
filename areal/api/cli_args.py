@@ -126,7 +126,7 @@ class GenerationHyperparameters:
         default=0, metadata={"help": "Minimum number of tokens to generate."}
     )
     max_tokens: int = field(
-        default=65536,
+        default=32768,
         metadata={
             "help": "Maximum number of tokens including prompt and generated tokens."
         },
@@ -1272,6 +1272,42 @@ class SGLangConfig:
 
 
 @dataclass
+class OpenAIConfig:
+    """Configuration for OpenAI proxy when using AgentWorkflow workflows."""
+
+    tool_call_parser: str = field(
+        default="qwen3",
+        metadata={"help": "Parser for tool calls in model output."},
+    )
+    reasoning_parser: str = field(
+        default="qwen3",
+        metadata={"help": "Parser for reasoning content (<think> tags)."},
+    )
+    chat_template_type: str = field(
+        default="hf",
+        metadata={
+            "help": "Chat template type: 'hf' (standard) or 'concat' (multi-turn concatenation).",
+            "choices": ["hf", "concat"],
+        },
+    )
+    engine_max_tokens: int | None = field(
+        default=None,
+        metadata={"help": "Maximum total tokens for the engine (prompt + completion)."},
+    )
+    turn_discount: float = field(
+        default=1.0,
+        metadata={"help": "Discount factor for multi-turn reward propagation."},
+    )
+    export_style: str = field(
+        default="individual",
+        metadata={
+            "help": "Export style: 'individual' (all interactions) or 'concat' (leaf nodes only).",
+            "choices": ["individual", "concat"],
+        },
+    )
+
+
+@dataclass
 class InferenceEngineConfig:
     """Configuration for inference servers, including offpolicyness control."""
 
@@ -1367,6 +1403,12 @@ class InferenceEngineConfig:
     use_lora: bool = field(
         default=False,
         metadata={"help": "Whether to use LoRA. Should be same as actors LORA option."},
+    )
+    openai: OpenAIConfig | None = field(
+        default=None,
+        metadata={
+            "help": "OpenAI proxy configuration (used when workflow is AgentWorkflow)."
+        },
     )
 
     def __post_init__(self):

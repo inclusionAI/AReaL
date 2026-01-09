@@ -74,6 +74,7 @@ For detailed examples, see the experiment configurations in the `examples/` dire
 - [DistributedDataParallel Configuration](section-distributed-data-parallel)
 - [FP8Engine Configuration](section-fp8-engine)
 - [MegatronEngine Configuration](section-megatron-engine)
+- [OpenAI Configuration](section-open-ai)
 - [PerfTracer Configuration](section-perf-tracer)
 - [Scheduler Configuration](section-scheduler)
 - [Scheduling Specification](section-scheduling)
@@ -462,7 +463,7 @@ Controls text generation behavior for rollout.
 | `n_samples`           | integer                | `1`          | Number of sequences to generate per prompt.                                                                                           |
 | `max_new_tokens`      | integer                | `16384`      | Maximum number of tokens to generate.                                                                                                 |
 | `min_new_tokens`      | integer                | `0`          | Minimum number of tokens to generate.                                                                                                 |
-| `max_tokens`          | integer                | `65536`      | Maximum number of tokens including prompt and generated tokens.                                                                       |
+| `max_tokens`          | integer                | `32768`      | Maximum number of tokens including prompt and generated tokens.                                                                       |
 | `greedy`              | boolean                | `False`      | Whether to use greedy decoding (max probability).                                                                                     |
 | `top_p`               | float                  | `1.0`        | Nucleus sampling probability threshold (0.0, 1.0\].                                                                                   |
 | `top_k`               | integer                | `100000000`  | Number of highest probability tokens to consider.                                                                                     |
@@ -502,6 +503,7 @@ Configuration for inference servers, including offpolicyness control.
 | `scheduling_spec`         | `tuple`                                             | **Required**    | inference engine schedule specs. Can accept 1 or 2 SchedulingSpec: if 1 spec provided, it's used for both worker and engine, engine is embedded in the worker; if 2 specs provided, first one is for worker, second one is for engine. Currently only used by the RolloutController. |
 | `scheduling_strategy`     | [`SchedulingStrategy`](section-scheduling-strategy) | **Required**    | The scheduling strategy of this TrainEngine, either separation or colocation. Currently only used by the RolloutController.                                                                                                                                                          |
 | `use_lora`                | boolean                                             | `False`         | Whether to use LoRA. Should be same as actors LORA option.                                                                                                                                                                                                                           |
+| `openai`                  | [`OpenAIConfig`](section-open-ai) \| None           | `None`          | OpenAI proxy configuration (used when workflow is AgentWorkflow).                                                                                                                                                                                                                    |
 
 (section-sg-lang)=
 
@@ -869,6 +871,21 @@ Refer to Megatron-LM documentation for implementation details.
 | `moe_permute_fusion`                       | boolean                                                              | `False`      | Fuse token rearrangement ops during token dispatching.                                                                                                  |
 | `fp8_config`                               | [`FP8EngineConfig`](section-fp8-engine) \| None                      | `None`       | -                                                                                                                                                       |
 | `enable_tree_training`                     | boolean                                                              | `False`      | Enable tree training with flex attention module.                                                                                                        |
+
+(section-open-ai)=
+
+## OpenAI Configuration
+
+Configuration for OpenAI proxy when using AgentWorkflow workflows.
+
+| Parameter            | Type            | Default        | Description                                                                                                      |
+| -------------------- | --------------- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `tool_call_parser`   | string          | `"qwen3"`      | Parser for tool calls in model output.                                                                           |
+| `reasoning_parser`   | string          | `"qwen3"`      | Parser for reasoning content (<think> tags).                                                                     |
+| `chat_template_type` | string          | `"hf"`         | Chat template type: 'hf' (standard) or 'concat' (multi-turn concatenation). **Choices:** `hf`, `concat`          |
+| `engine_max_tokens`  | integer \| None | `None`         | Maximum total tokens for the engine (prompt + completion).                                                       |
+| `turn_discount`      | float           | `1.0`          | Discount factor for multi-turn reward propagation.                                                               |
+| `export_style`       | string          | `"individual"` | Export style: 'individual' (all interactions) or 'concat' (leaf nodes only). **Choices:** `individual`, `concat` |
 
 (section-perf-tracer)=
 
