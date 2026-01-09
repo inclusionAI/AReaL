@@ -253,7 +253,6 @@ class FSDPEngine(TrainEngine):
         # Monkey patch: replace attention's forward() with
         # Ulysses-compatible version if Ulysses SP is enabled
         # or tree attention based on flex attention.
-        print(f"[debug] enable_tree_training={self.enable_tree_training}", flush=True)
         apply_monkey_patch(
             model=self.model,
             ulysses_sp_size=self.parallel_helper.sp_size,
@@ -497,9 +496,6 @@ class FSDPEngine(TrainEngine):
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
             # XXX: temp hack
-            for k, v in inputs.items():
-                print(f"[debug fsdp] input {k}: {v.shape if torch.is_tensor(v) else type(v)}")
-
             if inputs["position_ids"].dim() == 1:
                 inputs["position_ids"] = inputs["position_ids"].unsqueeze(0)
                 inputs["full_attention_mask"] = inputs["attention_mask"].clone()
