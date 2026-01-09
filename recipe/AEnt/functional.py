@@ -2,7 +2,7 @@ import torch
 import torch.distributed.nn.functional as dist_F
 import torch.nn.functional as F
 
-from areal.utils.ulysses import (
+from areal.models.fsdp.ulysses import (
     get_ulysses_sequence_parallel_group,
     get_ulysses_sequence_parallel_world_size,
 )
