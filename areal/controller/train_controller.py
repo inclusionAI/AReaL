@@ -19,6 +19,7 @@ from areal.controller.rollout_callback import RolloutCallback
 from areal.controller.rollout_controller import RolloutController
 from areal.scheduler.rpc.rtensor import RTensor
 from areal.utils import logging, stats_tracker
+from areal.utils.concurrent import run_async_task
 from areal.utils.network import find_free_ports
 
 logger = logging.getLogger("TrainController")
@@ -132,7 +133,6 @@ class TrainController:
             tasks=list(self.config.scheduling_spec),
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
-            shared_placement_group=True,
         )
 
         # Create workers via scheduler
@@ -164,20 +164,15 @@ class TrainController:
         engine_class = self.train_engine
 
         # Create and initialize engines on workers
-        self._run_async_task(
-            self._async_create_engines(
-                f"{engine_class.__module__}.{engine_class.__name__}"
-            )
+        run_async_task(
+            self._async_create_engines,
+            f"{engine_class.__module__}.{engine_class.__name__}",
         )
-        self._run_async_task(self._async_initialize_engines(ft_spec, **kwargs))
+        run_async_task(self._async_initialize_engines, ft_spec, **kwargs)
 
         # Identify DP head workers
         self._identify_dp_heads()
         logger.info("TrainController initialization complete")
-
-    def _run_async_task(self, task):
-        """Run an async task synchronously."""
-        return asyncio.run(task)
 
     def _engine_name(self, rank: int) -> str:
         """Generate engine name for a worker rank.
@@ -255,7 +250,7 @@ class TrainController:
             ]
             return await asyncio.gather(*tasks)
 
-        self.workers_is_dp_head = self._run_async_task(_get_dp_head())
+        self.workers_is_dp_head = run_async_task(_get_dp_head)
 
     def destroy(self):
         """Destroy the controller and release GPU memory of models.
@@ -280,7 +275,7 @@ class TrainController:
                     ]
                     await asyncio.gather(*tasks, return_exceptions=True)
 
-                self._run_async_task(_destroy_all_engines())
+                run_async_task(_destroy_all_engines)
                 logger.info("Engines destroyed")
             except Exception as e:
                 logger.error(f"Error destroying engines: {e}")
@@ -306,8 +301,8 @@ class TrainController:
         dp_split_args, dp_split_kwargs, group_indices = self._dispatch_inputs(
             *args, **kwargs
         )
-        results = self._run_async_task(
-            self._call_with_dispatched_inputs(method, dp_split_args, dp_split_kwargs)
+        results = run_async_task(
+            self._call_with_dispatched_inputs, method, dp_split_args, dp_split_kwargs
         )
         # Filter to only keep results from DP head workers
         results = [r for idx, r in enumerate(results) if self.workers_is_dp_head[idx]]
@@ -527,7 +522,7 @@ class TrainController:
             ]
             return await asyncio.gather(*tasks)
 
-        self._run_async_task(_call())
+        run_async_task(_call)
 
     def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
         self._custom_function_call("save_perf_tracer", step=step, force=force)
@@ -588,4 +583,4 @@ class TrainController:
 
     def clear_batches(self, *targets: dict[str, RTensor]):
         """Clear distributed batch shards from workers to free memory."""
-        self._run_async_task(self._async_clear_batches(*targets))
+        run_async_task(self._async_clear_batches, *targets)

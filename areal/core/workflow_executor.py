@@ -7,7 +7,6 @@ import random
 import threading
 import time
 from collections.abc import Awaitable, Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, Generic, Protocol
 from collections.abc import Generator
@@ -33,6 +32,7 @@ from areal.core import workflow_context
 from areal.core.workflow_context import WorkflowContext
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, perf_tracer, stats_tracker
+from areal.utils.concurrent import get_executor
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf, trace_session_event
@@ -361,8 +361,6 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         # Callback support: task_id -> callback_addr
         self._task_callbacks: dict[int, str] = {}
-        # Thread pool for sending callbacks (avoids creating threads per callback)
-        self._callback_executor: ThreadPoolExecutor | None = None
 
     def _set_thread_exception(self, exc: Exception):
         """Store exception from background thread for fail-fast behavior."""
@@ -407,7 +405,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             except requests.RequestException as e:
                 self.logger.error(f"Callback to {addr} failed: {e}")
 
-        self._callback_executor.submit(post)
+        get_executor().submit(post)
 
     def _commit_loop(self) -> None:
         """Producer thread - continuously submits tasks based on capacity."""
@@ -504,9 +502,6 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         self.runner.initialize(logger=logger)
 
         self._shutdown_event.clear()
-        self._callback_executor = ThreadPoolExecutor(
-            max_workers=4, thread_name_prefix="callback"
-        )
 
         self._commit_thread = threading.Thread(target=self._commit_loop, daemon=True)
         self._commit_thread.start()
@@ -537,11 +532,6 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
 
         # Clear pending callbacks to prevent memory leak
         self._task_callbacks.clear()
-
-        # Shutdown callback thread pool
-        if self._callback_executor is not None:
-            self._callback_executor.shutdown(wait=False)
-            self._callback_executor = None
 
         # Shutdown the async task runner
         self.runner.destroy()

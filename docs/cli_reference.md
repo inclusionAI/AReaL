@@ -931,10 +931,11 @@ Configuration class: SchedulingSpec
 
 Configuration class: SchedulingStrategy
 
-| Parameter | Type           | Default        | Description                               |
-| --------- | -------------- | -------------- | ----------------------------------------- |
-| `type`    | string         | `"separation"` | - **Choices:** `separation`, `colocation` |
-| `target`  | string \| None | `None`         | The target role to be colocated with      |
+| Parameter | Type           | Default        | Description                                                                                                                                                                     |
+| --------- | -------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`    | string         | `"separation"` | - **Choices:** `separation`, `colocation`                                                                                                                                       |
+| `target`  | string \| None | `None`         | The target role to be colocated with                                                                                                                                            |
+| `fork`    | boolean        | `True`         | When True with colocation, the target worker spawns a new process on the same node/GPUs instead of sharing its process. Provides process isolation while sharing GPU resources. |
 
 (section-session-tracer)=
 

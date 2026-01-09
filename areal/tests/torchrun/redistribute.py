@@ -6,9 +6,9 @@ import random
 import torch
 import torch.distributed as dist
 
-from areal.core.dist_rollout import redistribute
+from areal.core.dist_rollout import redistribute_trajectories
 from areal.platforms import current_platform
-from areal.utils.data import concat_padded_tensors, tensor_container_to
+from areal.utils.data import tensor_container_to
 
 
 def main(args):
@@ -17,7 +17,7 @@ def main(args):
     current_platform.set_device(rank)
     device = f"{current_platform.device_type}:{rank}"
 
-    bs = random.randint(1, 10) * args.granularity
+    bs = 16
     prompt_lens = [random.randint(1, 10) for _ in range(bs)]
     ans_lens = [random.randint(1, 10) for _ in range(bs)]
     seqlens = [x + y for x, y in zip(prompt_lens, ans_lens)]
@@ -42,9 +42,8 @@ def main(args):
         )
         data.append(d)
 
-    data = concat_padded_tensors(data)
-    data = tensor_container_to(data, device)
-    redistributed = redistribute(data, granularity=args.granularity)
+    data = [tensor_container_to(x, device) for x in data]
+    redistributed = redistribute_trajectories(data)
 
     redistributed.all_data = [
         tensor_container_to(x, "cpu") for x in redistributed.all_data
@@ -60,6 +59,5 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dump-path", type=str)
-    parser.add_argument("--granularity", type=int)
     args = parser.parse_args()
     main(args)

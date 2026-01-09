@@ -29,6 +29,7 @@ from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 from areal.scheduler.rpc.serialization import deserialize_value
 from areal.utils import logging, perf_tracer
+from areal.utils.concurrent import run_async_task
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, gethostip
@@ -139,18 +140,11 @@ class RolloutController:
             tasks=[sch_spec for _ in range(alloc_mode.gen.dp_size)],
             scheduling_strategy=self.config.scheduling_strategy,
             role=self._worker_role,
-            shared_placement_group=False,
         )
 
-        # Use asyncio.run to call async scheduler methods synchronously
-        asyncio.run(
-            self._async_initialize(
-                job,
-                server_args,
-                server_infos,
-                *args,
-                **kwargs,
-            )
+        # Call async scheduler methods synchronously
+        run_async_task(
+            self._async_initialize, job, server_args, server_infos, *args, **kwargs
         )
 
         # Initialize staleness manager for global capacity control
@@ -385,7 +379,7 @@ class RolloutController:
             future.get_loop().call_soon_threadsafe(future.set_result, None)
 
     def _collective_rpc(self, method: str, *args, **kwargs) -> list[Any]:
-        return asyncio.run(self._collective_rpc_async(method, *args, **kwargs))
+        return run_async_task(self._collective_rpc_async, method, *args, **kwargs)
 
     async def _collective_rpc_async(self, method: str, *args, **kwargs) -> list[Any]:
         tasks = [
@@ -764,7 +758,7 @@ class RolloutController:
             ]
             return await asyncio.gather(*tasks)
 
-        asyncio.run(_call())
+        run_async_task(_call)
 
     def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
         self._collective_rpc("save_perf_tracer", step=step, force=force)
