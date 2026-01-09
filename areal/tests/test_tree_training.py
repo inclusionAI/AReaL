@@ -540,7 +540,7 @@ def test_build_packed_tree_batch_n_mbs_minimum():
     # With large max_tokens_per_mb, all sequences would fit in 1 tree
     # But n_mbs=4 should force at least 4 trees
     mb_spec = MicroBatchSpec(
-        max_tokens_per_mb=10000,
+        max_tokens_per_mb=10240,  # 80 * 128
         n_mbs=4,
         n_mbs_divisor=1,
     )
@@ -560,10 +560,10 @@ def test_build_packed_tree_batch_n_mbs_divisor():
         seq_lengths=[100, 100, 100, 100, 100],
     )
 
-    # With max_tokens_per_mb=150, we'd get 5 trees (one per sequence)
+    # With max_tokens_per_mb=128, we'd get 5 trees (one per sequence)
     # n_mbs_divisor=2 should force an even number (6 trees)
     mb_spec = MicroBatchSpec(
-        max_tokens_per_mb=150,
+        max_tokens_per_mb=128,  # 1 * 128
         n_mbs=1,
         n_mbs_divisor=2,
     )
@@ -586,7 +586,7 @@ def test_build_packed_tree_batch_n_mbs_and_divisor_combined():
     # n_mbs=5 (minimum 5 trees), n_mbs_divisor=3 (must be divisible by 3)
     # Result should be 6 trees (next multiple of 3 >= 5)
     mb_spec = MicroBatchSpec(
-        max_tokens_per_mb=100,
+        max_tokens_per_mb=128,  # 1 * 128
         n_mbs=5,
         n_mbs_divisor=3,
     )
@@ -611,7 +611,7 @@ def test_build_packed_tree_batch_default_values():
     )
 
     mb_spec = MicroBatchSpec(
-        max_tokens_per_mb=10000,
+        max_tokens_per_mb=10240,  # 80 * 128
         # n_mbs and n_mbs_divisor default to 1
     )
 
@@ -631,7 +631,7 @@ def test_build_packed_tree_batch_cannot_split_warning():
 
     # Request 4 trees, but only 2 sequences available
     mb_spec = MicroBatchSpec(
-        max_tokens_per_mb=100,
+        max_tokens_per_mb=128,  # 1 * 128
         n_mbs=4,
         n_mbs_divisor=1,
     )
@@ -653,9 +653,9 @@ def test_build_packed_tree_batch_max_tokens_still_respected():
         seq_lengths=[100, 100, 100, 100],
     )
 
-    # max_tokens_per_mb=150 means at most ~1 sequence per tree
+    # max_tokens_per_mb=128 means at most ~1 sequence per tree
     mb_spec = MicroBatchSpec(
-        max_tokens_per_mb=150,
+        max_tokens_per_mb=128,  # 1 * 128
         n_mbs=2,
         n_mbs_divisor=1,
     )
@@ -666,7 +666,7 @@ def test_build_packed_tree_batch_max_tokens_still_respected():
     for i, mb in enumerate(result.mbs):
         if "trie_node" in mb:
             tree_tokens = mb["trie_node"].num_tokens
-            assert tree_tokens <= 150, (
-                f"Tree {i} has {tree_tokens} tokens, exceeds max_tokens_per_mb=150"
+            assert tree_tokens <= 128, (
+                f"Tree {i} has {tree_tokens} tokens, exceeds max_tokens_per_mb=128"
             )
 
