@@ -186,7 +186,7 @@ class WeightUpdateMeta:
         weight_chunked_mem_mb: int = 1024,
         use_lora: bool = False,
         lora_name: str = "",
-        lora_int_id: int = 0,
+        lora_int_id: int = 1,
         base_model_name: str = "",
     ):
         return cls(

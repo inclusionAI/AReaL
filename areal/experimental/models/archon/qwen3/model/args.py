@@ -69,7 +69,7 @@ class Qwen3ModelArgs(BaseModelArgs):
             is_critic=is_critic,
             moe_enabled=moe_enabled,
             moe_inter_dim=getattr(hf_config, "moe_intermediate_size", 768),
-            attn_type=kwargs.get("attn_type", "sdpa"),
+            attn_type=kwargs.get("attn_type", BaseModelArgs.attn_type),
         )
 
 

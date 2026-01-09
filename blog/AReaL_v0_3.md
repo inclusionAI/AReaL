@@ -294,4 +294,3 @@ either entirely correct or entirely incorrect.
   - [Evaluation Guide](https://inclusionai.github.io/AReaL/tutorial/eval.html)
   - [Training configs](https://github.com/inclusionAI/AReaL/tree/main/examples/configs/v0.3-qwen3-code)
     and [instructions](https://inclusionai.github.io/AReaL/references/reproduce.html)
-- [Scripts for Benchmark Training Throughput](https://github.com/inclusionAI/AReaL/tree/main/benchmark/verl_v0_3_0_post1_76084d3)

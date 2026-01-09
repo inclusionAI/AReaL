@@ -779,12 +779,13 @@ Configuration for Weights & Biases experiment tracking.
 
 Configuration for Archon Engine training backend.
 
-| Parameter               | Type    | Default  | Description                                                                                        |
-| ----------------------- | ------- | -------- | -------------------------------------------------------------------------------------------------- |
-| `attn_type`             | string  | `"sdpa"` | Attention backend type. **Choices:** `sdpa`, `varlen`                                              |
-| `offload_params`        | boolean | `False`  | Whether to offload FSDP parameters to CPU.                                                         |
-| `recompute_granularity` | string  | `"full"` | Activation checkpointing granularity. **Choices:** `none`, `full`, `selective`                     |
-| `recompute_num_layers`  | integer | `1`      | For selective recompute: checkpoint every N layers. Set to 0 for op-level selective checkpointing. |
+| Parameter               | Type    | Default    | Description                                                                                        |
+| ----------------------- | ------- | ---------- | -------------------------------------------------------------------------------------------------- |
+| `attn_type`             | string  | `"varlen"` | Attention backend type. **Choices:** `varlen`, `sdpa`                                              |
+| `offload_params`        | boolean | `False`    | Whether to offload FSDP parameters to CPU.                                                         |
+| `enable_compile`        | boolean | `True`     | Enable torch.compile for TransformerBlocks.                                                        |
+| `recompute_granularity` | string  | `"full"`   | Activation checkpointing granularity. **Choices:** `none`, `full`, `selective`                     |
+| `recompute_num_layers`  | integer | `1`        | For selective recompute: checkpoint every N layers. Set to 0 for op-level selective checkpointing. |
 
 (section-distributed-data-parallel)=
 
@@ -867,6 +868,7 @@ Refer to Megatron-LM documentation for implementation details.
 | `moe_token_dispatcher_type`                | string                                                               | `"alltoall"` | Type of token dispatcher. Options: 'allgather','alltoall' and 'flex'.                                                                                   |
 | `moe_permute_fusion`                       | boolean                                                              | `False`      | Fuse token rearrangement ops during token dispatching.                                                                                                  |
 | `fp8_config`                               | [`FP8EngineConfig`](section-fp8-engine) \| None                      | `None`       | -                                                                                                                                                       |
+| `enable_tree_training`                     | boolean                                                              | `False`      | Enable tree training with flex attention module.                                                                                                        |
 
 (section-perf-tracer)=
 

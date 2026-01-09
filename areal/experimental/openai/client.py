@@ -861,18 +861,6 @@ class ArealOpenAI(AsyncOpenAI):
         """Get completion/response with its reward from cache."""
         return self._cache.get(id)
 
-    def get_completions(self, id: str) -> InteractionWithTokenLogpReward | None:
-        logger.warning(
-            "get_completions is deprecated. Please use get_interaction instead."
-        )
-        return self.get_interaction(id)
-
-    def get_responses(self, id: str) -> InteractionWithTokenLogpReward | None:
-        logger.warning(
-            "get_responses is deprecated. Please use get_interaction instead."
-        )
-        return self.get_interaction(id)
-
     def set_reward(self, id: str, reward: float) -> None:
         """Set reward for a specific completion/response by its ID."""
         if id not in self._cache:
@@ -884,13 +872,6 @@ class ArealOpenAI(AsyncOpenAI):
         if not self._cache:
             raise RuntimeError("No interaction in cache to set reward for")
         return self._cache.set_last_reward(reward)
-
-    def set_final_reward(self, reward: float) -> None:
-        """Set reward for the final completion/response."""
-        logger.warning(
-            "set_final_reward is deprecated. Please use set_last_reward instead."
-        )
-        return self.set_last_reward(reward)
 
     def apply_reward_discount(self, turn_discount: float = 1.0) -> None:
         """Apply backward discounted rewards across cached completions/responses.
@@ -955,22 +936,6 @@ class ArealOpenAI(AsyncOpenAI):
             If an unsupported ``style`` is provided.
         """
         return self._cache.export_interactions(style)
-
-    def export_completions(
-        self, style: str = "concat"
-    ) -> dict[str, InteractionWithTokenLogpReward]:
-        logger.warning(
-            "export_completions is deprecated. Please use export_interactions instead."
-        )
-        return self.export_interactions(style)
-
-    def export_responses(
-        self, style: str = "concat"
-    ) -> dict[str, InteractionWithTokenLogpReward]:
-        logger.warning(
-            "export_responses is deprecated. Please use export_interactions instead."
-        )
-        return self.export_interactions(style)
 
 
 def is_omitted(value) -> bool:

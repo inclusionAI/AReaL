@@ -61,7 +61,7 @@ class Qwen2ModelArgs(BaseModelArgs):
             eos_id=getattr(hf_config, "eos_token_id", 151645),
             enable_weight_tying=getattr(hf_config, "tie_word_embeddings", False),
             is_critic=is_critic,
-            attn_type=kwargs.get("attn_type", "sdpa"),
+            attn_type=kwargs.get("attn_type", BaseModelArgs.attn_type),
         )
 
 
