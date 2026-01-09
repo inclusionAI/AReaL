@@ -495,6 +495,8 @@ class FSDPEngine(TrainEngine):
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
+            # XXX: temp hack
+            inputs["position_ids"] = inputs["position_ids"].unsqueeze(0)
             with trace_scope("fsdp_engine.forward"):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
@@ -1464,7 +1466,7 @@ class FSDPEngine(TrainEngine):
             if self.enable_tree_training:
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
                     logits,
-                    ctx.mb_input["trie_node"],
+                    ctx.trie_node,
                     ctx.mb_input["input_ids"],
                     temperature=self.config.temperature,
                     tp_group=self.parallel_helper.tp_group
@@ -1511,7 +1513,7 @@ class FSDPEngine(TrainEngine):
             if self.enable_tree_training:
                 logprobs = _gather_packed_tree_logprobs(
                     logits,
-                    ctx.mb_input["trie_node"],
+                    ctx.trie_node,
                     ctx.mb_input["input_ids"],
                     temperature=self.config.temperature,
                     tp_group=self.parallel_helper.tp_group
