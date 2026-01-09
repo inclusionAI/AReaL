@@ -937,11 +937,11 @@ def _collect_fsdp_parameters(engine: FSDPEngine) -> dict[str, torch.Tensor]:
 
 def test_fsdp_tree_training_forward(fsdp_engine, mock_tree_input):
     """Test FSDP tree training forward pass produces correct logprobs."""
-    # fsdp_engine.eval()
-    # logprob_baseline = fsdp_engine.forward_batch(
-    #     input_=mock_tree_input,
-    #     aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
-    # )
+    fsdp_engine.eval()
+    logprob_baseline = fsdp_engine.forward_batch(
+        input_=mock_tree_input,
+        aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
+    )
 
     # Create tree training FSDP engine
     os.environ.update(
