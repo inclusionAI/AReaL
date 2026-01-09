@@ -236,7 +236,7 @@ def apply_monkey_patch(
 
         patch_vlm_for_ulysses_input_slicing(model_class)
         logger.info(f"Patched {model_class_name}.forward")
-    elif ulysses_sp_size > 1:
+    else:
         from transformers.integrations import flash_attention
 
         if ulysses_sp_size > 1 and enable_tree_training:
