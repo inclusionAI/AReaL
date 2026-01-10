@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 if TYPE_CHECKING:
+    from torch.distributed import ProcessGroup
     from torch.distributed.device_mesh import DeviceMesh
 
     from areal.experimental.models.archon.activation_checkpoint import (
@@ -20,13 +21,22 @@ if TYPE_CHECKING:
 
 # Type alias for parallelize function signature
 class ParallelizeFn(Protocol):
-    """Protocol for model parallelization functions."""
+    """Protocol for model parallelization functions.
+
+    This protocol defines the signature for functions that apply various
+    parallelization strategies to models:
+    - TP (Tensor Parallelism) via tp_mesh
+    - CP (Context Parallelism / Ulysses SP) via cp_group
+    - AC (Activation Checkpointing) via ac_config
+    - FSDP (Fully Sharded Data Parallelism) via dp_mesh
+    """
 
     def __call__(
         self,
         model: nn.Module,
         tp_mesh: DeviceMesh | None = None,
         dp_mesh: DeviceMesh | None = None,
+        cp_group: ProcessGroup | None = None,
         param_dtype: torch.dtype = torch.bfloat16,
         reduce_dtype: torch.dtype = torch.float32,
         loss_parallel: bool = True,

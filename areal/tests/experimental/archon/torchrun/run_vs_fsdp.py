@@ -157,13 +157,11 @@ def test_archon_vs_fsdp_logits(model_type: str):
                 fsdp_logits = fsdp_logits.squeeze(0)
 
         # Compare non-padding area
-        pad_length = archon_ctx.pad_length
-        if pad_length > 0:
-            archon_logits_valid = archon_logits[:-pad_length]
-            fsdp_logits_valid = fsdp_logits[:-pad_length]
-        else:
-            archon_logits_valid = archon_logits
-            fsdp_logits_valid = fsdp_logits
+        # Use original batch length instead of ctx.pad_length since
+        # Archon and FSDP may have different padding strategies
+        original_length = batch["input_ids"].numel()
+        archon_logits_valid = archon_logits[:original_length]
+        fsdp_logits_valid = fsdp_logits[:original_length]
 
         diff = (archon_logits_valid.float() - fsdp_logits_valid.float()).abs()
         max_diff = diff.max().item()
@@ -185,6 +183,7 @@ def test_archon_vs_fsdp_logits(model_type: str):
     if dist.is_initialized():
         dist.barrier()
         print(f"[Rank {rank}] All ranks completed successfully")
+        dist.destroy_process_group()
 
 
 def main():

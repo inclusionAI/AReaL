@@ -13,7 +13,7 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     repeat_kv,
 )
 
-from areal.utils.ulysses import (
+from areal.models.fsdp.ulysses import (
     gather_heads_scatter_seq,
     gather_seq_scatter_heads,
     get_ulysses_sequence_parallel_world_size,

@@ -1,8 +1,10 @@
 # Adapted from torchtitan: torchtitan/models/qwen3/model/model.py
 
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
+from torch.distributed import ProcessGroup
 from torch.distributed.tensor import DTensor
 
 from areal.experimental.models.archon.attention import (
@@ -14,6 +16,10 @@ from areal.experimental.models.archon.qwen3.model.rope import (
     apply_rotary_emb,
     precompute_rope_cache,
     repeat_kv,
+)
+from areal.experimental.models.archon.ulysses import (
+    gather_heads_scatter_seq,
+    gather_seq_scatter_heads,
 )
 
 
@@ -53,7 +59,12 @@ class RMSNorm(nn.Module):
 
 
 class Attention(nn.Module):
-    """Multi-head attention module with Q/K norm and GQA support."""
+    """Multi-head attention module with Q/K norm, GQA, and Ulysses SP support.
+
+    Ulysses SP (Sequence Parallelism) uses All-to-All communication to split
+    attention heads across GPUs while keeping the full sequence on each GPU.
+    This is different from Ring Attention which splits the sequence.
+    """
 
     q_norm: RMSNorm | None
     k_norm: RMSNorm | None
@@ -98,6 +109,31 @@ class Attention(nn.Module):
         else:
             self.packed_attn = SDPAWrapper()
 
+        # Ulysses SP state (set by parallelize_fn via set_cp_group)
+        self._cp_group: ProcessGroup | None = None
+        self._cp_size: int = 1
+        self._cp_rank: int = 0
+
+    def set_cp_group(self, cp_group: ProcessGroup | None):
+        """Configure Ulysses sequence parallelism.
+
+        Args:
+            cp_group: Process group for Ulysses All-to-All communication.
+                     If None or size 1, SP is disabled.
+        """
+        self._cp_group = cp_group
+        if cp_group is not None:
+            self._cp_size = dist.get_world_size(cp_group)
+            self._cp_rank = dist.get_rank(cp_group)
+        else:
+            self._cp_size = 1
+            self._cp_rank = 0
+
+    @property
+    def _sp_enabled(self) -> bool:
+        """Check if Ulysses SP is enabled."""
+        return self._cp_group is not None and self._cp_size > 1
+
     def init_weights(self, init_std: float):
         for linear in (self.wq, self.wk, self.wv):
             nn.init.trunc_normal_(linear.weight, mean=0.0, std=0.02)
@@ -116,33 +152,60 @@ class Attention(nn.Module):
         max_seqlen: int | None = None,
     ) -> torch.Tensor:
         bs, seqlen, _ = x.shape
-        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
-        # Reshape for multi-head attention
+        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
         xq = xq.view(bs, seqlen, -1, self.head_dim)
         xk = xk.view(bs, seqlen, -1, self.head_dim)
         xv = xv.view(bs, seqlen, -1, self.head_dim)
 
-        # Apply Q/K normalization and convert to local tensor
         if self.q_norm:
-            xq = maybe_to_local(self.q_norm(xq))
+            xq = self.q_norm(xq)
         if self.k_norm:
-            xk = maybe_to_local(self.k_norm(xk))
-        xv = maybe_to_local(xv)
+            xk = self.k_norm(xk)
 
-        # Apply rotary embedding
+        # Convert DTensor to local tensor (for TP compatibility)
+        xq = maybe_to_local(xq)
+        xk = maybe_to_local(xk)
+
         xq, xk = apply_rotary_emb(xq, xk, rope_cache, positions)
 
-        # Repeat KV heads for GQA
-        keys = repeat_kv(xk, self.n_rep)
-        values = repeat_kv(xv, self.n_rep)
+        # [Optional] Ulysses All-to-All
+        if self._sp_enabled:
+            # Repeat kv heads if needed for gather_seq_scatter_heads
+            kv_heads = xk.size(2)
+            if kv_heads < self._cp_size:
+                repeats = self._cp_size // kv_heads
+                xk = repeat_kv(xk, repeats)
+                xv = repeat_kv(xv, repeats)
 
-        # Transpose for attention: [bs, n_heads, seqlen, head_dim]
+            xq = gather_seq_scatter_heads(
+                xq,
+                seq_dim=1,
+                head_dim=2,
+                unpadded_dim_size=seqlen * self._cp_size,
+                group=self._cp_group,
+            )
+            xk = gather_seq_scatter_heads(
+                xk,
+                seq_dim=1,
+                head_dim=2,
+                unpadded_dim_size=seqlen * self._cp_size,
+                group=self._cp_group,
+            )
+            xv = gather_seq_scatter_heads(
+                xv,
+                seq_dim=1,
+                head_dim=2,
+                unpadded_dim_size=seqlen * self._cp_size,
+                group=self._cp_group,
+            )
+
+            seqlen = xq.shape[1]
+
         xq = xq.transpose(1, 2)
-        xk = keys.transpose(1, 2)
-        xv = values.transpose(1, 2)
+        xk = xk.transpose(1, 2)
+        xv = xv.transpose(1, 2)
 
-        # Packed sequences - use SDPA
         output = self.packed_attn(
             xq,
             xk,
@@ -151,9 +214,17 @@ class Attention(nn.Module):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
         )
-        output = output.transpose(1, 2).contiguous()
-        output = output.view(bs, seqlen, -1)
 
+        output = output.transpose(1, 2).contiguous()
+
+        # [Optional] Ulysses All-to-All
+        if self._sp_enabled:
+            output = gather_heads_scatter_seq(
+                output, head_dim=2, seq_dim=1, group=self._cp_group
+            )
+            seqlen = output.shape[1]
+
+        output = output.view(bs, seqlen, -1)
         return self.wo(output)
 
 
@@ -204,7 +275,11 @@ class TransformerBlock(nn.Module):
         max_seqlen: int | None = None,
     ) -> torch.Tensor:
         x = x + self.attention(
-            self.attention_norm(x), rope_cache, positions, cu_seqlens, max_seqlen
+            self.attention_norm(x),
+            rope_cache,
+            positions,
+            cu_seqlens,
+            max_seqlen,
         )
         x = x + self.feed_forward(self.ffn_norm(x))
         return x

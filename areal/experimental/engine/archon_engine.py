@@ -58,10 +58,14 @@ from areal.experimental.models.archon import (
 from areal.experimental.models.archon.activation_checkpoint import (
     ActivationCheckpointConfig,
 )
+from areal.experimental.models.archon.ulysses import (
+    ulysses_gather_output,
+    ulysses_slice_inputs,
+)
 from areal.experimental.utils.archon.parallel import ArchonParallelDims
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
-from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
+from areal.utils.constants import DEFAULT_PAGE_SIZE_BYTES, DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
     MicroBatchItem,
     MicroBatchList,
@@ -85,10 +89,16 @@ from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
 @dataclass
 class ArchonTrainContext:
-    """Context passed through Archon forward/backward pipeline."""
+    """Context passed through Archon forward/backward pipeline.
 
-    model_inputs: dict[str, Any]
+    Attributes:
+        mb_input: Original microbatch input.
+        labels: Target token ids for loss computation (rolled from input_ids).
+        pad_length: Batch-level padding added by pad_mb_list.
+    """
+
     mb_input: dict[str, Any]
+    labels: torch.Tensor
     pad_length: int = 0
 
 
@@ -166,21 +176,24 @@ class ArchonEngine(TrainEngine):
 
         tp_size = parallel_strategy.tensor_parallel_size
         dp_size = parallel_strategy.data_parallel_size
+        cp_size = parallel_strategy.context_parallel_size
         self.parallel_dims = ArchonParallelDims(
             dp_shard=dp_size,
             tp=tp_size,
+            cp=cp_size,
             world_size=self.world_size,
             device_type=current_platform.device_type,
         )
 
         self._world_mesh = self.parallel_dims.world_mesh
-        self._mp_group = self.parallel_dims.tp_group
+        self._mp_group = self.parallel_dims.mp_group
 
         self.weight_update_group_name = "update_weight_group"
 
         self.logger.info(
             f"Initialized Archon engine with parallel dims: "
-            f"dp_shard={self.parallel_dims.dp_shard}, tp={self.parallel_dims.tp}"
+            f"dp_shard={self.parallel_dims.dp_shard}, tp={self.parallel_dims.tp}, "
+            f"cp={self.parallel_dims.cp} (Ulysses SP)"
         )
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
@@ -191,16 +204,43 @@ class ArchonEngine(TrainEngine):
         self._create_device_model()
         self.state_dict_adapter = self._create_state_dict_adapter()
 
-        tik = time.perf_counter()
+        # Compute page_size: number of tokens that fit in one GPU page
+        # based on hidden_size and dtype element size
+        hidden_size = self.model_config.hidden_size
         param_dtype = getattr(torch, self.config.dtype)
+        element_size = torch.empty([], dtype=param_dtype).element_size()
+        self.page_size = max(DEFAULT_PAGE_SIZE_BYTES // hidden_size // element_size, 1)
+
         tp_mesh = self.world_mesh["tp"] if self.parallel_dims.tp_enabled else None
-        dp_mesh = self.world_mesh["fsdp"]
+        dp_mesh = self.world_mesh["dp"]
         ac_config = self._build_ac_config()
 
+        # Check for incompatible combination: TP + AC + compile
+        # SequenceParallel (from TP) produces AsyncCollectiveTensor which causes
+        # torch.compile to repeatedly recompile when passed through checkpoint_wrapper
+        enable_compile = self.config.archon.enable_compile
+        if (
+            tp_mesh is not None
+            and ac_config is not None
+            and ac_config.mode != "none"
+            and enable_compile
+        ):
+            raise ValueError(
+                "Incompatible configuration: gradient_checkpointing=True with "
+                "enable_compile=True and TP > 1. SequenceParallel produces "
+                "AsyncCollectiveTensor which causes torch.compile to fail inside "
+                "checkpoint_wrapper. Please either:\n"
+                "  1. Set gradient_checkpointing=False, or\n"
+                "  2. Set archon.enable_compile=False, or\n"
+                "  3. Use TP=1 (no tensor parallelism)"
+            )
+
+        tik = time.perf_counter()
         self.spec.parallelize_fn(
             model=self.model,
             tp_mesh=tp_mesh,
             dp_mesh=dp_mesh,
+            cp_group=self.parallel_dims.cp_group,
             param_dtype=param_dtype,
             reduce_dtype=torch.float32,
             loss_parallel=True,
@@ -228,7 +268,7 @@ class ArchonEngine(TrainEngine):
 
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
-        return self.world_mesh["fsdp"].get_group()
+        return self.world_mesh["dp"].get_group()
 
     @property
     def data_parallel_rank(self) -> int:
@@ -293,7 +333,7 @@ class ArchonEngine(TrainEngine):
         assert self.lr_scheduler is not None
 
         tp_group = (
-            self.world_mesh["tp"].get_group() if self.parallel_dims.tp_enabled else None
+            self.parallel_dims.tp_group if self.parallel_dims.tp_enabled else None
         )
         grad_norm = fsdp2_clip_grad_norm(
             list(self.model.parameters()),
@@ -1023,10 +1063,14 @@ class ArchonEngine(TrainEngine):
 
         mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
+
+        # LCM ensures page-aligned memory and exact CP slicing without extra padding.
+        batch_align_to = math.lcm(self.page_size, self.parallel_dims.seq_len_divisor)
         mb_list = pad_mb_list(
             mb_list,
             pad_value=0.0,
             pad_to_maximum=self.config.pad_to_maximum,
+            batch_align_to=batch_align_to,
         )
 
         self.logger.info(
@@ -1047,10 +1091,24 @@ class ArchonEngine(TrainEngine):
     def _prepare_mb_inputs(
         self, mb_item: MicroBatchItem
     ) -> tuple[dict[str, Any], ArchonTrainContext]:
-        inputs = mb_item.padded_mb
+        inputs = dict(mb_item.padded_mb)
+
+        labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+
+        if self.parallel_dims.cp_enabled:
+            inputs, labels = ulysses_slice_inputs(
+                inputs,
+                labels,
+                self.parallel_dims.cp_rank,
+                self.parallel_dims.cp,
+            )
+
+        if labels.ndim == 2 and labels.shape[0] == 1:
+            labels = labels.squeeze(0)
+
         ctx = ArchonTrainContext(
-            model_inputs=inputs,
             mb_input=mb_item.orig_mb,
+            labels=labels,
             pad_length=mb_item.padding_length,
         )
         return inputs, ctx
@@ -1066,15 +1124,26 @@ class ArchonEngine(TrainEngine):
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
         if not self.config.is_critic:
-            logprobs, entropy = self._compute_logprobs_entropy(logits, ctx.model_inputs)
+            logprobs, entropy = self._compute_logprobs_entropy(logits, ctx.labels)
+
+            if self.parallel_dims.cp_enabled:
+                logprobs = ulysses_gather_output(logprobs, self.parallel_dims.cp_group)
+                entropy = ulysses_gather_output(entropy, self.parallel_dims.cp_group)
+
             if ctx.pad_length > 0:
                 logprobs = logprobs[: -ctx.pad_length]
                 entropy = entropy[: -ctx.pad_length]
+
             loss = loss_fn(logprobs, entropy, ctx.mb_input)
         else:
             values = logits.squeeze(-1)
+
+            if self.parallel_dims.cp_enabled:
+                values = ulysses_gather_output(values, self.parallel_dims.cp_group)
+
             if ctx.pad_length > 0:
                 values = values[: -ctx.pad_length]
+
             loss = loss_fn(values, ctx.mb_input)
 
         loss_scale = loss_weight_fn(ctx.mb_input) / total_loss_weight * loss_multiplier
@@ -1083,14 +1152,11 @@ class ArchonEngine(TrainEngine):
     def _compute_logprobs_entropy(
         self,
         logits: torch.Tensor,
-        inputs: dict[str, Any],
+        labels: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute log probabilities and entropy from logits."""
-        labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
-        if labels.ndim == 2 and labels.shape[0] == 1:
-            labels = labels.squeeze(0)
         tp_group = (
-            self.world_mesh["tp"].get_group() if self.parallel_dims.tp_enabled else None
+            self.parallel_dims.tp_group if self.parallel_dims.tp_enabled else None
         )
         logprobs, entropy = gather_logprobs_entropy(
             logits,
@@ -1107,24 +1173,26 @@ class ArchonEngine(TrainEngine):
     ) -> torch.Tensor:
         """Compute forward output (logprobs or values)."""
         if not self.config.is_critic:
-            result = self._compute_logprobs(logits, ctx.model_inputs)
+            result = self._compute_logprobs(logits, ctx.labels)
         else:
             result = logits.squeeze(-1)
+
+        if self.parallel_dims.cp_enabled:
+            result = ulysses_gather_output(result, self.parallel_dims.cp_group)
+
         if ctx.pad_length > 0:
             result = result[: -ctx.pad_length]
+
         return result
 
     def _compute_logprobs(
         self,
         logits: torch.Tensor,
-        inputs: dict[str, Any],
+        labels: torch.Tensor,
     ) -> torch.Tensor:
         """Compute log probabilities from logits (without entropy)."""
-        labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
-        if labels.ndim == 2 and labels.shape[0] == 1:
-            labels = labels.squeeze(0)
         tp_group = (
-            self.world_mesh["tp"].get_group() if self.parallel_dims.tp_enabled else None
+            self.parallel_dims.tp_group if self.parallel_dims.tp_enabled else None
         )
         logprobs = gather_logprobs(
             logits,

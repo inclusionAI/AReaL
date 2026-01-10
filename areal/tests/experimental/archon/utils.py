@@ -24,13 +24,30 @@ from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.network import find_free_ports
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
-# Model paths for testing
+# Model paths for testing (keyed by HF model_type)
 MODEL_PATHS = {
     "qwen2": get_model_path(
         "/storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct/",
         "Qwen/Qwen2.5-0.5B-Instruct",
     ),
+    "qwen3": get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-0.6B/",
+        "Qwen/Qwen3-0.6B",
+    ),
 }
+
+
+def get_model_path_for_type(model_type: str) -> str | None:
+    """Get model path for a given model type.
+
+    Args:
+        model_type: HF model_type (e.g., "qwen2", "qwen3").
+
+    Returns:
+        Model path if configured, None otherwise.
+    """
+    return MODEL_PATHS.get(model_type)
+
 
 DATASET_PATH = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
 
@@ -431,6 +448,8 @@ class DualEngineFixture:
             self.archon_engine.destroy()
         if self.fsdp_engine is not None:
             self.fsdp_engine.destroy()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 @pytest.fixture(scope="module")

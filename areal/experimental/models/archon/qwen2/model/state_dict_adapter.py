@@ -90,6 +90,10 @@ class Qwen2StateDictAdapter(BaseStateDictAdapter):
         # e.g., "layers.0._checkpoint_wrapped_module.attention.wq.weight"
         #    -> "layers.0.attention.wq.weight"
         name = name.replace("._checkpoint_wrapped_module", "")
+        # Strip torch.compile wrapper prefix if present
+        # e.g., "layers.0._orig_mod.attention.wq.weight"
+        #    -> "layers.0.attention.wq.weight"
+        name = name.replace("._orig_mod", "")
 
         hf_key = self._convert_key_to_hf(name)
         if hf_key is not None:

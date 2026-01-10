@@ -16,6 +16,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api.cli_args import MicroBatchSpec, NormConfig
 from areal.platforms import current_platform
 from areal.utils import datapack, logging
+from areal.utils.math import align
 
 logger = logging.getLogger("DataUtils")
 
@@ -755,6 +756,7 @@ def pad_mb_list(
     mb_list: MicroBatchList,
     pad_value: float = 0.0,
     pad_to_maximum: bool = False,
+    batch_align_to: int | None = None,
     align_sequences: bool = False,
     align_to_multiple_of: int | None = None,
 ) -> MicroBatchList:
@@ -762,11 +764,13 @@ def pad_mb_list(
         1. Reduce memory fragmentation.
         2. Align sequences to an integer multiple of `align_to_multiple_of`
         to be equally sliced into context and sequence parallel ranks.
+        3. Align batch total length to an integer multiple of `batch_align_to`.
 
     Args:
         mb_list (MicroBatchList): The micro-batch list to pad.
         pad_value (float, optional): The value to pad the tensors with. Defaults to 0.0.
         pad_to_maximum (bool, optional): Whether to pad to the maximum length specified in `mb_spec`. Defaults to False.
+        batch_align_to (int, optional): The size to align batch total length to. Defaults to None.
         align_sequences (bool, optional): Whether to align sequences to an integer multiple of `align_to_multiple_of`. Defaults to False.
         align_to_multiple_of (int, optional): The size to align sequences to. Defaults to None.
 
@@ -791,17 +795,15 @@ def pad_mb_list(
         )
         pad_to_maximum = False
     for mb, length in zip(mb_list.mbs, mb_list.group_lens):
-        if pad_to_maximum:
+        if pad_to_maximum and mb_list.mb_spec.max_tokens_per_mb is not None:
             pad_to_length = mb_list.mb_spec.max_tokens_per_mb
         else:
             # NOTE: GPU page size is 2MB
             # Take hidden size 4096 with bf16 dtype as an example,
             # the batch size of a page is 256
-            pad_to_length = (
-                (int(length) + N_TOKENS_PER_PAGE - 1)
-                // N_TOKENS_PER_PAGE
-                * N_TOKENS_PER_PAGE
-            )
+            pad_to_length = align(length, N_TOKENS_PER_PAGE)
+            if batch_align_to is not None:
+                pad_to_length = align(pad_to_length, batch_align_to)
         padded_mb, pad_len, old_cu_seqlens, align_to_length = pad_packed_tensor_dict(
             mb,
             pad_to_length,

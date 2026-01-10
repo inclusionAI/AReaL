@@ -14,6 +14,9 @@ DIST_GROUP_DEFAULT_TIMEOUT = datetime.timedelta(seconds=7200)
 # Memory Alignment
 # =============================================================================
 
+# Default huge page size (2 MiB) for memory allocation optimization.
+DEFAULT_PAGE_SIZE_BYTES = 2 * 1024 * 1024
+
 # Default alignment for vectorized memory operations (128-bit / 16 bytes).
 # This is the standard boundary across modern CPU (SSE/AVX/NEON) and GPU architectures.
 # In CUDA specifically, this applies to:

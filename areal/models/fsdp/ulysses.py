@@ -4,6 +4,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+import torch.distributed.nn.functional as dist_F
 from torch import Tensor
 from torch.distributed import ProcessGroup
 
@@ -42,6 +43,53 @@ def get_ulysses_sequence_parallel_rank(group: ProcessGroup | None = None) -> int
     return dist.get_rank(group) if group else 0
 
 
+def _gather_seq_scatter_heads(
+    x: Tensor,
+    seq_dim: int,
+    head_dim: int,
+    unpadded_dim_size: int = 0,
+    group: ProcessGroup | None = None,
+) -> Tensor:
+    """All-to-All: [bsz, seq/n, h, ...] -> [bsz, seq, h/n, ...]"""
+    if group is None:
+        return x
+
+    sp_world = dist.get_world_size(group)
+    if sp_world <= 1:
+        return x
+
+    x = SeqAllToAll.apply(group, x, head_dim, seq_dim)
+
+    if unpadded_dim_size and unpadded_dim_size % sp_world != 0:
+        padding_size = x.size(seq_dim) - unpadded_dim_size
+        if padding_size > 0:
+            x = _unpad_tensor(x, seq_dim, padding_size)
+
+    return x
+
+
+def _gather_heads_scatter_seq(
+    x: Tensor,
+    head_dim: int,
+    seq_dim: int,
+    group: ProcessGroup | None = None,
+) -> Tensor:
+    """All-to-All: [bsz, seq, h/n, ...] -> [bsz, seq/n, h, ...]"""
+    if group is None:
+        return x
+
+    sp_world = dist.get_world_size(group)
+    if sp_world <= 1:
+        return x
+
+    dim_size = x.size(seq_dim)
+    if dim_size % sp_world != 0:
+        padding_size = sp_world - (dim_size % sp_world)
+        x = _pad_tensor(x, seq_dim, padding_size)
+
+    return SeqAllToAll.apply(group, x, seq_dim, head_dim)
+
+
 def gather_seq_scatter_heads(
     x: Tensor,
     seq_dim: int,
@@ -49,41 +97,22 @@ def gather_seq_scatter_heads(
     unpadded_dim_size: int = 0,
     group: ProcessGroup | None = None,
 ) -> Tensor:
-    """
-    A func to sync embedding input with alltoall in sequence parallel
-    gather sequence dimension and scatter head dim:
-    e.g. seq_dim: 1, head_dim: 2
-    [bsz, seq/n, h, ...] -> [bsz, seq, h/n, ...]
-    """
-    group = get_ulysses_sequence_parallel_group() if group is None else group
-    if not group:
-        return x
-    sp_world = get_ulysses_sequence_parallel_world_size(group)
-    x = SeqAllToAll.apply(group, x, head_dim, seq_dim)
-    if unpadded_dim_size and unpadded_dim_size % sp_world != 0:
-        padding_size = x.size(seq_dim) - unpadded_dim_size
-        x = _unpad_tensor(x, seq_dim, padding_size)
-    return x
+    """_gather_seq_scatter_heads with global group."""
+    if group is None:
+        group = get_ulysses_sequence_parallel_group()
+    return _gather_seq_scatter_heads(x, seq_dim, head_dim, unpadded_dim_size, group)
 
 
 def gather_heads_scatter_seq(
-    x: Tensor, head_dim: int, seq_dim: int, group: ProcessGroup | None = None
+    x: Tensor,
+    head_dim: int,
+    seq_dim: int,
+    group: ProcessGroup | None = None,
 ) -> Tensor:
-    """
-    A func to sync attention result with alltoall in sequence parallel
-    gather head dimension and scatter seq dim:
-    e.g. seq_dim: 1, head_dim: 2
-    [bsz, seq, h/n, ...] -> [bsz, seq/n, h, ...]
-    """
-    group = get_ulysses_sequence_parallel_group() if group is None else group
-    if not group:
-        return x
-    dim_size = x.size(seq_dim)
-    sp_world = get_ulysses_sequence_parallel_world_size(group)
-    if dim_size % sp_world != 0:
-        padding_size = sp_world - (dim_size % sp_world)
-        x = _pad_tensor(x, seq_dim, padding_size)
-    return SeqAllToAll.apply(group, x, seq_dim, head_dim, False)
+    """_gather_heads_scatter_seq with global group."""
+    if group is None:
+        group = get_ulysses_sequence_parallel_group()
+    return _gather_heads_scatter_seq(x, head_dim, seq_dim, group)
 
 
 def _pad_tensor(x: Tensor, dim: int, padding_size: int) -> Tensor:
@@ -126,7 +155,6 @@ def all_to_all_tensor(
     scatter_dim: int,
     gather_dim: int,
     group: dist.ProcessGroup | None = None,
-    async_op: bool = False,
 ) -> Tensor:
     group = get_ulysses_sequence_parallel_group() if group is None else group
     sp_world_size = dist.get_world_size(group)
@@ -135,15 +163,8 @@ def all_to_all_tensor(
         for t in torch.tensor_split(local_input, sp_world_size, scatter_dim)
     ]
     output_list = [torch.empty_like(input_list[0]) for _ in range(sp_world_size)]
-    comm = dist.all_to_all(output_list, input_list, group=group, async_op=async_op)
-    if async_op:
-
-        def wait():
-            comm.wait()
-            return torch.cat(output_list, dim=gather_dim).contiguous()
-
-        return wait
-    return torch.cat(output_list, dim=gather_dim).contiguous()
+    output_tuple = dist_F.all_to_all(output_list, input_list, group=group)
+    return torch.cat(output_tuple, dim=gather_dim).contiguous()
 
 
 class SeqAllToAll(torch.autograd.Function):
@@ -154,30 +175,19 @@ class SeqAllToAll(torch.autograd.Function):
         local_input: Tensor,
         scatter_dim: int,
         gather_dim: int,
-        async_op: bool = False,
     ) -> Tensor:
         ctx.group = group
         ctx.scatter_dim = scatter_dim
         ctx.gather_dim = gather_dim
-        ctx.async_op = async_op
-        return all_to_all_tensor(local_input, scatter_dim, gather_dim, group, async_op)
+        return all_to_all_tensor(local_input, scatter_dim, gather_dim, group)
 
     @staticmethod
-    def backward(
-        ctx: Any, *grad_output: Tensor
-    ) -> tuple[None, Tensor, None, None, None, None]:
-        input_t = (
-            torch.cat(grad_output[1:], dim=ctx.gather_dim).contiguous()
-            if ctx.async_op
-            else grad_output[0]
-        )
+    def backward(ctx: Any, *grad_output: Tensor) -> tuple[None, Tensor, None, None]:
         return (
             None,
             all_to_all_tensor(
-                input_t, ctx.gather_dim, ctx.scatter_dim, ctx.group, False
+                grad_output[0], ctx.gather_dim, ctx.scatter_dim, ctx.group
             ),
-            None,
-            None,
             None,
             None,
         )
