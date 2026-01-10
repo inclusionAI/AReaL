@@ -453,17 +453,28 @@ class SlurmScheduler(Scheduler):
         idx: int,
         target_wi: SlurmWorkerInfo,
         target_role: str,
+        command: str | None = None,
     ) -> SlurmWorkerInfo:
-        """Fork a single worker asynchronously."""
+        """Fork a single worker asynchronously.
+
+        Parameters
+        ----------
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked process runs this module.
+        """
         worker_id = f"{role}/{idx}"
         target_url = (
             f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/fork"
         )
 
         try:
+            payload = {"role": role, "worker_index": idx}
+            if command is not None:
+                payload["command"] = command
             async with session.post(
                 target_url,
-                json={"role": role, "worker_index": idx},
+                json=payload,
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -535,8 +546,16 @@ class SlurmScheduler(Scheduler):
         role: str,
         target_role: str,
         target_workers: list[SlurmWorkerInfo],
+        command: str | None = None,
     ) -> list[str]:
-        """Create forked workers concurrently using async requests."""
+        """Create forked workers concurrently using async requests.
+
+        Parameters
+        ----------
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked processes run this module.
+        """
         timeout = aiohttp.ClientTimeout(total=120.0)
         async with aiohttp.ClientSession(
             timeout=timeout,
@@ -544,7 +563,9 @@ class SlurmScheduler(Scheduler):
         ) as session:
             # Launch all fork requests concurrently
             tasks = [
-                self._fork_single_worker(session, role, idx, target_wi, target_role)
+                self._fork_single_worker(
+                    session, role, idx, target_wi, target_role, command
+                )
                 for idx, target_wi in enumerate(target_workers)
             ]
             workers = await asyncio.gather(*tasks)
@@ -565,16 +586,45 @@ class SlurmScheduler(Scheduler):
 
         return worker_ids
 
-    def _create_forked_workers(
+    def fork_workers(
         self,
         role: str,
         target_role: str,
-        target_workers: list[SlurmWorkerInfo],
+        command: str | None = None,
     ) -> list[str]:
-        """Create forked workers by calling /fork on target workers concurrently."""
+        """Fork new worker processes from existing workers.
+
+        Creates new worker processes by forking from existing workers of the target role.
+        The forked workers are colocated on the same nodes as their target workers.
+
+        Parameters
+        ----------
+        role : str
+            Role name for the new forked workers (e.g., "proxy")
+        target_role : str
+            Role of existing workers to fork from (e.g., "rollout")
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked process runs this module.
+
+        Returns
+        -------
+        list[str]
+            List of worker IDs created (e.g., ["proxy/0", "proxy/1"])
+        """
+        if target_role not in self._workers:
+            raise WorkerNotFoundError(
+                target_role, f"Target role '{target_role}' not found for fork"
+            )
+        target_workers = self._workers[target_role]
+
         try:
             return run_async_task(
-                self._create_forked_workers_async, role, target_role, target_workers
+                self._create_forked_workers_async,
+                role,
+                target_role,
+                target_workers,
+                command,
             )
         except Exception:
             # Cleanup on failure
@@ -766,7 +816,7 @@ class SlurmScheduler(Scheduler):
             # Check if fork mode is enabled
             if strategy.fork:
                 # Fork mode: spawn new processes on same nodes via /fork endpoint
-                return self._create_forked_workers(role, colocate_role, target_workers)
+                return self.fork_workers(role, colocate_role)
 
             # Reuse existing workers - no new Slurm job submitted
             worker_ids = [w.worker.id for w in target_workers]

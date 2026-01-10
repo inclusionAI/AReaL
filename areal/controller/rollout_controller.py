@@ -9,12 +9,17 @@ from dataclasses import asdict, dataclass
 from threading import Lock
 from typing import Any
 
+import aiohttp
 from flask import Flask, jsonify, request
 from torchdata.stateful_dataloader import StatefulDataLoader
 from werkzeug.serving import make_server
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import InferenceEngineConfig, PerfTracerConfig, SchedulingSpec
+from areal.api.cli_args import (
+    InferenceEngineConfig,
+    PerfTracerConfig,
+    SchedulingSpec,
+)
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     LocalInfServerInfo,
@@ -24,7 +29,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow, WorkflowLike
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 from areal.scheduler.rpc.serialization import deserialize_value
@@ -103,6 +108,11 @@ class RolloutController:
         # Task completion futures
         self._pending_futures: dict[int, asyncio.Future] = {}
         self._futures_lock = threading.Lock()
+
+        # Proxy worker management (for AgentWorkflow support)
+        self.proxy_workers: list[Worker] = []
+        self.proxy_addrs: list[str] = []
+        self._proxy_started = False
 
     def _engine_name(self, rank: int) -> str:
         """Generate engine name for a worker rank.
@@ -241,12 +251,11 @@ class RolloutController:
         logger.info("All engines are initialized...")
 
     def destroy(self):
-        # Stop callback server first
-        self._stop_callback_server()
-
         # Stop background threads and shutdown the async task runner
         if self._dispatcher is not None:
             self._dispatcher.destroy()
+
+        self._stop_callback_server()
 
         self._collective_rpc("destroy", http_timeout=60.0)
 
@@ -258,7 +267,120 @@ class RolloutController:
             except Exception as e:
                 logger.error(f"Error deleting workers: {e}")
 
+        # Delete proxy workers if initialized
+        if self._proxy_started:
+            try:
+                self.scheduler.delete_workers(role="proxy")
+                logger.info("Proxy workers deleted")
+            except Exception as e:
+                logger.error(f"Error deleting proxy workers: {e}")
+            self.proxy_workers.clear()
+            self.proxy_addrs.clear()
+            self._proxy_started = False
+
         self.workers.clear()
+
+    def start_proxy(self) -> None:
+        """Initialize proxy workers for AgentWorkflow support.
+
+        Creates proxy workers colocated with rollout workers. Each proxy worker
+        runs a ProxyRolloutServer that connects to the same inference server
+        as its corresponding rollout worker.
+        """
+        if self._proxy_started:
+            logger.warning("Proxy workers already initialized")
+            return
+
+        if not self.server_infos:
+            raise RuntimeError(
+                "Cannot initialize proxy workers: rollout not initialized. "
+                "Call initialize() first."
+            )
+
+        run_async_task(self._async_start_proxy)
+        self._proxy_started = True
+
+    async def _async_start_proxy(self) -> None:
+        """Async implementation of proxy worker initialization.
+
+        Uses the fork mechanism to create proxy workers that run the standalone
+        proxy_rollout_server module. Initialization is done via HTTP POST to /init.
+        """
+        # Create proxy workers colocated with rollout workers via fork
+        # Use custom command to run proxy_rollout_server instead of rpc_server
+        command = "areal.experimental.openai.proxy.proxy_rollout_server"
+        worker_ids = self.scheduler.fork_workers(
+            role="proxy",
+            target_role=self._worker_role,
+            command=command,
+        )
+        logger.info(f"Proxy workers forked: {worker_ids}")
+
+        # Get proxy worker info
+        self.proxy_workers = self.scheduler.get_workers(role="proxy")
+        logger.info(f"Proxy workers: {[w.id for w in self.proxy_workers]}")
+
+        # Initialize each proxy server via HTTP POST /init
+        logger.info("Initializing proxy servers via HTTP...")
+        engine_class = f"{self.inf_engine.__module__}.{self.inf_engine.__name__}"
+
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            for worker, server_info in zip(self.proxy_workers, self.server_infos):
+                proxy_url = f"http://{worker.ip}:{worker.worker_ports[0]}"
+                payload = {
+                    "engine_class": engine_class,
+                    "config": asdict(self.config),
+                    "server_addr": f"{server_info.host}:{server_info.port}",
+                    "tokenizer_path": self.config.tokenizer_path,
+                }
+                tasks.append(self._init_proxy_via_http(session, proxy_url, payload))
+
+            init_results = await asyncio.gather(*tasks)
+
+        # Collect proxy addresses from init results
+        for result in init_results:
+            self.proxy_addrs.append(result["proxy_addr"])
+
+        logger.info(f"Proxy servers initialized. Addresses: {self.proxy_addrs}")
+
+    async def _init_proxy_via_http(
+        self,
+        session: aiohttp.ClientSession,
+        proxy_url: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Initialize proxy server via HTTP POST /init."""
+        async with session.post(f"{proxy_url}/init", json=payload) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                raise RuntimeError(
+                    f"Failed to initialize proxy at {proxy_url}: {error_text}"
+                )
+            return await resp.json()
+
+    def get_proxy_addr(self, rank: int) -> str:
+        """Get the proxy server address for a given rollout worker rank.
+
+        Parameters
+        ----------
+        rank : int
+            The rank of the rollout worker
+
+        Returns
+        -------
+        str
+            The HTTP address of the corresponding proxy server
+        """
+        if not self._proxy_started:
+            raise RuntimeError(
+                "Proxy workers not initialized. Call start_proxy() first."
+            )
+        if rank >= len(self.proxy_addrs):
+            raise IndexError(
+                f"Invalid rank {rank}, only {len(self.proxy_addrs)} proxy workers"
+            )
+        return self.proxy_addrs[rank]
 
     def _start_callback_server(self):
         """Start Flask HTTP server to receive callbacks from RolloutCallback."""
@@ -409,14 +531,21 @@ class RolloutController:
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
         return worker, rank
 
-    def _resolve_workflow_str(
-        self, workflow: RolloutWorkflow | type[RolloutWorkflow] | str
-    ) -> str:
+    def _resolve_workflow_str(self, workflow: WorkflowLike) -> str:
+        """Resolve workflow to a string import path.
+
+        Handles RolloutWorkflow, AgentWorkflow instances/classes, and string paths.
+        """
+
         if isinstance(workflow, str):
             return workflow
         elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
             return f"{workflow.__module__}.{workflow.__name__}"
         elif isinstance(workflow, RolloutWorkflow):
+            return f"{workflow.__module__}.{workflow.__class__.__name__}"
+        elif isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
+            return f"{workflow.__module__}.{workflow.__name__}"
+        elif isinstance(workflow, AgentWorkflow):
             return f"{workflow.__module__}.{workflow.__class__.__name__}"
         else:
             raise ValueError(f"Invalid workflow type: {type(workflow)}")
@@ -533,7 +662,7 @@ class RolloutController:
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         task_id: int | None = None,
@@ -579,7 +708,7 @@ class RolloutController:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         group_size: int = 1,
@@ -605,7 +734,7 @@ class RolloutController:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         group_size: int = 1,

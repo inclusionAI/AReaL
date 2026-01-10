@@ -302,7 +302,7 @@ class RayScheduler(Scheduler):
 
         return worker_info_list, worker_ids
 
-    def _create_forked_workers(
+    def _create_forked_workers_internal(
         self,
         role: str,
         target_role: str,
@@ -513,7 +513,7 @@ class RayScheduler(Scheduler):
             # Check if fork mode is enabled
             if strategy.fork:
                 # Fork mode: spawn new actors on same placement groups
-                worker_ids = self._create_forked_workers(
+                worker_ids = self._create_forked_workers_internal(
                     role, colocate_role, target_workers, schedulings
                 )
                 self._colocated_roles[role] = colocate_role
@@ -626,6 +626,60 @@ class RayScheduler(Scheduler):
         del self._workers[role]
 
         logger.info(f"Successfully deleted workers for role '{role}'")
+
+    def fork_workers(
+        self,
+        role: str,
+        target_role: str,
+        command: str | None = None,
+    ) -> list[str]:
+        """Fork new worker processes from existing workers.
+
+        Creates new Ray actors colocated with existing workers of the target role.
+        The forked workers share the same placement groups as their target workers.
+
+        Note: The `command` parameter is ignored for RayScheduler since Ray actors
+        always run the RayRPCServer. For custom module behavior, use LocalScheduler.
+
+        Parameters
+        ----------
+        role : str
+            Role name for the new forked workers (e.g., "proxy")
+        target_role : str
+            Role of existing workers to fork from (e.g., "rollout")
+        command : str, optional
+            Custom module path (ignored for Ray - Ray actors always run RayRPCServer)
+
+        Returns
+        -------
+        list[str]
+            List of worker IDs created (e.g., ["proxy/0", "proxy/1"])
+        """
+        if command is not None:
+            logger.warning(
+                f"RayScheduler.fork_workers: 'command' parameter is ignored. "
+                f"Ray actors always use RayRPCServer. Got command='{command}'"
+            )
+
+        if target_role not in self._workers:
+            raise WorkerNotFoundError(
+                target_role, f"Target role '{target_role}' not found for fork"
+            )
+        target_workers = self._workers[target_role]
+
+        # Use minimal scheduling specs - just inherit from target workers
+        from areal.api.cli_args import SchedulingSpec
+
+        schedulings = []
+        for target_wi in target_workers:
+            # Use minimal resources for forked workers
+            schedulings.append(SchedulingSpec(cpu=0, mem=0, gpu=1, port_count=1))
+
+        worker_ids = self._create_forked_workers_internal(
+            role, target_role, target_workers, schedulings
+        )
+        self._colocated_roles[role] = target_role
+        return worker_ids
 
     def _cleanup_workers(self, workers: list[RayWorkerInfo]):
         # Kill actors first

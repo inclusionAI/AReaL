@@ -345,15 +345,15 @@ be a simple single agent or a complex multi-agent workflow with handoffs:
 
 ```python
 # In areal/workflow/openai_agent/math_agent.py
-from agents import Agent as OpenAIAgent
+from agents import Agent as AgentWorkflow
 from agents import handoff
 from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
 
-def build_math_agent() -> OpenAIAgent:
+def build_math_agent() -> AgentWorkflow:
     """Create a multi-agent workflow for math problem solving."""
 
     # Create specialized agents for different reasoning stages
-    problem_analyzer = OpenAIAgent(
+    problem_analyzer = AgentWorkflow(
         name="Problem Analyzer",
         instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
         You are a math problem analyzer. Your job is to:
@@ -364,7 +364,7 @@ def build_math_agent() -> OpenAIAgent:
         """
     )
 
-    solution_specialist = OpenAIAgent(
+    solution_specialist = AgentWorkflow(
         name="Solution Specialist",
         instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
         You are a math solution specialist...
@@ -372,7 +372,7 @@ def build_math_agent() -> OpenAIAgent:
     )
 
     # Create main orchestrator with handoffs
-    main_agent = OpenAIAgent(
+    main_agent = AgentWorkflow(
         name="Math Problem Solver",
         instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
         You are a math problem solving coordinator...
@@ -586,11 +586,11 @@ You can create any agent workflow by writing a new builder function:
 
 ```python
 # In your custom module, e.g., my_package/custom_agent.py
-from agents import Agent as OpenAIAgent
+from agents import Agent as AgentWorkflow
 
-def build_custom_agent() -> OpenAIAgent:
+def build_custom_agent() -> AgentWorkflow:
     """Build your custom agent with any configuration."""
-    agent = OpenAIAgent(
+    agent = AgentWorkflow(
         name="CustomAgent",
         instructions="Your custom instructions...",
         # Add any OpenAI Agent SDK features:
@@ -615,9 +615,9 @@ Use `agent_builder_kwargs` to parameterize your agent builder:
 def build_parameterized_agent(
     system_message: str,
     enable_tools: bool = True
-) -> OpenAIAgent:
+) -> AgentWorkflow:
     """Agent builder that accepts parameters."""
-    agent = OpenAIAgent(
+    agent = AgentWorkflow(
         name="ParameterizedAgent",
         instructions=system_message,
         tools=get_tools() if enable_tools else None,

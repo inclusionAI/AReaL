@@ -207,6 +207,7 @@ def fork_worker():
     {
         "role": "ref",           # Role name for the forked worker
         "worker_index": 0,       # Worker index
+        "command": "areal.scheduler.rpc.rpc_server"  # Optional: custom module to run
     }
 
     Returns:
@@ -226,6 +227,7 @@ def fork_worker():
 
         role = data.get("role")
         worker_index = data.get("worker_index")
+        command = data.get("command")  # Optional custom module path
 
         if role is None:
             return jsonify({"error": "Missing 'role' field in request"}), 400
@@ -238,11 +240,12 @@ def fork_worker():
         _allocated_ports.add(child_port)
 
         # Build command for child process
-        # Reuse most arguments from this server, but change role/index/port
+        # Use custom module if specified, otherwise default to rpc_server
+        module = command if command else "areal.scheduler.rpc.rpc_server"
         cmd = [
             sys.executable,
             "-m",
-            "areal.scheduler.rpc.rpc_server",
+            module,
             "--host",
             "0.0.0.0",
             "--port",
