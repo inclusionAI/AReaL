@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("OpenAIProxyWorkflow")
 
 
-# Lazy-initialized thread pool for async HTTP requests
+# Lazy-initialized process pool for running agent tasks
 _executor: ProcessPoolExecutor | None = None
 _executor_lock = threading.Lock()
 
@@ -73,7 +73,8 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
     Parameters
     ----------
     mode : str
-        Either "offline" (agent runs locally) or "online" (external agent)
+        Must be "offline" (agent runs locally in subprocess). Online mode
+        is not currently supported.
     agent : AgentWorkflow
         The agent workflow to run
     proxy_addr : str

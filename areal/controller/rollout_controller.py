@@ -54,6 +54,7 @@ class _RemoteRolloutTaskInput:
     should_accept_fn: str | None
     is_eval: bool = False
     group_size: int = 1
+    proxy_addr: str | None = None
 
 
 @dataclass
@@ -607,6 +608,7 @@ class RolloutController:
                     group_size=pending_task.group_size,
                     task_id=task_id,
                     callback_addr=f"http://{self.callback_addr}/callback/rollout_complete",
+                    proxy_addr=pending_task.proxy_addr,
                 )
 
                 assert task_id == engine_task_id, (task_id, engine_task_id)
@@ -668,6 +670,7 @@ class RolloutController:
         task_id: int | None = None,
         is_eval: bool = False,
         group_size: int = 1,
+        proxy_addr: str | None = None,
     ) -> int:
         workflow_str = self._resolve_workflow_str(workflow)
         should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -687,6 +690,7 @@ class RolloutController:
             task_id=task_id,
             is_eval=is_eval,
             group_size=group_size,
+            proxy_addr=proxy_addr,
         )
 
         # Delegate to dispatcher
@@ -712,6 +716,7 @@ class RolloutController:
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         group_size: int = 1,
+        proxy_addr: str | None = None,
     ) -> dict[str, Any]:
         perf_tracer.instant(
             "rollout_controller.rollout_batch",
@@ -725,6 +730,7 @@ class RolloutController:
                 workflow_kwargs=workflow_kwargs,
                 should_accept_fn=should_accept_fn,
                 group_size=group_size,
+                proxy_addr=proxy_addr,
             )
         results = self.wait(count=len(data))
         # Concatenate into batch tensor format
@@ -739,6 +745,7 @@ class RolloutController:
         should_accept_fn: str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
+        proxy_addr: str | None = None,
     ) -> dict[str, Any]:
         """Prepare a batch with controlled staleness.
 
@@ -762,6 +769,7 @@ class RolloutController:
                         should_accept_fn=should_accept_fn,
                         task_id=self._task_id_generator.next(),
                         group_size=group_size,
+                        proxy_addr=proxy_addr,
                     )
 
         if not hasattr(self, "data_generator"):

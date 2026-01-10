@@ -53,6 +53,9 @@ logger = getLogger("ProxyRolloutServer")
 # Module-Level Globals (like rpc_server.py)
 # =============================================================================
 
+# Session timeout for cleanup (1 hour)
+SESSION_TIMEOUT_SECONDS = 3600
+
 # Engine and client (created via /init)
 _engine: InferenceEngine | None = None
 _openai_client: ArealOpenAI | None = None
@@ -62,6 +65,7 @@ _session_cache: dict[str, SessionData] = {}
 _active_sessions: Queue[str] = Queue(maxsize=1024)
 _lock = threading.Lock()
 _capacity = 0
+_last_cleanup_time: float = 0
 
 # Server address (set at startup)
 _server_host: str = "0.0.0.0"
@@ -145,7 +149,16 @@ class SessionData:
         self._completed_event = threading.Event()
 
         self._start_time = time.time()
+        self._last_access_time = time.time()
         self._end_time = None
+
+    def update_last_access(self):
+        """Update the last access time for this session."""
+        self._last_access_time = time.time()
+
+    def is_stale(self, timeout_seconds: float = SESSION_TIMEOUT_SECONDS) -> bool:
+        """Check if this session has been inactive for too long."""
+        return time.time() - self._last_access_time > timeout_seconds
 
     def finish(self):
         self._completed = True
@@ -324,6 +337,34 @@ def grant_capacity():
 # =============================================================================
 
 
+def _cleanup_stale_sessions():
+    """Remove stale sessions from the cache.
+
+    Called periodically (at most once per minute) during start_session to clean up
+    sessions that were started but never finished.
+    """
+    global _last_cleanup_time
+
+    # Only run cleanup at most once per minute
+    current_time = time.time()
+    if current_time - _last_cleanup_time < 60:
+        return
+
+    _last_cleanup_time = current_time
+
+    stale_sessions = []
+    for session_id, session_data in _session_cache.items():
+        if session_data.is_stale():
+            stale_sessions.append(session_id)
+
+    for session_id in stale_sessions:
+        logger.warning(f"Removing stale session: {session_id}")
+        _session_cache.pop(session_id, None)
+
+    if stale_sessions:
+        logger.info(f"Cleaned up {len(stale_sessions)} stale sessions")
+
+
 @app.post(f"/{RL_START_SESSION_PATHNAME}")
 def start_session(request: StartSessionRequest) -> StartSessionResponse:
     """Start a new RL session."""
@@ -331,6 +372,9 @@ def start_session(request: StartSessionRequest) -> StartSessionResponse:
     task_id = request.task_id
 
     with _lock:
+        # Periodically cleanup stale sessions
+        _cleanup_stale_sessions()
+
         if _capacity <= 0:
             raise HTTPException(
                 status_code=429,
@@ -373,7 +417,10 @@ def set_reward(request: SetRewardRequest, session_id: str):
     if session_id not in _session_cache:
         raise HTTPException(status_code=400, detail=f"Session {session_id} not found")
 
-    completions = _session_cache[session_id].completions
+    session_data = _session_cache[session_id]
+    session_data.update_last_access()
+
+    completions = session_data.completions
     if interaction_id is None:
         # Take the last interaction id
         if len(completions) == 0:
@@ -385,7 +432,7 @@ def set_reward(request: SetRewardRequest, session_id: str):
         raise HTTPException(
             status_code=400, detail=f"Interaction {interaction_id} not found"
         )
-    _session_cache[session_id].completions.set_reward(interaction_id, reward)
+    session_data.completions.set_reward(interaction_id, reward)
     return {"message": "success"}
 
 
@@ -409,6 +456,9 @@ def _call_client_create(
 
     if session_id not in _session_cache:
         raise HTTPException(status_code=400, detail=f"Session {session_id} not found")
+
+    session_data = _session_cache[session_id]
+    session_data.update_last_access()
 
     sig = inspect.signature(create_fn)
     areal_client_ignored_args = ["model"] + (extra_ignored_args or [])

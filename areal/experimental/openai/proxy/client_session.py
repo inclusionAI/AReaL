@@ -166,19 +166,23 @@ class OpenAIProxyClientSession:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ):
-        """End the RL session via HTTP request."""
-        if exc_type is not None:
-            # On exception, don't end the session normally
-            return
+        """End the RL session via HTTP request.
 
+        Always attempts to end the session, even on exception, to avoid
+        leaving zombie sessions on the server.
+        """
         if self.session_id is None:
-            raise ValueError("Session ID is not set")
+            return  # Session was never started
 
-        # End the RL session (HTTP request)
-        await post_json_with_retry(
-            self._session,
-            url=f"{self.base_url}{self.session_id}/{RL_END_SESSION_PATHNAME}",
-        )
+        # Always try to end the session, even on exception
+        try:
+            await post_json_with_retry(
+                self._session,
+                url=f"{self.base_url}{self.session_id}/{RL_END_SESSION_PATHNAME}",
+            )
+        except Exception as e:
+            # Log but don't raise - cleanup should be best-effort
+            logger.warning(f"Failed to end session {self.session_id}: {e}")
 
 
 async def post_json(
