@@ -126,7 +126,7 @@ class RolloutController:
         self,
         role: str,
         alloc_mode: AllocationMode,
-        server_args: dict[str, Any],
+        server_args: dict[str, Any] | None = None,
         server_infos: list[LocalInfServerInfo] | None = None,
         *args,
         **kwargs,
@@ -595,6 +595,9 @@ class RolloutController:
                 with self._futures_lock:
                     self._pending_futures[task_id] = future
 
+                proxy_addr = pending_task.proxy_addr
+                if proxy_addr is None:
+                    proxy_addr = self.get_proxy_addr(rank)
                 engine_task_id = await self.scheduler.async_call_engine(
                     worker.id,
                     "submit",
@@ -608,7 +611,7 @@ class RolloutController:
                     group_size=pending_task.group_size,
                     task_id=task_id,
                     callback_addr=f"http://{self.callback_addr}/callback/rollout_complete",
-                    proxy_addr=pending_task.proxy_addr,
+                    proxy_addr=proxy_addr,
                 )
 
                 assert task_id == engine_task_id, (task_id, engine_task_id)

@@ -1,17 +1,3 @@
-"""Proxy Rollout Server - Standalone FastAPI server for proxy workers.
-
-This server provides OpenAI-compatible endpoints and connects to existing
-SGLang/vLLM inference servers launched by rollout workers.
-
-Run as standalone module:
-    python -m areal.experimental.openai.proxy.proxy_rollout_server \
-        --port 8000 \
-        --experiment-name test \
-        --trial-name test \
-        --role proxy \
-        --worker-index 0
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -441,7 +427,7 @@ def set_reward(request: SetRewardRequest, session_id: str):
 # =============================================================================
 
 
-def _call_client_create(
+async def _call_client_create(
     create_fn,
     request: dict[str, Any] | BaseModel,
     session_id: str,
@@ -505,7 +491,9 @@ def _call_client_create(
         logger.warning("top_p not set in request, defaulting to 1.0")
 
     try:
-        return create_fn(areal_cache=_session_cache[session_id].completions, **kwargs)
+        return await create_fn(
+            areal_cache=_session_cache[session_id].completions, **kwargs
+        )
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -514,7 +502,7 @@ def _call_client_create(
     "/{session_id}/" + CHAT_COMPLETIONS_PATHNAME,
     dependencies=[Depends(validate_json_request)],
 )
-def chat_completions(
+async def chat_completions(
     request: CompletionCreateParams, session_id: str
 ) -> ChatCompletion:
     """OpenAI-compatible chat completions endpoint."""
@@ -523,7 +511,7 @@ def chat_completions(
             status_code=500,
             detail="Proxy server not initialized. Call /init first.",
         )
-    return _call_client_create(
+    return await _call_client_create(
         create_fn=_openai_client.chat.completions.create,
         request=request,
         session_id=session_id,
@@ -534,14 +522,14 @@ def chat_completions(
     "/{session_id}/" + RESPONSES_PATHNAME,
     dependencies=[Depends(validate_json_request)],
 )
-def responses(request: ResponseCreateParams, session_id: str) -> Response:
+async def responses(request: ResponseCreateParams, session_id: str) -> Response:
     """OpenAI-compatible responses endpoint."""
     if _openai_client is None:
         raise HTTPException(
             status_code=500,
             detail="Proxy server not initialized. Call /init first.",
         )
-    return _call_client_create(
+    return await _call_client_create(
         create_fn=_openai_client.responses.create,
         request=request,
         session_id=session_id,
