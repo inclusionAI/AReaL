@@ -698,6 +698,7 @@ class PPOTrainer:
 
     def _is_agent_workflow(self, workflow: WorkflowLike) -> bool:
         """Check if workflow is or resolves to an AgentWorkflow."""
+        print(workflow)
         if isinstance(workflow, AgentWorkflow):
             return True
         if isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
@@ -706,11 +707,8 @@ class PPOTrainer:
             # Try to resolve the string to check its type
             from areal.utils.dynamic_import import import_from_string
 
-            try:
-                cls = import_from_string(workflow)
-                return isinstance(cls, type) and issubclass(cls, AgentWorkflow)
-            except (ImportError, AttributeError):
-                return False
+            cls = import_from_string(workflow)
+            return isinstance(cls, type) and issubclass(cls, AgentWorkflow)
         return False
 
     def _ensure_proxy_started(self) -> None:
@@ -733,6 +731,8 @@ class PPOTrainer:
 
         logger.info("Initializing proxy workers for AgentWorkflow support")
         self.rollout.start_proxy()
+        if self.eval_rollout is not None:
+            self.eval_rollout.start_proxy()
         self._proxy_started = True
 
     def __enter__(self):

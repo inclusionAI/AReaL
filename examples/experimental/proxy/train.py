@@ -36,8 +36,8 @@ def main(args):
         valid_dataset=valid_dataset,
     ) as trainer:
         trainer.train(
-            workflow="examples.experimental.proxy.gsm8k_agent.GSM8kAgent",
-            eval_workflow="examples.experimental.proxy.gsm8k_agent.GSM8kAgent",
+            workflow="areal.workflow.openai.gsm8k_agent.GSM8kAgent",
+            eval_workflow="areal.workflow.openai.gsm8k_agent.GSM8kAgent",
             workflow_kwargs=workflow_kwargs,
             eval_workflow_kwargs=eval_workflow_kwargs,
         )

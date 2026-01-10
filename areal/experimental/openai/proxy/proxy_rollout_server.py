@@ -4,7 +4,6 @@ import argparse
 import inspect
 import threading
 import time
-from queue import Full, Queue
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -48,7 +47,6 @@ _openai_client: ArealOpenAI | None = None
 
 # Session management
 _session_cache: dict[str, SessionData] = {}
-_active_sessions: Queue[str] = Queue(maxsize=1024)
 _lock = threading.Lock()
 _capacity = 0
 _last_cleanup_time: float = 0
@@ -371,12 +369,6 @@ def start_session(request: StartSessionRequest) -> StartSessionResponse:
         idx = 0
         while (session_id := f"{task_id}-{idx}") in _session_cache:
             idx += 1
-
-        # Add to active sessions queue
-        try:
-            _active_sessions.put_nowait(session_id)
-        except Full:
-            raise HTTPException(status_code=503, detail="Queue is full")
 
         _capacity -= 1
         _session_cache[session_id] = SessionData(session_id=session_id)
