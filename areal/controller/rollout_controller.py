@@ -233,6 +233,8 @@ class RolloutController:
                     worker_id=worker.id,
                     method="initialize",
                     engine_name=self._engine_name(rank),
+                    # args in `engine_api`
+                    engine_id=str(rank),
                     addr=f"{info.host}:{info.port}",
                     *args,
                     **kwargs,
@@ -246,7 +248,19 @@ class RolloutController:
             self.server_infos = await self._collective_rpc_async(
                 "launch_server", server_args=server_args
             )
-            await self._collective_rpc_async("initialize", *args, **kwargs)
+            tasks = [
+                self.scheduler.async_call_engine(
+                    worker_id=worker.id,
+                    method="initialize",
+                    engine_name=self._engine_name(rank),
+                    # args in `engine_api`
+                    engine_id=str(rank),
+                    *args,
+                    **kwargs,
+                )
+                for rank, worker in enumerate(self.workers)
+            ]
+            await asyncio.gather(*tasks)
 
         logger.info("All engines are initialized...")
 
@@ -581,7 +595,7 @@ class RolloutController:
                     self._pending_futures[task_id] = future
 
                 proxy_addr = pending_task.proxy_addr
-                if proxy_addr is None:
+                if self._proxy_started and proxy_addr is None:
                     proxy_addr = self.get_proxy_addr(rank)
                 engine_task_id = await self.scheduler.async_call_engine(
                     worker.id,
@@ -765,13 +779,17 @@ class RolloutController:
 
         # Delegate to dispatcher
         assert dataloader.batch_size is not None
+        logger.info("before active submit and wait")
         results = self.dispatcher.active_submit_and_wait(
             self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
         )
+        logger.info("after active submit and wait")
 
         # Extract trajectories and concatenate
         trajectories = [r.trajectory if r is not None else None for r in results]
-        return concat_padded_tensors([t for t in trajectories if t is not None])
+        res = concat_padded_tensors([t for t in trajectories if t is not None])
+        logger.info("after concat padded tensors")
+        return res
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.

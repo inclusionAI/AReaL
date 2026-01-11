@@ -94,22 +94,28 @@ class OpenAIProxyClientSession:
         """Set reward for a specific completion/response by its ID."""
         if self.session_id is None:
             raise ValueError("Session ID is not set")
-        await set_interaction_reward(
+        payload = AReaLSetRewardRequest(interaction_id=completion_id, reward=reward)
+        await post_json(
             self._session,
-            interaction_id=completion_id,
-            reward=reward,
             url=f"{self.base_url}{self.session_id}/{RL_SET_REWARD_PATHNAME}",
+            payload=payload,
         )
 
     async def set_last_reward(self, reward: float):
         """Set reward for the most recent completion/response."""
         if self.session_id is None:
             raise ValueError("Session ID is not set")
-        await set_last_interaction_reward(
+        payload = AReaLSetRewardRequest(interaction_id=None, reward=reward)
+        await post_json(
             self._session,
-            reward=reward,
             url=f"{self.base_url}{self.session_id}/{RL_SET_REWARD_PATHNAME}",
+            payload=payload,
         )
+        # await set_last_interaction_reward(
+        #     self._session,
+        #     reward=reward,
+        #     url=f"{self.base_url}{self.session_id}/{RL_SET_REWARD_PATHNAME}",
+        # )
 
     async def export_interactions(
         self,
@@ -152,11 +158,16 @@ class OpenAIProxyClientSession:
 
     async def __aenter__(self) -> OpenAIProxyClientSession:
         """Start the RL session via HTTP request."""
-        data = await _start_session(
+        data = await post_json(
             self._session,
             url=f"{self.base_url}{RL_START_SESSION_PATHNAME}",
             payload=AReaLStartSessionRequest(task_id=self.task_id),
         )
+        # data = await _start_session(
+        #     self._session,
+        #     url=f"{self.base_url}{RL_START_SESSION_PATHNAME}",
+        #     payload=AReaLStartSessionRequest(task_id=self.task_id),
+        # )
         self.session_id = data["session_id"]
         return self
 

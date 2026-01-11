@@ -4,6 +4,7 @@ import asyncio
 import atexit
 import os
 import threading
+import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any
@@ -101,13 +102,14 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
 
     @trace_session("run_agent")
     async def _run_agent(self, base_url: str, data: dict):
-        extra_envs = {
-            "OPENAI_BASE_URL": base_url,
-        }
-        executor = _get_executor()
-        fut = executor.submit(_wrap_run, self.agent, data, extra_envs)
+        # extra_envs = {
+        #     "OPENAI_BASE_URL": base_url,
+        # }
+        # executor = _get_executor()
+        # fut = executor.submit(_wrap_run, self.agent, data, extra_envs)
         try:
-            return await asyncio.wrap_future(fut)
+            return await self.agent.run(base_url, data)
+            # return await asyncio.wrap_future(fut)
         except Exception:
             logger.error(f"Agent task failed: {traceback.format_exc()}")
             raise
@@ -138,9 +140,12 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
         """
         task_id = workflow_context.get().task_id
 
+        tik = time.time()
         async with aiohttp.ClientSession() as http_session:
+            t1 = time.time()
             # Grant capacity using the shared session
             await self._grant_capacity(http_session)
+            t2 = time.time()
 
             mode = self.mode
             assert mode == "offline"
@@ -153,7 +158,9 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 task_id=str(task_id),
             )
             async with proxy_client:
+                t4 = time.time()
                 rewards = await self._run_agent(proxy_client.session_url, data)
+                t5 = time.time()
 
                 if isinstance(rewards, dict):
                     for completion_id, reward in rewards.items():
@@ -162,16 +169,27 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                     await proxy_client.set_last_reward(rewards)
                 else:
                     raise ValueError(f"Invalid reward type: {type(rewards)}")
+                t6 = time.time()
+            t7 = time.time()
 
             interactions = await proxy_client.export_interactions(
                 discount=self.discount,
                 style=self.export_style,
             )
+            t8 = time.time()
 
         # Record stats
         last_id = list(interactions.keys())[-1] if interactions else None
         if last_id and interactions:
             last_reward = interactions[last_id].reward
             stats_tracker.get(workflow_context.stat_scope()).scalar(reward=last_reward)
+        t9 = time.time()
+
+        f"{self.proxy_addr}, aiohttp session: {t1 - tik:.2f}, "
+        f"grant cap: {t2 - t1:.2f}, "
+        f"start session: {t4 - t2:.2f}, "
+        f"run agent: {t5 - t4:.2f}, "
+        f"set reward: {t6 - t5:.2f}, end_session: {t7 - t6:.2f}, export: {t8 - t7:.2f}, "
+        f"log reward: {t9 - t8:.2f}"
 
         return interactions

@@ -664,6 +664,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         total_attempts = 0
         results = []
 
+        self.logger.info("into active submit and wait")
         while True:
             # Submit tasks to maintain overlap
             with self._input_cv:
@@ -692,9 +693,14 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                             "Input generator exhausted before batch completion. "
                             "Use cycle_dataloader() or provide an infinite generator."
                         ) from None
+            self.logger.info("submit task done")
             try:
-                res = self.wait_results(count=1, timeout=1)
-                is_accepted = res and res[0] is not None
+                arrived = self.wait_results(count=batch_size - accepted_cnt, timeout=1)
+            except TimeoutError:
+                arrived = []
+
+            for res in arrived:
+                is_accepted = res is not None
 
                 if not is_accepted:
                     if dynamic_bs:
@@ -704,18 +710,20 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                     continue
 
                 # Accepted sample
-                assert len(res) == 1
                 accepted_cnt += 1
                 total_attempts += 1
-                results.append(res[0])
+                results.append(res)
+                self.logger.info("get one result")
 
                 if dynamic_bs:
                     if total_attempts >= batch_size:
                         break
                 elif accepted_cnt >= batch_size:
                     break
-            except TimeoutError:
-                pass
+            else:
+                continue
+
+            break
 
         return results
 

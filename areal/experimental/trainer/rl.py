@@ -245,6 +245,9 @@ class PPOTrainer:
                     },
                 ),
             ):
+                import time
+
+                tik = time.time()
                 rollout_batch = self.actor.prepare_batch(
                     self.train_dataloader,
                     workflow=workflow,
@@ -253,6 +256,8 @@ class PPOTrainer:
                     group_size=config.gconfig.n_samples,
                     dynamic_bs=self.config.dynamic_bs,
                 )
+                logger.info(f"pure prepare_batch time: {time.time() - tik:.2f}")
+            logger.info(f"++++++++= prepare_batch time: {time.time() - tik:.2f}")
 
             if self.critic is not None:
                 with (
