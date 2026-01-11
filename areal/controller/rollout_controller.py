@@ -9,7 +9,6 @@ from dataclasses import asdict, dataclass
 from threading import Lock
 from typing import Any
 
-import aiohttp
 from flask import Flask, jsonify, request
 from torchdata.stateful_dataloader import StatefulDataLoader
 from werkzeug.serving import make_server
@@ -302,13 +301,7 @@ class RolloutController:
         self._proxy_started = True
 
     async def _async_start_proxy(self) -> None:
-        """Async implementation of proxy worker initialization.
-
-        Uses the fork mechanism to create proxy workers that run the standalone
-        proxy_rollout_server module. Initialization is done via HTTP POST to /init.
-        """
-        # Create proxy workers colocated with rollout workers via fork
-        # Use custom command to run proxy_rollout_server instead of rpc_server
+        """Async implementation of proxy worker initialization."""
         command = "areal.experimental.openai.proxy.proxy_rollout_server"
         worker_ids = self.scheduler.fork_workers(
             role="proxy",
@@ -317,48 +310,40 @@ class RolloutController:
         )
         logger.info(f"Proxy workers forked: {worker_ids}")
 
-        # Get proxy worker info
         self.proxy_workers = self.scheduler.get_workers(role="proxy")
         logger.info(f"Proxy workers: {[w.id for w in self.proxy_workers]}")
 
-        # Initialize each proxy server via HTTP POST /init
-        logger.info("Initializing proxy servers via HTTP...")
         engine_class = f"{self.inf_engine.__module__}.{self.inf_engine.__name__}"
 
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for worker, server_info in zip(self.proxy_workers, self.server_infos):
-                proxy_url = f"http://{worker.ip}:{worker.worker_ports[0]}"
-                payload = {
-                    "engine_class": engine_class,
-                    "config": asdict(self.config),
-                    "server_addr": f"{server_info.host}:{server_info.port}",
-                    "tokenizer_path": self.config.tokenizer_path,
-                }
-                tasks.append(self._init_proxy_via_http(session, proxy_url, payload))
+        create_tasks = []
+        for rank, worker in enumerate(self.proxy_workers):
+            create_tasks.append(
+                self.scheduler.create_engine(
+                    worker_id=worker.id,
+                    engine=engine_class,
+                    engine_name=f"proxy/{rank}",
+                    config=self.config,
+                )
+            )
+        await asyncio.gather(*create_tasks)
+        logger.info("Proxy engines created")
 
-            init_results = await asyncio.gather(*tasks)
-
-        # Collect proxy addresses from init results
-        for result in init_results:
-            self.proxy_addrs.append(result["proxy_addr"])
+        init_tasks = []
+        for rank, (worker, server_info) in enumerate(
+            zip(self.proxy_workers, self.server_infos)
+        ):
+            init_tasks.append(
+                self.scheduler.async_call_engine(
+                    worker_id=worker.id,
+                    method="initialize",
+                    engine_name=f"proxy/{rank}",
+                    addr=f"{server_info.host}:{server_info.port}",
+                )
+            )
+            self.proxy_addrs.append(f"http://{worker.ip}:{worker.worker_ports[0]}")
+        await asyncio.gather(*init_tasks)
 
         logger.info(f"Proxy servers initialized. Addresses: {self.proxy_addrs}")
-
-    async def _init_proxy_via_http(
-        self,
-        session: aiohttp.ClientSession,
-        proxy_url: str,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Initialize proxy server via HTTP POST /init."""
-        async with session.post(f"{proxy_url}/init", json=payload) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                raise RuntimeError(
-                    f"Failed to initialize proxy at {proxy_url}: {error_text}"
-                )
-            return await resp.json()
 
     def get_proxy_addr(self, rank: int) -> str:
         """Get the proxy server address for a given rollout worker rank.

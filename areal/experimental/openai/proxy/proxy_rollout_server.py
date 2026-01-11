@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import os
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -17,10 +18,11 @@ from openai.types.chat.completion_create_params import CompletionCreateParams
 from openai.types.responses import Response
 from openai.types.responses.response_create_params import ResponseCreateParams
 
-from areal.api.cli_args import InferenceEngineConfig, NameResolveConfig, OpenAIConfig
+from areal.api.cli_args import NameResolveConfig, OpenAIConfig
 from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.client import ArealOpenAI
-from areal.utils import name_resolve, names
+from areal.scheduler.rpc.serialization import deserialize_value, serialize_value
+from areal.utils import name_resolve, names, seeding
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.logging import getLogger
@@ -66,22 +68,6 @@ _etcd3_addr: str = "localhost:2379"
 # =============================================================================
 # Request/Response Models
 # =============================================================================
-
-
-class InitRequest(BaseModel):
-    """Request to initialize the proxy server with an inference engine."""
-
-    engine_class: str  # e.g., "areal.engine.sglang_remote.RemoteSGLangEngine"
-    config: dict[str, Any]  # InferenceEngineConfig as dict
-    server_addr: str  # Address of the inference server to connect to
-    tokenizer_path: str | None = None  # Override tokenizer path
-
-
-class InitResponse(BaseModel):
-    """Response from /init endpoint."""
-
-    status: str
-    proxy_addr: str  # Public address of the OpenAI proxy
 
 
 class StartSessionRequest(BaseModel):
@@ -244,62 +230,72 @@ app = FastAPI()
 
 @app.get("/health")
 def health():
-    """Health check endpoint."""
     return {"status": "ok", "initialized": _engine is not None}
 
 
-@app.post("/init")
-def init(request: InitRequest) -> InitResponse:
-    """Initialize the proxy server with an inference engine."""
-    global _engine, _openai_client
+def _setup_openai_client():
+    global _openai_client
+    config = _engine.config
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
+    openai_cfg = config.openai or OpenAIConfig()
+    _openai_client = ArealOpenAI(
+        engine=_engine,
+        tokenizer=tokenizer,
+        tool_call_parser=openai_cfg.tool_call_parser,
+        reasoning_parser=openai_cfg.reasoning_parser,
+        engine_max_tokens=openai_cfg.engine_max_tokens,
+        chat_template_type=openai_cfg.chat_template_type,
+    )
 
+
+@app.post("/configure")
+async def configure(raw_request: Request):
+    data = await raw_request.json()
+    config = deserialize_value(data.get("config"))
+    rank = data.get("rank", 0)
+    seeding.set_random_seed(config.seed, key=f"proxy{rank}")
+    return {"status": "success"}
+
+
+@app.post("/set_env")
+async def set_env(raw_request: Request):
+    data = await raw_request.json()
+    for key, value in data.get("env", {}).items():
+        os.environ[key] = str(value)
+    return {"status": "success"}
+
+
+@app.post("/create_engine")
+async def create_engine(raw_request: Request):
+    global _engine
     if _engine is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="Proxy server already initialized",
-        )
+        raise HTTPException(status_code=400, detail="Engine already exists")
 
-    try:
-        # Import engine class
-        engine_class = import_from_string(request.engine_class)
+    data = await raw_request.json()
+    engine_class = import_from_string(data.get("engine"))
+    init_kwargs = deserialize_value(data.get("init_kwargs", {}))
+    _engine = engine_class(**init_kwargs)
+    return {"status": "success"}
 
-        # Create config
-        config = InferenceEngineConfig(**request.config)
 
-        # Create engine
-        _engine = engine_class(config)
+@app.post("/call")
+async def call_engine_method(raw_request: Request):
+    global _engine, _openai_client
+    if _engine is None:
+        raise HTTPException(status_code=400, detail="Engine not initialized")
 
-        # Initialize engine with server address (connect only, no launch)
-        _engine.initialize(addr=request.server_addr)
+    data = await raw_request.json()
+    method_name = data.get("method")
+    args = deserialize_value(data.get("args", []))
+    kwargs = deserialize_value(data.get("kwargs", {}))
 
-        # Load tokenizer
-        tokenizer_path = request.tokenizer_path or config.tokenizer_path
-        if tokenizer_path is None:
-            raise ValueError("tokenizer_path required for proxy server initialization")
-        tokenizer = load_hf_tokenizer(tokenizer_path)
+    method = getattr(_engine, method_name)
+    result = method(*args, **kwargs)
 
-        # Get OpenAI config
-        openai_cfg = config.openai or OpenAIConfig()
+    if method_name == "initialize":
+        _setup_openai_client()
 
-        # Create ArealOpenAI client
-        _openai_client = ArealOpenAI(
-            engine=_engine,
-            tokenizer=tokenizer,
-            tool_call_parser=openai_cfg.tool_call_parser,
-            reasoning_parser=openai_cfg.reasoning_parser,
-            engine_max_tokens=openai_cfg.engine_max_tokens,
-            chat_template_type=openai_cfg.chat_template_type,
-        )
-
-        logger.info(f"Proxy server initialized, connected to {request.server_addr}")
-
-        return InitResponse(
-            status="ok", proxy_addr=f"http://{_server_host}:{_server_port}"
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to initialize proxy server: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "success", "result": serialize_value(result)}
 
 
 # =============================================================================
