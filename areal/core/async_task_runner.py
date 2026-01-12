@@ -333,6 +333,13 @@ class AsyncTaskRunner(Generic[T]):
         >>> runner.register_initialization_hook(setup_session)
         """
         with self._initialization_hooks_lock:
+            if self.thread is not None:
+                if self.logger:
+                    self.logger.warning(
+                        f"Initialization hook {getattr(hook, '__name__', repr(hook))} "
+                        "registered after runner has started. "
+                        "It will not be executed for this instance."
+                    )
             self._initialization_hooks.append(hook)
 
     def _check_thread_health(self):
