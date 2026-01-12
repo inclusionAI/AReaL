@@ -28,6 +28,7 @@ class FP8BlockwiseTensorHelper(torch.Tensor):
         block_size: int = 128,
     ):
         # Create a tensor subclass that wraps rowwise_data
+        rowwise_data = rowwise_data.view(torch.float8_e4m3fn)
         obj = torch.Tensor._make_wrapper_subclass(
             cls,
             rowwise_data.shape,
@@ -35,13 +36,13 @@ class FP8BlockwiseTensorHelper(torch.Tensor):
             device=rowwise_data.device,
             requires_grad=False,
         )
-        obj._rowwise_data = rowwise_data.view(torch.uint8)
+        obj._rowwise_data = rowwise_data
         obj._rowwise_scale_inv = rowwise_scale_inv
         obj._block_size = block_size
         return obj
 
     def __repr__(self) -> str:
-        return f"FP8BlockwiseTensorHelper(data={self._rowwise_data.view(torch.float8_e4m3fn)}\nscale_inv={self._rowwise_scale_inv}\ndata_shape={self.shape}, scale_shape={self._rowwise_scale_inv.shape}, block_size={self._block_size})"
+        return f"FP8BlockwiseTensorHelper(data={self._rowwise_data}\nscale_inv={self._rowwise_scale_inv}\ndata_shape={self.shape}, scale_shape={self._rowwise_scale_inv.shape}, block_size={self._block_size})"
 
     def _ceil_div(self, a: int, b: int) -> int:
         return (a + b - 1) // b
@@ -254,9 +255,7 @@ class FP8BlockwiseTensorHelper(torch.Tensor):
             - scale_inv: Inverse scale tensor (1/scale) with compact blockwise shape
                          [M/block_size, K/block_size] without padding
         """
-        # rowwise_data is stored in uint8 format, convert to PyTorch FP8
-        rowwise_data_uint8 = self._rowwise_data
-        torch_fp8_tensor = rowwise_data_uint8.view(torch.float8_e4m3fn)
+        torch_fp8_tensor = self._rowwise_data.view(torch.float8_e4m3fn)
 
         # Extract rowwise_scale_inv and remove padding if needed
         # FP8BlockwiseTensorHelper's scale_inv should already be compact, but we verify and trim padding
