@@ -215,8 +215,6 @@ def _load_weight_with_bridge_worker(
         if is_te_fp8_param and enable_fp8_param and hf_has_fp8 and not hf_all_fp8:
             raise RuntimeError("Expected all inputs to be FP8 for TE FP8 parameter")
 
-        # TODO: check fp type is matched between pytorch and te
-
         param_to_load = _weight_to_mcore_tp(
             hf_config=bridge.hf_config,
             mcore_weights_name=local_name,
