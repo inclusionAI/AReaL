@@ -35,13 +35,13 @@ class FP8BlockwiseTensorHelper(torch.Tensor):
             device=rowwise_data.device,
             requires_grad=False,
         )
-        obj._rowwise_data = rowwise_data
+        obj._rowwise_data = rowwise_data.view(torch.uint8)
         obj._rowwise_scale_inv = rowwise_scale_inv
         obj._block_size = block_size
         return obj
 
     def __repr__(self) -> str:
-        return f"FP8BlockwiseTensorHelper(data={self._rowwise_data}\nscale_inv={self._rowwise_scale_inv}\ndata_shape={self.shape}, scale_shape={self._rowwise_scale_inv.shape}, block_size={self._block_size})"
+        return f"FP8BlockwiseTensorHelper(data={self._rowwise_data.view(torch.float8_e4m3fn)}\nscale_inv={self._rowwise_scale_inv}\ndata_shape={self.shape}, scale_shape={self._rowwise_scale_inv.shape}, block_size={self._block_size})"
 
     def _ceil_div(self, a: int, b: int) -> int:
         return (a + b - 1) // b
@@ -276,6 +276,40 @@ class FP8BlockwiseTensorHelper(torch.Tensor):
 
         return torch_fp8_tensor, scale_inv
 
+    @classmethod
+    def from_te(
+        cls,
+        tensor: torch.Tensor,
+        block_size: int = 128,
+    ) -> "FP8BlockwiseTensorHelper":
+        """Convert Transformer Engine Float8BlockwiseQTensor to FP8BlockwiseTensorHelper.
+
+        Args:
+            tensor: Transformer Engine Float8BlockwiseQTensor to convert
+            block_size: Block size (defaults to 128).
+
+        Returns:
+            FP8BlockwiseTensorHelper instance
+
+        Raises:
+            ValueError: If tensor is not a Transformer Engine Float8Tensor
+            RuntimeError: If tensor doesn't have required attributes
+        """
+        if not is_float8tensor(tensor):
+            raise ValueError("tensor must be a Transformer Engine Float8Tensor")
+
+        if not (
+            hasattr(tensor, "_rowwise_data") and hasattr(tensor, "_rowwise_scale_inv")
+        ):
+            raise RuntimeError(
+                "tensor must be a Float8BlockwiseQTensor with _rowwise_data and _rowwise_scale_inv"
+            )
+
+        rowwise_data = tensor._rowwise_data.clone()
+        rowwise_scale_inv = tensor._rowwise_scale_inv.clone()
+
+        return cls(rowwise_data, rowwise_scale_inv, block_size)
+
     def to_te_fp8_inplace(self, target_te_tensor: torch.Tensor) -> None:
         """Convert FP8BlockwiseTensorHelper to Transformer Engine Float8BlockwiseQTensor format inplace.
 
@@ -350,3 +384,31 @@ class FP8BlockwiseTensorHelper(torch.Tensor):
                 return tensor.chunk(chunks, dim=dim)
 
         raise NotImplementedError(f"operation {func} is not supported")
+
+
+def convert_fp8_helper_to_pytorch_fp8(
+    named_tensors: list[tuple[str, torch.Tensor | FP8BlockwiseTensorHelper]],
+) -> list[tuple[str, torch.Tensor]]:
+    """Convert FP8BlockwiseTensorHelper instances in named tensors to PyTorch FP8 format.
+
+    This function processes a list of (name, tensor) pairs and converts any
+    FP8BlockwiseTensorHelper instances to PyTorch FP8 format by splitting them into
+    weight and scale_inv tensors.
+
+    Args:
+        named_tensors: List of (name, tensor) pairs. Tensors can be regular tensors
+                      or FP8BlockwiseTensorHelper instances.
+
+    Returns:
+        List of (name, tensor) pairs where FP8BlockwiseTensorHelper instances are
+        converted to (weight_name, weight) and (weight_name_scale_inv, scale_inv) pairs.
+    """
+    converted = []
+    for name, tensor in named_tensors:
+        if isinstance(tensor, FP8BlockwiseTensorHelper):
+            weight, scale_inv = tensor.to_pytorch_fp8()
+            converted.append((name, weight))
+            converted.append((f"{name}_scale_inv", scale_inv))
+        else:
+            converted.append((name, tensor))
+    return converted

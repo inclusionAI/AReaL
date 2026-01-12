@@ -11,6 +11,7 @@ from torch.nn.parameter import Parameter
 
 from areal.utils.fp8 import (
     FP8BlockwiseTensorHelper,
+    convert_fp8_helper_to_pytorch_fp8,
     get_block_size_from_config,
     quantize_params,
 )
@@ -85,13 +86,13 @@ def all_gather_param(
         not param.tensor_model_parallel
         or getattr(param, "parallel_mode", None) == "duplicated"
     ):
-        # For FP8 tensors, return the tensor directly without accessing .data
-        # because accessing .data on QuantizedTensor triggers __torch_dispatch__
-        # which dequantizes the tensor to bfloat16
+        # NOTE: For FP8 tensors with direct conversion, return the tensor directly
+        # without accessing .data to avoid dequantization (accessing .data on
+        # QuantizedTensor triggers __torch_dispatch__ which dequantizes to bfloat16).
+        # Otherwise, .data will implicitly convert TE FP8 to bf16, which will be
+        # converted to PyTorch FP8 later in convert_to_hf.
         if param_is_fp8 and fp8_direct_convert:
             return param
-        # If param is TE FP8, .data will implicitly convert TE FP8 to bf16,
-        # and then be converted to PyTorch FP8 later in convert_to_hf
         return param.data
 
     if ".experts." in name:
@@ -106,8 +107,6 @@ def all_gather_param(
 
     # Handle FP8 tensors specially
     if param_is_fp8 and fp8_direct_convert:
-        # Get block_size from quantization config if available
-        # Default to 128 if not specified
         block_size = get_block_size_from_config(quantization_config)
         return _all_gather_fp8_tensor_and_concat(
             param, tp_size, tp_group, partition_dim, name, block_size
@@ -573,20 +572,7 @@ def convert_to_hf(
             converted_named_tensors = conversion_fn(tf_config, name, param)
             if quantization_config:
                 if fp8_direct_convert:
-                    converted_fp8_named_tensors = []
-                    for hf_name, hf_tensor in converted_named_tensors:
-                        if isinstance(hf_tensor, FP8BlockwiseTensorHelper):
-                            # FP8BlockwiseTensorHelper from all_gather
-                            weight, scale_inv = hf_tensor.to_pytorch_fp8()
-                            converted_fp8_named_tensors.append((hf_name, weight))
-                            scale_inv_name = f"{hf_name}_scale_inv"
-                            converted_fp8_named_tensors.append(
-                                (scale_inv_name, scale_inv)
-                            )
-                        else:
-                            # Keep non-FP8 or non-weight tensors as is
-                            converted_fp8_named_tensors.append((hf_name, hf_tensor))
-                    return converted_fp8_named_tensors
+                    return convert_fp8_helper_to_pytorch_fp8(converted_named_tensors)
                 else:
                     # Quantize from bf16 to PyTorch FP8
                     return quantize_params(

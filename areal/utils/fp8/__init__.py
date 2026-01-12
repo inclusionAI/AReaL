@@ -26,7 +26,10 @@ from areal.utils.fp8.quantize import (
     dequantize_params,
     quantize_params,
 )
-from areal.utils.fp8.tensor_helper import FP8BlockwiseTensorHelper
+from areal.utils.fp8.tensor_helper import (
+    FP8BlockwiseTensorHelper,
+    convert_fp8_helper_to_pytorch_fp8,
+)
 from areal.utils.fp8.ue8m0 import (
     ceil_to_ue8m0,
     get_tma_aligned_size,
@@ -54,4 +57,5 @@ __all__ = [
     "should_deepgemm_weight_requant_ue8m0",
     # Tensor helper
     "FP8BlockwiseTensorHelper",
+    "convert_fp8_helper_to_pytorch_fp8",
 ]
