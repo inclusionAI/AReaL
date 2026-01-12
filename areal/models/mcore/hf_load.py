@@ -160,7 +160,10 @@ def _load_weight_with_bridge_worker(
                 isinstance(weight_block_size, (list, tuple))
                 and len(weight_block_size) == 2
                 and weight_block_size[0] == weight_block_size[1]
-            ), f"weight_block_size must be a square matrix, got {weight_block_size}"
+            ), (
+                f"weight_block_size must be a square matrix for hardware efficiency and simplicity, "
+                f"got {weight_block_size}."
+            )
             weight_block_size = weight_block_size[0]
 
         is_te_fp8_param = is_float8tensor(param)
