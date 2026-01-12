@@ -1,0 +1,161 @@
+experiment_name: asearcher-local
+trial_name: run1
+
+cluster:
+  fileroot: /tmp/areal/experiments
+  n_nodes: 1
+  n_gpus_per_node: 8
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/areal/name_resolve
+seed: 1
+total_train_epochs: 10
+total_train_steps: null
+tokenizer_path: ${actor.path}
+allocation_mode: sglang.d4p1t1+d4p1t1
+  
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 256
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 4
+  enable_rollout_tracing: true
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+
+gconfig:
+  n_samples: 16
+  min_new_tokens: 0
+  max_new_tokens: 1024
+  greedy: false
+  temperature: 1.0
+
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: Qwen/Qwen2.5-7B
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: false
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 16384
+  pad_to_maximum: true
+  optimizer:
+    type: adam
+    lr: 5e-6
+    weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    lr_scheduler_type: constant
+    gradient_clipping: 0.2
+    warmup_steps_proportion: 0.001
+  eps_clip: 0.4
+  temperature: ${gconfig.temperature}
+  reward_scaling: 10.0
+  reward_bias: -0.5
+  kl_ctl: 0.0
+  ppo_n_minibatches: 1
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behav_imp_weight_cap: 5.0
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars:
+        JINA_API_KEY: your_jina_api_key_here
+        SERPER_API_KEY: your_serper_api_key_here 
+
+ref:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  mb_spec:
+    max_tokens_per_mb: 16384
+  optimizer: null
+
+# SGLang
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: true
+  dtype: ${actor.dtype}
+  max_running_requests: null
+  context_length: 32768
+  mem_fraction_static: 0.8
+
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: 32768
+  gpu_memory_utilization: 0.9
+
+# datasets
+train_dataset:
+  batch_size: 128
+  shuffle: true
+  pin_memory: true
+  type: rl
+  num_workers: 4
+  path: ASearcher-Base-35k.jsonl
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: 10
+  freq_secs: null
+
+recover:
+  mode: auto
+  retries: 10
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
+
+perf_tracer:
+  enabled: true
+  experiment_name: ${experiment_name}  # Reuse top-level metadata
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}        # Shared filesystem path
+  save_interval: 1                     # Write traces every step
+  session_tracer:
+    enabled: true                      # Track per-session lifecycle
+    flush_threshold: 100               # Buffer 100 sessions before flushing
