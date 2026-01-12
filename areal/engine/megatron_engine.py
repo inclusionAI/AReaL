@@ -633,7 +633,11 @@ class MegatronEngine(TrainEngine):
         self.forward_backward_batch(mb_list, process_output, forward_only=False)
 
         # Step 4: Optimizer step
-        return self.optimizer_step()
+        r = self.optimizer_step()
+
+        # Step 5: Check nan grads and params
+        self._check_nan_grads_and_params()
+        return r
 
     @torch.no_grad()
     def eval_batch(
@@ -1483,6 +1487,29 @@ class MegatronEngine(TrainEngine):
         else:
             values = output.squeeze(-1)
             return values
+        
+    def _check_nan_grads_and_params(self) -> None:
+        # Check for NaN in gradients and parameters after optimizer step
+        nan_grads = []
+        nan_params = []
+        for model in self.model:
+            for name, param in model.named_parameters():
+                if hasattr(param, 'main_grad') and param.main_grad is not None:
+                    if torch.isnan(param.main_grad).any():
+                        nan_grads.append(name)
+                elif param.grad is not None:
+                    if torch.isnan(param.grad).any():
+                        nan_grads.append(name)
+                if torch.isnan(param.data).any():
+                    nan_params.append(name)
+        
+        if nan_grads or nan_params:
+            error_msg = "NaN detected after optimizer step!\n"
+            if nan_grads:
+                error_msg += f"  NaN gradients in {len(nan_grads)} params: {nan_grads[:5]}{'...' if len(nan_grads) > 5 else ''}\n"
+            if nan_params:
+                error_msg += f"  NaN parameters in {len(nan_params)} params: {nan_params[:5]}{'...' if len(nan_params) > 5 else ''}\n"
+            raise RuntimeError(error_msg)
 
 
 # =============================================================================
