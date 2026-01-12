@@ -15,7 +15,11 @@ from safetensors import safe_open
 from areal.models.mcore.registry import unwrap_to_gpt_model
 from areal.platforms import current_platform
 from areal.utils import logging
-from areal.utils.fp8 import FP8BlockwiseTensorHelper, dequantize_params
+from areal.utils.fp8 import (
+    FP8BlockwiseTensorHelper,
+    dequantize_params,
+    get_block_size_from_config,
+)
 
 logger = logging.getLogger("HFLoader")
 
@@ -153,18 +157,7 @@ def _load_weight_with_bridge_worker(
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
         # Get weight_block_size from quantization_config
-        weight_block_size = 128
-        if quantization_config is not None:
-            weight_block_size = quantization_config.get("weight_block_size", None)
-            assert (
-                isinstance(weight_block_size, (list, tuple))
-                and len(weight_block_size) == 2
-                and weight_block_size[0] == weight_block_size[1]
-            ), (
-                f"weight_block_size must be a square matrix for hardware efficiency and simplicity, "
-                f"got {weight_block_size}."
-            )
-            weight_block_size = weight_block_size[0]
+        weight_block_size = get_block_size_from_config(quantization_config, strict=True)
 
         is_te_fp8_param = is_float8tensor(param)
         # Check if any HF weight is FP8 (has _scale_inv suffix)

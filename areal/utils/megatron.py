@@ -9,7 +9,11 @@ from megatron.core.transformer.transformer_layer import get_transformer_layer_of
 from torch import Tensor
 from torch.nn.parameter import Parameter
 
-from areal.utils.fp8 import FP8BlockwiseTensorHelper, quantize_params
+from areal.utils.fp8 import (
+    FP8BlockwiseTensorHelper,
+    get_block_size_from_config,
+    quantize_params,
+)
 
 
 def _all_gather_and_concat(
@@ -64,7 +68,10 @@ def _all_gather_fp8_tensor_and_concat(
 
 # Adapted from slime
 def all_gather_param(
-    name: str, param: Parameter | Tensor, fp8_direct_convert: bool = False
+    name: str,
+    param: Parameter | Tensor,
+    fp8_direct_convert: bool = False,
+    quantization_config: dict[str, int | str | list[str]] | None = None,
 ) -> torch.Tensor | FP8BlockwiseTensorHelper:
     if "expert_bias" in name:
         return param
@@ -101,7 +108,7 @@ def all_gather_param(
     if param_is_fp8 and fp8_direct_convert:
         # Get block_size from quantization config if available
         # Default to 128 if not specified
-        block_size = 128  # TODO: get from quantization_config if available
+        block_size = get_block_size_from_config(quantization_config)
         return _all_gather_fp8_tensor_and_concat(
             param, tp_size, tp_group, partition_dim, name, block_size
         )

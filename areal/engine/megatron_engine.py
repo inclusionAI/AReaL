@@ -1029,7 +1029,12 @@ class MegatronEngine(TrainEngine):
         Returns:
             Tuple of (prepared_param, param_size_in_bytes)
         """
-        param = all_gather_param(name, param, fp8_direct_convert)
+        param = all_gather_param(
+            name,
+            param,
+            fp8_direct_convert,
+            quantization_config=self.quantization_config,
+        )
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
         if isinstance(param, FP8BlockwiseTensorHelper):

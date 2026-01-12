@@ -5,6 +5,7 @@ import re
 
 import torch
 
+from areal.utils.fp8.config import get_block_size_from_config
 from areal.utils.fp8.deepgemm import should_deepgemm_weight_requant_ue8m0
 from areal.utils.fp8.kernels import blockwise_cast_to_fp8_triton, weight_dequant
 from areal.utils.fp8.ue8m0 import quant_weight_ue8m0, transform_scale_ue8m0
@@ -183,23 +184,6 @@ def dequantize_params(
     if not scale_inv.is_contiguous():
         scale_inv = scale_inv.contiguous()
 
-    if quantization_config is None:
-        block_size = 128
-    else:
-        weight_block_size = quantization_config.get("weight_block_size", None)
-        # TODO: consider (M, N) block size, now only support square block size
-        if weight_block_size is not None:
-            if len(weight_block_size) != 2:
-                raise ValueError(
-                    f"weight_block_size must be a list/tuple of length 2, got {weight_block_size}"
-                )
-            if weight_block_size[0] != weight_block_size[1]:
-                raise ValueError(
-                    f"Only square block sizes are supported for FP8 dequantization. "
-                    f"Got {weight_block_size}, but both dimensions must be equal."
-                )
-            block_size = weight_block_size[0]
-        else:
-            block_size = 128
+    block_size = get_block_size_from_config(quantization_config, strict=True)
 
     return weight_dequant(weight, scale_inv, block_size, dst_dtype)
