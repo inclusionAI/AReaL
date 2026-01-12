@@ -7,8 +7,6 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ProcessPoolExecutor
-from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import datetime
 from threading import Lock
 from typing import Any, Protocol
@@ -33,6 +31,7 @@ from areal.api.io_struct import (
     WeightUpdateRequests,
 )
 from areal.api.workflow_api import RolloutWorkflow
+from areal.core import workflow_context
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
 from areal.utils.http import arequest_with_retry, get_default_connector
@@ -46,8 +45,6 @@ from .workflow_executor import WorkflowExecutor
 RID_CACHE_SIZE = 128
 
 logger = logging.getLogger("RemoteInfEngine")
-
-_session_storage = ContextVar("aiohttp.ClientSession")
 
 
 class RemoteInfBackendProtocol(Protocol):
@@ -294,48 +291,6 @@ class RemoteInfEngine(InferenceEngine):
         self._initialized = False
         self.local_server_processes: list[LocalInfServerInfo] = []
 
-    def _create_session(self) -> aiohttp.ClientSession:
-        """Create a ClientSession for the current asyncio coroutine.
-
-        Returns
-        -------
-        aiohttp.ClientSession
-            A new client session object
-        """
-        return aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(
-                total=self.config.request_timeout,
-                sock_connect=self.config.request_timeout,
-                connect=self.config.request_timeout,
-            ),
-            read_bufsize=1024 * 1024 * 10,
-            connector=get_default_connector(),
-        )
-
-    @asynccontextmanager
-    async def managed_session(self):
-        """Provide a managed ClientSession with automatic lifecycle handling.
-
-        Creates a ClientSession, stores it in task-local context for nested
-        agenerate() calls to reuse, and ensures proper cleanup.
-
-        Yields
-        ------
-            None
-
-        Examples
-        --------
-            async with engine.managed_session():
-                result = await engine.agenerate(request)
-        """
-        session = self._create_session()
-        token = _session_storage.set(session)
-        try:
-            yield
-        finally:
-            await session.close()
-            _session_storage.reset(token)
-
     def _wait_for_server(self, address):
         """Wait for a server to become healthy."""
         base_url = f"http://{address}"
@@ -559,13 +514,8 @@ class RemoteInfEngine(InferenceEngine):
             self.rid_to_address[req.rid] = server_addr
             self.rid_queue.append(req.rid)
 
-        # Get or create task-local session
-        session_cleanup = False
-        try:
-            session = _session_storage.get()
-        except LookupError:
-            session = self._create_session()
-            session_cleanup = True
+        # Get the shared session from workflow context
+        session = workflow_context.get_aiohttp_session()
 
         # Deal with rollout interruption
         stop_reason = None
@@ -611,9 +561,6 @@ class RemoteInfEngine(InferenceEngine):
                 len(gen_result.output_tokens),
                 len(req.input_ids),
             )
-
-        if session_cleanup:
-            await session.close()
 
         # Final abort handling
         if stop_reason == "abort":
