@@ -1019,13 +1019,26 @@ class WorkflowExecutor:
             enable_tracing=self.config.enable_rollout_tracing,
         )
 
+        # Register HTTP client lifecycle hooks on the runner
+        self._dispatcher.runner.register_initialization_hook(
+            self._configure_http_clients_hook
+        )
         # Initialize the dispatcher's async task runner
         self._dispatcher.initialize(logger=logger)
 
-        # Configure session cleanup for the shared HTTP clients
-        workflow_context.configure_http_clients(
-            shutdown_hook_registrar=self._dispatcher.runner.register_shutdown_hook,
-        )
+    async def _configure_http_clients_hook(self, runner: AsyncTaskRunner) -> None:
+        """Initialization hook to configure HTTP clients in the background thread.
+
+        This hook is executed in the AsyncTaskRunner's background thread event loop
+        at startup. It configures the thread-local HTTP client manager and registers
+        the cleanup hooks for shutdown.
+
+        Parameters
+        ----------
+        runner : AsyncTaskRunner
+            The runner instance that invoked this hook.
+        """
+        workflow_context.configure_http_clients(runner.register_shutdown_hook)
 
     def destroy(self):
         """Shutdown the workflow executor and clean up resources.
@@ -1036,9 +1049,6 @@ class WorkflowExecutor:
         # Stop background threads and shutdown the async task runner
         if self._dispatcher is not None:
             self._dispatcher.destroy()
-
-        # Reset HTTP client state for potential reinitialization
-        workflow_context.reset_http_clients()
 
         # Flush performance tracer
         tracer = perf_tracer.get_session_tracer()

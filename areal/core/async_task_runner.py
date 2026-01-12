@@ -206,8 +206,15 @@ class AsyncTaskRunner(Generic[T]):
 
         # Shutdown hooks for cleanup in background thread
         # Hooks are async functions that execute in the event loop during shutdown
-        self._shutdown_hooks: list[Callable[[], Awaitable[None]]] = []
+        self._shutdown_hooks: list[Callable[[AsyncTaskRunner[T]], Awaitable[None]]] = []
         self._shutdown_hooks_lock = threading.Lock()
+
+        # Initialization hooks for setup in background thread
+        # Hooks are async functions that execute in the event loop at startup
+        self._initialization_hooks: list[
+            Callable[[AsyncTaskRunner[T]], Awaitable[None]]
+        ] = []
+        self._initialization_hooks_lock = threading.Lock()
 
         # Task ID tracking for duplicate detection
         self._active_task_ids: set[int] = set()
@@ -266,7 +273,9 @@ class AsyncTaskRunner(Generic[T]):
                         f"Background thread did not exit within {timeout}s timeout."
                     )
 
-    def register_shutdown_hook(self, hook: Callable[[], Awaitable[None]]) -> None:
+    def register_shutdown_hook(
+        self, hook: Callable[["AsyncTaskRunner[T]"], Awaitable[None]]
+    ) -> None:
         """Register an async cleanup function to be called during shutdown.
 
         The hook will be executed in the AsyncTaskRunner's background thread
@@ -278,14 +287,14 @@ class AsyncTaskRunner(Generic[T]):
 
         Parameters
         ----------
-        hook : Callable[[], Awaitable[None]]
-            An async function that performs cleanup. Should not raise exceptions.
-            If it does raise, the exception will be logged but won't prevent
-            other hooks from running.
+        hook : Callable[[AsyncTaskRunner], Awaitable[None]]
+            An async function that takes the runner as parameter and performs
+            cleanup. Should not raise exceptions. If it does raise, the
+            exception will be logged but won't prevent other hooks from running.
 
         Examples
         --------
-        >>> async def cleanup_session():
+        >>> async def cleanup_session(runner: AsyncTaskRunner):
         ...     if hasattr(_session_storage, 'session'):
         ...         await _session_storage.session.close()
         >>> runner.register_shutdown_hook(cleanup_session)
@@ -298,6 +307,33 @@ class AsyncTaskRunner(Generic[T]):
                     )
                 return
             self._shutdown_hooks.append(hook)
+
+    def register_initialization_hook(
+        self, hook: Callable[["AsyncTaskRunner[T]"], Awaitable[None]]
+    ) -> None:
+        """Register an async initialization function to run at loop startup.
+
+        The hook will be executed in the AsyncTaskRunner's background thread
+        event loop at the start of _run_async_loop(), before any tasks are
+        processed.
+
+        Hooks are called in registration order (FIFO).
+
+        Parameters
+        ----------
+        hook : Callable[[AsyncTaskRunner], Awaitable[None]]
+            An async function that takes the runner as parameter and performs
+            initialization. Should not raise exceptions. If it does raise, the
+            exception will be logged and the runner will fail to start properly.
+
+        Examples
+        --------
+        >>> async def setup_session(runner: AsyncTaskRunner):
+        ...     configure_http_clients(runner.register_shutdown_hook)
+        >>> runner.register_initialization_hook(setup_session)
+        """
+        with self._initialization_hooks_lock:
+            self._initialization_hooks.append(hook)
 
     def _check_thread_health(self):
         """Check if the background thread has encountered a fatal error.
@@ -353,6 +389,19 @@ class AsyncTaskRunner(Generic[T]):
         4. Places results in output_queue
         5. Continues until exiting signal is set
         """
+        # Execute initialization hooks in registration order (FIFO)
+        if self._initialization_hooks:
+            for hook in self._initialization_hooks:
+                try:
+                    await hook(self)
+                except Exception as e:
+                    if self.logger:
+                        self.logger.error(
+                            f"Initialization hook {hook.__name__} failed: {e}",
+                            exc_info=True,
+                        )
+                    raise
+
         self._input_event = asyncio.Event()
         self._input_event.set()
 
@@ -440,7 +489,7 @@ class AsyncTaskRunner(Generic[T]):
             if self._shutdown_hooks:
                 for hook in reversed(self._shutdown_hooks):
                     try:
-                        await hook()
+                        await hook(self)
                     except Exception as e:
                         if self.logger:
                             self.logger.error(

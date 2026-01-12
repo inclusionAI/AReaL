@@ -4,13 +4,16 @@ import threading
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Self
+from typing import TYPE_CHECKING
 
 import aiohttp
 import httpx
 
 from areal.utils import logging
 from areal.utils.http import DEFAULT_REQUEST_TIMEOUT, get_default_connector
+
+if TYPE_CHECKING:
+    from areal.core.async_task_runner import AsyncTaskRunner
 
 logger = logging.getLogger("WorkflowContext")
 
@@ -58,31 +61,28 @@ def stat_scope() -> str:
 
 
 class HttpClientManager:
-    """Thread-safe singleton manager for shared HTTP clients.
+    """Per-thread manager for shared HTTP clients.
 
     This class manages shared aiohttp and httpx clients for workflow execution,
     providing connection pooling and DNS caching for improved performance.
+    Each thread gets its own instance via a global dict indexed by thread ID.
     """
 
-    _instance: HttpClientManager | None = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls) -> Self:
-        if cls._instance is None:
-            with cls._instance_lock:
-                if cls._instance is None:
-                    instance = super().__new__(cls)
-                    instance._aiohttp_session = None
-                    instance._httpx_client = None
-                    instance._shutdown_registrar = None
-                    instance._cleanup_registered = False
-                    instance._client_lock = threading.Lock()
-                    cls._instance = instance
-        return cls._instance
+    def __init__(self) -> None:
+        """Initialize the HttpClientManager instance."""
+        self._aiohttp_session: aiohttp.ClientSession | None = None
+        self._httpx_client: httpx.AsyncClient | None = None
+        self._shutdown_registrar: (
+            Callable[[Callable[[AsyncTaskRunner], Awaitable[None]]], None] | None
+        ) = None
+        self._cleanup_registered: bool = False
+        self._client_lock = threading.Lock()
 
     def configure(
         self,
-        shutdown_hook_registrar: Callable[[Callable[[], Awaitable[None]]], None],
+        shutdown_hook_registrar: Callable[
+            [Callable[[AsyncTaskRunner], Awaitable[None]]], None
+        ],
     ) -> None:
         """Configure the shutdown hook registrar for HTTP client cleanup.
 
@@ -157,8 +157,15 @@ class HttpClientManager:
                 self._ensure_cleanup_registered()
             return self._httpx_client
 
-    async def _async_cleanup(self) -> None:
-        """Async cleanup hook called during shutdown to close all HTTP clients."""
+    async def _async_cleanup(self, runner: AsyncTaskRunner) -> None:
+        """Async cleanup hook called during shutdown to close all HTTP clients.
+
+        Parameters
+        ----------
+        runner : AsyncTaskRunner
+            The runner instance that invoked this hook (unused but required by signature).
+        """
+        thread_id = threading.get_ident()
         with self._client_lock:
             if self._aiohttp_session is not None:
                 await self._aiohttp_session.close()
@@ -166,26 +173,48 @@ class HttpClientManager:
             if self._httpx_client is not None:
                 await self._httpx_client.aclose()
                 self._httpx_client = None
-
-    def reset(self) -> None:
-        """Reset all HTTP client state for reinitialization.
-
-        This resets the instance state. The clients themselves should be
-        closed via the registered shutdown hook before calling this.
-        """
-        with self._client_lock:
-            self._aiohttp_session = None
-            self._httpx_client = None
-            self._shutdown_registrar = None
             self._cleanup_registered = False
+        # Remove from global dict so next initialization creates fresh instance
+        _remove_manager(thread_id)
 
 
-# Module-level singleton instance
-_http_client_manager = HttpClientManager()
+# Global dict mapping thread ID -> HttpClientManager
+# Each thread gets its own HttpClientManager instance
+_managers: dict[int, HttpClientManager] = {}
+_managers_lock = threading.Lock()
+
+
+def _get_manager() -> HttpClientManager:
+    """Get or create the HttpClientManager for the current thread.
+
+    Returns
+    -------
+    HttpClientManager
+        The HttpClientManager instance for the current thread.
+    """
+    thread_id = threading.get_ident()
+    with _managers_lock:
+        if thread_id not in _managers:
+            _managers[thread_id] = HttpClientManager()
+        return _managers[thread_id]
+
+
+def _remove_manager(thread_id: int) -> None:
+    """Remove the HttpClientManager for a specific thread from the global dict.
+
+    Parameters
+    ----------
+    thread_id : int
+        The thread ID whose manager should be removed.
+    """
+    with _managers_lock:
+        _managers.pop(thread_id, None)
 
 
 def configure_http_clients(
-    shutdown_hook_registrar: Callable[[Callable[[], Awaitable[None]]], None],
+    shutdown_hook_registrar: Callable[
+        [Callable[[AsyncTaskRunner], Awaitable[None]]], None
+    ],
 ) -> None:
     """Configure the shutdown hook registrar for HTTP client cleanup.
 
@@ -197,7 +226,7 @@ def configure_http_clients(
         A function to register the HTTP client cleanup hook (typically
         AsyncTaskRunner.register_shutdown_hook).
     """
-    _http_client_manager.configure(shutdown_hook_registrar)
+    _get_manager().configure(shutdown_hook_registrar)
 
 
 def get_aiohttp_session() -> aiohttp.ClientSession:
@@ -212,7 +241,7 @@ def get_aiohttp_session() -> aiohttp.ClientSession:
     aiohttp.ClientSession
         The shared session for HTTP requests.
     """
-    return _http_client_manager.get_aiohttp_session()
+    return _get_manager().get_aiohttp_session()
 
 
 def get_httpx_client() -> httpx.AsyncClient:
@@ -227,13 +256,4 @@ def get_httpx_client() -> httpx.AsyncClient:
     httpx.AsyncClient
         The shared client for HTTP requests.
     """
-    return _http_client_manager.get_httpx_client()
-
-
-def reset_http_clients() -> None:
-    """Reset all HTTP client state for reinitialization.
-
-    This resets the module-level state. The clients themselves should be
-    closed via the registered shutdown hook before calling this.
-    """
-    _http_client_manager.reset()
+    return _get_manager().get_httpx_client()

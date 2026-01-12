@@ -467,7 +467,7 @@ class TestAsyncTaskRunnerShutdownHooks:
         # Track hook execution
         hook_called = []
 
-        async def cleanup_hook():
+        async def cleanup_hook(r):
             await asyncio.sleep(0.01)
             hook_called.append(True)
 
@@ -483,13 +483,13 @@ class TestAsyncTaskRunnerShutdownHooks:
 
         order = []
 
-        async def hook1():
+        async def hook1(r):
             order.append(1)
 
-        async def hook2():
+        async def hook2(r):
             order.append(2)
 
-        async def hook3():
+        async def hook3(r):
             order.append(3)
 
         runner.register_shutdown_hook(hook1)
@@ -506,11 +506,11 @@ class TestAsyncTaskRunnerShutdownHooks:
 
         executed = []
 
-        async def failing_hook():
+        async def failing_hook(r):
             executed.append("failing")
             raise ValueError("Hook failed!")
 
-        async def working_hook():
+        async def working_hook(r):
             executed.append("working")
 
         runner.register_shutdown_hook(working_hook)
@@ -528,7 +528,7 @@ class TestAsyncTaskRunnerShutdownHooks:
 
         hook_executed = []
 
-        async def cleanup_hook():
+        async def cleanup_hook(r):
             hook_executed.append(True)
 
         async def long_task(x: int) -> int:
@@ -555,7 +555,7 @@ class TestAsyncTaskRunnerShutdownHooks:
         time.sleep(0.1)
 
         # Try to register a hook after shutdown started
-        async def late_hook():
+        async def late_hook(r):
             pass
 
         # Should not raise an error
@@ -571,7 +571,7 @@ class TestAsyncTaskRunnerShutdownHooks:
         # Simulate a shared resource (like a session)
         shared_resource = {"active": True, "connections": 5}
 
-        async def cleanup_resource():
+        async def cleanup_resource(r):
             await asyncio.sleep(0.01)
             shared_resource["active"] = False
             shared_resource["connections"] = 0
