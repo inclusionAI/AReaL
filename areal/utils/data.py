@@ -593,8 +593,7 @@ def pad_packed_tensor_dict(
     data: dict[str, Any],
     pad_to_length: int,
     pad_value: float = 0.0,
-    align_sequences: bool = False,
-    align_to_multiple_of: int | None = None,
+    seq_align_to: int | None = None,
 ) -> tuple[dict[str, Any], int, torch.Tensor, int]:
     """Pad a packed dict of tensors to a specified length.
     This function assumes that the input data contains "cu_seqlens" and "max_seqlen" key,
@@ -620,17 +619,11 @@ def pad_packed_tensor_dict(
     # First pad sequences
     sequence_padded_data = {}
     align_to_length = None
-    if align_sequences:
-        if align_to_multiple_of is None:
-            raise ValueError(
-                "align_to_multiple_of must be specified when align_sequences is True."
-            )
+    if seq_align_to is not None:
         input_lens = cu_seqlens[1:] - cu_seqlens[:-1]
         batch_size = input_lens.shape[0]
-        # Align sequences to an integer multiple of align_to_multiple_of
-        pad_size = (
-            align_to_multiple_of - input_lens % align_to_multiple_of
-        ) % align_to_multiple_of
+        # Align sequences to an integer multiple of seq_align_to
+        pad_size = (-input_lens) % seq_align_to
         input_lens_padded = input_lens + pad_size
         cu_seqlens_padded = torch.zeros(
             batch_size + 1, dtype=torch.int32, device=cu_seqlens.device
@@ -696,8 +689,8 @@ def pad_packed_tensor_dict(
 
         data = sequence_padded_data
         align_to_length = cu_seqlens_padded[-1].item()
-        # ensure pad_to_length is a integer multiple of both align_to_multiple_of and N_TOKENS_PER_PAGE
-        lcm = np.lcm(align_to_multiple_of, N_TOKENS_PER_PAGE).item()
+        # ensure pad_to_length is a integer multiple of both seq_align_to and N_TOKENS_PER_PAGE
+        lcm = np.lcm(seq_align_to, N_TOKENS_PER_PAGE).item()
         pad_to_length = (pad_to_length + lcm - 1) // lcm * lcm
 
         cu_seqlens = data["cu_seqlens"]
@@ -757,12 +750,11 @@ def pad_mb_list(
     pad_value: float = 0.0,
     pad_to_maximum: bool = False,
     batch_align_to: int | None = None,
-    align_sequences: bool = False,
-    align_to_multiple_of: int | None = None,
+    seq_align_to: int | None = None,
 ) -> MicroBatchList:
     """Pad the micro-batch list to the maximum length or to a specific size to:
         1. Reduce memory fragmentation.
-        2. Align sequences to an integer multiple of `align_to_multiple_of`
+        2. Align sequences to an integer multiple of `seq_align_to`
         to be equally sliced into context and sequence parallel ranks.
         3. Align batch total length to an integer multiple of `batch_align_to`.
 
@@ -771,17 +763,11 @@ def pad_mb_list(
         pad_value (float, optional): The value to pad the tensors with. Defaults to 0.0.
         pad_to_maximum (bool, optional): Whether to pad to the maximum length specified in `mb_spec`. Defaults to False.
         batch_align_to (int, optional): The size to align batch total length to. Defaults to None.
-        align_sequences (bool, optional): Whether to align sequences to an integer multiple of `align_to_multiple_of`. Defaults to False.
-        align_to_multiple_of (int, optional): The size to align sequences to. Defaults to None.
+        seq_align_to (int, optional): The size to align each sequence length to. Defaults to None.
 
     Returns:
         MicroBatchList: The padded micro-batch list.
     """
-    if align_sequences:
-        if align_to_multiple_of is None:
-            raise ValueError(
-                "align_to_multiple_of must be specified when align_sequences is True."
-            )
     padded_mb_inputs, pad_lengths = [], []
     pad_to_lengths = []
     old_cu_seqlens_list = []
@@ -808,8 +794,7 @@ def pad_mb_list(
             mb,
             pad_to_length,
             pad_value=pad_value,
-            align_sequences=align_sequences,
-            align_to_multiple_of=align_to_multiple_of,
+            seq_align_to=seq_align_to,
         )
         padded_mb_inputs.append(padded_mb)
         pad_lengths.append(pad_len)
@@ -819,7 +804,7 @@ def pad_mb_list(
     mb_list.padded_mbs = padded_mb_inputs
     mb_list.padding_lengths = pad_lengths
     mb_list.padded_to_lengths = pad_to_lengths
-    if align_sequences:
+    if seq_align_to is not None:
         mb_list.old_cu_seqlens_list = old_cu_seqlens_list
         mb_list.align_to_lengths = align_to_lengths
     return mb_list
