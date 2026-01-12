@@ -4,6 +4,7 @@ These tests verify Archon Engine behavior across multiple GPUs:
 1. Data Parallelism (DP/FSDP) forward
 2. Tensor Parallelism (TP) forward
 3. Context Parallelism (CP/Ulysses) forward
+4. TP + AC + compile compatibility
 
 Run tests:
     pytest areal/tests/experimental/archon/test_distributed.py -v -m multi_gpu
@@ -136,3 +137,44 @@ def test_archon_cp_forward_4gpu():
     if current_platform.device_count() < 4:
         pytest.skip("This test requires 4 GPUs")
     _run_cp_test_with_torchrun(4, 2)
+
+
+# =============================================================================
+# TP + AC + compile Compatibility Tests
+# =============================================================================
+
+
+def _run_tp_ac_compile_test_with_torchrun(n_gpus: int, tp_size: int):
+    """Run TP + AC + compile compatibility test."""
+    port = find_free_ports(1)[0]
+    try:
+        subprocess.run(
+            [
+                "torchrun",
+                f"--nproc_per_node={n_gpus}",
+                "--nnodes=1",
+                "--master-addr=localhost",
+                f"--master_port={port}",
+                "areal/tests/experimental/archon/torchrun/run_tp_ac_compile.py",
+                f"--tp_size={tp_size}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        pytest.fail(f"Test failed with error: {e.stderr}")
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+def test_tp_ac_compile_compatibility_2gpu():
+    """Test TP + AC + compile doesn't trigger dynamo recompilation (2 GPUs).
+
+    This test verifies that the _WaitAsyncWrapper fix allows the combination
+    of Tensor Parallelism, Activation Checkpointing, and torch.compile to work
+    together without dynamo recompilation warnings.
+    """
+    if current_platform.device_count() < 2:
+        pytest.skip("This test requires 2 GPUs")
+    _run_tp_ac_compile_test_with_torchrun(2, 2)

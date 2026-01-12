@@ -6,13 +6,66 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
+from torch.distributed._functional_collectives import AsyncCollectiveTensor
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper as ptd_checkpoint_wrapper,
 )
 
+from areal.experimental.models.archon import varlen_attention as _  # noqa: F401
 from areal.utils import logging
 
 logger = logging.getLogger("ArchonActivationCheckpoint")
+
+
+def _wait_async_tensor(x):
+    """Convert AsyncCollectiveTensor to regular tensor by waiting.
+
+    Args:
+        x: Input value (may be tensor, AsyncCollectiveTensor, or other).
+
+    Returns:
+        If x is AsyncCollectiveTensor, returns x.wait() (the underlying tensor).
+        Otherwise returns x unchanged.
+    """
+    if isinstance(x, AsyncCollectiveTensor):
+        return x.wait()
+    return x
+
+
+class _WaitAsyncWrapper(nn.Module):
+    """Wrapper that waits for AsyncCollectiveTensor before checkpointed forward.
+
+    This resolves the incompatibility between TP (which produces AsyncCollectiveTensor)
+    and torch.compile + checkpoint_wrapper (which triggers dynamo recompilation on
+    AsyncCollectiveTensor inputs).
+
+    The wrapper sits outside checkpoint_wrapper and converts any AsyncCollectiveTensor
+    inputs to regular tensors before they enter the checkpoint region.
+    """
+
+    def __init__(self, module: nn.Module):
+        super().__init__()
+        self._module = module
+
+    def forward(self, *args, **kwargs):
+        args = tuple(_wait_async_tensor(arg) for arg in args)
+        kwargs = {k: _wait_async_tensor(v) for k, v in kwargs.items()}
+        return self._module(*args, **kwargs)
+
+
+def _create_checkpoint_wrapper(
+    module: nn.Module,
+    ac_config: "ActivationCheckpointConfig",
+    **kwargs,
+) -> nn.Module:
+    """Create a checkpoint wrapper with async tensor handling."""
+    checkpointed = ptd_checkpoint_wrapper(
+        module,
+        preserve_rng_state=ac_config.preserve_rng_state,
+        **kwargs,
+    )
+    return _WaitAsyncWrapper(checkpointed)
+
 
 # Op-level selective AC: ops to save instead of recompute
 _OP_SAC_SAVE_LIST = {
@@ -23,6 +76,7 @@ _OP_SAC_SAVE_LIST = {
     torch.ops.aten._scaled_dot_product_attention_math.default,
     torch.ops.aten._scaled_dot_product_fused_attention_overrideable.default,
     torch.ops.aten.max.default,
+    torch.ops.areal._varlen_attn.default,
 }
 
 # Global counter for layer-level selective AC
@@ -54,12 +108,16 @@ class ActivationCheckpointConfig:
             )
 
         if self.mode == "selective":
-            if not (
-                self.selective_ac_option.isdigit() or self.selective_ac_option == "op"
+            if self.selective_ac_option == "op":
+                pass
+            elif (
+                self.selective_ac_option.isdigit() and int(self.selective_ac_option) > 0
             ):
+                pass
+            else:
                 raise ValueError(
                     f"Invalid selective_ac_option: {self.selective_ac_option}. "
-                    "Must be a positive integer string (e.g., '1') or 'op'."
+                    "Must be a positive integer string (e.g., '1', '2') or 'op'."
                 )
 
 
@@ -125,10 +183,7 @@ def _apply_full_ac(
     Returns:
         The wrapped module with full activation checkpointing.
     """
-    return ptd_checkpoint_wrapper(
-        module,
-        preserve_rng_state=ac_config.preserve_rng_state,
-    )
+    return _create_checkpoint_wrapper(module, ac_config)
 
 
 def _apply_layer_sac(
@@ -151,11 +206,8 @@ def _apply_layer_sac(
     _layer_sac_count += 1
 
     ac_freq = int(ac_config.selective_ac_option)
-    if not ac_freq or _layer_sac_count % ac_freq == 0:
-        return ptd_checkpoint_wrapper(
-            module,
-            preserve_rng_state=ac_config.preserve_rng_state,
-        )
+    if _layer_sac_count % ac_freq == 0:
+        return _create_checkpoint_wrapper(module, ac_config)
     return module
 
 
@@ -215,10 +267,8 @@ def _apply_op_sac(
         meta = defaultdict(int)
         return create_selective_checkpoint_contexts(_get_custom_policy(meta))
 
-    return ptd_checkpoint_wrapper(
-        module,
-        context_fn=selective_checkpointing_context_fn,
-        preserve_rng_state=ac_config.preserve_rng_state,
+    return _create_checkpoint_wrapper(
+        module, ac_config, context_fn=selective_checkpointing_context_fn
     )
 
 
