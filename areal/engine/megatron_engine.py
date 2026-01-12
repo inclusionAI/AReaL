@@ -1386,8 +1386,7 @@ class MegatronEngine(TrainEngine):
             mb_list,
             pad_value=0.0,
             pad_to_maximum=self.config.pad_to_maximum,
-            align_sequences=True,
-            align_to_multiple_of=align_to_multiple_of,
+            seq_align_to=align_to_multiple_of,
         )
         self.logger.info(
             f"#microbatch: {len(mb_list.group_lens)}, microbatch #tokens: {mb_list.group_lens}, "
