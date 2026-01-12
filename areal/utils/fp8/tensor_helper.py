@@ -349,14 +349,4 @@ class FP8BlockwiseTensorHelper(torch.Tensor):
                 dim = args[2] if len(args) > 2 else kwargs.get("dim", 0)
                 return tensor.chunk(chunks, dim=dim)
 
-        # Default: operate on underlying data and return regular tensor
-        # This handles operations that don't preserve FP8 semantics
-        def unwrap(x):
-            if isinstance(x, FP8BlockwiseTensorHelper):
-                return x._rowwise_data
-            return x
-
-        new_args = tuple(unwrap(a) for a in args)
-        new_kwargs = {k: unwrap(v) for k, v in kwargs.items()}
-
-        return func(*new_args, **new_kwargs)
+        raise NotImplementedError(f"operation {func} is not supported")
