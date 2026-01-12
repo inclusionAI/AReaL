@@ -157,33 +157,60 @@ class FP8BlockwiseTensorHelper(torch.Tensor):
         return FP8BlockwiseTensorHelper(new_data, new_scale, self._block_size)
 
     def __getitem__(self, indices):
-        """Indexing operation: slice data and scale_inv accordingly."""
+        """Indexing operation: slice data and scale_inv accordingly.
+
+        Only the last two dimensions' indices need to be divided by block_size.
+        """
         new_data = self._rowwise_data[indices]
+        ndim = self._rowwise_data.ndim
 
         if isinstance(indices, slice):
-            # slicing on first dimension
-            start = indices.start if indices.start is not None else 0
-            stop = indices.stop if indices.stop is not None else self.shape[0]
-            scale_start = start // self._block_size
-            scale_stop = self._ceil_div(stop, self._block_size)
-            new_scale = self._rowwise_scale_inv[scale_start:scale_stop]
+            # Single slice: indexing first dimension
+            # Check if dim 0 is one of the last two dimensions
+            if ndim <= 2:
+                start = indices.start if indices.start is not None else 0
+                stop = indices.stop if indices.stop is not None else self.shape[0]
+                scale_start = start // self._block_size
+                scale_stop = self._ceil_div(stop, self._block_size)
+                new_scale = self._rowwise_scale_inv[scale_start:scale_stop]
+            else:
+                # >2D tensor: first dimension doesn't need block_size division
+                new_scale = self._rowwise_scale_inv[indices]
         elif isinstance(indices, int):
-            # slicing on first dimension
-            scale_idx = indices // self._block_size
-            new_scale = self._rowwise_scale_inv[scale_idx : scale_idx + 1]
+            # Single int: indexing first dimension
+            if ndim <= 2:
+                scale_idx = indices // self._block_size
+                new_scale = self._rowwise_scale_inv[scale_idx : scale_idx + 1]
+            else:
+                new_scale = self._rowwise_scale_inv[indices : indices + 1]
         elif isinstance(indices, tuple):
-            # indexing on multiple dimensions
+            # Multiple dimensions indexing
             scale_indices = []
-            for index in indices:
+
+            for dim_idx, index in enumerate(indices):
+                # Check if this dimension is one of the last two (ndim-2 or ndim-1)
+                is_last_two_dims = dim_idx >= ndim - 2
+
                 if isinstance(index, slice):
-                    start = index.start if index.start is not None else 0
-                    stop = index.stop if index.stop is not None else self.shape[0]
-                    scale_start = start // self._block_size
-                    scale_stop = self._ceil_div(stop, self._block_size)
-                    scale_indices.append(slice(scale_start, scale_stop))
+                    if is_last_two_dims:
+                        start = index.start if index.start is not None else 0
+                        # Get the actual stop from the corresponding dimension size
+                        dim_size = (
+                            self.shape[dim_idx] if dim_idx < ndim else self.shape[-1]
+                        )
+                        stop = index.stop if index.stop is not None else dim_size
+                        scale_start = start // self._block_size
+                        scale_stop = self._ceil_div(stop, self._block_size)
+                        scale_indices.append(slice(scale_start, scale_stop))
+                    else:
+                        # Not in last two dims, use index as-is
+                        scale_indices.append(index)
                 elif isinstance(index, int):
-                    scale_idx = index // self._block_size
-                    scale_indices.append(scale_idx)
+                    if is_last_two_dims:
+                        scale_idx = index // self._block_size
+                        scale_indices.append(scale_idx)
+                    else:
+                        scale_indices.append(index)
                 else:
                     raise NotImplementedError(
                         f"indexing with {type(index)} is not supported"
