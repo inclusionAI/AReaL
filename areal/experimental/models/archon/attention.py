@@ -130,7 +130,13 @@ class SDPAWrapper(nn.Module):
 
         with sdpa_kernel(self.sdpa_backends, set_priority=True):
             return F.scaled_dot_product_attention(
-                q, k, v, attn_mask=attn_mask, scale=scale, is_causal=False
+                q,
+                k,
+                v,
+                attn_mask=attn_mask,
+                scale=scale,
+                is_causal=False,
+                enable_gqa=q.size(1) != k.size(1),
             )
 
     def _get_mask(

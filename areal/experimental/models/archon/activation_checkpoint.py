@@ -1,6 +1,5 @@
 # Adapted from torchtitan: torchtitan/distributed/activation_checkpoint.py
 
-import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Literal
@@ -11,7 +10,9 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper as ptd_checkpoint_wrapper,
 )
 
-logger = logging.getLogger(__name__)
+from areal.utils import logging
+
+logger = logging.getLogger("ArchonActivationCheckpoint")
 
 # Op-level selective AC: ops to save instead of recompute
 _OP_SAC_SAVE_LIST = {

@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
+from torch.distributed import ProcessGroup
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
@@ -15,6 +17,10 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
+from areal.experimental.models.archon.utils import (
+    validate_cp_constraints,
+    validate_tp_constraints,
+)
 from areal.utils import logging
 
 if TYPE_CHECKING:
@@ -22,13 +28,14 @@ if TYPE_CHECKING:
         ActivationCheckpointConfig,
     )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ArchonQwen2Parallelize")
 
 
 def parallelize_qwen2(
     model: nn.Module,
     tp_mesh: DeviceMesh | None = None,
     dp_mesh: DeviceMesh | None = None,
+    cp_group: ProcessGroup | None = None,
     param_dtype: torch.dtype = torch.bfloat16,
     reduce_dtype: torch.dtype = torch.float32,
     loss_parallel: bool = True,
@@ -40,19 +47,22 @@ def parallelize_qwen2(
     """Apply parallelization to Qwen2 model.
 
     This is the main entry point for parallelizing a Qwen2 model.
-    It applies TP (if tp_mesh provided), AC (if ac_config provided),
-    torch.compile (if enable_compile), and FSDP (if dp_mesh provided).
+    It applies TP (if tp_mesh provided), CP (if cp_group provided),
+    AC (if ac_config provided), torch.compile (if enable_compile),
+    and FSDP (if dp_mesh provided).
 
     Order of operations:
     1. Apply TP (Tensor Parallelism)
-    2. Apply AC (Activation Checkpointing) - must be after TP
-    3. Apply torch.compile - must be after AC, before FSDP
-    4. Apply FSDP (Fully Sharded Data Parallelism)
+    2. Apply CP (Context Parallelism / Ulysses SP)
+    3. Apply AC (Activation Checkpointing) - must be after TP
+    4. Apply torch.compile - must be after AC, before FSDP
+    5. Apply FSDP (Fully Sharded Data Parallelism)
 
     Args:
         model: The Qwen2 model to parallelize.
         tp_mesh: Device mesh for tensor parallelism. If None, TP is not applied.
         dp_mesh: Device mesh for data parallelism (FSDP). If None, FSDP is not applied.
+        cp_group: Process group for context parallelism (Ulysses SP). If None, CP is not applied.
         param_dtype: Data type for model parameters.
         reduce_dtype: Data type for gradient reduction.
         loss_parallel: Whether to keep output sharded for loss parallelism.
@@ -65,14 +75,17 @@ def parallelize_qwen2(
         The parallelized model.
 
     Note:
-        Context Parallelism (CP) is only supported when cu_seqlens=None (non-packed sequences).
-        The model will automatically use simple causal attention for CP compatibility.
+        Context Parallelism (CP) implements Ulysses Sequence Parallelism using
+        All-to-All communication. It scatters attention heads and gathers sequences.
     """
-    # Step 1: Apply tensor parallelism
     if tp_mesh is not None:
         apply_tp(model, tp_mesh, loss_parallel=loss_parallel)
 
-    # Step 2: Apply activation checkpointing (must be after TP)
+    tp_size = tp_mesh.size() if tp_mesh is not None else 1
+    if cp_group is not None:
+        apply_cp(model, cp_group, tp_size=tp_size)
+
+    # AC must be after TP/CP
     if ac_config is not None and ac_config.mode != "none":
         from areal.experimental.models.archon.activation_checkpoint import (
             apply_activation_checkpointing,
@@ -80,13 +93,12 @@ def parallelize_qwen2(
 
         apply_activation_checkpointing(model, ac_config)
 
-    # Step 3: Apply torch.compile (must be after AC, before FSDP)
+    # torch.compile must be after AC, before FSDP
     if enable_compile:
         from areal.experimental.models.archon.compile import apply_compile
 
         apply_compile(model)
 
-    # Step 4: Apply FSDP
     if dp_mesh is not None:
         apply_fsdp(
             model,
@@ -97,7 +109,6 @@ def parallelize_qwen2(
             reshard_after_forward=reshard_after_forward,
         )
 
-    # Step 5: Enable weight tying after applying parallelisms
     if getattr(model.model_args, "enable_weight_tying", False):
         if model.output is not None and model.tok_embeddings is not None:
             model.output.weight = model.tok_embeddings.weight
@@ -127,7 +138,8 @@ def apply_tp(
         tp_mesh: Device mesh for tensor parallelism.
         loss_parallel: Whether to keep output sharded for loss parallelism.
     """
-    # Build root-level TP plan
+    validate_tp_constraints(model.model_args, tp_mesh.size())
+
     root_plan = {
         "tok_embeddings": RowwiseParallel(
             input_layouts=Replicate(),
@@ -136,10 +148,8 @@ def apply_tp(
         "norm": SequenceParallel(),
     }
 
-    # Add output layer based on model type (actor vs critic)
     if model.output is not None:
-        # Actor: lm_head with loss parallel
-        # use_local_output=True: return local tensor (not DTensor) for vocab_parallel loss
+        # use_local_output=True for vocab_parallel loss
         root_plan["output"] = ColwiseParallel(
             input_layouts=Shard(1),
             output_layouts=Shard(-1) if loss_parallel else Replicate(),
@@ -147,26 +157,16 @@ def apply_tp(
         )
 
     if model.score is not None:
-        # Critic: score layer - input is SP (Shard(1)), output should be Replicate
-        # Using PrepareModuleInput to handle the input redistribution
         root_plan["score"] = PrepareModuleInput(
             input_layouts=(Shard(1),),
             desired_input_layouts=(Replicate(),),
         )
 
-    # Parallelize root module
     parallelize_module(model, tp_mesh, root_plan)
 
-    # Apply TP to each transformer block
     for transformer_block in model.layers.values():
         layer_plan = {
             "attention_norm": SequenceParallel(),
-            # Prepare attention input:
-            # - x: Shard(1) -> Replicate() (unshard sequence dim)
-            # - rope_cache: Replicate() -> Replicate() (must be DTensor for xq*cos)
-            # - positions: Replicate() -> Replicate() (must be DTensor for rope_cache indexing)
-            # - cu_seqlens: None (pass-through, can be None or tensor)
-            # - max_seqlen: None (pass-through, int not tensor)
             "attention": PrepareModuleInput(
                 input_layouts=(Shard(1), Replicate(), Replicate(), None, None),
                 desired_input_layouts=(
@@ -177,21 +177,16 @@ def apply_tp(
                     None,
                 ),
             ),
-            # Q/K/V projections: column-parallel
-            # use_local_output=True: output local tensor for attention compatibility
+            # Qwen2 has no Q/K norms, so all output local tensors directly
             "attention.wq": ColwiseParallel(use_local_output=True),
             "attention.wk": ColwiseParallel(use_local_output=True),
             "attention.wv": ColwiseParallel(use_local_output=True),
-            # No Q/K norms in Qwen2 (unlike Qwen3)
-            # Output projection: row-parallel, output sharded on sequence
             "attention.wo": RowwiseParallel(output_layouts=Shard(1)),
             "ffn_norm": SequenceParallel(),
-            # Prepare FFN input: unshard sequence dim
             "feed_forward": PrepareModuleInput(
                 input_layouts=(Shard(1),),
                 desired_input_layouts=(Replicate(),),
             ),
-            # FFN projections
             "feed_forward.w1": ColwiseParallel(),
             "feed_forward.w2": RowwiseParallel(output_layouts=Shard(1)),
             "feed_forward.w3": ColwiseParallel(),
@@ -236,7 +231,6 @@ def apply_fsdp(
     if cpu_offload:
         fsdp_config["offload_policy"] = CPUOffloadPolicy()
 
-    # Wrap token embeddings
     if model.tok_embeddings is not None:
         fully_shard(
             model.tok_embeddings,
@@ -244,7 +238,6 @@ def apply_fsdp(
             reshard_after_forward=reshard_after_forward,
         )
 
-    # Wrap each transformer block
     for transformer_block in model.layers.values():
         fully_shard(
             transformer_block,
@@ -252,8 +245,7 @@ def apply_fsdp(
             reshard_after_forward=reshard_after_forward,
         )
 
-    # Wrap final layers together (optimization: don't reshard for last layers)
-    # Handle both actor (output) and critic (score)
+    # Don't reshard final layers - would be prefetched anyway
     final_layers = [model.norm] if model.norm is not None else []
     if model.output is not None:
         final_layers.append(model.output)
@@ -264,10 +256,9 @@ def apply_fsdp(
         fully_shard(
             final_layers,
             **fsdp_config,
-            reshard_after_forward=False,  # Don't reshard - would be prefetched anyway
+            reshard_after_forward=False,
         )
 
-    # Wrap root model
     fully_shard(model, **fsdp_config)
 
     logger.info("Applied FSDP to the model")
@@ -275,8 +266,38 @@ def apply_fsdp(
         logger.info("Applied CPU Offloading to the model")
 
 
+def apply_cp(
+    model: nn.Module,
+    cp_group: ProcessGroup,
+    tp_size: int = 1,
+) -> None:
+    """Apply context parallelism (Ulysses SP) to Qwen2 model.
+
+    This configures each Attention layer to use Ulysses sequence parallelism
+    with All-to-All communication for distributed attention computation.
+
+    Args:
+        model: The model to apply CP to.
+        cp_group: Process group for Ulysses All-to-All communication.
+        tp_size: Tensor parallelism size, used to compute local head counts.
+
+    Raises:
+        ValueError: If head counts don't satisfy CP constraints.
+    """
+    cp_size = dist.get_world_size(cp_group)
+    validate_cp_constraints(model.model_args, cp_size, tp_size)
+
+    for transformer_block in model.layers.values():
+        transformer_block.attention.set_cp_group(cp_group)
+
+    logger.info(
+        f"Applied Context Parallelism (Ulysses SP) to the model, cp_size={cp_size}"
+    )
+
+
 __all__ = [
     "parallelize_qwen2",
     "apply_tp",
     "apply_fsdp",
+    "apply_cp",
 ]

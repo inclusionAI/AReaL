@@ -58,6 +58,12 @@ from areal.engine.core import (
     compute_total_loss_weight,
     reorder_and_pad_outputs,
 )
+from areal.models.fsdp.ulysses import (
+    set_ulysses_sequence_parallel_group,
+    ulysses_pad,
+    ulysses_pad_and_slice_inputs,
+    ulysses_prepare_inputs,
+)
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
 from areal.platforms import current_platform
 from areal.utils import (
@@ -98,17 +104,11 @@ from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
-from areal.utils.ulysses import (
-    set_ulysses_sequence_parallel_group,
-    ulysses_pad,
-    ulysses_pad_and_slice_inputs,
-    ulysses_prepare_inputs,
-)
 
 if TYPE_CHECKING:
+    from areal.api.scheduler_api import Scheduler
     from areal.engine.ppo.actor import PPOActorConfig
     from areal.engine.ppo.critic import PPOCriticConfig
-    from areal.scheduler.scheduler import Scheduler
 
 
 @dataclasses.dataclass

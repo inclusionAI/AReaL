@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from areal.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ArchonCompile")
 
 
 class Compilable(Protocol):

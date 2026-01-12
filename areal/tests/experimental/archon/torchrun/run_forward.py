@@ -175,6 +175,7 @@ def test_archon_forward(model_type: str):
     if dist.is_initialized():
         dist.barrier()
         print(f"[Rank {rank}] All ranks completed successfully")
+        dist.destroy_process_group()
 
 
 def main():
