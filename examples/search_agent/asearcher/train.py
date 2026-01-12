@@ -55,8 +55,7 @@ class ASearcherReasoningWorkflow(RolloutWorkflow):
         max_tokens: int = 30000,
         judge_engine: RemoteSGLangEngine | None = None,
     ):
-        self.gconfig = gconfig
-        self.gconfig.n_samples = 1
+        self.gconfig = gconfig.new(n_samples=1),
         self.tokenizer = tokenizer
         self.dump_dir = dump_dir
         self.max_tokens = max_tokens
@@ -138,12 +137,6 @@ class AgentRLConfig(GRPOConfig):
             "help": "minimum number of turns for search agent"
         }
     )
-    n_trajs: int = field(
-        default=1,
-        metadata={
-            "help": "We could collect multiple trajectories for a single query. By default n_trajs=1."
-        }
-    )
     search_client_type: str = field(
         default="async-online-search-access",
         metadata={
@@ -185,15 +178,30 @@ def main(args):
     config, _ = load_expr_config(args, AgentRLConfig)
     config: AgentRLConfig
 
+    tokenizer = load_hf_tokenizer(config.tokenizer_path)
     train_dataset = get_search_dataset(config.train_dataset.path)
+
+    judge_engine = None
 
     with PPOTrainer(
         config=config,
         train_dataset=train_dataset,
     ) as trainer:
+        workflow_kwargs = dict(
+            gconfig=config.gconfig,
+            tokenizer=tokenizer,
+            dataset_path=config.train_dataset.path,
+            dump_dir=None,
+            max_turns=config.max_turns,
+            force_turns=config.force_turns,
+            search_client_type=config.search_client_type,
+            topk=config.topk,
+            max_tokens=min(config.actor.mb_spec.max_tokens_per_mb, 32768),
+            judge_engine=judge_engine,
+        )
         trainer.train(
             workflow="examples.search_agent.asearcher.train.ASearcherReasoningWorkflow",
-            workflow_kwargs=dict(),
+            workflow_kwargs=workflow_kwargs,
         )
 
 if __name__ == "__main__":
