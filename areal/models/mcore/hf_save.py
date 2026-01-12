@@ -302,7 +302,6 @@ def save_weights_to_hf_with_mbridge_fast(
         else:
             infer_params = param
             if fp8_direct_convert:
-                # Direct FP8 conversion: convert TE FP8 to FP8BlockwiseTensorHelper
                 infer_params = FP8BlockwiseTensorHelper.from_te(
                     infer_params, weight_block_size
                 )
@@ -311,7 +310,6 @@ def save_weights_to_hf_with_mbridge_fast(
         converted_names, converted_params = bridge._weight_to_hf_format(
             s.global_name, infer_params
         )
-        # Apply quantization if quantization_config is present
         if quantization_config is not None:
             if fp8_direct_convert:
                 # Direct FP8 conversion: convert FP8BlockwiseTensorHelper to PyTorch FP8
@@ -419,30 +417,23 @@ def save_weights_to_hf_with_mbridge_fast(
             else:
                 params = [param]
 
-            # Convert TE FP8 -> torch bf16 -> torch FP8 and finally save the native torch FP8 model
-            # Or if fp8_direct_convert=True, convert TE FP8 -> FP8BlockwiseTensorHelper -> torch FP8
             if fp8_direct_convert:
-                # Direct FP8 conversion: convert TE FP8 to FP8BlockwiseTensorHelper
                 params = [
                     FP8BlockwiseTensorHelper.from_te(p, weight_block_size)
                     for p in params
                 ]
             else:
-                # Dequantize TE FP8 tensors to bf16
                 params = [p.dequantize() if is_float8tensor(p) else p for p in params]
             merge_params = bridge._weight_merge_across_tp(s.global_name, params, param)
             converted_names, converted_params = bridge._weight_to_hf_format(
                 s.global_name, merge_params
             )
-            # Apply quantization if quantization_config is present
             if quantization_config is not None:
                 if fp8_direct_convert:
-                    # Direct FP8 conversion: convert FP8BlockwiseTensorHelper to PyTorch FP8
                     converted_named_params = convert_fp8_helper_to_pytorch_fp8(
                         list(zip(converted_names, converted_params))
                     )
                 else:
-                    # Quantize from bf16 to PyTorch FP8
                     converted_named_params = list(
                         zip(converted_names, converted_params)
                     )
