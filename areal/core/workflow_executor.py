@@ -1022,6 +1022,11 @@ class WorkflowExecutor:
         # Initialize the dispatcher's async task runner
         self._dispatcher.initialize(logger=logger)
 
+        # Configure session cleanup for the shared HTTP clients
+        workflow_context.configure_http_clients(
+            shutdown_hook_registrar=self._dispatcher.runner.register_shutdown_hook,
+        )
+
     def destroy(self):
         """Shutdown the workflow executor and clean up resources.
 
@@ -1031,6 +1036,9 @@ class WorkflowExecutor:
         # Stop background threads and shutdown the async task runner
         if self._dispatcher is not None:
             self._dispatcher.destroy()
+
+        # Reset HTTP client state for potential reinitialization
+        workflow_context.reset_http_clients()
 
         # Flush performance tracer
         tracer = perf_tracer.get_session_tracer()
