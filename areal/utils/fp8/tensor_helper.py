@@ -187,7 +187,7 @@ class FP8BlockwiseTensorHelper(torch.Tensor):
                     raise NotImplementedError(
                         f"indexing with {type(index)} is not supported"
                     )
-            new_scale = self._rowwise_scale_inv[scale_indices]
+            new_scale = self._rowwise_scale_inv[tuple(scale_indices)]
         else:
             raise NotImplementedError(f"indexing with {type(indices)} is not supported")
 
