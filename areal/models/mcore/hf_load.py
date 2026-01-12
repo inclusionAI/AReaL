@@ -44,7 +44,6 @@ def _weight_to_mcore_tp(
     tp_rank: int,
     tp_size: int,
     dtype: torch.dtype | None = None,
-    weight_block_size: int | None = None,
 ) -> torch.Tensor | FP8BlockwiseTensorHelper | None:
     if (
         "self_attention.linear_qkv." in mcore_weights_name
@@ -154,7 +153,7 @@ def _load_weight_with_bridge_worker(
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
         # Get weight_block_size from quantization_config
-        weight_block_size = None
+        weight_block_size = 128
         if quantization_config is not None:
             weight_block_size = quantization_config.get("weight_block_size", None)
             assert (
@@ -187,11 +186,8 @@ def _load_weight_with_bridge_worker(
                     # Convert to FP8BlockwiseTensorHelper to simplify handling
                     weight = hf_slice[:]
                     scale_inv = scale_inv_slice[:]
-                    block_size = (
-                        weight_block_size if weight_block_size is not None else 128
-                    )
                     weight_helper = FP8BlockwiseTensorHelper(
-                        weight, scale_inv, block_size=block_size
+                        weight, scale_inv, block_size=weight_block_size
                     )
                     hf_weights_safe_slice.append(weight_helper)
                 else:
@@ -228,7 +224,6 @@ def _load_weight_with_bridge_worker(
             dtype=bridge.dtype
             if not (is_te_fp8_param and hf_has_fp8 and hf_all_fp8)
             else None,
-            weight_block_size=weight_block_size,
         )
 
         # Load the parameter
