@@ -26,7 +26,7 @@ from areal.api.cli_args import (
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.scheduler_api import Scheduler
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow, WorkflowLike
 from areal.controller import RolloutController
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
@@ -110,6 +110,9 @@ class PPOTrainer:
         # Initialize inference
         self.rollout = self._init_rollout(config.rollout, is_eval=False)
         self.eval_rollout = self._init_rollout(config.rollout, is_eval=True)
+
+        # Proxy worker initialization (lazy, for AgentWorkflow support)
+        self._proxy_started = False
 
         ft_spec = FinetuneSpec(
             total_train_epochs=config.total_train_epochs,
@@ -197,8 +200,8 @@ class PPOTrainer:
 
     def train(
         self,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None = None,
+        workflow: WorkflowLike,
+        eval_workflow: WorkflowLike | None = None,
         workflow_kwargs: dict[str, Any] | None = None,
         eval_workflow_kwargs: dict[str, Any] | None = None,
         dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
@@ -217,6 +220,10 @@ class PPOTrainer:
             raise ValueError(f"Total epochs must be positive: {total_epochs}")
         steps_per_epoch = len(self.train_dataloader)
         max_steps = total_epochs * steps_per_epoch
+
+        # Initialize proxy workers if using AgentWorkflow
+        if self._is_agent_workflow(workflow):
+            self._ensure_proxy_started()
 
         for global_step in range(start_step, max_steps):
             if (
@@ -688,6 +695,45 @@ class PPOTrainer:
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
+
+    def _is_agent_workflow(self, workflow: WorkflowLike) -> bool:
+        """Check if workflow is or resolves to an AgentWorkflow."""
+        if isinstance(workflow, AgentWorkflow):
+            return True
+        if isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
+            return True
+        if isinstance(workflow, str):
+            # Try to resolve the string to check its type
+            from areal.utils.dynamic_import import import_from_string
+
+            cls = import_from_string(workflow)
+            return isinstance(cls, type) and issubclass(cls, AgentWorkflow)
+        return False
+
+    def _ensure_proxy_started(self) -> None:
+        """Lazily initialize proxy workers when AgentWorkflow is used.
+
+        This method is called before training when an AgentWorkflow is detected.
+        It creates proxy workers colocated with rollout workers to handle
+        OpenAI-compatible API requests from agent subprocesses.
+        """
+        if self._proxy_started:
+            return
+
+        # Only initialize proxy in single-controller mode with RolloutController
+        if not is_single_controller():
+            raise NotImplementedError("Proxy workers not supported in SPMD mode")
+
+        if self.config.scheduler.type == "ray":
+            raise NotImplementedError("Proxy workers not supported with RayScheduler")
+
+        assert isinstance(self.rollout, RolloutController)
+
+        logger.info("Initializing proxy workers for AgentWorkflow support")
+        self.rollout.start_proxy()
+        if self.eval_rollout is not None:
+            self.eval_rollout.start_proxy()
+        self._proxy_started = True
 
     def __enter__(self):
         return self
