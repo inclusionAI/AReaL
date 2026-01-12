@@ -227,180 +227,182 @@ class PPOTrainer:
             epoch = global_step // steps_per_epoch
             step = global_step % steps_per_epoch
 
-            with (
-                stats_tracker.record_timing("rollout"),
-                perf_tracer.trace_scope(
-                    "train.rollout",
-                    category=Category.COMPUTE,
-                    args={
-                        "global_step": global_step,
-                        "epoch_step": step,
-                    },
-                ),
-            ):
-                rollout_batch = self.actor.prepare_batch(
-                    self.train_dataloader,
-                    workflow=workflow,
-                    workflow_kwargs=workflow_kwargs,
-                    should_accept_fn=dynamic_filter_fn,
-                    group_size=config.gconfig.n_samples,
-                    dynamic_bs=self.config.dynamic_bs,
-                )
-
-            if self.critic is not None:
+            from areal.utils.memory_trace import memory_profile
+            with memory_profile(f"tree_training_step_{global_step}.pickle", enable_profile=global_step <= 2):
                 with (
-                    stats_tracker.record_timing("critic_values"),
+                    stats_tracker.record_timing("rollout"),
                     perf_tracer.trace_scope(
-                        "train.compute_values",
+                        "train.rollout",
                         category=Category.COMPUTE,
-                        args={"global_step": global_step},
+                        args={
+                            "global_step": global_step,
+                            "epoch_step": step,
+                        },
                     ),
                 ):
-                    rollout_batch["values"] = self.critic.compute_values(rollout_batch)
-                    self.critic.get_device_stats().log("critic values")
+                    rollout_batch = self.actor.prepare_batch(
+                        self.train_dataloader,
+                        workflow=workflow,
+                        workflow_kwargs=workflow_kwargs,
+                        should_accept_fn=dynamic_filter_fn,
+                        group_size=config.gconfig.n_samples,
+                        dynamic_bs=self.config.dynamic_bs,
+                    )
 
-            if config.actor.should_compute_prox_logp():
-                with (
-                    stats_tracker.record_timing("recompute_logp"),
-                    perf_tracer.trace_scope(
-                        "train.recompute_logp",
-                        category=Category.COMPUTE,
-                        args={"global_step": global_step},
-                    ),
-                ):
-                    rollout_batch["prox_logp"] = self.actor.compute_logp(rollout_batch)
-                    self.actor.get_device_stats().log("recompute logp")
-
-            if self.ref is not None:
-                with (
-                    stats_tracker.record_timing("ref_logp"),
-                    perf_tracer.trace_scope(
-                        "train.ref_logp",
-                        category=Category.COMPUTE,
-                        args={"global_step": global_step},
-                    ),
-                ):
-                    rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
-                    self.ref.get_device_stats().log("ref logp")
-
-            with (
-                stats_tracker.record_timing("compute_advantage"),
-                perf_tracer.trace_scope(
-                    "train.compute_advantage",
-                    category=Category.COMPUTE,
-                    args={"global_step": global_step},
-                ),
-            ):
-                adv_batch = self.actor.compute_advantages(rollout_batch)
-                self.actor.get_device_stats().log("compute advantages")
-
-            with (
-                stats_tracker.record_timing("train_step"),
-                perf_tracer.trace_scope(
-                    "train.ppo_update",
-                    category=Category.COMPUTE,
-                    args={"global_step": global_step},
-                ),
-            ):
-                self.actor.ppo_update(adv_batch)
-                self.actor.step_lr_scheduler()
-                self.actor.get_device_stats().log("ppo update")
-
-            if self.critic is not None:
-                with (
-                    stats_tracker.record_timing("critic_train_step"),
-                    perf_tracer.trace_scope(
-                        "train.critic_ppo_update",
-                        category=Category.COMPUTE,
-                        args={"global_step": global_step},
-                    ),
-                ):
-                    self.critic.ppo_update(adv_batch)
-                    self.critic.step_lr_scheduler()
-                    self.critic.get_device_stats().log("ppo critic update")
-
-            # pause inference for updating weights, save, and evaluation
-            self.rollout.pause()
-
-            with (
-                stats_tracker.record_timing("update_weights"),
-                perf_tracer.trace_scope(
-                    "train.update_weights",
-                    category=Category.COMM,
-                    args={"global_step": global_step},
-                ),
-            ):
-                self.actor.update_weights(self.weight_update_meta)
-
-                self.actor.set_version(global_step + 1)
                 if self.critic is not None:
-                    self.critic.set_version(global_step + 1)
-                self.rollout.set_version(global_step + 1)
-                self.eval_rollout.set_version(global_step + 1)
+                    with (
+                        stats_tracker.record_timing("critic_values"),
+                        perf_tracer.trace_scope(
+                            "train.compute_values",
+                            category=Category.COMPUTE,
+                            args={"global_step": global_step},
+                        ),
+                    ):
+                        rollout_batch["values"] = self.critic.compute_values(rollout_batch)
+                        self.critic.get_device_stats().log("critic values")
 
-            with (
-                stats_tracker.record_timing("save"),
-                perf_tracer.trace_scope(
-                    "train.save",
-                    category=Category.IO,
-                    args={"global_step": global_step},
-                ),
-            ):
-                self._save_hf(epoch=epoch, epoch_step=step, global_step=global_step)
+                if config.actor.should_compute_prox_logp():
+                    with (
+                        stats_tracker.record_timing("recompute_logp"),
+                        perf_tracer.trace_scope(
+                            "train.recompute_logp",
+                            category=Category.COMPUTE,
+                            args={"global_step": global_step},
+                        ),
+                    ):
+                        rollout_batch["prox_logp"] = self.actor.compute_logp(rollout_batch)
+                        self.actor.get_device_stats().log("recompute logp")
 
-            with (
-                stats_tracker.record_timing("checkpoint_for_recover"),
-                perf_tracer.trace_scope(
-                    "train.checkpoint",
-                    category=Category.IO,
-                    args={"global_step": global_step},
-                ),
-            ):
-                self._save_recover_checkpoint(
-                    epoch=epoch, epoch_step=step, global_step=global_step
-                )
+                if self.ref is not None:
+                    with (
+                        stats_tracker.record_timing("ref_logp"),
+                        perf_tracer.trace_scope(
+                            "train.ref_logp",
+                            category=Category.COMPUTE,
+                            args={"global_step": global_step},
+                        ),
+                    ):
+                        rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
+                        self.ref.get_device_stats().log("ref logp")
 
-            with (
-                stats_tracker.record_timing("eval"),
-                perf_tracer.trace_scope(
-                    "train.eval",
-                    category=Category.COMPUTE,
-                    args={"global_step": global_step},
-                ),
-            ):
-                self._evaluate(
-                    eval_workflow=eval_workflow,
-                    eval_workflow_kwargs=eval_workflow_kwargs,
-                    epoch=epoch,
-                    epoch_step=step,
-                    global_step=global_step,
-                )
+                with (
+                    stats_tracker.record_timing("compute_advantage"),
+                    perf_tracer.trace_scope(
+                        "train.compute_advantage",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    adv_batch = self.actor.compute_advantages(rollout_batch)
+                    self.actor.get_device_stats().log("compute advantages")
 
-            with (
-                stats_tracker.record_timing("clear_batches"),
-                perf_tracer.trace_scope(
-                    "train.clear_batches",
+                with (
+                    stats_tracker.record_timing("train_step"),
+                    perf_tracer.trace_scope(
+                        "train.ppo_update",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    self.actor.ppo_update(adv_batch)
+                    self.actor.step_lr_scheduler()
+                    self.actor.get_device_stats().log("ppo update")
+
+                if self.critic is not None:
+                    with (
+                        stats_tracker.record_timing("critic_train_step"),
+                        perf_tracer.trace_scope(
+                            "train.critic_ppo_update",
+                            category=Category.COMPUTE,
+                            args={"global_step": global_step},
+                        ),
+                    ):
+                        self.critic.ppo_update(adv_batch)
+                        self.critic.step_lr_scheduler()
+                        self.critic.get_device_stats().log("ppo critic update")
+
+                # pause inference for updating weights, save, and evaluation
+                self.rollout.pause()
+
+                with (
+                    stats_tracker.record_timing("update_weights"),
+                    perf_tracer.trace_scope(
+                        "train.update_weights",
+                        category=Category.COMM,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    self.actor.update_weights(self.weight_update_meta)
+
+                    self.actor.set_version(global_step + 1)
+                    if self.critic is not None:
+                        self.critic.set_version(global_step + 1)
+                    self.rollout.set_version(global_step + 1)
+                    self.eval_rollout.set_version(global_step + 1)
+
+                with (
+                    stats_tracker.record_timing("save"),
+                    perf_tracer.trace_scope(
+                        "train.save",
+                        category=Category.IO,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    self._save_hf(epoch=epoch, epoch_step=step, global_step=global_step)
+
+                with (
+                    stats_tracker.record_timing("checkpoint_for_recover"),
+                    perf_tracer.trace_scope(
+                        "train.checkpoint",
+                        category=Category.IO,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    self._save_recover_checkpoint(
+                        epoch=epoch, epoch_step=step, global_step=global_step
+                    )
+
+                with (
+                    stats_tracker.record_timing("eval"),
+                    perf_tracer.trace_scope(
+                        "train.eval",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    self._evaluate(
+                        eval_workflow=eval_workflow,
+                        eval_workflow_kwargs=eval_workflow_kwargs,
+                        epoch=epoch,
+                        epoch_step=step,
+                        global_step=global_step,
+                    )
+
+                with (
+                    stats_tracker.record_timing("clear_batches"),
+                    perf_tracer.trace_scope(
+                        "train.clear_batches",
+                        category=Category.INSTR,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    # Since all RTensor objects are affiliated IPs,
+                    # calling `clear_batches` once should be sufficient.
+                    self.actor.clear_batches(rollout_batch, adv_batch)
+
+                with perf_tracer.trace_scope(
+                    "train.log_stats",
                     category=Category.INSTR,
                     args={"global_step": global_step},
-                ),
-            ):
-                # Since all RTensor objects are affiliated IPs,
-                # calling `clear_batches` once should be sufficient.
-                self.actor.clear_batches(rollout_batch, adv_batch)
+                ):
+                    self._export_and_commit_stats(
+                        epoch=epoch, epoch_step=step, global_step=global_step
+                    )
 
-            with perf_tracer.trace_scope(
-                "train.log_stats",
-                category=Category.INSTR,
-                args={"global_step": global_step},
-            ):
-                self._export_and_commit_stats(
-                    epoch=epoch, epoch_step=step, global_step=global_step
-                )
+                # Resume rollout
+                self.rollout.resume()
 
-            # Resume rollout
-            self.rollout.resume()
-
-            self._save_perf_tracer(step=global_step)
+                self._save_perf_tracer(step=global_step)
 
     def close(self):
         self.stats_logger.close()
