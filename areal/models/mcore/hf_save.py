@@ -289,6 +289,8 @@ def save_weights_to_hf_with_mbridge_fast(
                 # Direct FP8 conversion: convert TE FP8 to FP8BlockwiseTensorHelper
                 infer_params = [
                     FP8BlockwiseTensorHelper.from_te(p, weight_block_size)
+                    if is_float8tensor(p)
+                    else p
                     for p in infer_params
                 ]
             else:
@@ -301,12 +303,13 @@ def save_weights_to_hf_with_mbridge_fast(
             )
         else:
             infer_params = param
-            if fp8_direct_convert:
-                infer_params = FP8BlockwiseTensorHelper.from_te(
-                    infer_params, weight_block_size
-                )
-            elif is_float8tensor(infer_params):
-                infer_params = infer_params.dequantize()
+            if is_float8tensor(infer_params):
+                if fp8_direct_convert:
+                    infer_params = FP8BlockwiseTensorHelper.from_te(
+                        infer_params, weight_block_size
+                    )
+                else:
+                    infer_params = infer_params.dequantize()
         converted_names, converted_params = bridge._weight_to_hf_format(
             s.global_name, infer_params
         )
@@ -420,6 +423,8 @@ def save_weights_to_hf_with_mbridge_fast(
             if fp8_direct_convert:
                 params = [
                     FP8BlockwiseTensorHelper.from_te(p, weight_block_size)
+                    if is_float8tensor(p)
+                    else p
                     for p in params
                 ]
             else:
