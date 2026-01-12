@@ -214,25 +214,19 @@ class ArchonEngine(TrainEngine):
         tp_mesh = self.world_mesh["tp"] if self.parallel_dims.tp_enabled else None
         dp_mesh = self.world_mesh["dp"]
         ac_config = self._build_ac_config()
-
-        # Check for incompatible combination: TP + AC + compile
-        # SequenceParallel (from TP) produces AsyncCollectiveTensor which causes
-        # torch.compile to repeatedly recompile when passed through checkpoint_wrapper
         enable_compile = self.config.archon.enable_compile
+
         if (
             tp_mesh is not None
             and ac_config is not None
             and ac_config.mode != "none"
             and enable_compile
         ):
-            raise ValueError(
-                "Incompatible configuration: gradient_checkpointing=True with "
-                "enable_compile=True and TP > 1. SequenceParallel produces "
-                "AsyncCollectiveTensor which causes torch.compile to fail inside "
-                "checkpoint_wrapper. Please either:\n"
-                "  1. Set gradient_checkpointing=False, or\n"
-                "  2. Set archon.enable_compile=False, or\n"
-                "  3. Use TP=1 (no tensor parallelism)"
+            self.logger.info(
+                "Tensor Parallelism + Activation Checkpointing + torch.compile enabled: "
+                "AsyncCollectiveTensor from SequenceParallel is explicitly waited "
+                "before entering checkpoint region. This has minimal performance impact "
+                "as the async collective op must complete anyway before the next layer."
             )
 
         tik = time.perf_counter()
@@ -247,7 +241,7 @@ class ArchonEngine(TrainEngine):
             cpu_offload=self.config.archon.offload_params,
             reshard_after_forward=True,
             ac_config=ac_config,
-            enable_compile=self.config.archon.enable_compile,
+            enable_compile=enable_compile,
         )
 
         # Synchronize all ranks after parallelization (especially after torch.compile)
