@@ -26,6 +26,7 @@ from areal.utils import logging, stats_tracker
 from areal.experimental.openai import ArealOpenAI
 from areal.experimental.trainer import PPOTrainer
 from areal.core import workflow_context
+from areal.api.alloc_mode import AllocationMode
 
 from reasoning_agent import run_agent
 from utils.search_tool import SearchToolBox
@@ -181,7 +182,11 @@ def main(args):
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
     train_dataset = get_search_dataset(config.train_dataset.path)
 
-    judge_engine = None
+    # Initialize judge engine
+    # Parse allocation mode.
+    allocation_mode = AllocationMode.from_str(config.allocation_mode)
+    judge_engine = RemoteSGLangEngine(config.judge_engine)
+    judge_engine.initialize(train_data_parallel_size=allocation_mode.train.dp_size)
 
     with PPOTrainer(
         config=config,
