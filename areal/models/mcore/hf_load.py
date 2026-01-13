@@ -133,7 +133,7 @@ def _weight_to_mcore_tp(
     tp_rank: int,
     tp_size: int,
     dtype: torch.dtype | None = None,
-) -> torch.Tensor | FP8BlockwiseTensorHelper | None:
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
     """Convert HF weights to Megatron-Core format with tensor/expert parallelism.
 
     Dispatches to specialized handlers based on weight type:
