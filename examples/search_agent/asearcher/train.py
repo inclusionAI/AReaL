@@ -75,8 +75,6 @@ class ASearcherReasoningWorkflow(RolloutWorkflow):
     
     async def arun_episode(self, engine, data):
         # Get the unique identifier for this prompt
-        print(f"[debug] data.keys(): {data.keys()}", flush=True)
-
         qid = None
         for key in ["query_id", "id", "qid"]:
             qid = data.get(key, None)
