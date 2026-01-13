@@ -328,9 +328,10 @@ class AsyncTaskRunner(Generic[T]):
 
         Examples
         --------
-        >>> async def setup_session(runner: AsyncTaskRunner):
-        ...     configure_http_clients(runner.register_shutdown_hook)
-        >>> runner.register_initialization_hook(setup_session)
+        >>> async def setup_resources(runner: AsyncTaskRunner):
+        ...     # Initialize any resources needed in the background thread
+        ...     pass
+        >>> runner.register_initialization_hook(setup_resources)
         """
         with self._initialization_hooks_lock:
             if self.thread is not None:

@@ -3,20 +3,15 @@ from __future__ import annotations
 import asyncio
 import threading
 import weakref
-from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING
 
 import aiohttp
 import httpx
 
 from areal.utils import logging
 from areal.utils.http import DEFAULT_REQUEST_TIMEOUT, get_default_connector
-
-if TYPE_CHECKING:
-    from areal.core.async_task_runner import AsyncTaskRunner
 
 logger = logging.getLogger("WorkflowContext")
 
@@ -111,7 +106,6 @@ async def _run_http_cleanup(manager: HttpClientManager) -> None:
             await manager._httpx_client.aclose()
             manager._httpx_client = None
         manager._event_loop = None
-        manager._cleanup_registered = False
     except Exception as e:
         # Log but don't fail - cleanup is best-effort during shutdown
         logger.warning(f"Error during HTTP client cleanup: {e}")
@@ -172,35 +166,6 @@ class HttpClientManager:
         self._aiohttp_session: aiohttp.ClientSession | None = None
         self._httpx_client: httpx.AsyncClient | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
-        self._shutdown_registrar: (
-            Callable[[Callable[[AsyncTaskRunner], Awaitable[None]]], None] | None
-        ) = None
-        self._cleanup_registered: bool = False
-
-    def configure(
-        self,
-        shutdown_hook_registrar: Callable[
-            [Callable[[AsyncTaskRunner], Awaitable[None]]], None
-        ],
-    ) -> None:
-        """Configure the shutdown hook registrar for HTTP client cleanup.
-
-        Called by WorkflowExecutor.initialize() to set up the cleanup mechanism.
-
-        Parameters
-        ----------
-        shutdown_hook_registrar : Callable
-            A function to register the HTTP client cleanup hook (typically
-            AsyncTaskRunner.register_shutdown_hook).
-        """
-        self._shutdown_registrar = shutdown_hook_registrar
-        self._cleanup_registered = False
-
-    def _ensure_cleanup_registered(self) -> None:
-        """Register the cleanup hook if not already registered."""
-        if not self._cleanup_registered and self._shutdown_registrar is not None:
-            self._shutdown_registrar(self._async_cleanup)
-            self._cleanup_registered = True
 
     async def _check_event_loop_change(self) -> None:
         """Check if event loop changed and close stale clients if so."""
@@ -223,7 +188,6 @@ class HttpClientManager:
             self._aiohttp_session = None
             self._httpx_client = None
             self._event_loop = None
-            self._cleanup_registered = False
 
             # Close old clients asynchronously (in current loop - they may warn but won't fail)
             if old_aiohttp is not None:
@@ -261,12 +225,6 @@ class HttpClientManager:
             # Register cleanup with the event loop
             _register_loop_cleanup(self._event_loop, self)
 
-            if self._shutdown_registrar is None:
-                logger.warning(
-                    "HTTP session created before configure() was called. "
-                    "Session cleanup may not be automatic."
-                )
-            self._ensure_cleanup_registered()
         return self._aiohttp_session
 
     async def get_httpx_client(self) -> httpx.AsyncClient:
@@ -296,32 +254,7 @@ class HttpClientManager:
             # Register cleanup with the event loop
             _register_loop_cleanup(self._event_loop, self)
 
-            if self._shutdown_registrar is None:
-                logger.warning(
-                    "HTTP client created before configure() was called. "
-                    "Client cleanup may not be automatic."
-                )
-            self._ensure_cleanup_registered()
         return self._httpx_client
-
-    async def _async_cleanup(self, runner: AsyncTaskRunner) -> None:
-        """Async cleanup hook called during shutdown to close all HTTP clients.
-
-        Parameters
-        ----------
-        runner : AsyncTaskRunner
-            The runner instance that invoked this hook (unused but required by signature).
-        """
-        thread_id = threading.get_ident()
-        if self._aiohttp_session is not None:
-            await self._aiohttp_session.close()
-            self._aiohttp_session = None
-        if self._httpx_client is not None:
-            await self._httpx_client.aclose()
-            self._httpx_client = None
-        self._cleanup_registered = False
-        # Remove from global dict so next initialization creates fresh instance
-        _remove_manager(thread_id)
 
 
 # Global dict mapping thread ID -> HttpClientManager
@@ -343,36 +276,6 @@ def _get_manager() -> HttpClientManager:
         if thread_id not in _managers:
             _managers[thread_id] = HttpClientManager()
         return _managers[thread_id]
-
-
-def _remove_manager(thread_id: int) -> None:
-    """Remove the HttpClientManager for a specific thread from the global dict.
-
-    Parameters
-    ----------
-    thread_id : int
-        The thread ID whose manager should be removed.
-    """
-    with _managers_lock:
-        _managers.pop(thread_id, None)
-
-
-def configure_http_clients(
-    shutdown_hook_registrar: Callable[
-        [Callable[[AsyncTaskRunner], Awaitable[None]]], None
-    ],
-) -> None:
-    """Configure the shutdown hook registrar for HTTP client cleanup.
-
-    Called by WorkflowExecutor.initialize() to set up the cleanup mechanism.
-
-    Parameters
-    ----------
-    shutdown_hook_registrar : Callable
-        A function to register the HTTP client cleanup hook (typically
-        AsyncTaskRunner.register_shutdown_hook).
-    """
-    _get_manager().configure(shutdown_hook_registrar)
 
 
 async def get_aiohttp_session() -> aiohttp.ClientSession:

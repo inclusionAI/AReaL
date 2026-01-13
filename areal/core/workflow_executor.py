@@ -1019,26 +1019,8 @@ class WorkflowExecutor:
             enable_tracing=self.config.enable_rollout_tracing,
         )
 
-        # Register HTTP client lifecycle hooks on the runner
-        self._dispatcher.runner.register_initialization_hook(
-            self._configure_http_clients_hook
-        )
         # Initialize the dispatcher's async task runner
         self._dispatcher.initialize(logger=logger)
-
-    async def _configure_http_clients_hook(self, runner: AsyncTaskRunner) -> None:
-        """Initialization hook to configure HTTP clients in the background thread.
-
-        This hook is executed in the AsyncTaskRunner's background thread event loop
-        at startup. It configures the thread-local HTTP client manager and registers
-        the cleanup hooks for shutdown.
-
-        Parameters
-        ----------
-        runner : AsyncTaskRunner
-            The runner instance that invoked this hook.
-        """
-        workflow_context.configure_http_clients(runner.register_shutdown_hook)
 
     def destroy(self):
         """Shutdown the workflow executor and clean up resources.
