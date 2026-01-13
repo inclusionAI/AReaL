@@ -26,7 +26,7 @@ from areal.api.cli_args import (
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import FinetuneSpec, StepInfo, WeightUpdateMeta
 from areal.api.scheduler_api import Scheduler
-from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
+from areal.api.workflow_api import WorkflowLike
 from areal.controller import RolloutController
 from areal.engine.sglang_remote import RemoteSGLangEngine
 from areal.engine.vllm_remote import RemotevLLMEngine
@@ -636,7 +636,7 @@ class PPOTrainer:
 
     def _evaluate_fn(
         self,
-        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        eval_workflow: WorkflowLike,
         eval_workflow_kwargs,
     ):
         if self.actor.is_data_parallel_head():
@@ -658,7 +658,7 @@ class PPOTrainer:
 
     def _evaluate(
         self,
-        eval_workflow: RolloutWorkflow | type[RolloutWorkflow] | str | None,
+        eval_workflow: WorkflowLike | None,
         eval_workflow_kwargs,
         epoch: int,
         epoch_step: int,

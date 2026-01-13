@@ -51,7 +51,7 @@ from areal.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import WorkflowLike
 from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.core import (
     aggregate_eval_losses,
@@ -357,7 +357,7 @@ class FSDPEngine(TrainEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> dict[str, Any]:
@@ -372,7 +372,7 @@ class FSDPEngine(TrainEngine):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
