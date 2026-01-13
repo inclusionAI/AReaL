@@ -163,10 +163,10 @@ class Tau2Workflow(RolloutWorkflow):
         try:
             rewards, completions = await asyncio.wait_for(
                 self.proxy_server.get_results(session_ids, style=self.export_style),
-                timeout=60.0,
+                timeout=1800.0,
             )
         except asyncio.TimeoutError:
-            logger.warning(f"[Rank {dist.get_rank()}] {task_id} get_results timed out after 60s")
+            logger.warning(f"[Rank {dist.get_rank()}] {task_id} get_results timed out after 30min")
             return None
 
         logger.info(f"[debug] [Rank {dist.get_rank()}] {task_id} finished self.proxy_server.get_results")
