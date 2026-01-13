@@ -2,7 +2,6 @@ import re
 import time
 from typing import Dict, List, Any, Optional
 
-from areal.utils import perf_tracer
 
 class ASearcherReasoningPrompts:
     THINK_AND_ACT_PROMPT_v1 =  \
@@ -600,16 +599,6 @@ async def run_agent(
               max_tokens: int = 30000,
               save_path: str | None = None,
               rank: int = -1):
-    task_id = perf_tracer.get_task_id()
-    if task_id is not None:
-        session_id = perf_tracer.register_session(task_id)
-        perf_tracer.set_session_id(session_id)
-    else:
-        session_id = None
-
-    # Create client with AReaL engine and tokenizer
-    # client = ArealOpenAI(engine=rollout_engine, tokenizer=tokenizer)
-
     # Create ASearcher Reasoning Agent
     agent = AReaLSearchReasoningAgentV1(max_turns=max_turns,
                                         force_turns=force_turns,
@@ -652,28 +641,24 @@ async def run_agent(
                 break
 
             # Use like standard OpenAI client
-            # This asyncio-task is traced automatically in agenerate
-            async with perf_tracer.atrace_session_phase(session_id, "generate"):
-                completion = await client.chat.completions.create(
-                    messages=[{"role": "user", "content": query["prompt"]}],
-                    temperature=1.0,
-                    max_tokens=max_tokens,
-                    max_completion_tokens=max_completion_tokens,
-                )
+            completion = await client.chat.completions.create(
+                messages=[{"role": "user", "content": query["prompt"]}],
+                temperature=1.0,
+                max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
+            )
             response = completion.choices[0].message.content
             completions.append(completion)
             stats["turns"] += 1
         elif query["type"] == "search":
             # Search
             tool_call = f"<search>{query['query'][0]}</search>"
-            async with perf_tracer.atrace_session_phase(session_id, "toolcall"):
-                response = (await toolbox.step((data["id"], [tool_call])))[0]
+            response = (await toolbox.step((data["id"], [tool_call])))[0]
             stats["num_search"] += 1
         elif query["type"] == "access":
             # Browsing
             tool_call = f"<access>{query['urls'][0]}</access>"
-            async with perf_tracer.atrace_session_phase(session_id, "toolcall"):
-                response = (await toolbox.step((data["id"], [tool_call])))[0]
+            response = (await toolbox.step((data["id"], [tool_call])))[0]
             stats["num_access"] += 1
         
         process = agent.consume_responses([process], [query], [response])[0]
@@ -699,13 +684,12 @@ async def run_agent(
     if isinstance(ground_truth, list) and len(ground_truth) == 1:
         ground_truth = str(ground_truth[0])
     judge_prompt = judge_prompt_template.format(question=data["question"], gt_answer=str(ground_truth), pred_answer=pred_answer[:200])
-    async with perf_tracer.atrace_session_phase(session_id, "reward"):
-        judge_completion = await judge_client.chat.completions.create(
-            messages=[{"role": "user", "content": judge_prompt}],
-            temperature=1.0,
-            max_tokens=8192,
-            max_completion_tokens=8192,
-        )
+    judge_completion = await judge_client.chat.completions.create(
+        messages=[{"role": "user", "content": judge_prompt}],
+        temperature=1.0,
+        max_tokens=8192,
+        max_completion_tokens=8192,
+    )
     judge_response = judge_completion.choices[0].message.content
     reward = parse_judge_result(judge_response)
     stats["score"] = reward
