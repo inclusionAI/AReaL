@@ -817,21 +817,22 @@ This configuration encapsulates all FP8-related parameters and can be reused acr
 different engines (e.g., Megatron, FSDP). When None in the parent config, FP8 training
 is disabled.
 
-| Parameter                     | Type    | Default         | Description                                                                                                                              |
-| ----------------------------- | ------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`                        | string  | `"e4m3"`        | FP8 precision mode. Options: 'e4m3' (uniform e4m3), 'hybrid' (e4m3 for activations/weights, e5m2 for output activation gradients).       |
-| `recipe`                      | string  | `"delayed"`     | FP8 scaling recipe. Options: 'tensorwise', 'delayed', 'mxfp8' (Blackwell only), 'blockwise'.                                             |
-| `param`                       | boolean | `False`         | Keep parameters in FP8 precision to save memory. Not all parameters will be converted to fp8; for example, biases will remain unchanged. |
-| `margin`                      | integer | `0`             | Margin for FP8 scaling factor computation.                                                                                               |
-| `amax_history_len`            | integer | `1`             | Length of amax history window for scaling factor computation.                                                                            |
-| `amax_compute_algo`           | string  | `"most_recent"` | Algorithm for choosing amax value. Options: 'max' (largest in history window), 'most_recent'.                                            |
-| `wgrad`                       | boolean | `True`          | When False, override FP8 config and compute weight gradients in higher precision.                                                        |
-| `dot_product_attention`       | boolean | `False`         | Use FP8 implementation of Dot Product Attention.                                                                                         |
-| `multi_head_attention`        | boolean | `False`         | Use FP8 implementation of Multi Head Attention.                                                                                          |
-| `tp_only_amax_red`            | boolean | `False`         | Reduce FP8 AMAX only in TP or TP-CP domain.                                                                                              |
-| `first_last_layers_bf16`      | boolean | `False`         | Retain first and last N TransformerBlocks in BF16 instead of FP8.                                                                        |
-| `num_layers_at_start_in_bf16` | integer | `1`             | Number of layers at start to keep in BF16 when first_last_layers_bf16 is True.                                                           |
-| `num_layers_at_end_in_bf16`   | integer | `1`             | Number of layers at end to keep in BF16 when first_last_layers_bf16 is True.                                                             |
+| Parameter                     | Type    | Default         | Description                                                                                                                                                                                                 |
+| ----------------------------- | ------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`                        | string  | `"e4m3"`        | FP8 precision mode. Options: 'e4m3' (uniform e4m3), 'hybrid' (e4m3 for activations/weights, e5m2 for output activation gradients).                                                                          |
+| `recipe`                      | string  | `"delayed"`     | FP8 scaling recipe. Options: 'tensorwise', 'delayed', 'mxfp8' (Blackwell only), 'blockwise'.                                                                                                                |
+| `param`                       | boolean | `False`         | Keep parameters in FP8 precision to save memory. Not all parameters will be converted to fp8; for example, biases will remain unchanged.                                                                    |
+| `margin`                      | integer | `0`             | Margin for FP8 scaling factor computation.                                                                                                                                                                  |
+| `amax_history_len`            | integer | `1`             | Length of amax history window for scaling factor computation.                                                                                                                                               |
+| `amax_compute_algo`           | string  | `"most_recent"` | Algorithm for choosing amax value. Options: 'max' (largest in history window), 'most_recent'.                                                                                                               |
+| `wgrad`                       | boolean | `True`          | When False, override FP8 config and compute weight gradients in higher precision.                                                                                                                           |
+| `dot_product_attention`       | boolean | `False`         | Use FP8 implementation of Dot Product Attention.                                                                                                                                                            |
+| `multi_head_attention`        | boolean | `False`         | Use FP8 implementation of Multi Head Attention.                                                                                                                                                             |
+| `tp_only_amax_red`            | boolean | `False`         | Reduce FP8 AMAX only in TP or TP-CP domain.                                                                                                                                                                 |
+| `first_last_layers_bf16`      | boolean | `False`         | Retain first and last N TransformerBlocks in BF16 instead of FP8.                                                                                                                                           |
+| `num_layers_at_start_in_bf16` | integer | `1`             | Number of layers at start to keep in BF16 when first_last_layers_bf16 is True.                                                                                                                              |
+| `num_layers_at_end_in_bf16`   | integer | `1`             | Number of layers at end to keep in BF16 when first_last_layers_bf16 is True.                                                                                                                                |
+| `direct_convert`              | boolean | `True`          | Whether to use direct FP8 conversion during weight updates and save/load. When True, FP8 parameters are directly converted between TE FP8 and PyTorch FP8 without intermediate dequantization/quantization. |
 
 (section-megatron-engine)=
 

@@ -18,7 +18,6 @@ from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import finalize_model_grads
-from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -77,6 +76,7 @@ from areal.utils.data import (
     unpad_logits,
 )
 from areal.utils.distributed import init_custom_process_group
+from areal.utils.fp8 import FP8BlockwiseTensorHelper
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
@@ -155,9 +155,14 @@ class MegatronEngine(TrainEngine):
         self.seed: int = 0
         self.own_global_group: bool = False
         self.is_offload: bool = False
-        self.enable_fp8: bool = self.config.megatron.fp8_config is not None
-        self.quantization_config: dict[str, int | str | list[str]] | None = None
         self.enable_tree_training: bool = self.mcore_config.enable_tree_training
+        # FP8 configuration
+        self.fp8_config = self.mcore_config.fp8_config
+        self.enable_fp8: bool = self.fp8_config is not None
+        self.fp8_direct_convert: bool = (
+            self.fp8_config.direct_convert if self.enable_fp8 else False
+        )
+        self.quantization_config: dict[str, int | str | list[str]] | None = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -768,7 +773,7 @@ class MegatronEngine(TrainEngine):
     def _check_and_apply_fp8_config(self):
         if not self.enable_fp8:
             return
-        fp8_config = self.mcore_config.fp8_config
+        fp8_config = self.fp8_config
         special_mappings = {"mode": "fp8"}
         # Fields that use the same name in both configs (no prefix needed)
         same_fields = {
@@ -789,7 +794,9 @@ class MegatronEngine(TrainEngine):
             if hasattr(self.tf_config, tf_field):
                 setattr(self.tf_config, tf_field, getattr(fp8_config, fp8_field))
             else:
-                raise ValueError(f"Unknown FP8 field: {fp8_field}")
+                self.logger.warning(
+                    f"Unknown FP8 field in TransformerConfig: {fp8_field}"
+                )
         self.logger.info(
             f"FP8 training enabled: mode={fp8_config.mode}, "
             f"recipe={fp8_config.recipe}, "
@@ -895,11 +902,7 @@ class MegatronEngine(TrainEngine):
             use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
             params_dtype=self.dtype,
             clip_grad=self.optimizer_config.gradient_clipping,
-            fp8_recipe=(
-                self.mcore_config.fp8_config.recipe
-                if self.mcore_config.fp8_config is not None
-                else None
-            ),
+            fp8_recipe=(self.fp8_config.recipe if self.enable_fp8 else None),
         )
         mcore_opt_config.overlap_param_gather_with_optimizer_step = (
             self.mcore_config.overlap_param_gather_with_optimizer_step
@@ -1023,14 +1026,17 @@ class MegatronEngine(TrainEngine):
         Returns:
             Tuple of (prepared_param, param_size_in_bytes)
         """
-        param = all_gather_param(name, param)
+        param = all_gather_param(
+            name,
+            param,
+            self.fp8_direct_convert,
+            quantization_config=self.quantization_config,
+        )
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
-        if is_float8tensor(param):
+        if isinstance(param, FP8BlockwiseTensorHelper):
             # FP8 is stored as uint8, so element_size is 1 byte
             param_size = param.numel()
-            # Convert TE FP8 to bf16 before convert_to_hf (which will convert to PyTorch FP8)
-            param = param.dequantize()
         else:
             param_size = param.numel() * param.element_size()
 
@@ -1061,6 +1067,7 @@ class MegatronEngine(TrainEngine):
                 name,
                 param,
                 quantization_config=self.quantization_config,
+                fp8_direct_convert=self.fp8_direct_convert,
             )
         )
         buffer_size += param_size
@@ -1132,6 +1139,7 @@ class MegatronEngine(TrainEngine):
                     name,
                     param,
                     quantization_config=self.quantization_config,
+                    fp8_direct_convert=self.fp8_direct_convert,
                 )
             )
 
@@ -1295,6 +1303,7 @@ class MegatronEngine(TrainEngine):
             max_shard_size_byte=int(3e9),
             max_workers=None,
             is_critic=self.config.is_critic,
+            fp8_direct_convert=self.fp8_direct_convert,
         )
 
         if dist.get_rank() == 0:
@@ -1314,6 +1323,7 @@ class MegatronEngine(TrainEngine):
             weights_path=path,
             max_workers=None,
             is_critic=self.config.is_critic,
+            fp8_direct_convert=self.fp8_direct_convert,
         )
 
     def _prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
