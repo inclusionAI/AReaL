@@ -14,6 +14,7 @@ from datasets import Dataset
 from loguru import logger as loguru_logger
 from tau2.registry import registry
 from tau2_utils import Tau2EnvConfig, Tau2RunInfo
+import torch.distributed as dist
 
 from areal.api.cli_args import (
     GenerationHyperparameters,
@@ -100,8 +101,7 @@ class Tau2Workflow(RolloutWorkflow):
         dump_dir: str | None = None,
     ):
         self.proxy_server = proxy_server
-        self.group_size = gconfig.n_samples
-        self.gconfig = gconfig.new(n_samples=1)
+        self.gconfig = gconfig
         self.econfig = econfig
         self.base_url = ensure_end_with_slash(base_url)
         self.process_pool = ProcessPoolExecutor(max_workers=max_concurrent_processes)
@@ -142,38 +142,41 @@ class Tau2Workflow(RolloutWorkflow):
 
     async def arun_episode(self, engine: InferenceEngine, data):
         task_id = uuid.uuid4().hex  # use a unique task id for each run
-        run_infos: list[Tau2RunInfo] = await asyncio.gather(
-            *[self._run_episode(task_id, data) for _ in range(self.group_size)]
-        )
+        logger.info(f"[debug] [Rank {dist.get_rank()}] {task_id} entering task")
+        run_info: Tau2RunInfo = await self._run_episode(task_id, data)
+        logger.info(f"[debug] [Rank {dist.get_rank()}] {task_id} finished _run_episode")
         # the queue is prepared for separated agent and trainer mode, should not be used in this example
         await ProxyServer.finish_task(
             task_id, base_url=self.base_url, put_to_queue=False
         )
+        logger.info(f"[debug] [Rank {dist.get_rank()}] {task_id} finished ProxyServer.finish_task")
 
-        session_ids = [f"{task_id}-{i}" for i in range(self.group_size)]
+        session_ids = [f"{task_id}-0"]
         rewards, completions = await self.proxy_server.get_results(
             session_ids, style=self.export_style
         )
+        logger.info(f"[debug] [Rank {dist.get_rank()}] {task_id} finished self.proxy_server.get_results")
 
         # log stats
         for reward in rewards.values():
             stats_tracker.get(self.rollout_stat_scope).scalar(reward=reward)
 
-        for info in run_infos:
-            stats_tracker.get(self.rollout_stat_scope).scalar(
-                steps_count=len(info.messages),
-                orchestrator_error=int(info.error is not None),
-            )
+        stats_tracker.get(self.rollout_stat_scope).scalar(
+            steps_count=len(run_info.messages),
+            orchestrator_error=int(run_info.error is not None),
+        )
 
-            def add_to_stats(name: str, times: list[float]):
-                if len(times):
-                    for key in ["mean", "max", "min", "std", "sum"]:
-                        stats_tracker.get(self.rollout_stat_scope).scalar(
-                            **{f"{name}_time/{key}": getattr(np.array(times), key)()}
-                        )
+        def add_to_stats(name: str, times: list[float]):
+            if len(times):
+                for key in ["mean", "max", "min", "std", "sum"]:
+                    stats_tracker.get(self.rollout_stat_scope).scalar(
+                        **{f"{name}_time/{key}": getattr(np.array(times), key)()}
+                    )
 
-            add_to_stats("agent", info.agent_time)
-            add_to_stats("user", info.user_time)
+        add_to_stats("agent", run_info.agent_time)
+        add_to_stats("user", run_info.user_time)
+        
+        logger.info(f"[debug] [Rank {dist.get_rank()}] {task_id} add stats done")
 
         # Dump info to file
         version = engine.get_version()
@@ -185,28 +188,24 @@ class Tau2Workflow(RolloutWorkflow):
         else:
             real_task_id = task_id
 
-        assert len(run_infos) == len(rewards), (
-            len(run_infos),
-            len(rewards),
-            self.group_size,
-        )
+        assert len(rewards) == 1, len(rewards)
 
-        for i, info in enumerate(run_infos):
-            try:
-                json_path = os.path.join(
-                    self.dump_dir, str(version), f"{real_task_id}-{i}.json"
-                )
-                async with aiofiles.open(json_path, "w") as f:
-                    await f.write(info.model_dump_json())
+        try:
+            json_path = os.path.join(
+                self.dump_dir, str(version), f"{real_task_id}-0.json"
+            )
+            async with aiofiles.open(json_path, "w") as f:
+                await f.write(run_info.model_dump_json())
 
-                file_path = os.path.join(
-                    self.dump_dir, str(version), f"{real_task_id}-{i}.txt"
-                )
-                async with aiofiles.open(file_path, "a") as f:
-                    await f.write(str(info))
-            except Exception as e:
-                logger.error(f"Error dumping rollout to file: {e}")
+            file_path = os.path.join(
+                self.dump_dir, str(version), f"{real_task_id}-0.txt"
+            )
+            async with aiofiles.open(file_path, "a") as f:
+                await f.write(str(run_info))
+        except Exception as e:
+            logger.error(f"Error dumping rollout to file: {e}")
 
+        logger.info(f"[debug] [Rank {dist.get_rank()}] {task_id} finished dumping")
         return completions
 
 
