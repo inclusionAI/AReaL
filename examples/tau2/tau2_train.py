@@ -101,7 +101,7 @@ class Tau2Workflow(RolloutWorkflow):
         dump_dir: str | None = None,
     ):
         self.proxy_server = proxy_server
-        self.gconfig = gconfig
+        self.gconfig = gconfig.new(n_samples=1)
         self.econfig = econfig
         self.base_url = ensure_end_with_slash(base_url)
         self.process_pool = ProcessPoolExecutor(max_workers=max_concurrent_processes)
