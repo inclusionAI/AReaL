@@ -5,6 +5,7 @@ import sys
 import uuid
 import json
 import numpy as np
+import uuid
 from datasets import load_dataset
 from transformers import PreTrainedTokenizerFast
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -74,22 +75,8 @@ class ASearcherReasoningWorkflow(RolloutWorkflow):
     
     async def arun_episode(self, engine, data):
         # Get the unique identifier for this prompt
-        qid = None
-        for key in ["query_id", "id", "qid"]:
-            qid = data.get(key, None)
-            if qid is not None:
-                break
-        qid = str(qid) or uuid.uuid4().hex
-        data["qid"] = qid
+        data["id"] = qid = uuid.uuid4().hex
 
-        # check for generated qid when resuming
-        if self.dump_dir is not None:
-            import glob
-            _pattern = os.path.join(self.dump_dir, "*", f"{qid}.jsonl")
-            if len(glob.glob(_pattern)) > 0:
-                logger.info(f"{qid} is already trained on")
-                return None
-            
         # path to save trajs
         version = engine.get_version()
         save_trajs_path = None

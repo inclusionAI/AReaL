@@ -393,7 +393,7 @@ class AReaLSearchReasoningAgentV1:
                         urls = []
                         # server_types = []
                     
-                    print(f"搜索结果文档数量: {len(documents)}")
+                    print(f"Num searched documents: {len(documents)}")
 
                     if len(documents) > 0:
                         doc_id_template = "[Doc {doc_id}]({url}):\n"
