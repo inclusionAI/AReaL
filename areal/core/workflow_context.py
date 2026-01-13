@@ -88,11 +88,6 @@ class HttpClientManager:
             old_aiohttp = self._aiohttp_session
             old_httpx = self._httpx_client
 
-            # Reset state first
-            self._aiohttp_session = None
-            self._httpx_client = None
-            self._event_loop = None
-
             # Close old clients asynchronously (in current loop)
             # Wrap in try-except as closing from a different loop may raise exceptions
             if old_aiohttp is not None:
@@ -105,6 +100,11 @@ class HttpClientManager:
                     await old_httpx.aclose()
                 except Exception as e:
                     logger.warning(f"Error closing stale httpx client: {e}")
+
+            # Reset state after attempting to close to avoid resource leaks on failure
+            self._aiohttp_session = None
+            self._httpx_client = None
+            self._event_loop = None
 
     async def get_aiohttp_session(self) -> aiohttp.ClientSession:
         """Get the shared aiohttp.ClientSession for the current workflow execution.
