@@ -1,5 +1,4 @@
 import sys
-from dataclasses import field
 
 from areal.api.cli_args import PPOConfig, load_expr_config
 from areal.dataset import get_custom_dataset
@@ -7,17 +6,8 @@ from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
 
 
-class AgentRLConfig(PPOConfig):
-    agent_module_path: str = field(
-        default="areal.workflow.openai.math_agent.MathAgent",
-        metadata={
-            "help": "The path to the agent module. The module should contain an AgentWorkflow class."
-        },
-    )
-
-
 def main(args):
-    config, _ = load_expr_config(args, AgentRLConfig)
+    config, _ = load_expr_config(args, PPOConfig)
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     train_dataset = get_custom_dataset(
