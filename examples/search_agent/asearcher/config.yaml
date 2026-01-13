@@ -134,11 +134,11 @@ saver:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
-  freq_steps: 10
+  freq_steps: null
   freq_secs: null
 
 recover:
-  mode: auto
+  mode: disabled
   retries: 10
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
