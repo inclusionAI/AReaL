@@ -194,8 +194,6 @@ class AReaLSearchReasoningAgentV1:
         # 保持与原agent相同的属性名
         self.stop = ["<|im_end|>", "<|endoftext|>"]
         self.stop_sequences = self.stop
-        
-        print(f"AReaLSearchAgentV1 初始化完成")
 
     def get_query_from_text(self, text: str) -> Optional[str]:
         pattern = r'<search>(.*?)</search>'
