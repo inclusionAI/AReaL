@@ -146,9 +146,16 @@ class Tau2Workflow(RolloutWorkflow):
         run_info: Tau2RunInfo = await self._run_episode(task_id, data)
         logger.info(f"[debug] [Rank {dist.get_rank()}] {task_id} finished _run_episode")
         # the queue is prepared for separated agent and trainer mode, should not be used in this example
-        await ProxyServer.finish_task(
-            task_id, base_url=self.base_url, put_to_queue=False
-        )
+        try:
+            await asyncio.wait_for(
+                ProxyServer.finish_task(
+                    task_id, base_url=self.base_url, put_to_queue=False
+                ),
+                timeout=1800.0,  # 30 minutes
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"[Rank {dist.get_rank()}] {task_id} finish_task timed out after 30min")
+            return None
         logger.info(f"[debug] [Rank {dist.get_rank()}] {task_id} finished ProxyServer.finish_task")
 
         session_ids = [f"{task_id}-0"]
