@@ -644,7 +644,6 @@ async def run_agent(
             completion = await client.chat.completions.create(
                 messages=[{"role": "user", "content": query["prompt"]}],
                 temperature=1.0,
-                max_tokens=max_tokens,
                 max_completion_tokens=max_completion_tokens,
             )
             response = completion.choices[0].message.content
@@ -687,7 +686,6 @@ async def run_agent(
     judge_completion = await judge_client.chat.completions.create(
         messages=[{"role": "user", "content": judge_prompt}],
         temperature=1.0,
-        max_tokens=8192,
         max_completion_tokens=8192,
     )
     judge_response = judge_completion.choices[0].message.content
