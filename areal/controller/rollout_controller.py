@@ -14,7 +14,11 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from werkzeug.serving import make_server
 
 from areal.api.alloc_mode import AllocationMode
-from areal.api.cli_args import InferenceEngineConfig, PerfTracerConfig, SchedulingSpec
+from areal.api.cli_args import (
+    InferenceEngineConfig,
+    PerfTracerConfig,
+    SchedulingSpec,
+)
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     LocalInfServerInfo,
@@ -24,7 +28,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
 from areal.core.staleness_manager import StalenessManager
 from areal.core.workflow_executor import BatchTaskDispatcher, TaskIdGenerator
 from areal.scheduler.rpc.serialization import deserialize_value
@@ -115,7 +119,7 @@ class RolloutController:
         self,
         role: str,
         alloc_mode: AllocationMode,
-        server_args: dict[str, Any],
+        server_args: dict[str, Any] | None = None,
         server_infos: list[LocalInfServerInfo] | None = None,
         *args,
         **kwargs,
@@ -223,6 +227,8 @@ class RolloutController:
                     worker_id=worker.id,
                     method="initialize",
                     engine_name=self._engine_name(rank),
+                    # args in `engine_api`
+                    engine_id=str(rank),
                     addr=f"{info.host}:{info.port}",
                     *args,
                     **kwargs,
@@ -236,17 +242,28 @@ class RolloutController:
             self.server_infos = await self._collective_rpc_async(
                 "launch_server", server_args=server_args
             )
-            await self._collective_rpc_async("initialize", *args, **kwargs)
+            tasks = [
+                self.scheduler.async_call_engine(
+                    worker_id=worker.id,
+                    method="initialize",
+                    engine_name=self._engine_name(rank),
+                    # args in `engine_api`
+                    engine_id=str(rank),
+                    *args,
+                    **kwargs,
+                )
+                for rank, worker in enumerate(self.workers)
+            ]
+            await asyncio.gather(*tasks)
 
         logger.info("All engines are initialized...")
 
     def destroy(self):
-        # Stop callback server first
-        self._stop_callback_server()
-
         # Stop background threads and shutdown the async task runner
         if self._dispatcher is not None:
             self._dispatcher.destroy()
+
+        self._stop_callback_server()
 
         self._collective_rpc("destroy", http_timeout=60.0)
 
@@ -409,9 +426,9 @@ class RolloutController:
         self._current_worker_idx = (self._current_worker_idx + 1) % len(self.workers)
         return worker, rank
 
-    def _resolve_workflow_str(
-        self, workflow: RolloutWorkflow | type[RolloutWorkflow] | str
-    ) -> str:
+    def _resolve_workflow_str(self, workflow: WorkflowLike) -> str:
+        """Resolve workflow to a string import path."""
+
         if isinstance(workflow, str):
             return workflow
         elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
@@ -533,7 +550,7 @@ class RolloutController:
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         task_id: int | None = None,
@@ -579,7 +596,7 @@ class RolloutController:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         group_size: int = 1,
@@ -605,7 +622,7 @@ class RolloutController:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: str | None = None,
         group_size: int = 1,

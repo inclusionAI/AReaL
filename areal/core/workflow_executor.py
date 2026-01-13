@@ -1,6 +1,5 @@
 from __future__ import annotations  # noqa
 
-import asyncio
 import json
 import os
 import random
@@ -20,7 +19,6 @@ import aiofiles.os
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import InferenceEngineConfig
-from areal.api.engine_api import InferenceEngine
 from areal.api.workflow_api import RolloutWorkflow
 from areal.core.async_task_runner import (
     AsyncTaskRunner,
@@ -34,65 +32,11 @@ from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.concurrent import get_executor
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
-from areal.utils.dynamic_import import import_from_string
 from areal.utils.perf_tracer import trace_perf, trace_session_event
 from logging import Logger
 
 if TYPE_CHECKING:
     from .remote_inf_engine import RemoteInfEngine
-
-
-class GroupedRolloutWorkflow(RolloutWorkflow):
-    def __init__(
-        self,
-        workflow: RolloutWorkflow,
-        group_size: int,
-        logger: Logger,
-    ):
-        if group_size < 1:
-            raise ValueError(f"group_size must be >= 1, got {group_size}")
-        self.workflow = workflow
-        self.group_size = group_size
-        self.logger = logger
-
-    async def arun_episode(
-        self, engine: InferenceEngine, data: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        results = await asyncio.gather(
-            *[self.workflow.arun_episode(engine, data) for _ in range(self.group_size)]
-        )
-
-        valid_results = [r for r in results if r is not None]
-
-        # All results None -> return None
-        if not valid_results:
-            return None
-
-        # Some results None -> warn and continue with valid ones
-        if len(valid_results) < len(results):
-            self.logger.warning(
-                f"GroupedRolloutWorkflow: {len(results) - len(valid_results)}/{len(results)} "
-                "trajectories returned None, using remaining results"
-            )
-
-        # Check if results are InteractionWithTokenLogpReward dicts
-        first = valid_results[0]
-        if (
-            isinstance(first, dict)
-            and first
-            and all(
-                isinstance(v, InteractionWithTokenLogpReward) for v in first.values()
-            )
-        ):
-            # Merge dicts - each result is {completion_id: InteractionWithTokenLogpReward}
-            merged: dict[str, InteractionWithTokenLogpReward] = {}
-            for result in valid_results:
-                merged.update(result)
-            return merged if merged else None
-
-        # Otherwise, tensor dicts - concatenate
-        concatenated = concat_padded_tensors(valid_results)
-        return concatenated if concatenated else None
 
 
 def check_trajectory_format(
@@ -749,8 +693,12 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                             "Use cycle_dataloader() or provide an infinite generator."
                         ) from None
             try:
-                res = self.wait_results(count=1, timeout=1)
-                is_accepted = res and res[0] is not None
+                arrived = self.wait_results(count=batch_size - accepted_cnt, timeout=1)
+            except TimeoutError:
+                arrived = []
+
+            for res in arrived:
+                is_accepted = res is not None
 
                 if not is_accepted:
                     if dynamic_bs:
@@ -760,18 +708,18 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                     continue
 
                 # Accepted sample
-                assert len(res) == 1
                 accepted_cnt += 1
                 total_attempts += 1
-                results.append(res[0])
+                results.append(res)
 
                 if dynamic_bs:
                     if total_attempts >= batch_size:
                         break
                 elif accepted_cnt >= batch_size:
                     break
-            except TimeoutError:
-                pass
+            else:
+                continue
+            break
 
         return results
 
@@ -1047,117 +995,6 @@ class WorkflowExecutor:
         """
         return self.staleness_manager.get_capacity()
 
-    def _resolve_raw_workflow(
-        self,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        workflow_kwargs: dict[str, Any] | None,
-    ):
-        # Case 1: Already a workflow instance
-        if isinstance(workflow, RolloutWorkflow):
-            if workflow_kwargs is not None:
-                self.logger.warning(
-                    "workflow_kwargs is ignored when workflow is already an instance"
-                )
-            return workflow
-        workflow_class: type[RolloutWorkflow]
-
-        # Resolve to a class type
-        if isinstance(workflow, str):
-            try:
-                imported_obj = import_from_string(workflow)
-            except (ValueError, ImportError, AttributeError) as e:
-                raise ValueError(
-                    f"Failed to import workflow from string {workflow!r}: {e}"
-                ) from e
-
-            if not isinstance(imported_obj, type) or not issubclass(
-                imported_obj, RolloutWorkflow
-            ):
-                raise TypeError(
-                    f"Imported object from {workflow!r} is not a valid RolloutWorkflow class."
-                )
-            workflow_class = imported_obj
-        elif isinstance(workflow, type) and issubclass(workflow, RolloutWorkflow):
-            workflow_class = workflow
-        else:
-            raise TypeError(
-                f"Invalid workflow type: {type(workflow)}. "
-                f"Expected RolloutWorkflow instance, RolloutWorkflow class, or string module path."
-            )
-
-        # Instantiate the class
-        if workflow_kwargs is None:
-            raise ValueError(
-                f"workflow_kwargs is required when workflow is a class or string. "
-                f"Got workflow={workflow}, but workflow_kwargs=None."
-            )
-
-        try:
-            return workflow_class(**workflow_kwargs)
-        except Exception as e:
-            raise TypeError(
-                f"Failed to instantiate workflow class {workflow_class} "
-                f"with kwargs {workflow_kwargs}: {e}"
-            ) from e
-
-    def _resolve_workflow(
-        self,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        workflow_kwargs: dict[str, Any] | None,
-        group_size: int = 1,
-    ) -> RolloutWorkflow:
-        """Resolve workflow parameter to a RolloutWorkflow instance."""
-        resolved = self._resolve_raw_workflow(workflow, workflow_kwargs)
-
-        # Wrap with GroupedRolloutWorkflow if group_size > 1
-        if group_size > 1:
-            resolved = GroupedRolloutWorkflow(resolved, group_size, self.logger)
-
-        return resolved
-
-    def _resolve_should_accept_fn(
-        self, should_accept_fn: Callable[[dict[str, Any]], bool] | str | None
-    ) -> Callable[[dict[str, Any]], bool] | None:
-        """Resolve should_accept_fn parameter to a callable or None.
-
-        Parameters
-        ----------
-        should_accept_fn : Callable[[Dict[str, Any]], bool] | str | None
-            The should_accept_fn specification
-
-        Returns
-        -------
-        Callable[[Dict[str, Any]], bool] | None
-            A callable for trajectory filtering, or None
-
-        Raises
-        ------
-        ValueError
-            If string import fails
-        TypeError
-            If imported object is not callable
-        """
-        if should_accept_fn is None or callable(should_accept_fn):
-            return should_accept_fn
-
-        if isinstance(should_accept_fn, str):
-            try:
-                func = import_from_string(should_accept_fn)
-            except (ValueError, ImportError, AttributeError) as e:
-                raise ValueError(
-                    f"Failed to import should_accept_fn from string {should_accept_fn!r}: {e}"
-                ) from e
-            if not callable(func):
-                raise TypeError(
-                    f"Imported object {func} from {should_accept_fn!r} is not callable"
-                )
-            return func
-
-        raise TypeError(
-            f"Invalid should_accept_fn type: {type(should_accept_fn)}. "
-            f"Expected callable or string module path."
-        )
-
     def _rollout_stats(self) -> str:
         stats = self.staleness_manager.get_stats()
         return (
@@ -1307,10 +1144,8 @@ class WorkflowExecutor:
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
-        group_size: int = 1,
+        workflow: RolloutWorkflow,
+        should_accept_fn: Callable[[dict[str, Any]], bool] = None,
         task_id: int | None = None,
         is_eval: bool = False,
     ) -> int:
@@ -1321,19 +1156,13 @@ class WorkflowExecutor:
 
         See :meth:`~areal.api.engine_api.InferenceEngine.submit` for parameters.
         """
-        # Resolve workflow and should_accept to their concrete forms
-        resolved_workflow = self._resolve_workflow(
-            workflow, workflow_kwargs, group_size
-        )
-        resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
-
         if task_id is None:
             task_id = self._task_id_generator.next()
         perf_tracer.register_task(task_id)
         task_input = _RolloutTaskInput(
             data=data,
-            workflow=resolved_workflow,
-            should_accept_fn=resolved_should_accept_fn,
+            workflow=workflow,
+            should_accept_fn=should_accept_fn,
             task_id=task_id,
             is_eval=is_eval,
         )
@@ -1396,9 +1225,7 @@ class WorkflowExecutor:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        workflow_kwargs: dict[str, Any] | None = None,
-        group_size: int = 1,
+        workflow: RolloutWorkflow,
     ) -> list[dict[str, Any]]:
         """Submit a batch of requests and wait for results.
 
@@ -1424,8 +1251,6 @@ class WorkflowExecutor:
             self.submit(
                 data=item,
                 workflow=workflow,
-                workflow_kwargs=workflow_kwargs,
-                group_size=group_size,
             )
         results = self.wait(count=len(data))
         # Return list of trajectory dicts (filter out None)
@@ -1435,10 +1260,8 @@ class WorkflowExecutor:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
-        workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
-        group_size: int = 1,
+        workflow: RolloutWorkflow,
+        should_accept_fn: Callable[[dict[str, Any]], bool] = None,
         dynamic_bs: bool = False,
     ) -> list[dict[str, Any]]:
         """Prepare a batch with controlled staleness.
@@ -1449,10 +1272,9 @@ class WorkflowExecutor:
         .. warning::
 
             This method caches an internal data generator on the first call.
-            The ``dataloader``, ``workflow``, ``workflow_kwargs``, ``group_size``,
-            and ``should_accept_fn`` parameters are captured at the first invocation
-            and reused in all subsequent calls. Passing different arguments in
-            later calls will **not** take effect.
+            The ``dataloader``, ``workflow``, and ``should_accept_fn`` parameters
+            are captured at the first invocation and reused in all subsequent calls.
+            Passing different arguments in later calls will **not** take effect.
 
             If you need to switch configurations mid-training, consider:
 
@@ -1470,20 +1292,15 @@ class WorkflowExecutor:
         """
 
         def task_input_generator():
-            resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
             for data in cycle_dataloader(dataloader):
                 for item in data:
-                    # Resolve workflow for each submission to allow
-                    # resource separation if a type or string is provided.
-                    resolved_workflow = self._resolve_workflow(
-                        workflow, workflow_kwargs, group_size
-                    )
+                    # Workflow is already resolved by RemoteInfEngine
                     task_id = self._task_id_generator.next()
                     perf_tracer.register_task(task_id)
                     yield _RolloutTaskInput(
                         data=item,
-                        workflow=resolved_workflow,
-                        should_accept_fn=resolved_should_accept_fn,
+                        workflow=workflow,
+                        should_accept_fn=should_accept_fn,
                         task_id=task_id,
                     )
 

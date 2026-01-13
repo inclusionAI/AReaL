@@ -4,7 +4,7 @@ import os
 import uuid
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from pydantic import BaseModel
 
@@ -40,7 +40,7 @@ from openai.types.responses.tool_param import ToolParam
 from openai.types.shared_params.metadata import Metadata
 
 from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import ModelRequest
+from areal.api.io_struct import ModelRequest, ModelResponse
 from areal.experimental.openai.cache import InteractionCache
 from areal.experimental.openai.tool_call_parser import process_tool_calls
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
@@ -49,7 +49,13 @@ from areal.utils import logging
 if TYPE_CHECKING:
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-    from areal.api.engine_api import InferenceEngine
+
+class _AsyncGenerateEngine(Protocol):
+    async def agenerate(self, req: ModelRequest) -> ModelResponse:
+        raise NotImplementedError()
+
+
+TRolloutEngine = TypeVar("TRolloutEngine", bound=_AsyncGenerateEngine)
 
 # reset OpenAI keys when using the wrapped client.
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "none")
@@ -208,7 +214,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
     def __init__(
         self,
         client,
-        engine: "InferenceEngine",
+        engine: TRolloutEngine,
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
         tool_call_parser: str,
@@ -472,7 +478,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
     def __init__(
         self,
         client,
-        engine: "InferenceEngine",
+        engine: TRolloutEngine,
         tokenizer: "PreTrainedTokenizerFast",
         cache: InteractionCache,
         tool_call_parser: str,
@@ -816,7 +822,7 @@ class ArealOpenAI(AsyncOpenAI):
 
     def __init__(
         self,
-        engine: "InferenceEngine",
+        engine: TRolloutEngine,
         tokenizer: "PreTrainedTokenizerFast",
         tool_call_parser: str = "qwen3",
         reasoning_parser: str = "qwen3",
