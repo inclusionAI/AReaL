@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import weakref
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 import aiohttp
@@ -59,6 +61,102 @@ def stat_scope() -> str:
         "eval-rollout" if in eval mode, "rollout" otherwise.
     """
     return "eval-rollout" if get().is_eval else "rollout"
+
+
+class _LoopCleanupEntry:
+    """Registry entry for HTTP client cleanup on event loop close.
+
+    Stores reference to HttpClientManager and original loop.close method.
+    Handles the complexity of weakrefs for extension loops (uvloop).
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, manager: HttpClientManager):
+        # Store manager reference
+        self.manager = manager
+
+        # Save original close method (avoid double-patching)
+        if not hasattr(loop, "_http_cleanup_orig_close"):
+            loop._http_cleanup_orig_close = loop.close
+
+        # Try to create weakref to original close
+        # Some loop implementations (uvloop) can't be weakref'd
+        try:
+            self._close_ref = weakref.WeakMethod(loop._http_cleanup_orig_close)
+        except TypeError:
+            # Fallback: store regular reference on the loop object itself
+            self._close_ref = lambda: loop._http_cleanup_orig_close
+
+    def get_original_close(self):
+        """Get the original close method."""
+        return self._close_ref()
+
+
+# Global registry: event_loop -> _LoopCleanupEntry
+# WeakKeyDictionary ensures loops can be garbage collected
+_loop_registry: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop, _LoopCleanupEntry
+] = weakref.WeakKeyDictionary()
+
+
+async def _run_http_cleanup(manager: HttpClientManager) -> None:
+    """Run async cleanup for HTTP clients.
+
+    Called by patched loop.close() via run_until_complete.
+    """
+    try:
+        if manager._aiohttp_session is not None:
+            await manager._aiohttp_session.close()
+            manager._aiohttp_session = None
+        if manager._httpx_client is not None:
+            await manager._httpx_client.aclose()
+            manager._httpx_client = None
+        manager._event_loop = None
+        manager._cleanup_registered = False
+    except Exception as e:
+        # Log but don't fail - cleanup is best-effort during shutdown
+        logger.warning(f"Error during HTTP client cleanup: {e}")
+
+
+def _patched_loop_close(loop: asyncio.AbstractEventLoop) -> None:
+    """Patched EventLoop.close method to run HTTP cleanup before closing.
+
+    This is the core of the asyncio-atexit pattern.
+    """
+    entry = _loop_registry.get(loop)
+    if entry is not None and entry.manager is not None:
+        # Run async cleanup if loop is not already closed
+        if not loop.is_closed():
+            try:
+                loop.run_until_complete(_run_http_cleanup(entry.manager))
+            except Exception as e:
+                logger.warning(f"Failed to run HTTP cleanup on loop close: {e}")
+
+    # Call original close method
+    original_close = (
+        entry.get_original_close() if entry else loop._http_cleanup_orig_close
+    )
+    return original_close()
+
+
+def _register_loop_cleanup(
+    loop: asyncio.AbstractEventLoop, manager: HttpClientManager
+) -> None:
+    """Register HTTP client cleanup for an event loop.
+
+    Patches the loop's close() method if not already patched.
+    """
+    # Check if already registered
+    if loop in _loop_registry:
+        # Update manager reference (loop might be reused with new manager)
+        _loop_registry[loop].manager = manager
+        return
+
+    # Create new registry entry
+    entry = _LoopCleanupEntry(loop, manager)
+    _loop_registry[loop] = entry
+
+    # Patch loop.close with our cleanup wrapper
+    loop.close = partial(_patched_loop_close, loop)
 
 
 class HttpClientManager:
@@ -159,6 +257,10 @@ class HttpClientManager:
             )
             # Track which event loop this session belongs to
             self._event_loop = asyncio.get_running_loop()
+
+            # Register cleanup with the event loop
+            _register_loop_cleanup(self._event_loop, self)
+
             if self._shutdown_registrar is None:
                 logger.warning(
                     "HTTP session created before configure() was called. "
@@ -190,6 +292,10 @@ class HttpClientManager:
             )
             # Track which event loop this client belongs to
             self._event_loop = asyncio.get_running_loop()
+
+            # Register cleanup with the event loop
+            _register_loop_cleanup(self._event_loop, self)
+
             if self._shutdown_registrar is None:
                 logger.warning(
                     "HTTP client created before configure() was called. "
