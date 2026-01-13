@@ -621,7 +621,7 @@ async def run_agent(
     cnt = 0
     while not agent.all_finished([process]):
         cnt += 1
-        print(f"Agent Loop: Qid={qid} rank={rank} cnt={cnt}", flush=True)
+        # print(f"Agent Loop: Qid={qid} rank={rank} cnt={cnt}", flush=True)
 
         # Prepare query
         query = agent.prepare_queries(tokenizer, [process])
