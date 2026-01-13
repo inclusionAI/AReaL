@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
@@ -61,11 +62,12 @@ def stat_scope() -> str:
 
 
 class HttpClientManager:
-    """Per-thread manager for shared HTTP clients.
+    """Per-thread and per-event-loop manager for shared HTTP clients.
 
     This class manages shared aiohttp and httpx clients for workflow execution,
     providing connection pooling and DNS caching for improved performance.
-    Each thread gets its own instance via a global dict indexed by thread ID.
+    Each thread/event loop combination gets its own instance via a global dict
+    indexed by (thread_id, loop_id) tuple.
     """
 
     def __init__(self) -> None:
@@ -166,6 +168,14 @@ class HttpClientManager:
             The runner instance that invoked this hook (unused but required by signature).
         """
         thread_id = threading.get_ident()
+        try:
+            loop = asyncio.get_running_loop()
+            loop_id = id(loop)
+        except RuntimeError:
+            raise RuntimeError(
+                "No running event loop; HttpClientManager requires an active event loop"
+            )
+
         with self._client_lock:
             if self._aiohttp_session is not None:
                 await self._aiohttp_session.close()
@@ -175,40 +185,49 @@ class HttpClientManager:
                 self._httpx_client = None
             self._cleanup_registered = False
         # Remove from global dict so next initialization creates fresh instance
-        _remove_manager(thread_id)
+        _remove_manager((thread_id, loop_id))
 
 
-# Global dict mapping thread ID -> HttpClientManager
-# Each thread gets its own HttpClientManager instance
-_managers: dict[int, HttpClientManager] = {}
+# Global dict mapping (thread_id, loop_id) -> HttpClientManager
+# Each thread/event loop combination gets its own HttpClientManager instance
+_managers: dict[tuple[int, int], HttpClientManager] = {}
 _managers_lock = threading.Lock()
 
 
 def _get_manager() -> HttpClientManager:
-    """Get or create the HttpClientManager for the current thread.
+    """Get or create the HttpClientManager for the current thread and event loop.
 
     Returns
     -------
     HttpClientManager
-        The HttpClientManager instance for the current thread.
+        The HttpClientManager instance for the current thread and event loop.
     """
     thread_id = threading.get_ident()
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+    except RuntimeError:
+        raise RuntimeError(
+            "No running event loop; HttpClientManager requires an active event loop"
+        )
+
+    key = (thread_id, loop_id)
     with _managers_lock:
-        if thread_id not in _managers:
-            _managers[thread_id] = HttpClientManager()
-        return _managers[thread_id]
+        if key not in _managers:
+            _managers[key] = HttpClientManager()
+        return _managers[key]
 
 
-def _remove_manager(thread_id: int) -> None:
-    """Remove the HttpClientManager for a specific thread from the global dict.
+def _remove_manager(key: tuple[int, int]) -> None:
+    """Remove the HttpClientManager for a specific thread/loop from the global dict.
 
     Parameters
     ----------
-    thread_id : int
-        The thread ID whose manager should be removed.
+    key : tuple[int, int]
+        The (thread_id, loop_id) key whose manager should be removed.
     """
     with _managers_lock:
-        _managers.pop(thread_id, None)
+        _managers.pop(key, None)
 
 
 def configure_http_clients(
