@@ -85,8 +85,7 @@ _loop_cleanup_registry: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 class _LoopCleanupEntry:
     """Registry entry for event loop cleanup callbacks.
 
-    Stores a list of cleanup callbacks and maintains a reference to the
-    original loop.close method to restore it after cleanup.
+    Stores a list of cleanup callbacks for an event loop.
     """
 
     def __init__(self, loop: asyncio.AbstractEventLoop):
@@ -94,19 +93,7 @@ class _LoopCleanupEntry:
         if not hasattr(loop, "_cleanup_orig_close"):
             loop._cleanup_orig_close = loop.close
 
-        # Try to create weakref to original close
-        # Some loop implementations (uvloop) can't be weakref'd
-        try:
-            self._close_ref = weakref.WeakMethod(loop._cleanup_orig_close)
-        except TypeError:
-            # Fallback: store regular reference on the loop object itself
-            self._close_ref = lambda: loop._cleanup_orig_close
-
         self.callbacks: list = []
-
-    def get_original_close(self):
-        """Get the original close method."""
-        return self._close_ref()
 
 
 def register_loop_cleanup(callback, *, loop=None):
@@ -240,4 +227,4 @@ def _patched_loop_close(loop):
     if entry.callbacks and not loop.is_closed():
         loop.run_until_complete(_run_cleanup_callbacks(loop, entry.callbacks))
     entry.callbacks[:] = []  # Clear callbacks
-    return entry.get_original_close()()
+    return loop._cleanup_orig_close()
