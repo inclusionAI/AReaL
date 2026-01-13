@@ -192,7 +192,7 @@ def main(args):
         config=config,
         train_dataset=train_dataset,
     ) as trainer:
-        workflow_kwargs = dict(
+        workflow = ASearcherReasoningWorkflow(
             gconfig=config.gconfig,
             tokenizer=tokenizer,
             dataset_path=config.train_dataset.path,
@@ -204,10 +204,7 @@ def main(args):
             max_tokens=min(config.actor.mb_spec.max_tokens_per_mb, 32768),
             judge_engine=judge_engine,
         )
-        trainer.train(
-            workflow="examples.search_agent.asearcher.train.ASearcherReasoningWorkflow",
-            workflow_kwargs=workflow_kwargs,
-        )
+        trainer.train(workflow=workflow)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
