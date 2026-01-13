@@ -134,22 +134,10 @@ class AgentRLConfig(GRPOConfig):
     topk: int = field(
         default=10,
         metadata={
-            "help": "search returns the top-k results. Default top_k=5"
+            "help": "search returns the top-k results. Default top_k=10"
         }
     )
     # Logging Agent Trajectories
-    log_agent_stats:  bool = field(
-        default=False,
-        metadata={
-            "help": "Log stats for agent trajectories"
-        },
-    )
-    log_agent_stats_keys: List[str] = field(
-        default_factory=lambda: [],
-        metadata={
-            "help": "Keys of log stats for agent trajectories"
-        },
-    )
     judge_engine: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
 
 
