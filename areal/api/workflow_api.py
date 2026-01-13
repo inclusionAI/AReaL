@@ -38,6 +38,7 @@ class RolloutWorkflow(ABC):
 
 
 class AgentWorkflow(ABC):
+    @abstractmethod
     async def run(
         self, data: dict[str, Any], **extra_kwargs: Any
     ) -> dict[str, float] | float:
