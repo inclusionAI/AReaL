@@ -40,6 +40,91 @@ def _get_shape(obj) -> list:
         return obj.get_shape()
 
 
+def _merge_qkv_weights(
+    hf_config,
+    mcore_weights_name: str,
+    hf_weights_safe_slice: list,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
+    """Merge Q, K, V weights into a single QKV weight tensor."""
+    assert len(hf_weights_safe_slice) == 3
+    num_key_value_heads = hf_config.num_key_value_heads
+    hidden_dim = hf_config.hidden_size
+    num_attention_heads = hf_config.num_attention_heads
+    head_dim = getattr(hf_config, "head_dim", hidden_dim // num_attention_heads)
+    group_dim = head_dim * num_attention_heads // num_key_value_heads
+    q, k, v = hf_weights_safe_slice
+    # q k v might be tp split
+    real_num_key_value_heads = _get_shape(q)[0] // group_dim
+    s = _get_tp_slice((real_num_key_value_heads * group_dim,), 0, tp_rank, tp_size)
+    q = q[s].reshape(
+        real_num_key_value_heads // tp_size,
+        group_dim,
+        -1,
+    )
+    s = _get_tp_slice((real_num_key_value_heads * head_dim,), 0, tp_rank, tp_size)
+    k = k[s].reshape(real_num_key_value_heads // tp_size, head_dim, -1)
+    v = v[s].reshape(real_num_key_value_heads // tp_size, head_dim, -1)
+    out_shape = [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
+    return torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
+
+
+def _merge_gate_up_weights(
+    hf_weights_safe_slice: list,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
+    """Merge gate_proj and up_proj into a single fc1 weight tensor."""
+    assert len(hf_weights_safe_slice) == 2, len(hf_weights_safe_slice)
+    gate, up = hf_weights_safe_slice
+    # chunk 0 for TP split
+    gate = gate[
+        _get_tp_slice(_get_shape(gate), dim=0, tp_rank=tp_rank, tp_size=tp_size)
+    ]
+    up = up[_get_tp_slice(_get_shape(up), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
+    return torch.cat([gate, up], dim=0)
+
+
+def _slice_moe_expert_weight(
+    hf_weights_safe_slice: list,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
+    """Slice MoE expert weight along the appropriate dimension."""
+    assert len(hf_weights_safe_slice) == 1
+    x = hf_weights_safe_slice[0]
+    shape = _get_shape(x)
+    # dim 1 chunk
+    partition_dim = 1
+    return x[_get_tp_slice(shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)]
+
+
+def _slice_generic_weight(
+    mcore_param_shape: list,
+    hf_weights_safe_slice: list,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor | FP8BlockwiseTensorHelper:
+    """Slice generic weight tensor based on shape mismatch."""
+    assert len(hf_weights_safe_slice) == 1
+    x = hf_weights_safe_slice[0]
+    x_shape = _get_shape(x)
+    partition_dim = None
+    if mcore_param_shape == x_shape:
+        return x[:] if not isinstance(x, torch.Tensor) else x
+    else:
+        assert len(x_shape) == len(mcore_param_shape)
+        for dim, (s1, s2) in enumerate(zip(x_shape, mcore_param_shape)):
+            if s1 != s2:
+                partition_dim = dim
+                break
+        # chunk on `partition_dim`
+        return x[
+            _get_tp_slice(x_shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)
+        ]
+
+
 def _weight_to_mcore_tp(
     hf_config,
     mcore_weights_name: str,
@@ -49,72 +134,32 @@ def _weight_to_mcore_tp(
     tp_size: int,
     dtype: torch.dtype | None = None,
 ) -> torch.Tensor | FP8BlockwiseTensorHelper | None:
+    """Convert HF weights to Megatron-Core format with tensor/expert parallelism.
+
+    Dispatches to specialized handlers based on weight type:
+    - QKV weights: merge Q, K, V into single tensor
+    - FC1 weights: merge gate and up projections
+    - MoE expert weights: slice along expert dimension
+    - Generic weights: slice based on shape mismatch
+    """
     if (
         "self_attention.linear_qkv." in mcore_weights_name
         and "layer_norm" not in mcore_weights_name
     ):
-        # merge qkv
-        assert len(hf_weights_safe_slice) == 3
-        num_key_value_heads = hf_config.num_key_value_heads
-        hidden_dim = hf_config.hidden_size
-        num_attention_heads = hf_config.num_attention_heads
-        head_dim = getattr(hf_config, "head_dim", hidden_dim // num_attention_heads)
-        group_dim = head_dim * num_attention_heads // num_key_value_heads
-        q, k, v = hf_weights_safe_slice
-        # q k v might be tp split
-        real_num_key_value_heads = _get_shape(q)[0] // group_dim
-        s = _get_tp_slice((real_num_key_value_heads * group_dim,), 0, tp_rank, tp_size)
-        q = q[s].reshape(
-            real_num_key_value_heads // tp_size,
-            group_dim,
-            -1,
+        res = _merge_qkv_weights(
+            hf_config, mcore_weights_name, hf_weights_safe_slice, tp_rank, tp_size
         )
-        s = _get_tp_slice((real_num_key_value_heads * head_dim,), 0, tp_rank, tp_size)
-        k = k[s].reshape(real_num_key_value_heads // tp_size, head_dim, -1)
-        v = v[s].reshape(real_num_key_value_heads // tp_size, head_dim, -1)
-        out_shape = [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
-        res = torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
     elif (
         "linear_fc1.weight" in mcore_weights_name
         or "linear_fc1.bias" in mcore_weights_name
     ):
-        # merge gate_proj and up_proj
-        assert len(hf_weights_safe_slice) == 2, len(hf_weights_safe_slice)
-        gate, up = hf_weights_safe_slice
-        # chunk 0 for TP split
-        gate = gate[
-            _get_tp_slice(_get_shape(gate), dim=0, tp_rank=tp_rank, tp_size=tp_size)
-        ]
-        up = up[_get_tp_slice(_get_shape(up), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
-        res = torch.cat([gate, up], dim=0)
-    elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
-        assert len(hf_weights_safe_slice) == 1
-        x = hf_weights_safe_slice[0]
-        shape = _get_shape(x)
-        # dim 1 chunk
-        partition_dim = 1
-        res = x[
-            _get_tp_slice(shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)
-        ]
+        res = _merge_gate_up_weights(hf_weights_safe_slice, tp_rank, tp_size)
+    elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:
+        res = _slice_moe_expert_weight(hf_weights_safe_slice, tp_rank, tp_size)
     else:
-        assert len(hf_weights_safe_slice) == 1
-        x = hf_weights_safe_slice[0]
-        x_shape = _get_shape(x)
-        partition_dim = None
-        if mcore_param_shape == x_shape:
-            res = x[:] if not isinstance(x, torch.Tensor) else x
-        else:
-            assert len(x_shape) == len(mcore_param_shape)
-            for dim, (s1, s2) in enumerate(zip(x_shape, mcore_param_shape)):
-                if s1 != s2:
-                    partition_dim = dim
-                    break
-            # chunk on `partition_dim`
-            res = x[
-                _get_tp_slice(
-                    x_shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size
-                )
-            ]
+        res = _slice_generic_weight(
+            mcore_param_shape, hf_weights_safe_slice, tp_rank, tp_size
+        )
 
     if dtype is not None and not isinstance(res, FP8BlockwiseTensorHelper):
         res = res.to(dtype)
