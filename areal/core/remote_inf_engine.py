@@ -515,7 +515,7 @@ class RemoteInfEngine(InferenceEngine):
             self.rid_queue.append(req.rid)
 
         # Get the shared session from workflow context
-        session = workflow_context.get_aiohttp_session()
+        session = await workflow_context.get_aiohttp_session()
 
         # Deal with rollout interruption
         stop_reason = None

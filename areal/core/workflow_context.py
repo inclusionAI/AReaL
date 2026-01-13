@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import threading
-from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Self
 
 import aiohttp
 import httpx
 
 from areal.utils import logging
+from areal.utils.concurrent import register_loop_cleanup
 from areal.utils.http import DEFAULT_REQUEST_TIMEOUT, get_default_connector
 
 logger = logging.getLogger("WorkflowContext")
@@ -58,149 +58,145 @@ def stat_scope() -> str:
 
 
 class HttpClientManager:
-    """Thread-safe singleton manager for shared HTTP clients.
+    """Per-thread manager for shared HTTP clients.
 
     This class manages shared aiohttp and httpx clients for workflow execution,
     providing connection pooling and DNS caching for improved performance.
+    Each thread gets its own instance via a global dict indexed by thread ID.
     """
 
-    _instance: HttpClientManager | None = None
-    _instance_lock = threading.Lock()
+    def __init__(self) -> None:
+        """Initialize the HttpClientManager instance."""
+        self._aiohttp_session: aiohttp.ClientSession | None = None
+        self._httpx_client: httpx.AsyncClient | None = None
+        self._event_loop: asyncio.AbstractEventLoop | None = None
 
-    def __new__(cls) -> Self:
-        if cls._instance is None:
-            with cls._instance_lock:
-                if cls._instance is None:
-                    instance = super().__new__(cls)
-                    instance._aiohttp_session = None
-                    instance._httpx_client = None
-                    instance._shutdown_registrar = None
-                    instance._cleanup_registered = False
-                    instance._client_lock = threading.Lock()
-                    cls._instance = instance
-        return cls._instance
+    async def _check_event_loop_change(self) -> None:
+        """Check if event loop changed and close stale clients if so."""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop - nothing to check
+            return
 
-    def configure(
-        self,
-        shutdown_hook_registrar: Callable[[Callable[[], Awaitable[None]]], None],
-    ) -> None:
-        """Configure the shutdown hook registrar for HTTP client cleanup.
+        if self._event_loop is not None and self._event_loop is not current_loop:
+            # Event loop changed - need to close stale clients
+            logger.warning(
+                "Event loop changed. Closing stale HTTP clients and creating new ones."
+            )
 
-        Called by WorkflowExecutor.initialize() to set up the cleanup mechanism.
+            old_aiohttp = self._aiohttp_session
+            old_httpx = self._httpx_client
 
-        Parameters
-        ----------
-        shutdown_hook_registrar : Callable
-            A function to register the HTTP client cleanup hook (typically
-            AsyncTaskRunner.register_shutdown_hook).
-        """
-        with self._client_lock:
-            self._shutdown_registrar = shutdown_hook_registrar
-            self._cleanup_registered = False
+            # Reset state first
+            self._aiohttp_session = None
+            self._httpx_client = None
+            self._event_loop = None
 
-    def _ensure_cleanup_registered(self) -> None:
-        """Register the cleanup hook if not already registered."""
-        if not self._cleanup_registered and self._shutdown_registrar is not None:
-            self._shutdown_registrar(self._async_cleanup)
-            self._cleanup_registered = True
+            # Close old clients asynchronously (in current loop - they may warn but won't fail)
+            if old_aiohttp is not None:
+                await old_aiohttp.close()
+            if old_httpx is not None:
+                await old_httpx.aclose()
 
-    def get_aiohttp_session(self) -> aiohttp.ClientSession:
+    async def get_aiohttp_session(self) -> aiohttp.ClientSession:
         """Get the shared aiohttp.ClientSession for the current workflow execution.
 
         The session is lazily created on first access and reused for all subsequent
         calls within the same AsyncTaskRunner background thread. The session is
         automatically closed during AsyncTaskRunner shutdown.
 
+        If the event loop has changed since the session was created (e.g., in tests),
+        the old session is closed and a new one is created.
+
         Returns
         -------
         aiohttp.ClientSession
             The shared session for HTTP requests.
         """
-        with self._client_lock:
-            if self._aiohttp_session is None:
-                timeout = aiohttp.ClientTimeout(total=DEFAULT_REQUEST_TIMEOUT)
-                self._aiohttp_session = aiohttp.ClientSession(
-                    timeout=timeout,
-                    read_bufsize=1024 * 1024 * 10,
-                    connector=get_default_connector(),
-                )
-                if self._shutdown_registrar is None:
-                    logger.warning(
-                        "HTTP session created before configure() was called. "
-                        "Session cleanup may not be automatic."
-                    )
-                self._ensure_cleanup_registered()
-            return self._aiohttp_session
+        await self._check_event_loop_change()
 
-    def get_httpx_client(self) -> httpx.AsyncClient:
+        if self._aiohttp_session is None:
+            timeout = aiohttp.ClientTimeout(total=DEFAULT_REQUEST_TIMEOUT)
+            self._aiohttp_session = aiohttp.ClientSession(
+                timeout=timeout,
+                read_bufsize=1024 * 1024 * 10,
+                connector=get_default_connector(),
+            )
+            # Track which event loop this session belongs to
+            self._event_loop = asyncio.get_running_loop()
+
+            # Register cleanup with the event loop
+            # Use closure to capture current session reference
+            session_to_close = self._aiohttp_session
+
+            async def cleanup_aiohttp_session():
+                if session_to_close is not None and not session_to_close.closed:
+                    await session_to_close.close()
+
+            register_loop_cleanup(cleanup_aiohttp_session, loop=self._event_loop)
+
+        return self._aiohttp_session
+
+    async def get_httpx_client(self) -> httpx.AsyncClient:
         """Get the shared httpx.AsyncClient for the current workflow execution.
 
         The client is lazily created on first access and reused for all subsequent
         calls within the same AsyncTaskRunner background thread. The client is
         automatically closed during AsyncTaskRunner shutdown.
 
+        If the event loop has changed since the client was created (e.g., in tests),
+        the old client is closed and a new one is created.
+
         Returns
         -------
         httpx.AsyncClient
             The shared client for HTTP requests.
         """
-        with self._client_lock:
-            if self._httpx_client is None:
-                self._httpx_client = httpx.AsyncClient(
-                    timeout=httpx.Timeout(DEFAULT_REQUEST_TIMEOUT)
-                )
-                if self._shutdown_registrar is None:
-                    logger.warning(
-                        "HTTP client created before configure() was called. "
-                        "Client cleanup may not be automatic."
-                    )
-                self._ensure_cleanup_registered()
-            return self._httpx_client
+        await self._check_event_loop_change()
 
-    async def _async_cleanup(self) -> None:
-        """Async cleanup hook called during shutdown to close all HTTP clients."""
-        with self._client_lock:
-            if self._aiohttp_session is not None:
-                await self._aiohttp_session.close()
-                self._aiohttp_session = None
-            if self._httpx_client is not None:
-                await self._httpx_client.aclose()
-                self._httpx_client = None
+        if self._httpx_client is None:
+            self._httpx_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(DEFAULT_REQUEST_TIMEOUT)
+            )
+            # Track which event loop this client belongs to
+            self._event_loop = asyncio.get_running_loop()
 
-    def reset(self) -> None:
-        """Reset all HTTP client state for reinitialization.
+            # Register cleanup with the event loop
+            # Use closure to capture current client reference
+            client_to_close = self._httpx_client
 
-        This resets the instance state. The clients themselves should be
-        closed via the registered shutdown hook before calling this.
-        """
-        with self._client_lock:
-            self._aiohttp_session = None
-            self._httpx_client = None
-            self._shutdown_registrar = None
-            self._cleanup_registered = False
+            async def cleanup_httpx_client():
+                if client_to_close is not None and not client_to_close.is_closed:
+                    await client_to_close.aclose()
+
+            register_loop_cleanup(cleanup_httpx_client, loop=self._event_loop)
+
+        return self._httpx_client
 
 
-# Module-level singleton instance
-_http_client_manager = HttpClientManager()
+# Global dict mapping thread ID -> HttpClientManager
+# Each thread gets its own HttpClientManager instance
+_managers: dict[int, HttpClientManager] = {}
+_managers_lock = threading.Lock()
 
 
-def configure_http_clients(
-    shutdown_hook_registrar: Callable[[Callable[[], Awaitable[None]]], None],
-) -> None:
-    """Configure the shutdown hook registrar for HTTP client cleanup.
+def _get_manager() -> HttpClientManager:
+    """Get or create the HttpClientManager for the current thread.
 
-    Called by WorkflowExecutor.initialize() to set up the cleanup mechanism.
-
-    Parameters
-    ----------
-    shutdown_hook_registrar : Callable
-        A function to register the HTTP client cleanup hook (typically
-        AsyncTaskRunner.register_shutdown_hook).
+    Returns
+    -------
+    HttpClientManager
+        The HttpClientManager instance for the current thread.
     """
-    _http_client_manager.configure(shutdown_hook_registrar)
+    thread_id = threading.get_ident()
+    with _managers_lock:
+        if thread_id not in _managers:
+            _managers[thread_id] = HttpClientManager()
+        return _managers[thread_id]
 
 
-def get_aiohttp_session() -> aiohttp.ClientSession:
+async def get_aiohttp_session() -> aiohttp.ClientSession:
     """Get the shared aiohttp.ClientSession for the current workflow execution.
 
     The session is lazily created on first access and reused for all subsequent
@@ -212,10 +208,10 @@ def get_aiohttp_session() -> aiohttp.ClientSession:
     aiohttp.ClientSession
         The shared session for HTTP requests.
     """
-    return _http_client_manager.get_aiohttp_session()
+    return await _get_manager().get_aiohttp_session()
 
 
-def get_httpx_client() -> httpx.AsyncClient:
+async def get_httpx_client() -> httpx.AsyncClient:
     """Get the shared httpx.AsyncClient for the current workflow execution.
 
     The client is lazily created on first access and reused for all subsequent
@@ -227,13 +223,4 @@ def get_httpx_client() -> httpx.AsyncClient:
     httpx.AsyncClient
         The shared client for HTTP requests.
     """
-    return _http_client_manager.get_httpx_client()
-
-
-def reset_http_clients() -> None:
-    """Reset all HTTP client state for reinitialization.
-
-    This resets the module-level state. The clients themselves should be
-    closed via the registered shutdown hook before calling this.
-    """
-    _http_client_manager.reset()
+    return await _get_manager().get_httpx_client()
