@@ -35,6 +35,7 @@ class SearchToolBox:
     
     async def step(self, qid_actions: Tuple[str, List[str]]):
         qid, actions = qid_actions
+        # qid = qid.split("@")[0]
 
         results = []
         for action in actions:
@@ -83,15 +84,15 @@ class SearchToolBox:
                 result["type"] = "access"
 
             # compute rewards
-            ground_truth = self.id2info[qid.split("@")[0]]["answer"]
+            ground_truth = self.id2info[qid]["answer"]
             if isinstance(ground_truth, list) or isinstance(ground_truth, tuple):
                 ground_truth = [str(gt) for gt in ground_truth]
             else:
                 ground_truth = str(ground_truth)
 
             ground_truth_aug = None
-            if "aug_answer" in self.id2info[qid.split("@")[0]] and len(self.id2info[qid.split("@")[0]]["aug_answer"]) > 0:
-                ground_truth_aug = self.id2info[qid.split("@")[0]]["aug_answer"]
+            if "aug_answer" in self.id2info[qid] and len(self.id2info[qid]["aug_answer"]) > 0:
+                ground_truth_aug = self.id2info[qid]["aug_answer"]
                 if isinstance(ground_truth_aug, list) or isinstance(ground_truth_aug, tuple):
                     ground_truth_aug = [str(gt) for gt in ground_truth_aug]
                 else:
@@ -109,7 +110,7 @@ class SearchToolBox:
 
             result["extracted"] = extracted
             result["score"] = score
-            result["ground_truth"] = self.id2info[qid.split("@")[0]]["answer"]
+            result["ground_truth"] = self.id2info[qid]["answer"]
             
             if ground_truth_aug is not None:
                 score_aug = max(score_aug, score)

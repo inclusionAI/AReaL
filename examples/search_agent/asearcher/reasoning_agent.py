@@ -605,8 +605,8 @@ async def run_agent(
                                         topk=topk,
                                         force_valid=force_valid)
 
-    qid = data["id"]
-    process = dict(id=data["id"],
+    qid = data["qid"]
+    process = dict(id=data["qid"],
                    question=data["question"],
                    prompt=data["question"],
                    gt=data["answer"])
@@ -652,12 +652,12 @@ async def run_agent(
         elif query["type"] == "search":
             # Search
             tool_call = f"<search>{query['query'][0]}</search>"
-            response = (await toolbox.step((data["id"], [tool_call])))[0]
+            response = (await toolbox.step((data["qid"], [tool_call])))[0]
             stats["num_search"] += 1
         elif query["type"] == "access":
             # Browsing
             tool_call = f"<access>{query['urls'][0]}</access>"
-            response = (await toolbox.step((data["id"], [tool_call])))[0]
+            response = (await toolbox.step((data["qid"], [tool_call])))[0]
             stats["num_access"] += 1
         
         process = agent.consume_responses([process], [query], [response])[0]

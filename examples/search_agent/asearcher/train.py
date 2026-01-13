@@ -75,7 +75,13 @@ class ASearcherReasoningWorkflow(RolloutWorkflow):
     
     async def arun_episode(self, engine, data):
         # Get the unique identifier for this prompt
-        data["id"] = qid = uuid.uuid4().hex
+        qid = None
+        for key in ["query_id", "id", "qid"]:
+            qid = data.get(key, None)
+            if qid is not None:
+                break
+        qid = str(qid) or uuid.uuid4().hex
+        data["qid"] = qid
 
         # path to save trajs
         version = engine.get_version()
