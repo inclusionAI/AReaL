@@ -66,8 +66,8 @@ def test_chunk_dim0(device):
     assert up._rowwise_scale_inv.shape == (M // block_size // 2, K // block_size)
 
     # Verify data content
-    assert torch.equal(gate._rowwise_data, data[: M // 2])
-    assert torch.equal(up._rowwise_data, data[M // 2 :])
+    assert torch.equal(gate._rowwise_data.view(torch.uint8), data[: M // 2])
+    assert torch.equal(up._rowwise_data.view(torch.uint8), data[M // 2 :])
 
     # Verify scale_inv content
     assert torch.equal(gate._rowwise_scale_inv, scale_inv[: M // block_size // 2])
@@ -253,8 +253,8 @@ def test_cat_dim0(device):
     assert fc1._rowwise_scale_inv.shape == (2 * M // block_size, K // block_size)
 
     # Verify data content
-    assert torch.equal(fc1._rowwise_data[:M], gate_data)
-    assert torch.equal(fc1._rowwise_data[M:], up_data)
+    assert torch.equal(fc1._rowwise_data[:M].view(torch.uint8), gate_data)
+    assert torch.equal(fc1._rowwise_data[M:].view(torch.uint8), up_data)
 
     # Verify scale_inv content
     assert torch.equal(fc1._rowwise_scale_inv[: M // block_size], gate_scale)
@@ -533,5 +533,5 @@ def test_glu_conversion_flow(device):
     )
 
     # Verify data content
-    assert torch.equal(gate._rowwise_data, data[:intermediate_size])
-    assert torch.equal(up._rowwise_data, data[intermediate_size:])
+    assert torch.equal(gate._rowwise_data.view(torch.uint8), data[:intermediate_size])
+    assert torch.equal(up._rowwise_data.view(torch.uint8), data[intermediate_size:])
