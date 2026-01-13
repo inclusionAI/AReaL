@@ -694,7 +694,7 @@ async def run_agent(
 
     # client.set_reward(completion.id, reward)
 
-    print("LLM as Judge for Qid={}. GT={}. Ans={}. Result: MBE={}. Raw Response={}".format(data["id"], ground_truth, pred_answer, reward, judge_response[:500]))
+    print("LLM as Judge for Qid={}. GT={}. Ans={}. Result: MBE={}. Raw Response={}".format(data["qid"], ground_truth, pred_answer, reward, judge_response[:500]))
 
     if save_path is not None:
         import os, json, sys
