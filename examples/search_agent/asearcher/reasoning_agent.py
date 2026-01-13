@@ -687,6 +687,7 @@ async def run_agent(
         messages=[{"role": "user", "content": judge_prompt}],
         temperature=1.0,
         max_completion_tokens=8192,
+        store=False,
     )
     judge_response = judge_completion.choices[0].message.content
     reward = parse_judge_result(judge_response)
