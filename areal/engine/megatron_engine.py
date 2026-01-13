@@ -155,14 +155,14 @@ class MegatronEngine(TrainEngine):
         self.seed: int = 0
         self.own_global_group: bool = False
         self.is_offload: bool = False
-        self.enable_fp8: bool = self.config.megatron.fp8_config is not None
-        self.quantization_config: dict[str, int | str | list[str]] | None = None
         self.enable_tree_training: bool = self.mcore_config.enable_tree_training
+        # FP8 configuration
+        self.fp8_config = self.mcore_config.fp8_config
+        self.enable_fp8: bool = self.fp8_config is not None
         self.fp8_direct_convert: bool = (
-            self.config.megatron.fp8_config.direct_convert
-            if self.config.megatron.fp8_config is not None
-            else False
+            self.fp8_config.direct_convert if self.enable_fp8 else False
         )
+        self.quantization_config: dict[str, int | str | list[str]] | None = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -773,7 +773,7 @@ class MegatronEngine(TrainEngine):
     def _check_and_apply_fp8_config(self):
         if not self.enable_fp8:
             return
-        fp8_config = self.mcore_config.fp8_config
+        fp8_config = self.fp8_config
         special_mappings = {"mode": "fp8"}
         # Fields that use the same name in both configs (no prefix needed)
         same_fields = {
@@ -794,7 +794,9 @@ class MegatronEngine(TrainEngine):
             if hasattr(self.tf_config, tf_field):
                 setattr(self.tf_config, tf_field, getattr(fp8_config, fp8_field))
             else:
-                self.logger.warning(f"Unknown FP8 field: {fp8_field}")
+                self.logger.warning(
+                    f"Unknown FP8 field in TransformerConfig: {fp8_field}"
+                )
         self.logger.info(
             f"FP8 training enabled: mode={fp8_config.mode}, "
             f"recipe={fp8_config.recipe}, "
@@ -900,11 +902,7 @@ class MegatronEngine(TrainEngine):
             use_distributed_optimizer=self.mcore_config.ddp.use_distributed_optimizer,
             params_dtype=self.dtype,
             clip_grad=self.optimizer_config.gradient_clipping,
-            fp8_recipe=(
-                self.mcore_config.fp8_config.recipe
-                if self.mcore_config.fp8_config is not None
-                else None
-            ),
+            fp8_recipe=(self.fp8_config.recipe if self.enable_fp8 else None),
         )
         mcore_opt_config.overlap_param_gather_with_optimizer_step = (
             self.mcore_config.overlap_param_gather_with_optimizer_step
@@ -1016,7 +1014,6 @@ class MegatronEngine(TrainEngine):
         self,
         name: str,
         param: nn.Parameter | torch.Tensor,
-        fp8_direct_convert: bool = False,
     ) -> tuple[nn.Parameter | torch.Tensor, int]:
         """Collect and prepare a parameter for conversion.
 
@@ -1032,7 +1029,7 @@ class MegatronEngine(TrainEngine):
         param = all_gather_param(
             name,
             param,
-            fp8_direct_convert,
+            self.fp8_direct_convert,
             quantization_config=self.quantization_config,
         )
         param = remove_padding(name, param, self.hf_config.vocab_size)
@@ -1054,7 +1051,7 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
-        param, param_size = self._collect_param(name, param, self.fp8_direct_convert)
+        param, param_size = self._collect_param(name, param)
 
         if not self.is_pipeline_parallel_head():
             return buffer_size
@@ -1157,7 +1154,7 @@ class MegatronEngine(TrainEngine):
         buffer_size: int,
         weight_chunked_mem_size: int,
     ) -> int:
-        param, param_size = self._collect_param(name, param, self.fp8_direct_convert)
+        param, param_size = self._collect_param(name, param)
 
         if (
             buffer_size + param_size

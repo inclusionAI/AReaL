@@ -74,7 +74,6 @@ def _weight_to_mcore_tp(
         v = v[s].reshape(real_num_key_value_heads // tp_size, head_dim, -1)
         out_shape = [-1, hidden_dim] if ".bias" not in mcore_weights_name else [-1]
         res = torch.cat([q, k, v], dim=1).view(*out_shape).contiguous()
-
     elif (
         "linear_fc1.weight" in mcore_weights_name
         or "linear_fc1.bias" in mcore_weights_name
@@ -88,7 +87,6 @@ def _weight_to_mcore_tp(
         ]
         up = up[_get_tp_slice(_get_shape(up), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
         res = torch.cat([gate, up], dim=0)
-
     elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:  # moe
         assert len(hf_weights_safe_slice) == 1
         x = hf_weights_safe_slice[0]
@@ -98,7 +96,6 @@ def _weight_to_mcore_tp(
         res = x[
             _get_tp_slice(shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)
         ]
-
     else:
         assert len(hf_weights_safe_slice) == 1
         x = hf_weights_safe_slice[0]
