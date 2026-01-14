@@ -240,7 +240,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self._cache = cache
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
-
+ 
     async def create(
         self,
         *,

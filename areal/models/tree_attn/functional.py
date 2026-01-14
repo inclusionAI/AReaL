@@ -15,6 +15,7 @@ from areal.utils.functional.vocab_parallel import (
     gather_logprobs,
     gather_logprobs_entropy,
 )
+from areal.utils.perf_tracer import trace_perf
 
 if TYPE_CHECKING:
     from areal.models.tree_attn.tree import TrieNode
@@ -199,6 +200,7 @@ def _compute_transition_logprob_entropy(
     return lp.squeeze(0), ent.squeeze(0)
 
 
+@trace_perf("tree_attn._gather_packed_tree_logprobs")
 def _gather_packed_tree_logprobs(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -312,6 +314,7 @@ def _gather_packed_tree_logprobs(
     return results
 
 
+@trace_perf("tree_attn._gather_packed_tree_logprobs_entropy")
 def _gather_packed_tree_logprobs_entropy(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -406,6 +409,7 @@ def _gather_packed_tree_logprobs_entropy(
     return logprobs_results, entropy_results
 
 
+@trace_perf("tree_attn.gather_packed_tree_logprobs")
 def gather_packed_tree_logprobs(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -431,6 +435,7 @@ def gather_packed_tree_logprobs(
     return logprob
 
 
+@trace_perf("tree_attn.gather_packed_tree_logprobs_entropy")
 def gather_packed_tree_logprobs_entropy(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -458,6 +463,7 @@ def gather_packed_tree_logprobs_entropy(
     return logprob, entropy
 
 
+@trace_perf("tree_attn.merge_packed_tree_results")
 def merge_packed_tree_results(
     results_list: list[dict[int, torch.Tensor]],
     batch_size: int,
