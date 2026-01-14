@@ -1042,12 +1042,17 @@ class vLLMConfig:
     # will enable chunked prefill in vLLM, which will cause
     # evalution performance degeneration.
     max_model_len: int | None = 32768
-    enable_chunked_prefill: bool = False
-    # NOTE: Setting enable_prefix_caching to False
-    # because it will reuse the block after
-    # model weights are updated. Using v0.7.2 reset_prefix_cache
-    # will fix this issue.
-    enable_prefix_caching: bool = False
+    # NOTE: vLLM V1 engine enables chunked prefill by default in
+    # non-pooling tasks.
+    enable_chunked_prefill: bool = True
+    # NOTE: Disables prefix caching (vLLM default is enabled) because it will
+    # reuse cached blocks after model weights are updated,
+    # Using v0.7.2 reset_prefix_cache will fix this issue.
+    # Pass --no-enable-prefix-caching flag to vLLM.
+    # WARNING: Setting enable_prefix_caching=False has NO effect because
+    # get_py_cmd ignores parameters with False values,
+    # so vLLM will use its default (enabled).
+    no_enable_prefix_caching: bool = True
     gpu_memory_utilization: float = 0.9
     worker_extension_cls: str = (
         "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"

@@ -592,8 +592,8 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 | `cpu_offload_gb`               | float           | `0`                                                                 | -           |
 | `disable_sliding_window`       | boolean         | `True`                                                              | -           |
 | `max_model_len`                | integer \| None | `32768`                                                             | -           |
-| `enable_chunked_prefill`       | boolean         | `False`                                                             | -           |
-| `enable_prefix_caching`        | boolean         | `False`                                                             | -           |
+| `enable_chunked_prefill`       | boolean         | `True`                                                              | -           |
+| `no_enable_prefix_caching`     | boolean         | `True`                                                              | -           |
 | `gpu_memory_utilization`       | float           | `0.9`                                                               | -           |
 | `worker_extension_cls`         | string          | `"areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"` | -           |
 | `enable_sleep_mode`            | boolean         | `False`                                                             | -           |
