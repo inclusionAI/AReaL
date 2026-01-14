@@ -33,7 +33,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
     WeightUpdateRequests,
 )
-from areal.api.workflow_api import RolloutWorkflow, WorkflowLike
+from areal.api.workflow_api import AgentWorkflow, RolloutWorkflow, WorkflowLike
 from areal.core import workflow_context
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
@@ -501,6 +501,12 @@ class RemoteInfEngine(InferenceEngine):
                 )
             resolved = workflow
 
+        elif isinstance(workflow, AgentWorkflow):
+            raise NotImplementedError(
+                f"AgentWorkflow resolution is not yet supported. "
+                f"Got workflow={workflow}"
+            )
+
         elif isinstance(workflow, str):
             try:
                 imported_obj = import_from_string(workflow)
@@ -525,6 +531,20 @@ class RemoteInfEngine(InferenceEngine):
                         "workflow_kwargs is ignored when workflow resolves to an instance"
                     )
                 resolved = imported_obj
+            # Check if it's an AgentWorkflow class
+            elif isinstance(imported_obj, type) and issubclass(
+                imported_obj, AgentWorkflow
+            ):
+                raise NotImplementedError(
+                    f"AgentWorkflow resolution is not yet supported. "
+                    f"Got workflow={workflow}"
+                )
+            # Check if it's an AgentWorkflow instance
+            elif isinstance(imported_obj, AgentWorkflow):
+                raise NotImplementedError(
+                    f"AgentWorkflow resolution is not yet supported. "
+                    f"Got workflow={workflow}"
+                )
             else:
                 raise TypeError(
                     f"Imported object from {workflow!r} is not a valid RolloutWorkflow or AgentWorkflow."
@@ -537,6 +557,12 @@ class RemoteInfEngine(InferenceEngine):
                     f"Got workflow={workflow}, but workflow_kwargs=None."
                 )
             resolved = workflow(**workflow_kwargs)
+
+        elif isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
+            raise NotImplementedError(
+                f"AgentWorkflow resolution is not yet supported. "
+                f"Got workflow={workflow}"
+            )
 
         else:
             raise TypeError(
