@@ -219,6 +219,13 @@ class MegatronEngine(TrainEngine):
         if is_tms_enabled():
             torch_memory_saver.hook_mode = "preload"
 
+        # Check memory snapshot configuration from environment variables
+        self._check_memory_snapshot_env()
+
+        # Start memory snapshot recording if this is the first call and snapshot is enabled
+        if self._should_capture_memory_snapshot(self._current_train_step):
+            self._start_memory_snapshot_recording()
+
         current_platform.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.device(int(os.environ["LOCAL_RANK"]))
         self.rank = int(os.environ["RANK"])
@@ -353,9 +360,6 @@ class MegatronEngine(TrainEngine):
                 model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
         self._create_optimizer(ft_spec)
-
-        # Check memory snapshot configuration from environment variables
-        self._check_memory_snapshot_env()
 
         self._initialized = True
 
@@ -619,10 +623,6 @@ class MegatronEngine(TrainEngine):
     ) -> dict[str, float]:
         self._ensure_ready()
 
-        # Start memory snapshot recording if this is the first call and snapshot is enabled
-        if self._should_capture_memory_snapshot(self._current_train_step):
-            self._start_memory_snapshot_recording()
-
         self.optimizer_zero_grad()
 
         # Step 1: Prepare micro-batches
@@ -650,16 +650,20 @@ class MegatronEngine(TrainEngine):
                 loss_multiplier=loss_multiplier,
             )
 
-        self.forward_backward_batch(mb_list, process_output, forward_only=False)
+        try:
+            self.forward_backward_batch(mb_list, process_output, forward_only=False)
+            # Step 4: Optimizer step
+            result = self.optimizer_step()
+        except Exception as e:
+            # OOM error
+            self.logger.error(f"OOM error: {e}")
 
-        # Step 4: Optimizer step
-        result = self.optimizer_step()
-
-        # Export memory snapshot if enabled for this step
-        if self._should_capture_memory_snapshot(self._current_train_step):
-            self._export_memory_snapshot(self._current_train_step)
-            # Stop recording after exporting to avoid memory overhead
-            self._stop_memory_snapshot_recording()
+            # Export memory snapshot if enabled for this step
+            if self._should_capture_memory_snapshot(self._current_train_step):
+                self._export_memory_snapshot(self._current_train_step)
+                # Stop recording after exporting to avoid memory overhead
+                self._stop_memory_snapshot_recording()
+            raise e
 
         # Increment step counter
         self._current_train_step += 1
@@ -881,13 +885,9 @@ class MegatronEngine(TrainEngine):
         if not enabled:
             return
 
-        if not current_platform.is_cuda_available():
-            self.logger.warning("CUDA unavailable. Memory snapshot disabled.")
-            return
-
         self._memory_snapshot_enabled = True
         self._memory_snapshot_dir = os.environ.get(
-            "AREAL_MEMORY_SNAPSHOT_DIR", "/tmp/areal_memory_snapshots"
+            "AREAL_MEMORY_SNAPSHOT_DIR", "./areal_memory_snapshots"
         )
 
         # Parse profile steps
