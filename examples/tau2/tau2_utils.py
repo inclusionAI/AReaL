@@ -1,10 +1,78 @@
+import json
 from dataclasses import dataclass, field
 
 import yaml
+from loguru import logger
+from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
-from tau2.data_model.message import Message
+from tau2.data_model.message import AssistantMessage, Message, ToolCall
 from tau2.data_model.simulation import RewardInfo
 from tau2.data_model.tasks import Task
+import tau2.utils.llm_utils
+
+
+def _get_message_from_completion(completion: ChatCompletion) -> AssistantMessage:
+    """Convert a ChatCompletion (from OpenAI SDK / ArealOpenAI) to AssistantMessage.
+
+    This is a replacement for tau2.utils.llm_utils._get_message_from_response
+    that works with ChatCompletion instead of litellm's ModelResponse.
+
+    Args:
+        completion: ChatCompletion object from ArealOpenAI client
+
+    Returns:
+        AssistantMessage: Tau2 message format
+    """
+    # Extract usage information
+    usage = None
+    if completion.usage is not None:
+        usage = {
+            "completion_tokens": completion.usage.completion_tokens,
+            "prompt_tokens": completion.usage.prompt_tokens,
+        }
+
+    # Get the first choice
+    choice = completion.choices[0]
+
+    # Check finish reason
+    try:
+        finish_reason = choice.finish_reason
+        if finish_reason == "length":
+            logger.warning("Output might be incomplete due to token limit!")
+    except Exception as e:
+        logger.error(e)
+        raise e
+
+    assert choice.message.role == "assistant", (
+        "The response should be an assistant message"
+    )
+
+    content = choice.message.content
+    tool_calls_raw = choice.message.tool_calls or []
+    tool_calls = [
+        ToolCall(
+            id=tool_call.id,
+            name=tool_call.function.name,
+            arguments=json.loads(tool_call.function.arguments),
+        )
+        for tool_call in tool_calls_raw
+    ]
+    tool_calls = tool_calls or None
+
+    message = AssistantMessage(
+        role="assistant",
+        content=content,
+        tool_calls=tool_calls,
+        cost=0.0,  # No cost tracking for ArealOpenAI
+        usage=usage,
+        raw_data=completion.model_dump(),
+    )
+    return message
+
+
+# Patch tau2.utils.llm_utils._get_message_from_response with our implementation
+tau2.utils.llm_utils._get_message_from_response = _get_message_from_completion
+
 
 
 class Tau2RunInfo(BaseModel):
