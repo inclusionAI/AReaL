@@ -328,14 +328,45 @@ class LocalScheduler(Scheduler):
             timeout=timeout,
             connector=get_default_connector(),
         ) as session:
-            # Launch all fork requests concurrently
+            # Launch all fork requests concurrently with exception handling
             tasks = [
                 self._fork_single_worker(
                     session, role, idx, target_wi, target_role, command
                 )
                 for idx, target_wi in enumerate(target_workers)
             ]
-            workers = await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Separate successful workers from failures
+        workers = []
+        failed_indices = []
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                failed_indices.append(idx)
+                logger.error(
+                    f"Failed to fork worker {role}/{idx} from {target_role}/{idx}: {result}"
+                )
+            else:
+                workers.append(result)
+
+        # If any fork failed, cleanup successful workers and raise
+        if failed_indices:
+            if workers:
+                logger.warning(
+                    f"Cleaning up {len(workers)} successfully forked workers due to partial failure"
+                )
+                # Store temporarily for cleanup
+                self._workers[role] = workers
+                try:
+                    self.delete_workers(role)
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup forked workers: {cleanup_error}")
+
+            raise WorkerCreationError(
+                role,
+                f"Failed to fork {len(failed_indices)} out of {len(target_workers)} workers",
+                f"Failed indices: {failed_indices}",
+            )
 
         self._workers[role] = list(workers)
         self._colocated_roles[role] = target_role
@@ -380,9 +411,7 @@ class LocalScheduler(Scheduler):
             List of worker IDs created (e.g., ["proxy/0", "proxy/1"])
         """
         if target_role not in self._workers:
-            raise WorkerNotFoundError(
-                target_role, f"Target role '{target_role}' not found for fork"
-            )
+            raise WorkerNotFoundError(f"Target role '{target_role}' not found for fork")
         target_workers = self._workers[target_role]
 
         try:

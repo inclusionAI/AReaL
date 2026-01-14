@@ -666,9 +666,7 @@ class RayScheduler(Scheduler):
             )
 
         if target_role not in self._workers:
-            raise WorkerNotFoundError(
-                target_role, f"Target role '{target_role}' not found for fork"
-            )
+            raise WorkerNotFoundError(f"Target role '{target_role}' not found for fork")
         target_workers = self._workers[target_role]
 
         schedulings = []
