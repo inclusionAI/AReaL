@@ -1477,6 +1477,13 @@ class FSDPEngine(TrainEngine):
             )
         if not self.config.is_critic:
             if self.enable_tree_training:
+                # Handle dummy trie (empty tree for DP load balancing)
+                # When trie has no sequences, return zero loss with grad connection
+                if ctx.trie_node is None or not ctx.trie_node.all_sequence_ids:
+                    # Return zero loss that maintains gradient connection to logits
+                    # This ensures backward() works correctly for FSDP synchronization
+                    return logits.sum() * 0.0
+
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
                     logits,
                     ctx.trie_node,
