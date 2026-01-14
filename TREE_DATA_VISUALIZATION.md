@@ -89,6 +89,15 @@ for trie in trie_nodes:
 
 ## Using the Visualization Tool
 
+### Pre-requisites
+
+```bash
+cd AReaL/
+pip3 install -e . --no-deps --no-build-isolation
+pip3 install mbridge
+export TORCH_COMPILE_DISABLE=1
+```
+
 ### List Available Dumps
 
 ```bash
