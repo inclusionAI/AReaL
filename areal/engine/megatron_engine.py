@@ -163,6 +163,9 @@ class MegatronEngine(TrainEngine):
             self.fp8_config.direct_convert if self.enable_fp8 else False
         )
         self.quantization_config: dict[str, int | str | list[str]] | None = None
+        self._current_train_step: int = 0
+        self._memory_snapshot_enabled: bool = False
+        self._memory_snapshot_started: bool = False
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -350,6 +353,10 @@ class MegatronEngine(TrainEngine):
                 model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
         self._create_optimizer(ft_spec)
+
+        # Check memory snapshot configuration from environment variables
+        self._check_memory_snapshot_env()
+
         self._initialized = True
 
     @property
@@ -402,6 +409,9 @@ class MegatronEngine(TrainEngine):
         return self._cpu_group
 
     def destroy(self):
+        # Stop memory snapshot recording if active
+        self._stop_memory_snapshot_recording()
+
         self._initialized = False
         self.process_group_initialized = False
         if hasattr(self, "optimizer"):
@@ -608,6 +618,11 @@ class MegatronEngine(TrainEngine):
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
     ) -> dict[str, float]:
         self._ensure_ready()
+
+        # Start memory snapshot recording if this is the first call and snapshot is enabled
+        if self._should_capture_memory_snapshot(self._current_train_step):
+            self._start_memory_snapshot_recording()
+
         self.optimizer_zero_grad()
 
         # Step 1: Prepare micro-batches
@@ -638,7 +653,18 @@ class MegatronEngine(TrainEngine):
         self.forward_backward_batch(mb_list, process_output, forward_only=False)
 
         # Step 4: Optimizer step
-        return self.optimizer_step()
+        result = self.optimizer_step()
+
+        # Export memory snapshot if enabled for this step
+        if self._should_capture_memory_snapshot(self._current_train_step):
+            self._export_memory_snapshot(self._current_train_step)
+            # Stop recording after exporting to avoid memory overhead
+            self._stop_memory_snapshot_recording()
+
+        # Increment step counter
+        self._current_train_step += 1
+
+        return result
 
     @torch.no_grad()
     def eval_batch(
@@ -838,6 +864,116 @@ class MegatronEngine(TrainEngine):
         if perf_tracer.is_configured():
             return
         perf_tracer.configure(config, rank=rank, role=role)
+
+    def _check_memory_snapshot_env(self) -> None:
+        """Check environment variables for memory snapshot configuration.
+
+        Environment variables:
+        - AREAL_MEMORY_SNAPSHOT: Set to "1" or "true" to enable memory snapshot
+        - AREAL_MEMORY_SNAPSHOT_DIR: Directory to save snapshot files (default: /tmp/areal_memory_snapshots)
+        - AREAL_MEMORY_SNAPSHOT_STEPS: Comma-separated list of steps to profile (e.g., "0,10,20")
+                                       If not set, profiles all steps
+        - AREAL_MEMORY_SNAPSHOT_MAX_ENTRIES: Max number of memory events (default: 100000)
+
+        Reference: https://pytorch.org/blog/understanding-gpu-memory-1/
+        """
+        enabled = os.environ.get("AREAL_MEMORY_SNAPSHOT", "").lower() in ("1", "true")
+        if not enabled:
+            return
+
+        if not current_platform.is_cuda_available():
+            self.logger.warning("CUDA unavailable. Memory snapshot disabled.")
+            return
+
+        self._memory_snapshot_enabled = True
+        self._memory_snapshot_dir = os.environ.get(
+            "AREAL_MEMORY_SNAPSHOT_DIR", "/tmp/areal_memory_snapshots"
+        )
+
+        # Parse profile steps
+        steps_str = os.environ.get("AREAL_MEMORY_SNAPSHOT_STEPS", "")
+        if steps_str:
+            try:
+                self._memory_snapshot_steps = set(
+                    int(s.strip()) for s in steps_str.split(",") if s.strip()
+                )
+            except ValueError:
+                self.logger.error(
+                    f"Invalid AREAL_MEMORY_SNAPSHOT_STEPS format: {steps_str}. "
+                    "Expected comma-separated integers."
+                )
+                self._memory_snapshot_steps = None
+        else:
+            self._memory_snapshot_steps = None  # Profile all steps
+
+        # Parse max entries
+        try:
+            self._memory_snapshot_max_entries = int(
+                os.environ.get("AREAL_MEMORY_SNAPSHOT_MAX_ENTRIES", "100000")
+            )
+        except ValueError:
+            self.logger.warning(
+                "Invalid AREAL_MEMORY_SNAPSHOT_MAX_ENTRIES, using default 100000"
+            )
+            self._memory_snapshot_max_entries = 100000
+
+        os.makedirs(self._memory_snapshot_dir, exist_ok=True)
+
+        self.logger.info(
+            f"Memory snapshot enabled: dir={self._memory_snapshot_dir}, "
+            f"steps={self._memory_snapshot_steps or 'all'}, "
+            f"max_entries={self._memory_snapshot_max_entries}"
+        )
+
+    def _should_capture_memory_snapshot(self, step: int) -> bool:
+        """Check if we should capture memory snapshot at this step."""
+        if not self._memory_snapshot_enabled:
+            return False
+        if self._memory_snapshot_steps is None:
+            return True  # Profile all steps
+        return step in self._memory_snapshot_steps
+
+    def _start_memory_snapshot_recording(self) -> None:
+        """Start recording memory snapshot history."""
+        if not self._memory_snapshot_enabled or self._memory_snapshot_started:
+            return
+        self.logger.info(
+            f"Starting memory snapshot recording (max_entries={self._memory_snapshot_max_entries})"
+        )
+        torch.cuda.memory._record_memory_history(
+            max_entries=self._memory_snapshot_max_entries
+        )
+        self._memory_snapshot_started = True
+
+    def _stop_memory_snapshot_recording(self) -> None:
+        """Stop recording memory snapshot history."""
+        if not self._memory_snapshot_started:
+            return
+        self.logger.info("Stopping memory snapshot recording")
+        torch.cuda.memory._record_memory_history(enabled=None)
+        self._memory_snapshot_started = False
+
+    def _export_memory_snapshot(self, step: int) -> None:
+        """Export memory snapshot to file."""
+        if not self._memory_snapshot_enabled:
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        rank = dist.get_rank() if dist.is_initialized() else 0
+
+        filename = os.path.join(
+            self._memory_snapshot_dir,
+            f"memory_snapshot_rank{rank}_step{step}_{timestamp}.pickle",
+        )
+
+        try:
+            self.logger.info(f"Saving memory snapshot to: {filename}")
+            torch.cuda.memory._dump_snapshot(filename)
+            self.logger.info(
+                "Memory snapshot saved. Visualize at: https://pytorch.org/memory_viz"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to capture memory snapshot: {e}")
 
     def _make_parallel_strategy(
         self, parallel_strategy: ParallelStrategy
