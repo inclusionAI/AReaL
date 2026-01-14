@@ -1038,16 +1038,24 @@ class vLLMConfig:
     swap_space: int = 4
     cpu_offload_gb: float = 0
     disable_sliding_window: bool = True
-    # NOTE: Defaults max_model_len to 32k because a larger value
-    # will enable chunked prefill in vLLM, which will cause
-    # evalution performance degeneration.
     max_model_len: int | None = 32768
-    enable_chunked_prefill: bool = False
-    # NOTE: Setting enable_prefix_caching to False
-    # because it will reuse the block after
-    # model weights are updated. Using v0.7.2 reset_prefix_cache
-    # will fix this issue.
-    enable_prefix_caching: bool = False
+    # NOTE: We use no_enable_* prefix (instead of enable_*) because get_py_cmd()
+    # ignores parameters with False values. Setting enable_chunked_prefill=False
+    # or enable_prefix_caching=False has NO effect - vLLM will use its default
+    # values (True). Using no_enable_*=True correctly passes --no-enable-* flags
+    # to vLLM, achieving enable_*=False behavior.
+    #
+    # IMPORTANT: vLLM V1 engine forces enable_chunked_prefill=True by default
+    # for non-pooling tasks (generation tasks). And no_enable_chunked_prefill=True
+    # has NO effect for generation tasks in vLLM v0.11.0.
+    #
+    # TODO(vllm-v0.11.0): vLLM v0.11.0 has inference quality issues when
+    # temperature=1.0 - multiple sampling runs produce garbled/corrupted outputs.
+    # This affects generation quality in RL training workflows.
+    no_enable_chunked_prefill: bool = False
+    # NOTE: Disables prefix caching (vLLM default is enabled) because it will
+    # make RL training corrupted in single controller mode.
+    no_enable_prefix_caching: bool = True
     gpu_memory_utilization: float = 0.9
     worker_extension_cls: str = (
         "areal.thirdparty.vllm.vllm_worker_extension.VLLMWorkerExtension"
