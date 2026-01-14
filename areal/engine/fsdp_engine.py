@@ -1486,6 +1486,8 @@ class FSDPEngine(TrainEngine):
                     if self.parallel_helper.tp_size > 1
                     else None,
                 )
+                print(f"[debug] logits.shape: {logits.shape}, logits.dtype: {logits.dtype}")
+                print(f"[debug] logprobs.shape: {logprobs.shape}, logprobs.dtype: {logprobs.dtype}")
             else:
                 logprobs, entropy = self._compute_logprobs_entropy(
                     logits, ctx.model_inputs, ctx.ulysses_pad_size

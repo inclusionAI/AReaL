@@ -476,8 +476,14 @@ def grpo_loss_fn(
     else:
         # Log clipping statistics (PPO only)
         clip_mask = stat["clip_mask"]
+        print(f"[debug] logprobs.shape={logprobs.shape}, logprobs.dtype={logprobs.dtype}")
+        print(f"[debug] old_logp.shape={old_logp.shape}, old_logp.dtype={old_logp.dtype}")
+        print(f"[debug] clip_mask.shape={clip_mask.shape}, clip_mask.dtype={clip_mask.dtype}")
         clipped_new_logp = torch.where(clip_mask, logprobs.detach(), 0.0)
         clipped_old_logp = torch.where(clip_mask, old_logp, 0.0)
+        print(f"[debug] clipped_new_logp.shape={clipped_new_logp.shape}, clipped_new_logp.dtype={clipped_new_logp.dtype}")
+        print(f"[debug] clipped_old_logp.shape={clipped_old_logp.shape}, clipped_old_logp.dtype={clipped_old_logp.dtype}")
+
         stats_tracker.stat(
             clipped_new_logp=clipped_new_logp,
             clipped_old_logp=clipped_old_logp,
