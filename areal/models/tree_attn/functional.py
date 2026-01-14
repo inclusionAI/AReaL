@@ -354,7 +354,7 @@ def _gather_packed_tree_logprobs_entropy(
     logprobs_results: dict[int, torch.Tensor] = {}
     entropy_results: dict[int, torch.Tensor] = {}
     device = logits.device
-    dtype = logits.dtype
+    dtype = torch.float # logprobs should always be float
     input_ids = input_ids.squeeze(0)
     # Cached implementation with chunking
     # Cache for internal node results: (start_idx, end_idx) -> (logprobs, entropy)
