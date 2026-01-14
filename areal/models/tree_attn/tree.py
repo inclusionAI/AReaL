@@ -16,7 +16,6 @@ import torch
 import torch.distributed as dist
 
 from areal.api.cli_args import MicroBatchSpec
-from areal.models.tree_attn.module import BLOCK_SIZE, USE_BLOCK_MASK
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
@@ -352,7 +351,8 @@ def build_packed_tree_batch(
             "MicroBatchSpec.max_tokens_per_mb must be a positive value for tree training."
         )
 
-    # Validate padding constraints when using block masks
+    # Validate padding constraints when using block masks 
+    from areal.models.tree_attn.module import BLOCK_SIZE, USE_BLOCK_MASK
     if USE_BLOCK_MASK:
         no_padding = not pad_to_maximum and pad_to_multiple_of <= 1
         if no_padding:
