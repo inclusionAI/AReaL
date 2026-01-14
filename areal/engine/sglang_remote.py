@@ -21,7 +21,7 @@ from areal.api.io_struct import (
     WeightUpdateRequests,
 )
 from areal.api.scheduler_api import Scheduler
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import WorkflowLike
 from areal.controller import RolloutController
 from areal.core import RemoteInfEngine
 from areal.core.workflow_executor import WorkflowExecutor
@@ -290,7 +290,7 @@ class RemoteSGLangEngine(InferenceEngine):
     def submit(
         self,
         data: dict[str, Any],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
@@ -325,7 +325,7 @@ class RemoteSGLangEngine(InferenceEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> dict[str, Any]:
@@ -344,7 +344,7 @@ class RemoteSGLangEngine(InferenceEngine):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,

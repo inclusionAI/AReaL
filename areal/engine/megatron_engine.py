@@ -42,7 +42,7 @@ from areal.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import WorkflowLike
 from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.engine.core import (
     aggregate_eval_losses,
@@ -99,9 +99,9 @@ from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
 
 if TYPE_CHECKING:
+    from areal.api.scheduler_api import Scheduler
     from areal.engine.ppo.actor import PPOActorConfig
     from areal.engine.ppo.critic import PPOCriticConfig
-    from areal.scheduler.scheduler import Scheduler
 
 
 class _MegatronModelList(list):
@@ -447,7 +447,7 @@ class MegatronEngine(TrainEngine):
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> dict[str, Any]:
@@ -462,7 +462,7 @@ class MegatronEngine(TrainEngine):
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,

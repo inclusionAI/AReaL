@@ -14,7 +14,7 @@ from areal.api.io_struct import (
     WeightUpdateMeta,
 )
 from areal.api.scheduler_api import Job, Scheduler, Worker
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import WorkflowLike
 from areal.controller.rollout_callback import RolloutCallback
 from areal.controller.rollout_controller import RolloutController
 from areal.scheduler.rpc.rtensor import RTensor
@@ -530,7 +530,7 @@ class TrainController:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
         group_size: int = 1,
@@ -548,7 +548,7 @@ class TrainController:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any],
         should_accept_fn: str | None = None,
         group_size: int = 1,

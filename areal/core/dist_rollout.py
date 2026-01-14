@@ -7,7 +7,7 @@ import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.engine_api import InferenceEngine, TrainEngine
-from areal.api.workflow_api import RolloutWorkflow
+from areal.api.workflow_api import WorkflowLike
 from areal.platforms import current_platform
 from areal.utils.data import (
     all_gather_tensor_container,
@@ -161,7 +161,7 @@ class DistRolloutCoordinator:
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
     ) -> dict[str, Any]:
@@ -179,7 +179,7 @@ class DistRolloutCoordinator:
         ----------
         data : List[Dict[str, Any]]
             Input data batch for rollout generation
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             Workflow defining rollout logic
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
@@ -215,7 +215,7 @@ class DistRolloutCoordinator:
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
-        workflow: RolloutWorkflow | type[RolloutWorkflow] | str,
+        workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         group_size: int = 1,
@@ -232,7 +232,7 @@ class DistRolloutCoordinator:
         ----------
         dataloader : StatefulDataLoader
             Dataloader to pull samples from
-        workflow : RolloutWorkflow | type[RolloutWorkflow] | str
+        workflow : WorkflowLike
             Workflow defining rollout logic
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
