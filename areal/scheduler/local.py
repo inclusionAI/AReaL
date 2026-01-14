@@ -246,6 +246,7 @@ class LocalScheduler(Scheduler):
         idx: int,
         target_wi: WorkerInfo,
         target_role: str,
+        command: str | None = None,
     ) -> WorkerInfo:
         """Fork a single worker asynchronously."""
         worker_id = f"{role}/{idx}"
@@ -254,9 +255,12 @@ class LocalScheduler(Scheduler):
         )
 
         try:
+            payload = {"role": role, "worker_index": idx}
+            if command is not None:
+                payload["command"] = command
             async with session.post(
                 target_url,
-                json={"role": role, "worker_index": idx},
+                json=payload,
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -311,11 +315,72 @@ class LocalScheduler(Scheduler):
             env_vars=target_wi.env_vars.copy(),  # Inherited from target
         )
 
+    async def _kill_forked_worker(
+        self,
+        session: aiohttp.ClientSession,
+        role: str,
+        idx: int,
+        target_wi: WorkerInfo,
+    ) -> None:
+        """Kill a single forked worker via its parent's RPC server."""
+        target_url = f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/kill_forked_worker"
+
+        try:
+            payload = {"role": role, "worker_index": idx}
+            async with session.post(
+                target_url,
+                json=payload,
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.warning(
+                        f"Failed to kill forked worker {role}/{idx}: "
+                        f"HTTP {response.status}: {error_text}"
+                    )
+                else:
+                    result = await response.json()
+                    logger.info(
+                        result.get("message", f"Killed forked worker {role}/{idx}")
+                    )
+        except Exception as e:
+            logger.warning(f"Exception killing forked worker {role}/{idx}: {e}")
+
+    async def _cleanup_forked_workers_async(
+        self,
+        role: str,
+        target_role: str,
+        workers: list[WorkerInfo],
+    ) -> None:
+        """Cleanup forked workers by calling kill endpoint on parent workers."""
+        target_workers = self._workers.get(target_role, [])
+        if not target_workers:
+            logger.warning(
+                f"Cannot cleanup forked workers: target role '{target_role}' not found"
+            )
+            return
+
+        timeout = aiohttp.ClientTimeout(total=30.0)
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=get_default_connector(),
+        ) as session:
+            tasks = []
+            for worker_info in workers:
+                worker_index = int(worker_info.worker.id.split("/")[-1])
+                if worker_index < len(target_workers):
+                    tasks.append(
+                        self._kill_forked_worker(
+                            session, role, worker_index, target_workers[worker_index]
+                        )
+                    )
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _create_forked_workers_async(
         self,
         role: str,
         target_role: str,
         target_workers: list[WorkerInfo],
+        command: str | None = None,
     ) -> list[str]:
         """Create forked workers concurrently using async requests."""
         timeout = aiohttp.ClientTimeout(total=120.0)
@@ -323,12 +388,44 @@ class LocalScheduler(Scheduler):
             timeout=timeout,
             connector=get_default_connector(),
         ) as session:
-            # Launch all fork requests concurrently
+            # Launch all fork requests concurrently with exception handling
             tasks = [
-                self._fork_single_worker(session, role, idx, target_wi, target_role)
+                self._fork_single_worker(
+                    session, role, idx, target_wi, target_role, command
+                )
                 for idx, target_wi in enumerate(target_workers)
             ]
-            workers = await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Separate successful workers from failures
+        workers = []
+        failed_indices = []
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                failed_indices.append(idx)
+                logger.error(
+                    f"Failed to fork worker {role}/{idx} from {target_role}/{idx}: {result}"
+                )
+            else:
+                workers.append(result)
+
+        # If any fork failed, cleanup successful workers and raise
+        if failed_indices:
+            if workers:
+                logger.warning(
+                    f"Cleaning up {len(workers)} successfully forked workers due to partial failure"
+                )
+                # Kill the forked processes via parent RPC servers
+                try:
+                    await self._cleanup_forked_workers_async(role, target_role, workers)
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup forked workers: {cleanup_error}")
+
+            raise WorkerCreationError(
+                role,
+                f"Failed to fork {len(failed_indices)} out of {len(target_workers)} workers",
+                f"Failed indices: {failed_indices}",
+            )
 
         self._workers[role] = list(workers)
         self._colocated_roles[role] = target_role
@@ -346,16 +443,43 @@ class LocalScheduler(Scheduler):
 
         return worker_ids
 
-    def _create_forked_workers(
+    def fork_workers(
         self,
         role: str,
         target_role: str,
-        target_workers: list[WorkerInfo],
+        command: str | None = None,
     ) -> list[str]:
-        """Create forked workers by calling /fork on target workers concurrently."""
+        """Fork new worker processes from existing workers.
+
+        Creates new worker processes by forking from existing workers of the target role.
+        The forked workers are colocated on the same nodes as their target workers.
+
+        Parameters
+        ----------
+        role : str
+            Role name for the new forked workers (e.g., "proxy")
+        target_role : str
+            Role of existing workers to fork from (e.g., "rollout")
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked process runs this module.
+
+        Returns
+        -------
+        list[str]
+            List of worker IDs created (e.g., ["proxy/0", "proxy/1"])
+        """
+        if target_role not in self._workers:
+            raise WorkerNotFoundError(f"Target role '{target_role}' not found for fork")
+        target_workers = self._workers[target_role]
+
         try:
             return run_async_task(
-                self._create_forked_workers_async, role, target_role, target_workers
+                self._create_forked_workers_async,
+                role,
+                target_role,
+                target_workers,
+                command,
             )
         except Exception:
             # Cleanup on failure
@@ -440,9 +564,7 @@ class LocalScheduler(Scheduler):
             # Check if fork mode is enabled
             if strategy.fork:
                 # Fork mode: spawn new processes on same GPUs via /fork endpoint
-                worker_ids = self._create_forked_workers(
-                    role, colocate_role, target_workers
-                )
+                worker_ids = self.fork_workers(role, colocate_role)
             else:
                 # Reuse existing workers - no new processes spawned
                 worker_ids = [w.worker.id for w in target_workers]

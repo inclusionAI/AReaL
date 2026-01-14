@@ -125,6 +125,43 @@ class Scheduler(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    def fork_workers(
+        self,
+        role: str,
+        target_role: str,
+        command: str | None = None,
+    ) -> list[str]:
+        """Fork new worker processes from existing workers.
+
+        Creates new worker processes by forking from existing workers of the target role.
+        The forked workers are colocated on the same nodes as their target workers.
+
+        Parameters
+        ----------
+        role : str
+            Role name for the new forked workers (e.g., "proxy")
+        target_role : str
+            Role of existing workers to fork from (e.g., "rollout")
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked process runs this module (e.g.,
+            "areal.experimental.openai.proxy.proxy_rollout_server").
+
+        Returns
+        -------
+        list[str]
+            List of worker IDs created (e.g., ["proxy/0", "proxy/1"])
+
+        Raises
+        ------
+        WorkerCreationError
+            If fork operation fails
+        WorkerNotFoundError
+            If target_role workers don't exist
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     async def create_engine(
         self,
         worker_id: str,
