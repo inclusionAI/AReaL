@@ -6,11 +6,10 @@
 python3 examples/experimental/proxy/train.py \
     --config examples/experimental/proxy/config.yaml \
     scheduler.type=local \
-    +agent_module_path="areal.workflow.openai.math_agent.MathAgent"
 ```
 
 This script will run the example agent in `areal/workflow/openai/math_agent.py`. You can
-also modify `agent_module_path` to run other example agents defined in the same file.
+also modify `workflow` to run other example agents defined in the same file.
 
 ## Write Your Own Agent
 
@@ -21,10 +20,10 @@ also modify `agent_module_path` to run other example agents defined in the same 
    final reward, or a dict where the reward of each interaction is keyed by the
    completion or response ID.
 
-1. Wrap the function within AReaL's `AgentWorkflow`. This class is for pure typing
-   usage. You can add configurable options in the `__init__` method and expose them in
-   the training scripts, in which way you can then configure these options in CLI args
-   or yaml.
+1. Wrap the function within AReaL's `AgentWorkflow`. This class is for pure typing and
+   API regulation usage. You can add configurable options in the `__init__` method and
+   expose them in the training scripts, in which way you can then configure these
+   options in CLI args or yaml.
 
 ```python
 async def my_agent(data: dict) -> float:
@@ -38,8 +37,6 @@ class MyAgentWorkflow(AgentWorkflow):
 ```
 
 3. Place your agent code in a path that can be imported in Python, and modify the
-   `agent_module_path` in the configuration file to that path:
+   `workflow` in the training script to that path.
 
-```yaml
-agent_module_path: "examples.experimental.proxy.math_agent.MyAgent"
-```
+See `areal/workflow/openai/` for concrete examples.

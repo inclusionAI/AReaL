@@ -77,7 +77,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
     @trace_session("run_agent")
     async def _run_agent(self, base_url: str, data: dict):
         if self.mode == "inline":
-            http_client = workflow_context.get_httpx_client()
+            http_client = await workflow_context.get_httpx_client()
             extra_kwargs = {
                 "base_url": base_url,
                 "http_client": http_client,
@@ -110,7 +110,7 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
     ) -> dict[str, InteractionWithTokenLogpReward] | None:
         task_id = workflow_context.get().task_id
 
-        http_session = workflow_context.get_aiohttp_session()
+        http_session = await workflow_context.get_aiohttp_session()
 
         # Grant capacity for clients, otherwise agent sessions are rejected.
         # Designed for online mode. Users' requests do not have any staleness
