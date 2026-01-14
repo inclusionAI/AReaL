@@ -534,6 +534,62 @@ class SlurmScheduler(Scheduler):
             node=target_wi.node,  # Same node as target
         )
 
+    async def _kill_forked_worker(
+        self,
+        session: aiohttp.ClientSession,
+        role: str,
+        idx: int,
+        target_wi: SlurmWorkerInfo,
+    ) -> None:
+        """Kill a single forked worker via its parent's RPC server."""
+        target_url = f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/kill_forked_worker"
+
+        try:
+            payload = {"role": role, "worker_index": idx}
+            async with session.post(
+                target_url,
+                json=payload,
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.warning(
+                        f"Failed to kill forked worker {role}/{idx}: "
+                        f"HTTP {response.status}: {error_text}"
+                    )
+                else:
+                    result = await response.json()
+                    logger.info(
+                        result.get("message", f"Killed forked worker {role}/{idx}")
+                    )
+        except Exception as e:
+            logger.warning(f"Exception killing forked worker {role}/{idx}: {e}")
+
+    async def _cleanup_forked_workers_async(
+        self,
+        role: str,
+        target_role: str,
+        workers: list[SlurmWorkerInfo],
+    ) -> None:
+        """Cleanup forked workers by calling kill endpoint on parent workers."""
+        target_workers = self._workers.get(target_role, [])
+        if not target_workers:
+            logger.warning(
+                f"Cannot cleanup forked workers: target role '{target_role}' not found"
+            )
+            return
+
+        timeout = aiohttp.ClientTimeout(total=30.0)
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=get_default_connector(),
+        ) as session:
+            tasks = [
+                self._kill_forked_worker(session, role, idx, target_workers[idx])
+                for idx in range(len(workers))
+                if idx < len(target_workers)
+            ]
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _create_forked_workers_async(
         self,
         role: str,
@@ -574,10 +630,9 @@ class SlurmScheduler(Scheduler):
                 logger.warning(
                     f"Cleaning up {len(workers)} successfully forked workers due to partial failure"
                 )
-                # Store temporarily for cleanup
-                self._workers[role] = workers
+                # Kill the forked processes via parent RPC servers
                 try:
-                    self.delete_workers(role)
+                    await self._cleanup_forked_workers_async(role, target_role, workers)
                 except Exception as cleanup_error:
                     logger.error(f"Failed to cleanup forked workers: {cleanup_error}")
 

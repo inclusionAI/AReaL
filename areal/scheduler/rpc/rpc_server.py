@@ -59,6 +59,8 @@ _allocated_ports: set[int] = set()
 # Forked child processes - tracked for cleanup
 _forked_children: list[subprocess.Popen] = []
 _forked_children_lock = Lock()
+# Map (role, worker_index) to forked process for selective killing
+_forked_children_map: dict[tuple[str, int], subprocess.Popen] = {}
 
 # Server config (needed for /fork endpoint to spawn children with same config)
 _experiment_name: str | None = None
@@ -218,7 +220,7 @@ def fork_worker():
         "pid": 12345
     }
     """
-    global _forked_children, _allocated_ports
+    global _forked_children, _forked_children_map, _allocated_ports
 
     try:
         data = request.get_json()
@@ -299,6 +301,7 @@ def fork_worker():
 
         with _forked_children_lock:
             _forked_children.append(child_process)
+            _forked_children_map[(role, worker_index)] = child_process
 
         # Wait for child to be ready
         child_host = _server_host
@@ -311,6 +314,7 @@ def fork_worker():
             with _forked_children_lock:
                 if child_process in _forked_children:
                     _forked_children.remove(child_process)
+                _forked_children_map.pop((role, worker_index), None)
             _allocated_ports.discard(child_port)
             return jsonify(
                 {"error": "Forked worker failed to start within timeout"}
@@ -332,6 +336,87 @@ def fork_worker():
 
     except Exception as e:
         logger.error(f"Error in fork: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
+@app.route("/kill_forked_worker", methods=["POST"])
+def kill_forked_worker():
+    """Kill a specific forked worker process.
+
+    This endpoint terminates a previously forked child process identified by
+    its role and worker_index.
+
+    Expected JSON payload:
+    {
+        "role": "ref",           # Role name of the forked worker
+        "worker_index": 0        # Worker index
+    }
+
+    Returns:
+    {
+        "status": "success",
+        "message": "Killed forked worker ref/0 (pid=12345)"
+    }
+    """
+    global _forked_children, _forked_children_map
+
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON in request body"}), 400
+
+        role = data.get("role")
+        worker_index = data.get("worker_index")
+
+        if role is None:
+            return jsonify({"error": "Missing 'role' field in request"}), 400
+        if worker_index is None:
+            return jsonify({"error": "Missing 'worker_index' field in request"}), 400
+
+        key = (role, worker_index)
+
+        with _forked_children_lock:
+            child_process = _forked_children_map.get(key)
+
+            if child_process is None:
+                return jsonify(
+                    {"error": f"Forked worker {role}/{worker_index} not found"}
+                ), 404
+
+            pid = child_process.pid
+
+            # Kill the process tree
+            try:
+                if child_process.poll() is None:  # Still running
+                    kill_process_tree(pid, timeout=3, graceful=True)
+                    logger.info(
+                        f"Killed forked worker {role}/{worker_index} (pid={pid})"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Error killing forked worker {role}/{worker_index} (pid={pid}): {e}"
+                )
+                return jsonify(
+                    {
+                        "error": f"Failed to kill forked worker: {str(e)}",
+                        "pid": pid,
+                    }
+                ), 500
+
+            # Remove from tracking structures
+            if child_process in _forked_children:
+                _forked_children.remove(child_process)
+            _forked_children_map.pop(key, None)
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": f"Killed forked worker {role}/{worker_index} (pid={pid})",
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error in kill_forked_worker: {e}\n{traceback.format_exc()}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
@@ -803,7 +888,7 @@ def clear_batch_data():
 
 def cleanup_forked_children():
     """Clean up all forked child processes."""
-    global _forked_children
+    global _forked_children, _forked_children_map
 
     with _forked_children_lock:
         if not _forked_children:
@@ -818,6 +903,7 @@ def cleanup_forked_children():
             except Exception as e:
                 logger.error(f"Error killing forked child {child.pid}: {e}")
         _forked_children.clear()
+        _forked_children_map.clear()
 
 
 def cleanup_engines():
