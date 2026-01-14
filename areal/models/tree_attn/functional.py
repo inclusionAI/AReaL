@@ -61,7 +61,7 @@ def _compute_internal_node_logprobs(
     """
     num_internal = end_idx - start_idx
     if num_internal <= 0:
-        return torch.empty(0, device=logits.device, dtype=logits.dtype)
+        return torch.empty(0, device=logits.device, dtype=torch.float)
 
     # Prediction positions and corresponding labels
     pred_start, pred_end = start_idx, end_idx
@@ -111,7 +111,7 @@ def _compute_internal_node_logprobs_entropy(
     """
     num_internal = end_idx - start_idx
     if num_internal <= 0:
-        empty = torch.empty(0, device=logits.device, dtype=logits.dtype)
+        empty = torch.empty(0, device=logits.device, dtype=torch.float)
         return empty, empty
 
     pred_start, pred_end = start_idx, end_idx
@@ -268,7 +268,6 @@ def _gather_packed_tree_logprobs(
     """
     results: dict[int, torch.Tensor] = {}
     device = logits.device
-    dtype = logits.dtype
     input_ids = input_ids.squeeze(0)
     # Cached implementation with chunking
     # Cache for internal node logprobs: (start_idx, end_idx) -> tensor
@@ -279,7 +278,7 @@ def _gather_packed_tree_logprobs(
     for seq_id in trie.all_sequence_ids:
         indices = trie.get_sequence_tree_indices(seq_id)
         if not indices:
-            results[seq_id] = torch.empty(0, device=device, dtype=dtype)
+            results[seq_id] = torch.empty(0, device=device, dtype=torch.float)
             continue
 
         logprob_parts: list[torch.Tensor] = []
@@ -309,7 +308,7 @@ def _gather_packed_tree_logprobs(
         if logprob_parts:
             results[seq_id] = torch.cat(logprob_parts, dim=0)
         else:
-            results[seq_id] = torch.empty(0, device=device, dtype=dtype)
+            results[seq_id] = torch.empty(0, device=device, dtype=torch.float)
 
     return results
 
@@ -354,7 +353,6 @@ def _gather_packed_tree_logprobs_entropy(
     logprobs_results: dict[int, torch.Tensor] = {}
     entropy_results: dict[int, torch.Tensor] = {}
     device = logits.device
-    dtype = torch.float # logprobs should always be float
     input_ids = input_ids.squeeze(0)
     # Cached implementation with chunking
     # Cache for internal node results: (start_idx, end_idx) -> (logprobs, entropy)
@@ -365,7 +363,7 @@ def _gather_packed_tree_logprobs_entropy(
     for seq_id in trie.all_sequence_ids:
         indices = trie.get_sequence_tree_indices(seq_id)
         if not indices:
-            empty = torch.empty(0, device=device, dtype=dtype)
+            empty = torch.empty(0, device=device, dtype=torch.float)
             logprobs_results[seq_id] = empty
             entropy_results[seq_id] = empty
             continue
@@ -402,7 +400,7 @@ def _gather_packed_tree_logprobs_entropy(
             logprobs_results[seq_id] = torch.cat(logprob_parts, dim=0)
             entropy_results[seq_id] = torch.cat(entropy_parts, dim=0)
         else:
-            empty = torch.empty(0, device=device, dtype=dtype)
+            empty = torch.empty(0, device=device, dtype=torch.float)
             logprobs_results[seq_id] = empty
             entropy_results[seq_id] = empty
 
@@ -420,7 +418,7 @@ def gather_packed_tree_logprobs(
 ) -> torch.Tensor:
     # Handle empty/dummy trie
     if not trie.all_sequence_ids:
-        return torch.empty(0, device=logits.device, dtype=logits.dtype)
+        return torch.empty(0, device=logits.device, dtype=torch.float)
 
     logprob_results = _gather_packed_tree_logprobs(
         logits,
@@ -446,7 +444,7 @@ def gather_packed_tree_logprobs_entropy(
 ):
     # Handle empty/dummy trie
     if not trie.all_sequence_ids:
-        empty = torch.empty(0, device=logits.device, dtype=logits.dtype)
+        empty = torch.empty(0, device=logits.device, dtype=torch.float)
         return empty, empty
 
     logprob_results, entropy_results = _gather_packed_tree_logprobs_entropy(
