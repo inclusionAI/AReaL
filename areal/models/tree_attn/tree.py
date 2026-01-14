@@ -7,6 +7,8 @@ prefix computation.
 
 from __future__ import annotations
 
+import os
+import pickle
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,6 +22,9 @@ from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
 
 logger = logging.getLogger(__name__)
+
+# Global counter for tracking how many times build_packed_tree_batch is called
+_dump_call_counter = 0
 
 
 # =============================================================================
@@ -223,6 +228,60 @@ def _compress_trie(root: _BuildNode) -> TrieNode:
 # =============================================================================
 
 
+def _maybe_dump_tree_pack_data(
+    data: dict[str, Any],
+    mbs: list[dict[str, Any]],
+    call_count: int,
+    dp_group: dist.ProcessGroup | None,
+) -> None:
+    """Dump input data and output mbs to files if TREE_PACK_DUMP_PATH is set.
+
+    Creates two files per call per rank:
+    - call{count}_rank{rank}.pt: Contains input_data and output_mbs (tensors)
+    - call{count}_rank{rank}_trie.pkl: Contains serialized trie_node structures (pickle)
+    """
+    dump_path = os.environ.get("TREE_PACK_DUMP_PATH", "")
+    if not dump_path:
+        return
+
+    # Get rank (use 0 if not distributed)
+    if dist.is_initialized():
+        rank = dist.get_rank(dp_group) if dp_group else dist.get_rank()
+    else:
+        rank = 0
+
+    # Create directory if it doesn't exist
+    os.makedirs(dump_path, exist_ok=True)
+
+    # Build filenames
+    base_filename = f"call{call_count}_rank{rank}"
+    filepath = os.path.join(dump_path, f"{base_filename}.pt")
+    trie_filepath = os.path.join(dump_path, f"{base_filename}_trie.pkl")
+
+    # Prepare data to dump (detach tensors to avoid issues)
+    dump_data = {
+        "input_data": {
+            k: v.detach().cpu() if torch.is_tensor(v) else v for k, v in data.items()
+        },
+        "output_mbs": [
+            {
+                k: v.detach().cpu() if torch.is_tensor(v) else v
+                for k, v in mb.items()
+                if k != "trie_node"
+            }
+            for mb in mbs
+        ],
+    }
+
+    # Prepare trie nodes to dump
+    trie_nodes = [mb["trie_node"] for mb in mbs if "trie_node" in mb]
+
+    torch.save(dump_data, filepath)
+    with open(trie_filepath, "wb") as f:
+        pickle.dump(trie_nodes, f)
+    logger.info(f"Dumped tree pack data to {filepath} and {trie_filepath}")
+
+
 @trace_perf("tree_attn.build_packed_tree_batch")
 def build_packed_tree_batch(
     data: dict[str, Any],
@@ -276,6 +335,11 @@ def build_packed_tree_batch(
         If trees cannot be split to meet n_mbs, n_mbs_divisor, or dp_group
         synchronization requirements.
     """
+    # Increment dump call counter
+    global _dump_call_counter
+    _dump_call_counter += 1
+    current_call_count = _dump_call_counter
+
     # Warn about non-effective attributes (only granularity now)
     if mb_spec.granularity != 1:
         logger.warning(
@@ -439,6 +503,10 @@ def build_packed_tree_batch(
         padded_to_lengths=padded_to_lengths,
         _max_seqlen=max(padded_to_lengths),
     )
+
+    # Dump data if TREE_PACK_DUMP_PATH is set
+    _maybe_dump_tree_pack_data(data, mbs, current_call_count, dp_group)
+
     return batch
 
 
