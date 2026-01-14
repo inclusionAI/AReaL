@@ -420,7 +420,8 @@ def gather_packed_tree_logprobs(
 ) -> torch.Tensor:
     # Handle empty/dummy trie
     if not trie.all_sequence_ids:
-        return torch.empty(0, device=logits.device, dtype=logits.dtype)
+        # logprobs/entropy should always be float
+        return torch.empty(0, device=logits.device, dtype=torch.float)
 
     logprob_results = _gather_packed_tree_logprobs(
         logits,
@@ -446,7 +447,8 @@ def gather_packed_tree_logprobs_entropy(
 ):
     # Handle empty/dummy trie
     if not trie.all_sequence_ids:
-        empty = torch.empty(0, device=logits.device, dtype=logits.dtype)
+        # logprobs/entropy should always be float
+        empty = torch.empty(0, device=logits.device, dtype=torch.float)
         return empty, empty
 
     logprob_results, entropy_results = _gather_packed_tree_logprobs_entropy(
