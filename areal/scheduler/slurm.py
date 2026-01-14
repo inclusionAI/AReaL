@@ -583,11 +583,15 @@ class SlurmScheduler(Scheduler):
             timeout=timeout,
             connector=get_default_connector(),
         ) as session:
-            tasks = [
-                self._kill_forked_worker(session, role, idx, target_workers[idx])
-                for idx in range(len(workers))
-                if idx < len(target_workers)
-            ]
+            tasks = []
+            for worker_info in workers:
+                worker_index = int(worker_info.worker.id.split("/")[-1])
+                if worker_index < len(target_workers):
+                    tasks.append(
+                        self._kill_forked_worker(
+                            session, role, worker_index, target_workers[worker_index]
+                        )
+                    )
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _create_forked_workers_async(

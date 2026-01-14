@@ -375,38 +375,40 @@ def kill_forked_worker():
 
         key = (role, worker_index)
 
+        # Remove from tracking structures first (hold lock only for dict/list operations)
         with _forked_children_lock:
-            child_process = _forked_children_map.get(key)
-
-            if child_process is None:
-                return jsonify(
-                    {"error": f"Forked worker {role}/{worker_index} not found"}
-                ), 404
-
-            pid = child_process.pid
-
-            # Kill the process tree
-            try:
-                if child_process.poll() is None:  # Still running
-                    kill_process_tree(pid, timeout=3, graceful=True)
-                    logger.info(
-                        f"Killed forked worker {role}/{worker_index} (pid={pid})"
+            child_process = _forked_children_map.pop(key, None)
+            if child_process:
+                try:
+                    _forked_children.remove(child_process)
+                except ValueError:
+                    # Defensive: process was in map but not in list
+                    logger.warning(
+                        f"Process for {role}/{worker_index} was in map but not in list"
                     )
-            except Exception as e:
-                logger.error(
-                    f"Error killing forked worker {role}/{worker_index} (pid={pid}): {e}"
-                )
-                return jsonify(
-                    {
-                        "error": f"Failed to kill forked worker: {str(e)}",
-                        "pid": pid,
-                    }
-                ), 500
 
-            # Remove from tracking structures
-            if child_process in _forked_children:
-                _forked_children.remove(child_process)
-            _forked_children_map.pop(key, None)
+        if child_process is None:
+            return jsonify(
+                {"error": f"Forked worker {role}/{worker_index} not found"}
+            ), 404
+
+        pid = child_process.pid
+
+        # Kill the process tree (outside the lock to avoid blocking other operations)
+        try:
+            if child_process.poll() is None:  # Still running
+                kill_process_tree(pid, timeout=3, graceful=True)
+                logger.info(f"Killed forked worker {role}/{worker_index} (pid={pid})")
+        except Exception as e:
+            logger.error(
+                f"Error killing forked worker {role}/{worker_index} (pid={pid}): {e}"
+            )
+            return jsonify(
+                {
+                    "error": f"Failed to kill forked worker: {str(e)}",
+                    "pid": pid,
+                }
+            ), 500
 
         return jsonify(
             {
