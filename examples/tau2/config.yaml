@@ -175,3 +175,13 @@ stats_logger:
   fileroot: ${cluster.fileroot}
   wandb:
     mode: disabled
+
+perf_tracer:
+  enabled: false
+  experiment_name: ${experiment_name}  # Reuse top-level metadata
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}        # Shared filesystem path
+  save_interval: 1                     # Write traces every step
+  session_tracer:
+    enabled: false                      # Track per-session lifecycle
+    flush_threshold: 100               # Buffer 100 sessions before flushing
