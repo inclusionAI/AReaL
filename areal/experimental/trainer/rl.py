@@ -266,6 +266,7 @@ class PPOTrainer:
                         stats_tracker.record_timing("recompute_logp"),
                         perf_tracer.trace_scope(
                             "train.recompute_logp",
+                            enable_profiler=True,
                             category=Category.COMPUTE,
                             args={"global_step": global_step},
                         ),
