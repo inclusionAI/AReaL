@@ -35,6 +35,12 @@ as much as you'd enjoy real milk tea. Cheers!
 
 ## 📰 News
 
+**\[2026/01/15\]** Congrats to our friends at [CAMEL-AI](https://www.camel-ai.org/) for
+open-sourcing [SETA](https://github.com/camel-ai/seta), their terminal agent RL project
+trained with AReaL! Check out
+[their training workflow](https://github.com/camel-ai/seta/tree/main/training/tbench_areal_workflow)
+and the [announcement on X](https://x.com/guohao_li/status/2009678513574408636).
+
 **\[2026/01/01\]** Happy New Year! Thanks to the outstanding contribution from
 @HwVanICI, we are excited to officially announce stable support for AReaL training on
 **Ascend NPU devices**! The code is actively maintained and continuously updated in the
