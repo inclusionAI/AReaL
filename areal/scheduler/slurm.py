@@ -455,7 +455,14 @@ class SlurmScheduler(Scheduler):
         target_role: str,
         command: str | None = None,
     ) -> SlurmWorkerInfo:
-        """Fork a single worker asynchronously."""
+        """Fork a single worker asynchronously.
+
+        Parameters
+        ----------
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked process runs this module.
+        """
         worker_id = f"{role}/{idx}"
         target_url = (
             f"http://{target_wi.worker.ip}:{target_wi.worker.worker_ports[0]}/fork"
@@ -601,7 +608,14 @@ class SlurmScheduler(Scheduler):
         target_workers: list[SlurmWorkerInfo],
         command: str | None = None,
     ) -> list[str]:
-        """Create forked workers concurrently using async requests."""
+        """Create forked workers concurrently using async requests.
+
+        Parameters
+        ----------
+        command : str, optional
+            Custom module path to run instead of the default rpc_server.
+            If specified, the forked processes run this module.
+        """
         timeout = aiohttp.ClientTimeout(total=120.0)
         async with aiohttp.ClientSession(
             timeout=timeout,
