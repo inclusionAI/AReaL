@@ -170,7 +170,11 @@ def concat_padded_tensors(
         return {}
 
     # Find max sequence length across all dictionaries
-    assert all("attention_mask" in td for td in tensor_dicts)
+    if not all("attention_mask" in td for td in tensor_dicts):
+        raise ValueError(
+            f"All tensor dicts must contain 'attention_mask' key. Current tensor dict keys: "
+            f"{[list(td.keys()) for td in tensor_dicts]}"
+        )
     max_length = max([x["attention_mask"].shape[1] for x in tensor_dicts])
     result = {}
 
