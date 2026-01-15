@@ -306,7 +306,7 @@ class RayScheduler(Scheduler):
 
         return worker_info_list, worker_ids
 
-    def _create_forked_workers(
+    def _create_forked_workers_internal(
         self,
         role: str,
         target_role: str,
@@ -517,7 +517,7 @@ class RayScheduler(Scheduler):
             # Check if fork mode is enabled
             if strategy.fork:
                 # Fork mode: spawn new actors on same placement groups
-                worker_ids = self._create_forked_workers(
+                worker_ids = self._create_forked_workers_internal(
                     role, colocate_role, target_workers, schedulings
                 )
                 self._colocated_roles[role] = colocate_role

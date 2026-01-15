@@ -21,7 +21,7 @@ import torch.distributed as dist
 import uvloop
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from areal.api.cli_args import InferenceEngineConfig
+from areal.api.cli_args import InferenceEngineConfig, OpenAIProxyConfig
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import (
     HttpGenerationResult,
@@ -486,11 +486,35 @@ class RemoteInfEngine(InferenceEngine):
         with self.lock:
             return self._version
 
+    def _wrap_openai_agent(self, agent, proxy_addr: str) -> RolloutWorkflow:
+        """Wrap AgentWorkflow in OpenAIProxyWorkflow (HTTP mode only).
+
+        Parameters
+        ----------
+        agent : AgentWorkflow
+            The agent workflow to wrap
+        proxy_addr : str
+            HTTP address of the proxy server (required)
+        """
+        from areal.experimental.openai import OpenAIProxyWorkflow
+
+        openai_cfg = self.config.openai or OpenAIProxyConfig()
+
+        return OpenAIProxyWorkflow(
+            mode=openai_cfg.mode,
+            agent=agent,
+            proxy_addr=proxy_addr,
+            discount=openai_cfg.turn_discount,
+            export_style=openai_cfg.export_style,
+            subproc_max_workers=openai_cfg.subproc_max_workers,
+        )
+
     def _resolve_workflow(
         self,
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None,
         group_size: int = 1,
+        proxy_addr: str | None = None,
     ) -> RolloutWorkflow:
         resolved: RolloutWorkflow
 
@@ -502,10 +526,16 @@ class RemoteInfEngine(InferenceEngine):
             resolved = workflow
 
         elif isinstance(workflow, AgentWorkflow):
-            raise NotImplementedError(
-                f"AgentWorkflow resolution is not yet supported. "
-                f"Got workflow={workflow}"
-            )
+            if workflow_kwargs is not None:
+                self.logger.warning(
+                    "workflow_kwargs is ignored when workflow is already an AgentWorkflow instance"
+                )
+            if proxy_addr is None:
+                raise ValueError(
+                    "proxy_addr is required for AgentWorkflow. "
+                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                )
+            resolved = self._wrap_openai_agent(workflow, proxy_addr=proxy_addr)
 
         elif isinstance(workflow, str):
             try:
@@ -514,6 +544,7 @@ class RemoteInfEngine(InferenceEngine):
                 raise ValueError(
                     f"Failed to import workflow from string {workflow!r}: {e}"
                 ) from e
+
             # Check if it's a RolloutWorkflow class
             if isinstance(imported_obj, type) and issubclass(
                 imported_obj, RolloutWorkflow
@@ -535,16 +566,21 @@ class RemoteInfEngine(InferenceEngine):
             elif isinstance(imported_obj, type) and issubclass(
                 imported_obj, AgentWorkflow
             ):
-                raise NotImplementedError(
-                    f"AgentWorkflow resolution is not yet supported. "
-                    f"Got workflow={workflow}"
-                )
+                if proxy_addr is None:
+                    raise ValueError(
+                        "proxy_addr is required for AgentWorkflow. "
+                        "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                    )
+                agent = imported_obj(**(workflow_kwargs or {}))
+                resolved = self._wrap_openai_agent(agent, proxy_addr=proxy_addr)
             # Check if it's an AgentWorkflow instance
             elif isinstance(imported_obj, AgentWorkflow):
-                raise NotImplementedError(
-                    f"AgentWorkflow resolution is not yet supported. "
-                    f"Got workflow={workflow}"
-                )
+                if proxy_addr is None:
+                    raise ValueError(
+                        "proxy_addr is required for AgentWorkflow. "
+                        "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                    )
+                resolved = self._wrap_openai_agent(imported_obj, proxy_addr=proxy_addr)
             else:
                 raise TypeError(
                     f"Imported object from {workflow!r} is not a valid RolloutWorkflow or AgentWorkflow."
@@ -559,10 +595,13 @@ class RemoteInfEngine(InferenceEngine):
             resolved = workflow(**workflow_kwargs)
 
         elif isinstance(workflow, type) and issubclass(workflow, AgentWorkflow):
-            raise NotImplementedError(
-                f"AgentWorkflow resolution is not yet supported. "
-                f"Got workflow={workflow}"
-            )
+            if proxy_addr is None:
+                raise ValueError(
+                    "proxy_addr is required for AgentWorkflow. "
+                    "Ensure proxy workers are initialized via RolloutController.start_proxy()."
+                )
+            agent = workflow(**(workflow_kwargs or {}))
+            resolved = self._wrap_openai_agent(agent, proxy_addr=proxy_addr)
 
         else:
             raise TypeError(
@@ -903,6 +942,7 @@ class RemoteInfEngine(InferenceEngine):
         task_id: int | None = None,
         callback_addr: str | None = None,
         is_eval: bool = False,
+        proxy_addr: str | None = None,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -924,6 +964,9 @@ class RemoteInfEngine(InferenceEngine):
         is_eval : bool, optional
             Whether this is an evaluation workflow. Affects variables like trajectory dump path
             and statistics keys. By default False.
+        proxy_addr : str, optional
+            HTTP address of the proxy server for AgentWorkflow. If provided,
+            AgentWorkflow will use this proxy instead of a local one.
         """
         assert workflow is not None, "Workflow must be specified for submit."
         if callback_addr:
@@ -931,7 +974,7 @@ class RemoteInfEngine(InferenceEngine):
 
         # Resolve workflow to a RolloutWorkflow instance
         resolved_workflow = self._resolve_workflow(
-            workflow, workflow_kwargs, group_size
+            workflow, workflow_kwargs, group_size, proxy_addr=proxy_addr
         )
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
 
