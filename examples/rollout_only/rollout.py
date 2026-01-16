@@ -195,6 +195,7 @@ def main(args):
     seeding.set_random_seed(config.seed, key=f"rollout{rank}")
 
     # Create dataset and dataloader (same as gsm8k_rl_mt.py)
+    # Trim dataset here, otherwise workflow executor indefinitely submit data
     train_dataset = get_custom_dataset(
         split="train",
         dataset_config=config.train_dataset,
@@ -212,7 +213,6 @@ def main(args):
     )
 
     # Initialize inference engine
-    config.rollout.max_head_offpolicyness = int(1e12)  # Disable staleness control
     rollout_engine = RemoteSGLangEngine(config.rollout)
     rollout_engine.initialize()
 
