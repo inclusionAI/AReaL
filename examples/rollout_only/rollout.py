@@ -257,14 +257,14 @@ def main(args):
         rollout_engine.set_version(step + 1)
 
         if batch_count % 10 == 0:
-            print(f"[Rank {dist.get_rank()}] Processed {batch_count} batches, {total_samples} samples")
+            print(f"[Rank {rank}] Processed {batch_count} batches, {total_samples} samples")
 
     # Export and print statistics
     rollout_stats = stats_tracker.export_all(reduce_group=group)
-    print(f"\n[Rank {dist.get_rank()}] Rollout completed!")
-    print(f"[Rank {dist.get_rank()}] Total batches: {batch_count}")
-    print(f"[Rank {dist.get_rank()}] Total samples: {total_samples}")
-    print(f"\n[Rank {dist.get_rank()}] Statistics:\n{tabulate_stats(rollout_stats)}")
+    print(f"\n[Rank {rank}] Rollout completed!")
+    print(f"[Rank {rank}] Total batches: {batch_count}")
+    print(f"[Rank {rank}] Total samples: {total_samples}")
+    print(f"\n[Rank {rank}] Statistics:\n{tabulate_stats(rollout_stats)}")
 
     # Cleanup
     rollout_engine.destroy()
