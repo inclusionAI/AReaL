@@ -362,7 +362,7 @@ def local_main(config, run_id: int = 0):
     if alloc_mode.type_ != AllocationType.LLM_SERVER_ONLY:
         if alloc_mode.type_ == AllocationType.DECOUPLED_EVAL:
             gpu = 0
-            nprocs = 1
+            nprocs = int(os.environ.get("AREAL_DECOUPLED_EVAL_PROCS", "1"))
         else:
             gpu = nprocs = alloc_mode.train.world_size
         _env_vars = dict(
