@@ -12,11 +12,11 @@ seed: 1
 total_train_epochs: 10
 total_train_steps: null
 tokenizer_path: ${actor.path}
-allocation_mode: sglang.d6+d2
+allocation_mode: sglang:d6+d2
 
 max_turns: 32
 force_turns: 4
-search_client_type: async-online-search-access
+search_client_type: async-search-access
 topk: 10
 judge_engine:
   experiment_name: ${experiment_name}
