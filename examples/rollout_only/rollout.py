@@ -39,12 +39,24 @@ class MockTrainEngine(TrainEngine):
         self._cpu_group = None
         self._rank = dist.get_rank() if dist.is_initialized() else 0
         self._world_size = dist.get_world_size() if dist.is_initialized() else 1
+        self._initialized = False
+        self._version = 0
+
+    # === Process group properties (used by DistRolloutCoordinator) ===
 
     @property
     def data_parallel_group(self):
         if self._data_parallel_group is None:
             self._data_parallel_group = dist.new_group()
         return self._data_parallel_group
+
+    @property
+    def data_parallel_rank(self) -> int:
+        return self._rank
+
+    @property
+    def data_parallel_world_size(self) -> int:
+        return self._world_size
 
     @property
     def context_and_model_parallel_group(self):
@@ -70,6 +82,86 @@ class MockTrainEngine(TrainEngine):
     @property
     def device(self):
         return "cpu"
+
+    # === Initialization methods (stubs) ===
+
+    def create_process_group(self, parallel_strategy=None):
+        pass
+
+    def initialize(self, *args, **kwargs):
+        self._initialized = True
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
+
+    # === Version management (stubs) ===
+
+    def set_version(self, version: int):
+        self._version = version
+
+    def get_version(self) -> int:
+        return self._version
+
+    # === Training methods (stubs - not used in rollout-only) ===
+
+    def train(self, mode: bool = True):
+        pass
+
+    def update_weights(self, meta):
+        pass
+
+    def connect_engine(self, engine, meta):
+        pass
+
+    def rollout_batch(self, data, workflow, workflow_kwargs=None, group_size=1):
+        raise NotImplementedError("MockTrainEngine does not support rollout_batch")
+
+    def prepare_batch(
+        self, dataloader, workflow, workflow_kwargs=None,
+        should_accept_fn=None, group_size=1, dynamic_bs=False
+    ):
+        raise NotImplementedError("MockTrainEngine does not support prepare_batch")
+
+    def save(self, meta):
+        pass
+
+    def load(self, meta):
+        pass
+
+    def optimizer_zero_grad(self):
+        pass
+
+    def optimizer_step(self):
+        return {"update_successful": True, "grad_norm": 0.0, "lr": 0.0}
+
+    def lr_scheduler_step(self):
+        pass
+
+    def forward_backward_batch(self, mb_list, process_output_fn, forward_only=False):
+        pass
+
+    def train_batch(self, input_, loss_fn, loss_weight_fn):
+        return {}
+
+    def eval_batch(self, input_, loss_fn, loss_weight_fn):
+        return None
+
+    def forward_batch(self, input_, output_seqlens=None, aggregate_fn=None):
+        return None
+
+    def export_stats(self):
+        return {}
+
+    def onload(self):
+        pass
+
+    def offload(self):
+        pass
+
+    def get_device_stats(self):
+        from areal.api.io_struct import DeviceRuntimeInfo
+        return DeviceRuntimeInfo()
 
 @dataclass
 class MultiTurnGRPOConfig(GRPOConfig):
