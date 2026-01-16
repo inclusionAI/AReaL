@@ -200,6 +200,10 @@ def main(args):
         dataset_config=config.train_dataset,
         tokenizer=tokenizer,
     )
+    batch_size = config.train_dataset.batch_size // world_size
+    max_num_prompts = config.max_batches * batch_size
+    train_dataset = train_dataset.select(range(max_num_prompts))
+
     train_dataloader = create_dataloader(
         train_dataset,
         rank=rank,
