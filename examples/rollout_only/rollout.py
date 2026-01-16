@@ -176,7 +176,7 @@ class MultiTurnGRPOConfig(GRPOConfig):
         },
     )
     max_batches: int = field(
-        default=-1,
+        default=8,
         metadata={"help": "Maximum number of batches to rollout. -1 for all."},
     )
 
