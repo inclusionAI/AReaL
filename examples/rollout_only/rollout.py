@@ -236,7 +236,7 @@ def main(args):
 
     print(f"[Rank {rank}] Starting rollout...")
 
-    for batch_idx, data in enumerate(train_dataloader):
+    for step, data in enumerate(train_dataloader):
         if config.max_batches > 0 and batch_count >= config.max_batches:
             break
 
@@ -252,6 +252,9 @@ def main(args):
         print(f"[Rank {rank}] output batch shape: {batch_shape}")
         total_samples += batch_size
         batch_count += 1
+
+        mock_train_engine.set_version(step + 1)
+        rollout_engine.set_version(step + 1)
 
         if rank == 0 and batch_count % 10 == 0:
             print(f"Processed {batch_count} batches, {total_samples} samples")
