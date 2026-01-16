@@ -21,12 +21,10 @@ from areal.api.engine_api import TrainEngine
 from areal.core.dist_rollout import DistRolloutCoordinator
 from areal.dataset import get_custom_dataset
 from areal.engine.sglang_remote import RemoteSGLangEngine
-from areal.reward.gsm8k import gsm8k_reward_fn
 from areal.utils import seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.printing import tabulate_stats
-from areal.workflow.rlvr import RLVRWorkflow
 
 
 class MockTrainEngine(TrainEngine):
@@ -123,14 +121,13 @@ def main(args):
         train_engine=mock_train_engine,
     )
 
-    # Create workflow
-    workflow = RLVRWorkflow(
-        reward_fn=gsm8k_reward_fn,
+    workflow_kwargs = dict(
+        reward_fn="examples.multi_turn_math.gsm8k_rl_mt.gsm8k_reward_fn",
         gconfig=config.gconfig,
-        tokenizer=tokenizer,
-        enable_thinking=False,
+        tokenizer=config.tokenizer_path,
+        export_style="individual",
+        max_turns=8,
     )
-
     # Run rollout through entire dataset
     batch_count = 0
     total_samples = 0
@@ -143,7 +140,8 @@ def main(args):
 
         batch = coordinator.prepare_batch(
             dataloader=train_dataloader,
-            workflow=workflow,
+            workflow="examples.multi_turn_math.gsm8k_rl_mt.MultiturnRLVRWorkflow",
+            workflow_kwargs=workflow_kwargs,
             group_size=config.gconfig.n_samples,
         )
 
