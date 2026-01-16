@@ -243,7 +243,9 @@ def main(args):
             group_size=config.gconfig.n_samples,
         )
 
-        batch_size = batch.get("input_ids", batch.get("packed_input_ids")).shape[0]
+        batch_shape = batch.get("input_ids", batch.get("packed_input_ids")).shape
+        batch_size = batch_shape[0]
+        print(f"[Rank {rank}] output batch shape: {batch_shape}")
         total_samples += batch_size
         batch_count += 1
 
