@@ -180,12 +180,16 @@ def main(args):
 
         if config.actor.should_compute_prox_logp():
             with stats_tracker.record_timing("recompute_logp"):
-                batch["prox_logp"] = actor.compute_logp(batch)
+                batch["prox_logp"] = actor.compute_logp(
+                    batch, temperature=config.gconfig.temperature
+                )
                 actor.get_device_stats().log("recompute logp")
 
         if ref is not None:
             with stats_tracker.record_timing("ref_logp"):
-                batch["ref_logp"] = ref.compute_logp(batch)
+                batch["ref_logp"] = ref.compute_logp(
+                    batch, temperature=config.gconfig.temperature
+                )
                 ref.get_device_stats().log("ref logp")
 
         with stats_tracker.record_timing("compute_advantage"):
@@ -193,7 +197,9 @@ def main(args):
             actor.get_device_stats().log("compute advantages")
 
         with stats_tracker.record_timing("train_step"):
-            actor.aent_ppo_update(batch, global_step)
+            actor.aent_ppo_update(
+                batch, global_step, temperature=config.gconfig.temperature
+            )
             actor.step_lr_scheduler()
             actor.get_device_stats().log("ppo update")
 

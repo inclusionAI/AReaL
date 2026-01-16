@@ -60,7 +60,6 @@ actor:
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
   eps_clip: 0.4
-  temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
   kl_ctl: 0.0

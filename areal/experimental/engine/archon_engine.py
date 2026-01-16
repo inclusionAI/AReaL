@@ -1118,7 +1118,9 @@ class ArchonEngine(TrainEngine):
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
         if not self.config.is_critic:
-            logprobs, entropy = self._compute_logprobs_entropy(logits, ctx.labels)
+            logprobs, entropy = self._compute_logprobs_entropy(
+                logits, ctx.labels, ctx.mb_input["temperature"]
+            )
 
             if self.parallel_dims.cp_enabled:
                 logprobs = ulysses_gather_output(logprobs, self.parallel_dims.cp_group)
@@ -1147,6 +1149,7 @@ class ArchonEngine(TrainEngine):
         self,
         logits: torch.Tensor,
         labels: torch.Tensor,
+        temperature: float,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute log probabilities and entropy from logits."""
         tp_group = (
@@ -1155,7 +1158,7 @@ class ArchonEngine(TrainEngine):
         logprobs, entropy = gather_logprobs_entropy(
             logits,
             labels,
-            temperature=self.config.temperature,
+            temperature=temperature,
             tp_group=tp_group,
         )
         return logprobs, entropy
@@ -1167,7 +1170,9 @@ class ArchonEngine(TrainEngine):
     ) -> torch.Tensor:
         """Compute forward output (logprobs or values)."""
         if not self.config.is_critic:
-            result = self._compute_logprobs(logits, ctx.labels)
+            result = self._compute_logprobs(
+                logits, ctx.labels, ctx.mb_input["temperature"]
+            )
         else:
             result = logits.squeeze(-1)
 
@@ -1183,6 +1188,7 @@ class ArchonEngine(TrainEngine):
         self,
         logits: torch.Tensor,
         labels: torch.Tensor,
+        temperature: float,
     ) -> torch.Tensor:
         """Compute log probabilities from logits (without entropy)."""
         tp_group = (
@@ -1191,7 +1197,7 @@ class ArchonEngine(TrainEngine):
         logprobs = gather_logprobs(
             logits,
             labels,
-            temperature=self.config.temperature,
+            temperature=temperature,
             tp_group=tp_group,
         )
         return logprobs

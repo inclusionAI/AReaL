@@ -741,9 +741,6 @@ class TrainEngineConfig:
         default=False,
         metadata={"help": "Whether to use a critic/reward model"},
     )
-    temperature: float = field(
-        default=1.0, metadata={"help": "Temperature during generation."}
-    )
     # Runtime microbatch limit
     mb_spec: MicroBatchSpec = field(default_factory=MicroBatchSpec)
     pad_to_maximum: bool = field(

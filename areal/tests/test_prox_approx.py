@@ -359,7 +359,7 @@ class TestComputeLogpOptimization:
         }
 
         # Call compute_logp - should always return tensor
-        result = actor.compute_logp(batch)
+        result = actor.compute_logp(batch, temperature=1.0)
 
         assert result is not None
         assert isinstance(result, torch.Tensor)
@@ -624,7 +624,7 @@ class TestEndToEndOptimization:
         ) or (not config.use_decoupled_loss and config.recompute_logprob)
 
         if should_compute:
-            batch["prox_logp"] = actor.compute_logp(batch)
+            batch["prox_logp"] = actor.compute_logp(batch, temperature=1.0)
         else:
             batch["prox_logp"] = None  # Caller sets to None when skipping
 
@@ -667,7 +667,7 @@ class TestEndToEndOptimization:
             ) or (not config.use_decoupled_loss and config.recompute_logprob)
 
             if should_compute:
-                result = actor.compute_logp(batch)
+                result = actor.compute_logp(batch, temperature=1.0)
                 assert result is not None, f"Failed: {desc}"
                 assert isinstance(result, torch.Tensor), f"Failed: {desc}"
                 mock_engine.forward.assert_called_once()

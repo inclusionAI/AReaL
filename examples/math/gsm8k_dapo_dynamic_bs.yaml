@@ -62,7 +62,6 @@ actor:
     warmup_steps_proportion: 0.001
   eps_clip: 0.2
   eps_clip_higher: 0.28
-  temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
   overlong_reward_penalty: true

@@ -1349,7 +1349,7 @@ class FSDPEngine(TrainEngine):
         logprobs, entropy = gather_logprobs_entropy(
             logits,
             labels,
-            temperature=self.config.temperature,
+            temperature=inputs["temperature"],
             tp_group=self.parallel_helper.tp_group
             if self.parallel_helper.tp_size > 1
             else None,
@@ -1379,7 +1379,7 @@ class FSDPEngine(TrainEngine):
         logprobs = gather_logprobs(
             logits,
             labels,
-            temperature=self.config.temperature,
+            temperature=inputs["temperature"],
             tp_group=self.parallel_helper.tp_group
             if self.parallel_helper.tp_size > 1
             else None,

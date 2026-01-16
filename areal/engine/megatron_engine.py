@@ -1434,7 +1434,7 @@ class MegatronEngine(TrainEngine):
                     output,
                     inputs["trie_node"],
                     inputs["input_ids"],
-                    temperature=self.config.temperature,
+                    temperature=inputs["temperature"],
                     tp_group=mpu.get_tensor_model_parallel_group()
                     if mpu.get_tensor_model_parallel_world_size() > 1
                     else None,
@@ -1444,7 +1444,7 @@ class MegatronEngine(TrainEngine):
                 logprobs, entropy = gather_logprobs_entropy(
                     output,
                     labels,
-                    temperature=self.config.temperature,
+                    temperature=inputs["temperature"],
                     tp_group=mpu.get_tensor_model_parallel_group()
                     if mpu.get_tensor_model_parallel_world_size() > 1
                     else None,
@@ -1472,7 +1472,7 @@ class MegatronEngine(TrainEngine):
                     output,
                     inputs["trie_node"],
                     inputs["input_ids"],
-                    temperature=self.config.temperature,
+                    temperature=inputs["temperature"],
                     tp_group=mpu.get_tensor_model_parallel_group()
                     if mpu.get_tensor_model_parallel_world_size() > 1
                     else None,
@@ -1482,7 +1482,7 @@ class MegatronEngine(TrainEngine):
             logprobs = gather_logprobs(
                 output,
                 labels,
-                temperature=self.config.temperature,
+                temperature=inputs["temperature"],
                 tp_group=mpu.get_tensor_model_parallel_group()
                 if mpu.get_tensor_model_parallel_world_size() > 1
                 else None,

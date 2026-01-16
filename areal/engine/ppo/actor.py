@@ -53,8 +53,6 @@ class PPOActor:
         self.gae_lambda = config.gae_lambda
         self.mask_no_eos_with_zero = config.mask_no_eos_with_zero
 
-        self.temperature = config.temperature
-
         self.m2_threshold = config.m2_threshold
 
         # Log critical GSPO/GRPO configuration for reproducibility
@@ -117,7 +115,8 @@ class PPOActor:
 
     @trace_perf("ppo_actor.compute_logp", category="compute")
     @torch.no_grad()
-    def compute_logp(self, data: dict[str, Any]) -> torch.Tensor:
+    def compute_logp(self, data: dict[str, Any], temperature: float) -> torch.Tensor:
+        data = {**data, "temperature": temperature}
         self.engine.eval()
         return self.engine.forward(
             input_=data,
@@ -343,8 +342,8 @@ class PPOActor:
 
 
 class PPOActorController(TrainController):
-    def compute_logp(self, *args, **kwargs):
-        return self._custom_function_call("compute_logp", *args, **kwargs)
+    def compute_logp(self, data, temperature: float):
+        return self._custom_function_call("compute_logp", data, temperature=temperature)
 
     def compute_advantages(self, *args, **kwargs):
         return self._custom_function_call("compute_advantages", *args, **kwargs)

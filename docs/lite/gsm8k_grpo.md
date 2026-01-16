@@ -615,12 +615,12 @@ batch = actor.prepare_batch(
 
 # Step 2: Optionally recompute log probabilities with current policy
 if config.actor.recompute_logprob:
-    logp = actor.compute_logp(batch)
+    logp = actor.compute_logp(batch, temperature=config.gconfig.temperature)
     batch["prox_logp"] = logp
 
 # Step 3: Compute reference log probabilities for KL penalty
 if ref is not None:
-    batch["ref_logp"] = ref.compute_logp(batch)
+    batch["ref_logp"] = ref.compute_logp(batch, temperature=config.gconfig.temperature)
 
 # Step 4: Compute advantages using Generalized Advantage Estimation
 actor.compute_advantages(batch)
@@ -699,12 +699,12 @@ for global_step in range(max_steps):
     # ==== Training Phase ====
     # Recompute log probs with current policy (optional)
     if config.actor.recompute_logprob:
-        logp = actor.compute_logp(batch)
+        logp = actor.compute_logp(batch, temperature=config.gconfig.temperature)
         batch["prox_logp"] = logp
 
     # Compute reference log probs for KL penalty
     if ref is not None:
-        batch["ref_logp"] = ref.compute_logp(batch)
+        batch["ref_logp"] = ref.compute_logp(batch, temperature=config.gconfig.temperature)
 
     # Compute advantages and update policy
     actor.compute_advantages(batch)

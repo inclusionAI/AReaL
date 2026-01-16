@@ -63,7 +63,6 @@ actor:
     mean_level: batch
     std_level: batch
   eps_clip: 0.4
-  temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
   kl_ctl: 0.0

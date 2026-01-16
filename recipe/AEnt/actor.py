@@ -34,7 +34,7 @@ class AEntPPOActor(PPOActor):
 
     @stats_tracker.scope_func_wrapper("aent_ppo_actor")
     def aent_ppo_update(
-        self, data: dict[str, Any], global_step: int
+        self, data: dict[str, Any], global_step: int, temperature: float
     ) -> list[dict[str, float]]:
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
@@ -121,7 +121,7 @@ class AEntPPOActor(PPOActor):
                     mb,
                     loss_fn=functools.partial(
                         aent_grpo_loss_fn,
-                        temperature=self.temperature,
+                        temperature=temperature,
                         eps_clip=self.config.eps_clip,
                         eps_clip_higher=self.config.eps_clip_higher,
                         entropy_coeff=self.entropy_coeff,

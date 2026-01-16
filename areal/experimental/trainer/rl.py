@@ -275,7 +275,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["prox_logp"] = self.actor.compute_logp(rollout_batch)
+                    rollout_batch["prox_logp"] = self.actor.compute_logp(
+                        rollout_batch, temperature=config.gconfig.temperature
+                    )
                     self.actor.get_device_stats().log("recompute logp")
 
             if self.ref is not None:
@@ -287,7 +289,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    rollout_batch["ref_logp"] = self.ref.compute_logp(rollout_batch)
+                    rollout_batch["ref_logp"] = self.ref.compute_logp(
+                        rollout_batch, temperature=config.gconfig.temperature
+                    )
                     self.ref.get_device_stats().log("ref logp")
 
             with (

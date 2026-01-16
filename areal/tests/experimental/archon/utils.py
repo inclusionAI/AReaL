@@ -333,7 +333,6 @@ def create_engine_config(
             lr_scheduler_type="constant",
             gradient_clipping=1.0,
         ),
-        temperature=1.0,
     )
 
 

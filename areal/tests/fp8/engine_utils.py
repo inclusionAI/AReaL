@@ -266,7 +266,10 @@ def create_engine(
 
 @torch.no_grad()
 def forward_with_logits_and_logprobs(
-    engine: MegatronEngine, input_: dict[str, Any], profile_gemm: bool = False
+    engine: MegatronEngine,
+    input_: dict[str, Any],
+    profile_gemm: bool = False,
+    temperature: float = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Forward pass that returns both logits and logprobs.
 
@@ -274,6 +277,7 @@ def forward_with_logits_and_logprobs(
         engine: MegatronEngine instance
         input_: Input dictionary
         profile_gemm: If True, profile GEMM kernels during forward pass
+        temperature: Temperature for softmax scaling during logprob computation
 
     Returns:
         tuple: (logits, logprobs) both with shape [batch, seq_len, ...]
@@ -299,7 +303,7 @@ def forward_with_logits_and_logprobs(
         logprobs = gather_logprobs(
             output,
             labels,
-            temperature=engine.config.temperature,
+            temperature=temperature,
             tp_group=mpu.get_tensor_model_parallel_group()
             if mpu.get_tensor_model_parallel_world_size() > 1
             else None,
