@@ -1,0 +1,200 @@
+experiment_name: tau2-grpo
+trial_name: trial0
+
+seed: 1
+enable_offload: false
+total_train_epochs: 200
+tokenizer_path: ${actor.path}
+
+do_eval: false
+export_style: individual
+
+cluster:
+  n_nodes: 3
+  n_gpus_per_node: 8
+  fileroot: /storage/openpsi/experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /storage/openpsi/experiments/name_resolve/mzy
+    etcd3_addr: etcd-client.openpsi-etcd.svc.sigma-su18-01.hn01.su18-hn.local:2379
+
+allocation_mode: sglang:d8t2+d8
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 256
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
+  enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+
+gconfig:
+  n_samples: 8
+  min_new_tokens: 0
+  max_new_tokens: 8192
+  max_tokens: 32767 # SGlang only accepts 32767 tokens total length
+  greedy: false
+  temperature: 1.0
+
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: /storage/openpsi/models/Qwen__Qwen3-8B
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 32768
+  optimizer:
+    type: adam
+    lr: 1.7e-5
+    weight_decay: 0.017
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    lr_scheduler_type: constant
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.001
+  eps_clip: 0.4
+  temperature: ${gconfig.temperature}
+  reward_scaling: 10.0
+  reward_bias: -0.5
+  kl_ctl: 0.0
+  ppo_n_minibatches: 1
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behav_imp_weight_cap: 5.0
+  reward_norm: null
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 32
+      cmd: python3 -m areal.scheduler.rpc.rpc_server
+      env_vars:
+        NCCL_DEBUG: "WARN"
+        NCCL_IB_DISABLE: "0"
+        NCCL_SOCKET_IFNAME: "bond0"
+        NCCL_NET: "IB"
+        NCCL_NET_PLUGIN: ""
+        NCCL_IB_GID_INDEX: "3"
+        NCCL_IB_TIMEOUT: "22"
+        NCCL_IB_RETRY_CNT: "7"
+        NCCL_IB_SL: "5"
+        NCCL_IB_TC: "136"
+        NCCL_IB_HCA: "mlx5_bond"
+        NCCL_IB_QPS_PER_CONNECTION: "8"
+        NCCL_SET_THREAD_NAME: "1"
+        PYTORCH_NPU_ALLOC_CONF: "expandable_segments:True"
+        TAU2_DATA_DIR: /storage/openpsi/users/donghonghua.dhh/workspace/tau2-bench/data
+        WANDB_BASE_URL: http://8.150.1.98:8080
+        WANDB_API_KEY: local-8726acfd20a41b5ab8ac35fd51014b15169fa20a
+      additional_bash_cmds:
+        - pip install tenacity
+        - pip install torch_memory_saver
+        - pip install litellm==1.75
+        - pip install "transformers==4.57.1"
+        - pip install /storage/openpsi/users/xushusheng.xss/projects/Tau@DHH/tau2-bench
+
+ref:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  mb_spec:
+    max_tokens_per_mb: 32768
+  optimizer: null
+
+econfig:
+  domain: airline
+  max_steps: 50
+  solo_mode: false # True
+  user_llm_base_url: http://33.180.164.146:30000/v1/
+  user_llm: openai/Qwen2.5-72B
+  user_llm_args:
+    temperature: 0.0
+    max_completion_tokens: 512
+  turn_discount: 1.0
+  invalid_format_penalty: 0.1
+
+# SGLang
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: true
+  dtype: ${actor.dtype}
+  max_running_requests: null
+  context_length: 32768
+  mem_fraction_static: 0.8
+
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: 32768
+  gpu_memory_utilization: 0.9
+
+# datasets
+train_dataset:
+  batch_size: 30
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: tau2/train
+  type: rl
+  max_length: 1024
+
+valid_dataset:
+  batch_size: 16
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: tau2/test
+  type: rl
+  drop_last: false
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: online

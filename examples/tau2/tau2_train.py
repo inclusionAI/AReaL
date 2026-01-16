@@ -137,6 +137,8 @@ class Tau2Runner:
                 # Use ArealOpenAI client for inference
                 completion = await self.client.chat.completions.create(*args, **kwargs)
                 return completion
+            except ValueError as e:
+                logger.warning(f"ValueError in _acompletion_via_client: {e}")
             finally:
                 run_info.agent_time.append(time.perf_counter() - start_time)
 
