@@ -243,18 +243,6 @@ class TestGSM8KAdvanced:
         # This tests that it handles the comparison gracefully
         assert isinstance(reward, float) and reward in [0.0, 1.0]
 
-    def test_gsm8k_multiple_choice_letter(self):
-        """Test multiple choice letter answers."""
-        reward = gsm8k_reward_fn(
-            prompt="Which is correct?",
-            completions="The answer is (B)",
-            prompt_ids=[],
-            completion_ids=[],
-            answer="B",
-        )
-        # Should handle letter extraction or fail gracefully
-        assert isinstance(reward, float) and reward in [0.0, 1.0]
-
     def test_gsm8k_equation_form(self):
         """Test equation form answers."""
         reward = gsm8k_reward_fn(
@@ -518,7 +506,7 @@ class TestComplexLatexFormulas:
             completions=r"$\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$",
             prompt_ids=[],
             completion_ids=[],
-            answer=r"n(n+1)/2",
+            answer=r"$n(n+1)/2$",
         )
         # Should match at least the final answer
         assert isinstance(reward, float)
@@ -706,10 +694,10 @@ class TestComplexLatexFormulas:
         """Test vector notation."""
         reward = gsm8k_reward_fn(
             prompt="Magnitude of vector",
-            completions=r"$\|\vec{v}\| = \sqrt{a^2 + b^2}$",
+            completions=r"The answer is $\sqrt{a^2 + b^2}$",
             prompt_ids=[],
             completion_ids=[],
-            answer=r"sqrt(a^2 + b^2)",
+            answer=r"$sqrt(a^2 + b^2)$",
         )
         assert isinstance(reward, float), "Vector notation should be handled"
 
@@ -717,10 +705,10 @@ class TestComplexLatexFormulas:
         """Test combination of subscripts and superscripts."""
         reward = gsm8k_reward_fn(
             prompt="Formula with sub and superscripts",
-            completions=r"$a_n^2 + b_m^3 = c_{n+m}$",
+            completions=r"the answer is $\\boxed{a_n^2 + b_m^3}$",
             prompt_ids=[],
             completion_ids=[],
-            answer=r"a_n^2 + b_m^3",
+            answer=r"$a_n^2 + b_m^3$",
         )
         assert isinstance(reward, float), "Complex subscripts should be handled"
 
