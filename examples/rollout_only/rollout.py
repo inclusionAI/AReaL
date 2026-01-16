@@ -26,7 +26,6 @@ from areal.utils.dataloader import create_dataloader
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.printing import tabulate_stats
 
-
 class MockTrainEngine(TrainEngine):
     """Minimal TrainEngine mock for rollout-only usage.
 
@@ -72,19 +71,26 @@ class MockTrainEngine(TrainEngine):
     def device(self):
         return "cpu"
 
-
 @dataclass
-class RolloutOnlyConfig(GRPOConfig):
-    """Configuration for rollout-only execution."""
-
+class MultiTurnGRPOConfig(GRPOConfig):
+    agent_run_args: dict = field(
+        default_factory=dict,
+        metadata={"help": "Arguments for running the agent."},
+    )
+    export_style: str = field(
+        default="concat",
+        metadata={
+            "help": "Export style for the completions. By default export_style=concat."
+        },
+    )
     max_batches: int = field(
         default=-1,
-        metadata={"help": "Maximum number of batches to process. -1 for all."},
+        metadata={"help": "Maximum number of batches to rollout. -1 for all."},
     )
 
 
 def main(args):
-    config, _ = load_expr_config(args, RolloutOnlyConfig)
+    config, _ = load_expr_config(args, MultiTurnGRPOConfig)
 
     # Initialize distributed
     dist.init_process_group("gloo")
