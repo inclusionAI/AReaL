@@ -16,7 +16,7 @@ allocation_mode: sglang:d6+d2
 
 max_turns: 32
 force_turns: 4
-search_client_type: async-search-access
+search_client_type: async-online-search-access
 topk: 10
 judge_engine:
   experiment_name: ${experiment_name}
