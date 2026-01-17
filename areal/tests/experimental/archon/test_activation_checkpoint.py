@@ -1,10 +1,8 @@
 """Unit tests for Archon activation checkpointing.
 
 Tests cover:
-1. _wait_async_tensor helper function
-2. _WaitAsyncWrapper module wrapper
-3. ActivationCheckpointConfig validation
-4. apply_activation_checkpointing with all modes
+1. ActivationCheckpointConfig validation
+2. apply_activation_checkpointing with all modes
 
 Run tests:
     pytest areal/tests/experimental/archon/test_activation_checkpoint.py -v
@@ -13,125 +11,14 @@ Run tests:
 import pytest
 import torch
 import torch.nn as nn
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointWrapper,
+)
 
 from areal.experimental.models.archon.activation_checkpoint import (
     ActivationCheckpointConfig,
-    _wait_async_tensor,
-    _WaitAsyncWrapper,
     apply_activation_checkpointing,
 )
-
-# =============================================================================
-# _wait_async_tensor Tests
-# =============================================================================
-
-
-class TestWaitAsyncTensor:
-    """Test _wait_async_tensor helper function."""
-
-    def test_regular_tensor_passthrough(self):
-        """Regular tensor should pass through unchanged."""
-        x = torch.randn(2, 3)
-        result = _wait_async_tensor(x)
-        assert result is x
-
-    def test_none_passthrough(self):
-        """None should pass through unchanged."""
-        result = _wait_async_tensor(None)
-        assert result is None
-
-    def test_non_tensor_passthrough(self):
-        """Non-tensor objects should pass through unchanged."""
-        x = [1, 2, 3]
-        result = _wait_async_tensor(x)
-        assert result is x
-
-    def test_int_passthrough(self):
-        """Integer should pass through unchanged."""
-        result = _wait_async_tensor(42)
-        assert result == 42
-
-    def test_string_passthrough(self):
-        """String should pass through unchanged."""
-        result = _wait_async_tensor("test")
-        assert result == "test"
-
-
-# =============================================================================
-# _WaitAsyncWrapper Tests
-# =============================================================================
-
-
-class TestWaitAsyncWrapper:
-    """Test _WaitAsyncWrapper module."""
-
-    def test_wrapper_forwards_to_module(self):
-        """Wrapper should forward calls to inner module."""
-        inner = nn.Linear(4, 2)
-        wrapper = _WaitAsyncWrapper(inner)
-
-        x = torch.randn(3, 4)
-        expected = inner(x)
-        result = wrapper(x)
-
-        assert torch.allclose(result, expected)
-
-    def test_wrapper_handles_kwargs(self):
-        """Wrapper should handle keyword arguments."""
-
-        class DummyModule(nn.Module):
-            def forward(self, x, scale=1.0):
-                return x * scale
-
-        inner = DummyModule()
-        wrapper = _WaitAsyncWrapper(inner)
-
-        x = torch.randn(2, 2)
-        result = wrapper(x, scale=2.0)
-        expected = x * 2.0
-
-        assert torch.allclose(result, expected)
-
-    def test_wrapper_handles_multiple_args(self):
-        """Wrapper should handle multiple positional arguments."""
-
-        class MultiArgModule(nn.Module):
-            def forward(self, a, b, c):
-                return a + b + c
-
-        inner = MultiArgModule()
-        wrapper = _WaitAsyncWrapper(inner)
-
-        a, b, c = torch.randn(2), torch.randn(2), torch.randn(2)
-        result = wrapper(a, b, c)
-        expected = a + b + c
-
-        assert torch.allclose(result, expected)
-
-    def test_wrapper_preserves_module_parameters(self):
-        """Wrapper should preserve inner module's parameters."""
-        inner = nn.Linear(4, 2)
-        wrapper = _WaitAsyncWrapper(inner)
-
-        # Parameters should be accessible
-        params = list(wrapper.parameters())
-        inner_params = list(inner.parameters())
-        assert len(params) == len(inner_params)
-
-        for p, ip in zip(params, inner_params):
-            assert p is ip
-
-    def test_wrapper_preserves_training_mode(self):
-        """Wrapper should forward training mode to inner module."""
-        inner = nn.Linear(4, 2)
-        wrapper = _WaitAsyncWrapper(inner)
-
-        wrapper.train()
-        assert inner.training is True
-
-        wrapper.eval()
-        assert inner.training is False
-
 
 # =============================================================================
 # ActivationCheckpointConfig Tests
@@ -233,16 +120,16 @@ class TestApplyActivationCheckpointing:
 
         for layer in model.layers.values():
             assert isinstance(layer, DummyBlock)
-            assert not isinstance(layer, _WaitAsyncWrapper)
+            assert not isinstance(layer, CheckpointWrapper)
 
     def test_full_mode_wraps_all_layers(self):
-        """Full mode should wrap all layers with _WaitAsyncWrapper."""
+        """Full mode should wrap all layers with CheckpointWrapper."""
         model = DummyModel(num_layers=3)
         config = ActivationCheckpointConfig(mode="full")
         apply_activation_checkpointing(model, config)
 
         for layer in model.layers.values():
-            assert isinstance(layer, _WaitAsyncWrapper)
+            assert isinstance(layer, CheckpointWrapper)
 
     def test_selective_mode_wraps_every_n_layers(self):
         """Selective mode should wrap every Nth layer."""
@@ -252,10 +139,10 @@ class TestApplyActivationCheckpointing:
 
         # With ac_freq=2, the 2nd and 4th layers are checkpointed.
         # This corresponds to layers with index 1 and 3.
-        assert not isinstance(model.layers["0"], _WaitAsyncWrapper)
-        assert isinstance(model.layers["1"], _WaitAsyncWrapper)
-        assert not isinstance(model.layers["2"], _WaitAsyncWrapper)
-        assert isinstance(model.layers["3"], _WaitAsyncWrapper)
+        assert not isinstance(model.layers["0"], CheckpointWrapper)
+        assert isinstance(model.layers["1"], CheckpointWrapper)
+        assert not isinstance(model.layers["2"], CheckpointWrapper)
+        assert isinstance(model.layers["3"], CheckpointWrapper)
 
     def test_selective_mode_every_layer(self):
         """Selective mode with option '1' should wrap every layer."""
@@ -264,7 +151,7 @@ class TestApplyActivationCheckpointing:
         apply_activation_checkpointing(model, config)
 
         for layer in model.layers.values():
-            assert isinstance(layer, _WaitAsyncWrapper)
+            assert isinstance(layer, CheckpointWrapper)
 
     def test_selective_op_mode_wraps_all_layers(self):
         """Selective op mode should wrap all layers."""
@@ -273,7 +160,7 @@ class TestApplyActivationCheckpointing:
         apply_activation_checkpointing(model, config)
 
         for layer in model.layers.values():
-            assert isinstance(layer, _WaitAsyncWrapper)
+            assert isinstance(layer, CheckpointWrapper)
 
     def test_model_without_layers_raises(self):
         """Model without layers attribute should raise ValueError."""
@@ -330,9 +217,9 @@ class TestApplyActivationCheckpointing:
         apply_activation_checkpointing(model2, config2)
 
         # model1: selective, every 2nd layer
-        assert not isinstance(model1.layers["0"], _WaitAsyncWrapper)
-        assert isinstance(model1.layers["1"], _WaitAsyncWrapper)
+        assert not isinstance(model1.layers["0"], CheckpointWrapper)
+        assert isinstance(model1.layers["1"], CheckpointWrapper)
 
         # model2: all layers wrapped
         for layer in model2.layers.values():
-            assert isinstance(layer, _WaitAsyncWrapper)
+            assert isinstance(layer, CheckpointWrapper)

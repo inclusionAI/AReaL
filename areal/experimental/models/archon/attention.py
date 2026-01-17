@@ -50,26 +50,16 @@ def create_block_causal_mask_2d(
         [-inf, -inf, -inf, | -inf, -inf, |   0, -inf]
         [-inf, -inf, -inf, | -inf, -inf, |   0,   0 ]
     """
-    # Initialize with all masked (-inf)
+    positions = torch.arange(seq_len, device=device)
+    seq_ids = torch.searchsorted(cu_seqlens, positions, side="right") - 1
+
+    # same_seq: query and key must be in the same sequence
+    # causal: key position <= query position
+    same_seq = seq_ids.unsqueeze(1) == seq_ids.unsqueeze(0)
+    causal = positions.unsqueeze(0) <= positions.unsqueeze(1)
+
     mask = torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype)
-
-    # Fill in causal blocks for each sequence
-    num_seqs = len(cu_seqlens) - 1
-    for i in range(num_seqs):
-        start = cu_seqlens[i].item()
-        end = cu_seqlens[i + 1].item()
-        block_size = end - start
-        if block_size > 0:
-            # Create causal block: lower triangular = 0, upper triangular = -inf
-            # torch.triu with diagonal=1 gives upper triangular (excluding diagonal)
-            causal_block = torch.triu(
-                torch.full(
-                    (block_size, block_size), float("-inf"), device=device, dtype=dtype
-                ),
-                diagonal=1,
-            )
-            mask[start:end, start:end] = causal_block
-
+    mask.masked_fill_(same_seq & causal, 0.0)
     return mask
 
 

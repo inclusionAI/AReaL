@@ -25,7 +25,8 @@ from areal.utils.network import find_free_ports
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
 # Model paths for testing (keyed by HF model_type)
-MODEL_PATHS = {
+# Dense models (fast to instantiate even on meta device)
+DENSE_MODEL_PATHS = {
     "qwen2": get_model_path(
         "/storage/openpsi/models/Qwen__Qwen2.5-0.5B-Instruct/",
         "Qwen/Qwen2.5-0.5B-Instruct",
@@ -35,6 +36,17 @@ MODEL_PATHS = {
         "Qwen/Qwen3-0.6B",
     ),
 }
+
+# MoE models (slow to instantiate due to large number of experts)
+MOE_MODEL_PATHS = {
+    "qwen3_moe": get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-30B-A3B-Instruct-2507/",
+        "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    ),
+}
+
+# Combined for backward compatibility
+MODEL_PATHS = {**DENSE_MODEL_PATHS, **MOE_MODEL_PATHS}
 
 
 def get_model_path_for_type(model_type: str) -> str | None:

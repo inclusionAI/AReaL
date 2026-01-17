@@ -62,9 +62,9 @@ class BaseArchonModel(nn.Module, ABC):
     def forward(
         self,
         tokens: torch.Tensor,
-        positions: torch.Tensor | None = None,
-        cu_seqlens: torch.Tensor | None = None,
-        max_seqlen: int | None = None,
+        positions: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
     ) -> torch.Tensor: ...
 
     @abstractmethod

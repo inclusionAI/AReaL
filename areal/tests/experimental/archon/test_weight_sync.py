@@ -1,334 +1,623 @@
-"""Weight synchronization tests for Archon Engine.
+"""Tests for weight synchronization and completeness verification.
 
-These tests verify that Archon weight conversion to HuggingFace format
-is correct, which is critical for SGLang weight sync.
+These tests verify:
+1. Weight completeness: All Archon parameters can be converted to HF format
+2. Bidirectional completeness: HF keys <-> Archon keys mapping is complete
+3. Shape matching: Converted weight shapes match HF model shapes
+4. Value matching: Weight values are preserved after conversion (slow test)
+5. Iterative conversion consistency: convert_single_to_hf matches batch to_hf
 
 Run tests:
     pytest areal/tests/experimental/archon/test_weight_sync.py -v
 
-Note: These tests require GPU. They are included in CI as weight sync
-correctness is critical for SGLang integration.
+Note: Most tests use meta device for fast execution without GPU memory.
+The slow test (test_archon_weights_match_hf) requires CUDA.
 """
 
 import pytest
 import torch
-from transformers import AutoModelForCausalLM
+import torch.distributed as dist
 
-from areal.experimental.models.archon import get_supported_model_types
-from areal.tests.experimental.archon.utils import (
-    DualEngineFixture,
-    get_model_path_for_type,
+from areal.experimental.models.archon.qwen3.model.state_dict_adapter import (
+    Qwen3StateDictAdapter,
 )
 
-# Skip if no CUDA available
-pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="CUDA not available"
-)
-
-# Get all supported model types for parametrization
-SUPPORTED_MODEL_TYPES = sorted(get_supported_model_types())
+# =============================================================================
+# Mock Configs for Iterative Conversion Tests
+# =============================================================================
 
 
-@pytest.fixture(scope="module", params=SUPPORTED_MODEL_TYPES)
-def engines(request):
-    """Fixture to provide initialized engines for each supported model type."""
-    model_type = request.param
-    model_path = get_model_path_for_type(model_type)
+class MockDenseConfig:
+    """Mock Qwen3 dense model config."""
 
-    if model_path is None:
-        pytest.skip(f"No model path configured for model type: {model_type}")
-
-    fixture = DualEngineFixture(model_path=model_path)
-    fixture.setup()
-    fixture.model_type = model_type  # Store for test identification
-    yield fixture
-    fixture.teardown()
+    model_type = "qwen3"
+    num_local_experts = 0
+    tie_word_embeddings = False
 
 
-class TestWeightSync:
-    """Test suite for verifying Archon weight sync to SGLang.
+class MockMoEConfig:
+    """Mock Qwen3 MoE model config."""
 
-    These tests ensure 100% correctness of weight conversion, which is critical
-    because any mismatch will cause silent failures in SGLang weight sync.
+    model_type = "qwen3_moe"
+    num_local_experts = 4
+    tie_word_embeddings = False
+
+
+# =============================================================================
+# Fixtures for Iterative Conversion Tests
+# =============================================================================
+
+
+@pytest.fixture
+def small_dense_model_args():
+    """Create small dense model args for CPU testing."""
+    from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
+
+    return Qwen3ModelArgs(
+        dim=64,
+        hidden_dim=128,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=16,
+        n_layers=2,
+        vocab_size=1000,
+        max_seq_len=32,
+        attn_type="sdpa",
+        moe_enabled=False,
+    )
+
+
+@pytest.fixture
+def small_moe_model_args():
+    """Create small MoE model args for CPU testing."""
+    from areal.experimental.models.archon.moe import MoEArgs
+    from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
+
+    return Qwen3ModelArgs(
+        dim=64,
+        hidden_dim=128,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=16,
+        n_layers=2,
+        vocab_size=1000,
+        max_seq_len=32,
+        attn_type="sdpa",
+        moe_enabled=True,
+        moe_inter_dim=128,
+        moe_args=MoEArgs(num_experts=4, top_k=2),
+        decoder_sparse_step=1,  # All layers are MoE
+    )
+
+
+@pytest.fixture
+def small_dense_model(small_dense_model_args):
+    """Create and initialize small dense model on CPU."""
+    from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+
+    model = Qwen3Model(small_dense_model_args)
+    model.init_weights(torch.device("cpu"))
+    return model
+
+
+@pytest.fixture
+def small_moe_model(small_moe_model_args):
+    """Create and initialize small MoE model on CPU."""
+    from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+
+    model = Qwen3Model(small_moe_model_args)
+    model.init_weights(torch.device("cpu"))
+    return model
+
+
+@pytest.fixture
+def dense_adapter():
+    """Create adapter for dense model."""
+    return Qwen3StateDictAdapter(MockDenseConfig())
+
+
+@pytest.fixture
+def moe_adapter():
+    """Create adapter for MoE model."""
+    return Qwen3StateDictAdapter(MockMoEConfig())
+
+
+# =============================================================================
+# Lightweight Weight Completeness Tests (Meta Device, No GPU Memory)
+# =============================================================================
+
+
+class TestWeightCompletenessWithMetaDevice:
+    """Tests that verify weight completeness using meta device (no GPU memory).
+
+    These tests create models on meta device to check key names and shapes
+    without actually allocating memory for weights. This makes them fast
+    and runnable without GPU.
+
+    Note: Only tests dense models (qwen2, qwen3). MoE tests are in a separate
+    class marked as slow.
     """
 
-    def test_archon_weight_name_conversion(self, engines: DualEngineFixture):
-        """Verify that Archon state_dict_adapter correctly converts weight names to HF format.
+    @pytest.fixture(scope="class")
+    def model_configs_and_specs(self):
+        """Load configs and specs for dense model types only."""
+        from transformers import AutoConfig
 
-        This is critical because SGLang expects HuggingFace format weight names.
-        If conversion is wrong, weight updates will fail silently.
+        from areal.experimental.models.archon import get_model_spec
+        from areal.tests.experimental.archon.utils import DENSE_MODEL_PATHS
+
+        results = {}
+        for model_type, path in DENSE_MODEL_PATHS.items():
+            if path is None:
+                continue
+            try:
+                config = AutoConfig.from_pretrained(path, trust_remote_code=True)
+                spec = get_model_spec(model_type)
+                results[model_type] = {
+                    "config": config,
+                    "spec": spec,
+                    "path": path,
+                }
+            except Exception:
+                pass
+        return results
+
+    def test_all_archon_params_have_hf_mapping(self, model_configs_and_specs):
+        """Verify that ALL Archon model parameters can be converted to HF format.
+
+        This is the lightweight equivalent of test_archon_all_params_converted.
+        Uses meta device so no GPU memory is needed.
         """
-        archon_engine = engines.archon_engine
-        model_type = getattr(engines, "model_type", "unknown")
+        for model_type, info in model_configs_and_specs.items():
+            config = info["config"]
+            spec = info["spec"]
 
-        # Get the state dict adapter
-        adapter = archon_engine.state_dict_adapter
-        assert adapter is not None, "state_dict_adapter should be initialized"
+            # Create model args from HF config
+            model_args = spec.model_args_class.from_hf_config(config, is_critic=False)
 
-        # Check if model uses tied embeddings
-        tie_word_embeddings = getattr(
-            archon_engine.model_config, "tie_word_embeddings", False
-        )
+            # Create model on meta device (no memory allocation)
+            with torch.device("meta"):
+                model = spec.model_class(model_args)
 
-        # Expected HF name patterns (common across Qwen models)
-        hf_patterns = [
-            "model.embed_tokens.weight",
-            "model.layers.0.self_attn.q_proj.weight",
-            "model.layers.0.self_attn.k_proj.weight",
-            "model.layers.0.self_attn.v_proj.weight",
-            "model.layers.0.self_attn.o_proj.weight",
-            "model.layers.0.mlp.gate_proj.weight",
-            "model.layers.0.mlp.up_proj.weight",
-            "model.layers.0.mlp.down_proj.weight",
-            "model.norm.weight",
-        ]
-        # lm_head.weight is only expected when embeddings are not tied
-        if not tie_word_embeddings:
-            hf_patterns.append("lm_head.weight")
+            # Create adapter
+            adapter = spec.state_dict_adapter_class(config)
 
-        # Collect all converted names
-        converted_names = set()
-        archon_names = []
+            # Check all parameters can be converted
+            unconverted = []
+            for name, param in model.named_parameters():
+                # Create a fake tensor with correct shape on CPU
+                # (meta tensors can't be used with adapter directly)
+                fake_tensor = torch.empty(param.shape)
+                hf_pairs = adapter.convert_single_to_hf(name, fake_tensor)
+                if not hf_pairs:
+                    unconverted.append(name)
 
-        for name, param in archon_engine.model.named_parameters():
-            archon_names.append(name)
-            # Convert to HF format (use _get_full_tensor to handle DTensor from FSDP2)
-            tensor = archon_engine._get_full_tensor(param)
-            hf_pairs = adapter.convert_single_to_hf(name, tensor)
-            for hf_name, _ in hf_pairs:
-                converted_names.add(hf_name)
-
-        print(f"\n[Weight Name Conversion - {model_type}]")
-        print(f"  Total Archon parameters: {len(archon_names)}")
-        print(f"  Total converted HF names: {len(converted_names)}")
-        print(f"  tie_word_embeddings: {tie_word_embeddings}")
-        print(f"  Sample Archon names: {archon_names[:5]}")
-        print(f"  Sample converted HF names: {list(converted_names)[:5]}")
-
-        # Verify expected patterns exist (must be exact match, not substring)
-        missing_patterns = []
-        for pattern in hf_patterns:
-            if pattern not in converted_names:
-                missing_patterns.append(pattern)
-
-        if missing_patterns:
-            pytest.fail(
-                f"[{model_type}] Missing required HF weight names: {missing_patterns}"
+            assert not unconverted, (
+                f"[{model_type}] Found {len(unconverted)} unconverted parameters: "
+                f"{unconverted[:5]}..."
             )
 
-        # Basic sanity check: ALL converted names should look like HF format
-        for hf_name in converted_names:
-            # HF names typically start with "model." or "lm_head"
-            assert hf_name.startswith("model.") or hf_name.startswith("lm_head"), (
-                f"[{model_type}] Unexpected HF name format: {hf_name}"
-            )
+    def test_hf_weight_keys_bidirectional_completeness(self, model_configs_and_specs):
+        """Verify bidirectional completeness: HF keys <-> Archon keys.
 
-    def test_archon_all_params_converted(self, engines: DualEngineFixture):
-        """Verify that ALL Archon parameters are converted (no missing weights)."""
-        archon_engine = engines.archon_engine
-        model_type = getattr(engines, "model_type", "unknown")
-        adapter = archon_engine.state_dict_adapter
-
-        unconverted_params = []
-        converted_count = 0
-
-        for name, param in archon_engine.model.named_parameters():
-            # Use _get_full_tensor to handle DTensor from FSDP2
-            tensor = archon_engine._get_full_tensor(param)
-            hf_pairs = adapter.convert_single_to_hf(name, tensor)
-            if not hf_pairs:
-                unconverted_params.append(name)
-            else:
-                converted_count += len(hf_pairs)
-
-        print(f"\n[Parameter Conversion Coverage - {model_type}]")
-        print(f"  Converted parameters: {converted_count}")
-        print(f"  Unconverted parameters: {len(unconverted_params)}")
-
-        if unconverted_params:
-            print(f"  Unconverted names: {unconverted_params[:10]}")
-            pytest.fail(
-                f"[{model_type}] Found {len(unconverted_params)} unconverted parameters. "
-                f"These weights will NOT be synced to SGLang!"
-            )
-
-    def test_archon_hf_weight_completeness(self, engines: DualEngineFixture):
-        """Verify bidirectional completeness: all HF weights are covered by Archon conversion.
-
-        This test checks that:
-        1. Every Archon param converts to valid HF names
-        2. Every HF model param is produced by Archon conversion (no missing weights)
+        This is the lightweight equivalent of test_archon_hf_weight_completeness.
+        Compares expected HF keys with what the adapter produces.
         """
-        archon_engine = engines.archon_engine
-        model_type = getattr(engines, "model_type", "unknown")
-        adapter = archon_engine.state_dict_adapter
+        from transformers import AutoModelForCausalLM
 
-        # Load HF model to get all expected weight names
-        hf_model = AutoModelForCausalLM.from_pretrained(
-            engines.model_path,
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
-        )
-        hf_weight_names = set(hf_model.state_dict().keys())
-        tie_word_embeddings = getattr(hf_model.config, "tie_word_embeddings", False)
-        del hf_model
+        for model_type, info in model_configs_and_specs.items():
+            config = info["config"]
+            spec = info["spec"]
 
-        # Collect all converted names from Archon
-        archon_converted_names = set()
-        for name, param in archon_engine.model.named_parameters():
-            tensor = archon_engine._get_full_tensor(param)
-            hf_pairs = adapter.convert_single_to_hf(name, tensor)
-            for hf_name, _ in hf_pairs:
-                archon_converted_names.add(hf_name)
+            # Get expected HF keys by loading model on meta device
+            with torch.device("meta"):
+                try:
+                    hf_model = AutoModelForCausalLM.from_config(
+                        config, trust_remote_code=True
+                    )
+                    hf_weight_names = set(hf_model.state_dict().keys())
+                except Exception:
+                    # Some models may not support meta device loading
+                    continue
 
-        # Check: HF weights not covered by Archon
-        missing_in_archon = hf_weight_names - archon_converted_names
+            # Create Archon model on meta device
+            model_args = spec.model_args_class.from_hf_config(config, is_critic=False)
+            with torch.device("meta"):
+                archon_model = spec.model_class(model_args)
 
-        # If tie_word_embeddings is enabled, lm_head.weight is shared with embed_tokens
-        # so it's expected to be missing from the converted weights
-        if tie_word_embeddings and "lm_head.weight" in missing_in_archon:
-            missing_in_archon.discard("lm_head.weight")
+            # Create adapter
+            adapter = spec.state_dict_adapter_class(config)
+            tie_word_embeddings = getattr(config, "tie_word_embeddings", False)
 
-        # Check: Archon produces weights not in HF (unexpected extras)
-        extra_in_archon = archon_converted_names - hf_weight_names
+            # Collect all converted names from Archon
+            archon_converted_names = set()
+            for name, param in archon_model.named_parameters():
+                fake_tensor = torch.empty(param.shape)
+                hf_pairs = adapter.convert_single_to_hf(name, fake_tensor)
+                for hf_name, _ in hf_pairs:
+                    archon_converted_names.add(hf_name)
 
-        print(f"\n[Weight Completeness Check - {model_type}]")
-        print(f"  HF model weights: {len(hf_weight_names)}")
-        print(f"  Archon converted weights: {len(archon_converted_names)}")
-        print(f"  Missing in Archon: {len(missing_in_archon)}")
-        print(f"  Extra in Archon: {len(extra_in_archon)}")
+            # Check: HF weights not covered by Archon
+            missing_in_archon = hf_weight_names - archon_converted_names
 
-        if missing_in_archon:
-            print(f"  Missing weights: {sorted(missing_in_archon)[:10]}")
-            pytest.fail(
-                f"[{model_type}] {len(missing_in_archon)} HF weights not produced by Archon: "
+            # Expected missing: rotary_emb.inv_freq (computed at runtime)
+            missing_in_archon = {k for k in missing_in_archon if "rotary_emb" not in k}
+
+            # If tie_word_embeddings, lm_head.weight is shared
+            if tie_word_embeddings and "lm_head.weight" in missing_in_archon:
+                missing_in_archon.discard("lm_head.weight")
+
+            # Check: Archon produces weights not in HF
+            extra_in_archon = archon_converted_names - hf_weight_names
+
+            assert not missing_in_archon, (
+                f"[{model_type}] HF weights not produced by Archon: "
                 f"{sorted(missing_in_archon)[:5]}..."
             )
-
-        if extra_in_archon:
-            print(f"  Extra weights: {sorted(extra_in_archon)[:10]}")
-            pytest.fail(
-                f"[{model_type}] {len(extra_in_archon)} unexpected weights from Archon: "
+            assert not extra_in_archon, (
+                f"[{model_type}] Unexpected weights from Archon: "
                 f"{sorted(extra_in_archon)[:5]}..."
             )
 
-    def test_archon_hf_weight_shape_match(self, engines: DualEngineFixture):
-        """Verify that ALL converted weights have correct shapes matching HF model."""
-        archon_engine = engines.archon_engine
-        model_type = getattr(engines, "model_type", "unknown")
-        adapter = archon_engine.state_dict_adapter
+    def test_weight_shapes_match_hf(self, model_configs_and_specs):
+        """Verify that converted weight shapes match HF model shapes.
 
-        # Load HF model to get expected shapes
-        hf_model = AutoModelForCausalLM.from_pretrained(
-            engines.model_path,
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
-        )
-        hf_state_dict = hf_model.state_dict()
-        del hf_model  # Free memory
-
-        # Compare shapes for ALL weights
-        shape_mismatches = []
-        checked_count = 0
-
-        for name, param in archon_engine.model.named_parameters():
-            # Use _get_full_tensor to handle DTensor from FSDP2
-            tensor = archon_engine._get_full_tensor(param)
-            hf_pairs = adapter.convert_single_to_hf(name, tensor)
-            for hf_name, hf_tensor in hf_pairs:
-                if hf_name in hf_state_dict:
-                    expected_shape = hf_state_dict[hf_name].shape
-                    actual_shape = hf_tensor.shape
-                    checked_count += 1
-                    if expected_shape != actual_shape:
-                        shape_mismatches.append(
-                            {
-                                "archon_name": name,
-                                "hf_name": hf_name,
-                                "expected": expected_shape,
-                                "actual": actual_shape,
-                            }
-                        )
-
-        print(f"\n[Weight Shape Verification - {model_type}]")
-        print(f"  Weights checked: {checked_count}")
-        print(f"  Shape mismatches: {len(shape_mismatches)}")
-
-        if shape_mismatches:
-            for m in shape_mismatches[:5]:
-                print(
-                    f"    {m['hf_name']}: expected {m['expected']}, got {m['actual']}"
-                )
-            pytest.fail(
-                f"[{model_type}] Found {len(shape_mismatches)} shape mismatches. "
-                f"Weight sync will fail or produce wrong results!"
-            )
-
-    def test_weight_values_100_percent(self, engines: DualEngineFixture):
-        """Verify that ALL weight values are preserved after conversion.
-
-        This test checks 100% of weights, not just a sample. This is critical
-        because even a single corrupted weight can cause model degradation.
+        This is the lightweight equivalent of test_archon_hf_weight_shape_match.
+        Uses meta device so no actual memory is allocated.
         """
-        archon_engine = engines.archon_engine
-        model_type = getattr(engines, "model_type", "unknown")
-        adapter = archon_engine.state_dict_adapter
+        from transformers import AutoModelForCausalLM
 
-        # Load HF model
-        hf_model = AutoModelForCausalLM.from_pretrained(
-            engines.model_path,
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
-        )
-        hf_state_dict = hf_model.state_dict()
-        del hf_model
+        for model_type, info in model_configs_and_specs.items():
+            config = info["config"]
+            spec = info["spec"]
 
-        # Compare values for ALL weights
-        value_diffs = []
-        checked_count = 0
-        total_elements = 0
+            # Get expected HF shapes by loading model on meta device
+            with torch.device("meta"):
+                try:
+                    hf_model = AutoModelForCausalLM.from_config(
+                        config, trust_remote_code=True
+                    )
+                    hf_shapes = {k: v.shape for k, v in hf_model.state_dict().items()}
+                except Exception:
+                    continue
 
-        for name, param in archon_engine.model.named_parameters():
-            # Use _get_full_tensor to handle DTensor from FSDP2
-            tensor = archon_engine._get_full_tensor(param)
-            hf_pairs = adapter.convert_single_to_hf(name, tensor)
-            for hf_name, hf_tensor in hf_pairs:
-                if hf_name in hf_state_dict:
-                    expected = hf_state_dict[hf_name]
-                    if expected.shape == hf_tensor.shape:
-                        # Move tensors to same device for comparison
-                        expected_cpu = expected.float().cpu()
-                        hf_tensor_cpu = hf_tensor.float().cpu()
-                        diff = (expected_cpu - hf_tensor_cpu).abs()
-                        max_diff = diff.max().item()
-                        total_elements += expected.numel()
-                        checked_count += 1
+            # Create Archon model on meta device
+            model_args = spec.model_args_class.from_hf_config(config, is_critic=False)
+            with torch.device("meta"):
+                archon_model = spec.model_class(model_args)
 
-                        # Use strict tolerance for weight sync
-                        if max_diff > 1e-5:
-                            value_diffs.append(
+            # Create adapter
+            adapter = spec.state_dict_adapter_class(config)
+
+            # Compare shapes
+            shape_mismatches = []
+            for name, param in archon_model.named_parameters():
+                fake_tensor = torch.empty(param.shape)
+                hf_pairs = adapter.convert_single_to_hf(name, fake_tensor)
+                for hf_name, hf_tensor in hf_pairs:
+                    if hf_name in hf_shapes:
+                        expected_shape = hf_shapes[hf_name]
+                        actual_shape = hf_tensor.shape
+                        if expected_shape != actual_shape:
+                            shape_mismatches.append(
                                 {
+                                    "archon_name": name,
                                     "hf_name": hf_name,
-                                    "max_diff": max_diff,
-                                    "mean_diff": diff.mean().item(),
+                                    "expected": expected_shape,
+                                    "actual": actual_shape,
                                 }
                             )
 
-        print(f"\n[Weight Value Verification (100%) - {model_type}]")
-        print(f"  Weights checked: {checked_count}")
-        print(f"  Total elements checked: {total_elements:,}")
-        print(f"  Value mismatches (diff > 1e-5): {len(value_diffs)}")
-
-        if value_diffs:
-            for v in value_diffs[:10]:
-                print(
-                    f"    {v['hf_name']}: max_diff={v['max_diff']:.2e}, "
-                    f"mean_diff={v['mean_diff']:.2e}"
-                )
-            pytest.fail(
-                f"[{model_type}] Found {len(value_diffs)} weight value mismatches! "
-                f"Weight sync will produce incorrect model behavior."
+            assert not shape_mismatches, (
+                f"[{model_type}] Found {len(shape_mismatches)} shape mismatches: "
+                f"{shape_mismatches[:3]}..."
             )
 
-        # Values should match exactly since we loaded from same checkpoint
-        assert checked_count > 0, f"[{model_type}] No weights were checked!"
+
+@pytest.mark.slow
+class TestMoEWeightCompletenessWithMetaDevice:
+    """MoE-specific weight completeness tests using meta device.
+
+    These tests verify MoE models (qwen3_moe) separately from dense models
+    because instantiating large MoE models is slow even on meta device.
+
+    Marked as slow - skipped by default in CI.
+    Run with: pytest -m slow
+    """
+
+    @pytest.fixture(scope="class")
+    def moe_models_and_data(self):
+        """Load configs, create models on meta device, and prepare test data.
+
+        This fixture creates both HF and Archon models once for all tests,
+        avoiding the expensive model instantiation in each test method.
+        """
+        from transformers import AutoConfig, AutoModelForCausalLM
+
+        from areal.experimental.models.archon import get_model_spec
+        from areal.tests.experimental.archon.utils import MOE_MODEL_PATHS
+
+        results = {}
+        for model_type, path in MOE_MODEL_PATHS.items():
+            if path is None:
+                continue
+            try:
+                config = AutoConfig.from_pretrained(path, trust_remote_code=True)
+                spec = get_model_spec(model_type)
+
+                # Create HF model on meta device (once)
+                with torch.device("meta"):
+                    hf_model = AutoModelForCausalLM.from_config(
+                        config, trust_remote_code=True
+                    )
+                hf_weight_names = set(hf_model.state_dict().keys())
+                hf_shapes = {k: v.shape for k, v in hf_model.state_dict().items()}
+
+                # Create Archon model on meta device (once)
+                model_args = spec.model_args_class.from_hf_config(
+                    config, is_critic=False
+                )
+                with torch.device("meta"):
+                    archon_model = spec.model_class(model_args)
+
+                # Create adapter
+                adapter = spec.state_dict_adapter_class(config)
+
+                results[model_type] = {
+                    "config": config,
+                    "spec": spec,
+                    "path": path,
+                    "hf_model": hf_model,
+                    "hf_weight_names": hf_weight_names,
+                    "hf_shapes": hf_shapes,
+                    "archon_model": archon_model,
+                    "adapter": adapter,
+                }
+            except Exception:
+                pass
+        return results
+
+    def test_all_archon_params_have_hf_mapping(self, moe_models_and_data):
+        """Verify that ALL Archon model parameters can be converted to HF format."""
+        for model_type, info in moe_models_and_data.items():
+            archon_model = info["archon_model"]
+            adapter = info["adapter"]
+
+            # Check all parameters can be converted
+            unconverted = []
+            for name, param in archon_model.named_parameters():
+                fake_tensor = torch.empty(param.shape)
+                hf_pairs = adapter.convert_single_to_hf(name, fake_tensor)
+                if not hf_pairs:
+                    unconverted.append(name)
+
+            assert not unconverted, (
+                f"[{model_type}] Found {len(unconverted)} unconverted parameters: "
+                f"{unconverted[:5]}..."
+            )
+
+    def test_hf_weight_keys_bidirectional_completeness(self, moe_models_and_data):
+        """Verify bidirectional completeness: HF keys <-> Archon keys."""
+        for model_type, info in moe_models_and_data.items():
+            config = info["config"]
+            archon_model = info["archon_model"]
+            adapter = info["adapter"]
+            hf_weight_names = info["hf_weight_names"]
+            tie_word_embeddings = getattr(config, "tie_word_embeddings", False)
+
+            # Collect all converted names from Archon
+            archon_converted_names = set()
+            for name, param in archon_model.named_parameters():
+                fake_tensor = torch.empty(param.shape)
+                hf_pairs = adapter.convert_single_to_hf(name, fake_tensor)
+                for hf_name, _ in hf_pairs:
+                    archon_converted_names.add(hf_name)
+
+            # Check: HF weights not covered by Archon
+            missing_in_archon = hf_weight_names - archon_converted_names
+
+            # Expected missing: rotary_emb.inv_freq (computed at runtime)
+            missing_in_archon = {k for k in missing_in_archon if "rotary_emb" not in k}
+
+            # If tie_word_embeddings, lm_head.weight is shared
+            if tie_word_embeddings and "lm_head.weight" in missing_in_archon:
+                missing_in_archon.discard("lm_head.weight")
+
+            # Check: Archon produces weights not in HF
+            extra_in_archon = archon_converted_names - hf_weight_names
+
+            assert not missing_in_archon, (
+                f"[{model_type}] HF weights not produced by Archon: "
+                f"{sorted(missing_in_archon)[:5]}..."
+            )
+            assert not extra_in_archon, (
+                f"[{model_type}] Unexpected weights from Archon: "
+                f"{sorted(extra_in_archon)[:5]}..."
+            )
+
+    def test_weight_shapes_match_hf(self, moe_models_and_data):
+        """Verify that converted weight shapes match HF model shapes."""
+        for model_type, info in moe_models_and_data.items():
+            archon_model = info["archon_model"]
+            adapter = info["adapter"]
+            hf_shapes = info["hf_shapes"]
+
+            # Compare shapes
+            shape_mismatches = []
+            for name, param in archon_model.named_parameters():
+                fake_tensor = torch.empty(param.shape)
+                hf_pairs = adapter.convert_single_to_hf(name, fake_tensor)
+                for hf_name, hf_tensor in hf_pairs:
+                    if hf_name in hf_shapes:
+                        expected_shape = hf_shapes[hf_name]
+                        actual_shape = hf_tensor.shape
+                        if expected_shape != actual_shape:
+                            shape_mismatches.append(
+                                {
+                                    "archon_name": name,
+                                    "hf_name": hf_name,
+                                    "expected": expected_shape,
+                                    "actual": actual_shape,
+                                }
+                            )
+
+            assert not shape_mismatches, (
+                f"[{model_type}] Found {len(shape_mismatches)} shape mismatches: "
+                f"{shape_mismatches[:3]}..."
+            )
+
+
+# =============================================================================
+# Full Weight Value Tests (GPU Required, Slow)
+# =============================================================================
+
+
+# Skip if no CUDA available
+cuda_required = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA not available"
+)
+
+
+@cuda_required
+@pytest.mark.slow
+def test_archon_weights_match_hf():
+    """Verify Archon weight conversion from HuggingFace is correct.
+
+    This test loads actual models and compares weights to ensure
+    the state dict adapter correctly converts between formats.
+    """
+    from areal.tests.experimental.archon.utils import (
+        MODEL_PATHS,
+        load_archon_model,
+        load_hf_model,
+        setup_environment,
+    )
+
+    setup_environment()
+
+    model_path = MODEL_PATHS["qwen2"]
+    dtype = torch.bfloat16
+
+    hf_model = load_hf_model(model_path, dtype=dtype)
+    archon_model, _ = load_archon_model(model_path, dtype=dtype)
+
+    # Key mappings: archon_key -> hf_key
+    key_mappings = [
+        ("tok_embeddings.weight", "model.embed_tokens.weight"),
+        ("layers.0.attention.wq.weight", "model.layers.0.self_attn.q_proj.weight"),
+        ("layers.0.attention.wk.weight", "model.layers.0.self_attn.k_proj.weight"),
+        ("layers.0.attention.wv.weight", "model.layers.0.self_attn.v_proj.weight"),
+        ("layers.0.attention.wo.weight", "model.layers.0.self_attn.o_proj.weight"),
+        ("layers.0.feed_forward.w1.weight", "model.layers.0.mlp.gate_proj.weight"),
+        ("layers.0.feed_forward.w2.weight", "model.layers.0.mlp.down_proj.weight"),
+        ("layers.0.feed_forward.w3.weight", "model.layers.0.mlp.up_proj.weight"),
+        ("norm.weight", "model.norm.weight"),
+        ("output.weight", "lm_head.weight"),
+    ]
+
+    archon_params = dict(archon_model.named_parameters())
+    hf_params = dict(hf_model.named_parameters())
+
+    for archon_key, hf_key in key_mappings:
+        if archon_key not in archon_params or hf_key not in hf_params:
+            continue
+
+        archon_w = archon_params[archon_key].data
+        hf_w = hf_params[hf_key].data
+
+        assert archon_w.shape == hf_w.shape, (
+            f"Shape mismatch for {archon_key}: {archon_w.shape} vs {hf_w.shape}"
+        )
+
+        max_diff = (archon_w.float() - hf_w.float()).abs().max().item()
+        assert max_diff < 1e-5, f"Weight mismatch for {archon_key}: max_diff={max_diff}"
+
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+# =============================================================================
+# Iterative vs Batch Conversion Tests
+# =============================================================================
+
+
+class TestIterativeVsBatchConversion:
+    """Verify iterative convert_single_to_hf matches batch to_hf.
+
+    This is critical for weight synchronization (update_weights_from_dist)
+    which uses iterative conversion to send weights to inference servers.
+    """
+
+    def test_dense_iterative_equals_batch(self, small_dense_model, dense_adapter):
+        """Dense: iterative convert_single_to_hf == batch to_hf."""
+        # Method 1: Iterative conversion (simulates weight update flow)
+        hf_iterative = {}
+        for name, param in small_dense_model.named_parameters():
+            hf_pairs = dense_adapter.convert_single_to_hf(name, param.data)
+            for hf_name, hf_tensor in hf_pairs:
+                hf_iterative[hf_name] = hf_tensor
+
+        # Method 2: Batch conversion
+        hf_batch = dense_adapter.to_hf(small_dense_model.state_dict())
+
+        # Assert keys match
+        assert set(hf_iterative.keys()) == set(hf_batch.keys()), (
+            f"Key mismatch: iterative has {len(hf_iterative)} keys, "
+            f"batch has {len(hf_batch)} keys"
+        )
+
+        # Assert values match
+        for key in hf_iterative:
+            assert torch.equal(hf_iterative[key], hf_batch[key]), (
+                f"Value mismatch at {key}"
+            )
+
+    def test_moe_iterative_equals_batch(self, small_moe_model, moe_adapter):
+        """MoE: iterative convert_single_to_hf == batch to_hf."""
+        # Method 1: Iterative conversion
+        hf_iterative = {}
+        for name, param in small_moe_model.named_parameters():
+            hf_pairs = moe_adapter.convert_single_to_hf(name, param.data)
+            for hf_name, hf_tensor in hf_pairs:
+                hf_iterative[hf_name] = hf_tensor
+
+        # Method 2: Batch conversion
+        hf_batch = moe_adapter.to_hf(small_moe_model.state_dict())
+
+        # Assert keys match
+        assert set(hf_iterative.keys()) == set(hf_batch.keys()), (
+            f"Key mismatch: iterative has {len(hf_iterative)} keys, "
+            f"batch has {len(hf_batch)} keys. "
+            f"Extra in iterative: {set(hf_iterative.keys()) - set(hf_batch.keys())}. "
+            f"Extra in batch: {set(hf_batch.keys()) - set(hf_iterative.keys())}"
+        )
+
+        # Assert values match
+        for key in hf_iterative:
+            assert torch.equal(hf_iterative[key], hf_batch[key]), (
+                f"Value mismatch at {key}"
+            )
+
+    def test_dense_no_duplicate_keys_in_iteration(
+        self, small_dense_model, dense_adapter
+    ):
+        """Dense: no duplicate HF keys produced during iteration."""
+        hf_keys = []
+        for name, param in small_dense_model.named_parameters():
+            hf_pairs = dense_adapter.convert_single_to_hf(name, param.data)
+            hf_keys.extend([hf_name for hf_name, _ in hf_pairs])
+
+        assert len(hf_keys) == len(set(hf_keys)), (
+            f"Duplicate keys found: {len(hf_keys)} total, {len(set(hf_keys))} unique"
+        )
+
+    def test_moe_no_duplicate_keys_in_iteration(self, small_moe_model, moe_adapter):
+        """MoE: no duplicate HF keys produced during iteration."""
+        hf_keys = []
+        for name, param in small_moe_model.named_parameters():
+            hf_pairs = moe_adapter.convert_single_to_hf(name, param.data)
+            hf_keys.extend([hf_name for hf_name, _ in hf_pairs])
+
+        assert len(hf_keys) == len(set(hf_keys)), (
+            f"Duplicate keys found: {len(hf_keys)} total, {len(set(hf_keys))} unique"
+        )

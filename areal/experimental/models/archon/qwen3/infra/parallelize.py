@@ -6,24 +6,34 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import ProcessGroup
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointWrapper,
+)
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy, fully_shard
-from torch.distributed.tensor import Replicate, Shard
+from torch.distributed.tensor import Partial, Replicate, Shard
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
     PrepareModuleInput,
+    PrepareModuleInputOutput,
     RowwiseParallel,
     SequenceParallel,
     parallelize_module,
 )
 
+from areal.experimental.models.archon import moe as moe_module
+from areal.experimental.models.archon.compile import Compilable
+from areal.experimental.models.archon.moe import grouped_experts
 from areal.experimental.models.archon.utils import (
     validate_cp_constraints,
+    validate_ep_constraints,
     validate_tp_constraints,
 )
+from areal.models.parallel_styles import ReplicateParallel
 from areal.utils import logging
 
 if TYPE_CHECKING:
+    from areal.experimental.models.archon import ArchonParallelDims
     from areal.experimental.models.archon.activation_checkpoint import (
         ActivationCheckpointConfig,
     )
@@ -33,9 +43,7 @@ logger = logging.getLogger("ArchonQwen3Parallelize")
 
 def parallelize_qwen3(
     model: nn.Module,
-    tp_mesh: DeviceMesh | None = None,
-    dp_mesh: DeviceMesh | None = None,
-    cp_group: ProcessGroup | None = None,
+    parallel_dims: ArchonParallelDims,
     param_dtype: torch.dtype = torch.bfloat16,
     reduce_dtype: torch.dtype = torch.float32,
     loss_parallel: bool = True,
@@ -47,22 +55,19 @@ def parallelize_qwen3(
     """Apply parallelization to Qwen3 model.
 
     This is the main entry point for parallelizing a Qwen3 model.
-    It applies TP (if tp_mesh provided), CP (if cp_group provided),
-    AC (if ac_config provided), torch.compile (if enable_compile),
-    and FSDP (if dp_mesh provided).
+    It applies parallelization strategies based on parallel_dims configuration.
 
     Order of operations:
-    1. Apply TP (Tensor Parallelism)
-    2. Apply CP (Context Parallelism / Ulysses SP)
-    3. Apply AC (Activation Checkpointing) - must be after TP
-    4. Apply torch.compile - must be after AC, before FSDP
-    5. Apply FSDP (Fully Sharded Data Parallelism)
+    1. Apply non-MoE TP (Tensor Parallelism for dense layers)
+    2. Apply MoE EP+TP (Expert Parallelism + MoE-specific TP)
+    3. Apply CP (Context Parallelism / Ulysses SP)
+    4. Apply AC (Activation Checkpointing) - must be after TP/EP
+    5. Apply torch.compile - must be after AC, before FSDP
+    6. Apply FSDP (Fully Sharded Data Parallelism)
 
     Args:
         model: The Qwen3 model to parallelize.
-        tp_mesh: Device mesh for tensor parallelism. If None, TP is not applied.
-        dp_mesh: Device mesh for data parallelism (FSDP). If None, FSDP is not applied.
-        cp_group: Process group for context parallelism (Ulysses SP). If None, CP is not applied.
+        parallel_dims: Parallel dimensions configuration containing mesh and group info.
         param_dtype: Data type for model parameters.
         reduce_dtype: Data type for gradient reduction.
         loss_parallel: Whether to keep output sharded for loss parallelism.
@@ -77,13 +82,25 @@ def parallelize_qwen3(
     Note:
         Context Parallelism (CP) implements Ulysses Sequence Parallelism using
         All-to-All communication. It scatters attention heads and gathers sequences.
-    """
-    if tp_mesh is not None:
-        apply_tp(model, tp_mesh, loss_parallel=loss_parallel)
 
-    tp_size = tp_mesh.size() if tp_mesh is not None else 1
-    if cp_group is not None:
-        apply_cp(model, cp_group, tp_size=tp_size)
+        Expert Parallelism (EP) distributes MoE experts across devices, using
+        All-to-All communication to dispatch tokens to their assigned experts.
+    """
+    # Apply non-MoE TP first (attention, norms, dense FFN layers)
+    tp_mesh = parallel_dims.get_mesh("tp") if parallel_dims.tp_enabled else None
+    if tp_mesh is not None:
+        apply_non_moe_tp(model, tp_mesh, loss_parallel=loss_parallel)
+
+    # Apply MoE EP+TP (handles both MoE-specific TP and EP)
+    # Only apply when tp > 1 or ep > 1
+    ep_mesh = parallel_dims.get_mesh("ep") if parallel_dims.ep_enabled else None
+    if tp_mesh is not None or ep_mesh is not None:
+        apply_moe_ep_tp(model, tp_mesh, ep_mesh)
+
+    # Apply CP (Context Parallelism / Ulysses SP)
+    if parallel_dims.cp_enabled:
+        cp_group = parallel_dims.get_group("cp")
+        apply_cp(model, cp_group, tp_size=parallel_dims.tp)
 
     # AC must be after TP/CP
     if ac_config is not None and ac_config.mode != "none":
@@ -95,11 +112,16 @@ def parallelize_qwen3(
 
     # torch.compile must be after AC, before FSDP
     if enable_compile:
-        from areal.experimental.models.archon.compile import apply_compile
+        ep_enabled = parallel_dims.ep > 1
+        _apply_compile(model, ep_enabled=ep_enabled)
 
-        apply_compile(model)
-
+    # Apply FSDP
+    # dp_shard_cp mesh for FSDP sharding of dense params
+    dp_mesh = parallel_dims.get_mesh("dp_shard_cp")
     if dp_mesh is not None:
+        # dp_shard_mod_ep mesh for MoE experts FSDP sharding (only when EP enabled)
+        dp_mod_ep_mesh = parallel_dims.get_mesh("dp_shard_mod_ep")
+
         apply_fsdp(
             model,
             dp_mesh,
@@ -107,6 +129,9 @@ def parallelize_qwen3(
             reduce_dtype=reduce_dtype,
             cpu_offload=cpu_offload,
             reshard_after_forward=reshard_after_forward,
+            ep_degree=parallel_dims.ep,
+            dp_mod_ep_mesh=dp_mod_ep_mesh,
+            gradient_divide_factor=parallel_dims.fsdp_gradient_divide_factor,
         )
 
     if getattr(model.model_args, "enable_weight_tying", False):
@@ -116,21 +141,25 @@ def parallelize_qwen3(
     return model
 
 
-def apply_tp(
+def apply_non_moe_tp(
     model: nn.Module,
     tp_mesh: DeviceMesh,
     loss_parallel: bool = True,
 ) -> None:
-    """Apply tensor parallelism to Qwen3 model.
+    """Apply tensor parallelism to non-MoE components of Qwen3 model.
 
-    This applies TP with Sequence Parallelism to the model:
+    This handles TP for all non-MoE components:
     - Embedding: RowwiseParallel (output sharded on sequence dim)
     - Attention: ColwiseParallel for q/k/v, RowwiseParallel for output
-    - FFN: ColwiseParallel for w1/w3, RowwiseParallel for w2
+    - FFN (non-MoE layers only): ColwiseParallel for w1/w3, RowwiseParallel for w2
     - Q/K norm: SequenceParallel
     - Final norm: SequenceParallel
     - Output (lm_head): ColwiseParallel
     - Score (critic): Replicated (small layer, no need to shard)
+
+    For MoE layers, this function only handles attention and norms.
+    MoE-specific parallelism (input/output conversion, router, experts)
+    is handled by apply_moe_ep_tp().
 
     Args:
         model: The model to apply TP to.
@@ -185,14 +214,23 @@ def apply_tp(
             "attention.k_norm": SequenceParallel(sequence_dim=2),
             "attention.wo": RowwiseParallel(output_layouts=Shard(1)),
             "ffn_norm": SequenceParallel(),
-            "feed_forward": PrepareModuleInput(
-                input_layouts=(Shard(1),),
-                desired_input_layouts=(Replicate(),),
-            ),
-            "feed_forward.w1": ColwiseParallel(),
-            "feed_forward.w2": RowwiseParallel(output_layouts=Shard(1)),
-            "feed_forward.w3": ColwiseParallel(),
         }
+
+        # Only apply FFN TP for non-MoE layers
+        # MoE layers have their FFN handled by apply_moe_ep_tp()
+        is_moe_layer = getattr(transformer_block, "moe_enabled", False)
+        if not is_moe_layer and transformer_block.feed_forward is not None:
+            layer_plan.update(
+                {
+                    "feed_forward": PrepareModuleInput(
+                        input_layouts=(Shard(1),),
+                        desired_input_layouts=(Replicate(),),
+                    ),
+                    "feed_forward.w1": ColwiseParallel(),
+                    "feed_forward.w2": RowwiseParallel(output_layouts=Shard(1)),
+                    "feed_forward.w3": ColwiseParallel(),
+                }
+            )
 
         parallelize_module(
             module=transformer_block,
@@ -200,7 +238,7 @@ def apply_tp(
             parallelize_plan=layer_plan,
         )
 
-    logger.info("Applied Tensor Parallelism to the model")
+    logger.info("Applied Tensor Parallelism (non-MoE) to the model")
 
 
 def apply_fsdp(
@@ -210,22 +248,31 @@ def apply_fsdp(
     reduce_dtype: torch.dtype = torch.float32,
     cpu_offload: bool = False,
     reshard_after_forward: bool = True,
+    ep_degree: int = 1,
+    dp_mod_ep_mesh: DeviceMesh | None = None,
+    gradient_divide_factor: int | None = None,
 ) -> None:
     """Apply FSDP2 to Qwen3 model.
 
     This wraps each component with FSDP for memory-efficient training:
     - Token embeddings (separately wrapped)
     - Each TransformerBlock (separately wrapped)
+    - MoE experts (separately wrapped with dp_mod_ep_mesh when EP is enabled)
     - Final norm + output/score (wrapped together)
     - Root model (for any remaining params)
 
     Args:
         model: The model to apply FSDP to.
-        dp_mesh: Device mesh for data parallelism.
+        dp_mesh: Device mesh for data parallelism (dp_shard_cp).
         param_dtype: Data type for model parameters.
         reduce_dtype: Data type for gradient reduction.
         cpu_offload: Whether to enable CPU offloading.
         reshard_after_forward: Whether to reshard parameters after forward.
+        ep_degree: Expert parallelism degree.
+        dp_mod_ep_mesh: Device mesh for MoE experts FSDP sharding (dp_shard_mod_ep).
+            Only used when ep_degree > 1.
+        gradient_divide_factor: Gradient divide factor for FSDP.
+            Used to ensure consistent gradient scaling for MoE experts.
     """
     mp_policy = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=reduce_dtype)
     fsdp_config: dict[str, Any] = {"mesh": dp_mesh, "mp_policy": mp_policy}
@@ -241,6 +288,32 @@ def apply_fsdp(
         )
 
     for transformer_block in model.layers.values():
+        # When EP is enabled, MoE experts are sharded with dp_mod_ep_mesh
+        # while the rest of the transformer block uses dp_mesh (dp_shard_cp)
+        if (
+            getattr(transformer_block, "moe_enabled", False)
+            and ep_degree > 1
+            and dp_mod_ep_mesh is not None
+        ):
+            fsdp_ep_config = fsdp_config.copy()
+            fsdp_ep_config["mesh"] = dp_mod_ep_mesh
+
+            # FSDP wrap the MoE experts with dp_mod_ep_mesh
+            fully_shard(
+                transformer_block.moe.experts,
+                **fsdp_ep_config,
+                reshard_after_forward=reshard_after_forward,
+            )
+
+            # Set gradient divide factor for consistent gradient scaling
+            # Although the FSDP sharding of experts is done on a mesh of a different
+            # size than other parameters, the gradient division factor should be
+            # consistent with data parallelism.
+            if gradient_divide_factor is not None:
+                transformer_block.moe.experts.set_gradient_divide_factor(
+                    gradient_divide_factor,
+                )
+
         fully_shard(
             transformer_block,
             **fsdp_config,
@@ -299,9 +372,196 @@ def apply_cp(
     )
 
 
+def _apply_compile(model: Compilable, ep_enabled: bool = False) -> None:
+    """Apply torch.compile to Qwen3 model (MoE-aware).
+
+    For MoE layers, compile submodules separately to avoid graph breaks
+    from FSDP(GroupedExperts). For non-MoE layers, compile the whole block.
+
+    Must be called AFTER TP and AC, BEFORE FSDP.
+
+    Args:
+        model: The model to compile.
+        ep_enabled: Whether Expert Parallelism is enabled. If True, marks
+            dynamic shapes for varying token counts per expert.
+    """
+    # NOTE: This flag is needed for torch.compile to avoid graph breaking on dynamic shapes in token-choice MoE
+    torch._dynamo.config.capture_scalar_outputs = True
+    # Workaround for https://github.com/pytorch/pytorch/issues/166926
+    # NOTE: Upgrading pytorch may resolve this in the future.
+    if hasattr(torch._C._dynamo.eval_frame, "_set_lru_cache"):
+        torch._C._dynamo.eval_frame._set_lru_cache(False)
+
+    for name, block in model.layers.items():
+        if getattr(block, "moe_enabled", False):
+            # MoE layer: compile submodules separately to avoid graph breaks
+            # from FSDP(GroupedExperts) hooks which use torch._dynamo.disable
+            if isinstance(block, CheckpointWrapper):
+                inner_block = block._checkpoint_wrapped_module
+            else:
+                inner_block = block
+
+            for attr_name, submod in inner_block.named_children():
+                assert getattr(block, attr_name) == getattr(inner_block, attr_name)
+
+                if isinstance(submod, moe_module.MoE):
+                    # avoid graph breaking on the GroupedExperts' FSDP hooks
+                    # by wrapping each submod's forward instead of their __call__
+                    for moe_attr, moe_submod in submod.named_children():
+                        if moe_attr == "experts":
+                            # NOTE: We don't compile token dispatch and token combine due to an issue on B200:
+                            # https://github.com/pytorch/torchtitan/issues/1940
+                            continue
+                        setattr(
+                            submod,
+                            moe_attr,
+                            torch.compile(
+                                moe_submod, backend="inductor", fullgraph=True
+                            ),
+                        )
+                elif attr_name == "attention_norm" or attr_name == "ffn_norm":
+                    # NOTE: attention_norm/ffn_norm may use SequenceParallel
+                    # which has issues with torch.compile + Inductor
+                    # SequenceParallel has async redistribute which breaks
+                    # the graph by introducing async tensors in forward
+                    # while the backward expects local tensors.
+                    # NOTE: Upgrading pytorch may resolve this in the future.
+                    continue
+                else:
+                    setattr(
+                        inner_block,
+                        attr_name,
+                        torch.compile(submod, backend="inductor", fullgraph=True),
+                    )
+        else:
+            # If it's not a MoE layer, there is no FSDP(GroupedExperts)
+            # So we can compile the whole block
+            model.layers[name] = torch.compile(
+                block,
+                backend="inductor",
+                fullgraph=True,
+            )
+
+    already_patched = (
+        "_run_experts_grouped_mm_dynamic"
+        in grouped_experts._run_experts_grouped_mm.__qualname__
+    )
+    if not already_patched:
+        grouped_experts._run_experts_grouped_mm = torch.compile(
+            grouped_experts._run_experts_grouped_mm,
+            backend="inductor",
+            fullgraph=True,
+        )
+
+        if ep_enabled:
+            compiled_fn = grouped_experts._run_experts_grouped_mm
+
+            def _run_experts_grouped_mm_dynamic(
+                w1: torch.Tensor,
+                w2: torch.Tensor,
+                w3: torch.Tensor,
+                x: torch.Tensor,
+                num_tokens_per_expert: torch.Tensor,
+            ) -> torch.Tensor:
+                torch._dynamo.mark_dynamic(x, 0)
+                return compiled_fn(w1, w2, w3, x, num_tokens_per_expert)
+
+            grouped_experts._run_experts_grouped_mm = _run_experts_grouped_mm_dynamic
+
+    logger.info(
+        f"Compiled {len(model.layers)} TransformerBlocks with torch.compile (MoE-aware)"
+    )
+
+
+def apply_moe_ep_tp(
+    model: nn.Module,
+    tp_mesh: DeviceMesh | None,
+    ep_mesh: DeviceMesh | None,
+) -> None:
+    """Apply MoE-specific parallelism (Expert Parallelism and MoE TP) to Qwen3 model.
+
+    This handles all MoE-related parallelism:
+    1. Input/output tensor conversion for MoE layers (when TP enabled)
+    2. Router gate handling (when TP enabled)
+    3. Expert parallelism via all-to-all dispatch/combine (when EP enabled)
+
+    Args:
+        model: The model to apply MoE parallelism to.
+        tp_mesh: TP device mesh. If None, skip TP-related MoE handling.
+        ep_mesh: EP device mesh. If None, skip expert parallelism.
+
+    Note:
+        This function is a no-op for non-MoE models.
+        For models with MoE, at least one of tp_mesh or ep_mesh should be provided.
+
+    Raises:
+        ValueError: If num_experts is not divisible by ep_size.
+    """
+    from areal.experimental.models.archon.expert_parallel import ExpertParallel
+
+    # Early exit if nothing to do
+    if tp_mesh is None and ep_mesh is None:
+        return
+
+    # Validate expert count if EP is enabled
+    if ep_mesh is not None:
+        validate_ep_constraints(model.model_args, ep_mesh.size())
+
+    moe_count = 0
+    for transformer_block in model.layers.values():
+        if not getattr(transformer_block, "moe_enabled", False):
+            continue
+
+        moe = transformer_block.moe
+        if moe is None:
+            continue
+
+        moe_count += 1
+
+        # Apply TP-related MoE handling (input/output conversion, router gate)
+        # This handles DTensor/Tensor conversion for sequence parallelism
+        if tp_mesh is not None:
+            moe_tp_plan = {
+                "moe": PrepareModuleInputOutput(
+                    input_layouts=(Shard(1),),
+                    desired_input_layouts=(Replicate(),),
+                    use_local_input=True,
+                    output_layouts=(Partial(),),
+                    desired_output_layouts=(Shard(1),),
+                ),
+                "moe.router.gate": ReplicateParallel(),
+            }
+            parallelize_module(
+                module=transformer_block,
+                device_mesh=tp_mesh,
+                parallelize_plan=moe_tp_plan,
+            )
+
+        # Apply Expert Parallelism to the experts module
+        # This registers hooks for automatic token dispatch/combine during forward
+        if ep_mesh is not None:
+            parallelize_module(
+                module=moe.experts,
+                device_mesh=ep_mesh,
+                parallelize_plan=ExpertParallel(),
+            )
+
+    # Log what was applied
+    if moe_count > 0:
+        applied = []
+        if tp_mesh is not None:
+            applied.append(f"MoE TP (tp_size={tp_mesh.size()})")
+        if ep_mesh is not None:
+            applied.append(f"EP (ep_size={ep_mesh.size()})")
+        logger.info(f"Applied {', '.join(applied)} to {moe_count} MoE layers")
+    else:
+        logger.debug("No MoE layers found, apply_moe_ep_tp is a no-op")
+
+
 __all__ = [
     "parallelize_qwen3",
-    "apply_tp",
+    "apply_non_moe_tp",
+    "apply_moe_ep_tp",
     "apply_fsdp",
     "apply_cp",
 ]

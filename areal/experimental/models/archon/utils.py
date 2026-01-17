@@ -91,4 +91,56 @@ def validate_cp_constraints(
             )
 
 
-__all__ = ["ModelArgsProtocol", "validate_cp_constraints", "validate_tp_constraints"]
+@runtime_checkable
+class MoEModelArgsProtocol(Protocol):
+    """Protocol for model args that have MoE configuration."""
+
+    moe_enabled: bool
+    moe_args: object | None  # MoEArgs, but use object to avoid circular import
+
+
+def validate_ep_constraints(
+    model_args: MoEModelArgsProtocol,
+    ep_size: int,
+) -> None:
+    """Validate expert parallelism constraints for MoE models.
+
+    This validates that the model's MoE configuration is compatible
+    with the requested expert parallelism configuration.
+
+    Args:
+        model_args: Model arguments containing moe_enabled and moe_args.
+        ep_size: Expert parallelism size.
+
+    Raises:
+        ValueError: If MoE configuration doesn't satisfy EP constraints.
+    """
+    if ep_size <= 1:
+        return
+
+    if not model_args.moe_enabled:
+        raise ValueError(
+            f"Expert parallelism (ep_size={ep_size}) requires MoE to be enabled, "
+            f"but moe_enabled={model_args.moe_enabled}"
+        )
+
+    if model_args.moe_args is None:
+        raise ValueError(
+            f"Expert parallelism (ep_size={ep_size}) requires moe_args to be set, "
+            f"but moe_args is None"
+        )
+
+    num_experts = model_args.moe_args.num_experts
+    if num_experts % ep_size != 0:
+        raise ValueError(
+            f"num_experts ({num_experts}) must be divisible by ep_size ({ep_size})"
+        )
+
+
+__all__ = [
+    "ModelArgsProtocol",
+    "MoEModelArgsProtocol",
+    "validate_cp_constraints",
+    "validate_tp_constraints",
+    "validate_ep_constraints",
+]
