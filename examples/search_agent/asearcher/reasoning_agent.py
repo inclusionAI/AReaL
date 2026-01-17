@@ -645,6 +645,8 @@ async def run_agent(
                 messages=[{"role": "user", "content": query["prompt"]}],
                 temperature=1.0,
                 max_completion_tokens=max_completion_tokens,
+                extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+                thinking=True,
             )
             response = completion.choices[0].message.content
             completions.append(completion)
