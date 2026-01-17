@@ -128,8 +128,8 @@ class Tau2Runner:
             """Completion function that uses ArealOpenAI client."""
             start_time = time.perf_counter()
             kwargs.update(
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-                thinking=False,
+                extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+                thinking=True,
             )
             # Remove litellm-specific arguments
             kwargs.pop("num_retries", None)
