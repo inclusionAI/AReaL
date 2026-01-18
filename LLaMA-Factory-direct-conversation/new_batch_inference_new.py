@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime
 import traceback
 
-from generation_new  import MultiverseGeneratorNew
+from generation_new import MultiverseGeneratorNew
 
 
 def extract_boxed_answer(text: str) -> Optional[str]:
