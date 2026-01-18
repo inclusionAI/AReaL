@@ -869,14 +869,8 @@ def get_packed_tree_position_ids(
     if seq_len == 0:
         position_ids = torch.empty(0, dtype=torch.long, device=attention_mask.device)
     else:
-        # Process in chunks to avoid OOM from creating full bool copy
-        # Each chunk processes `chunk_size` rows at a time
-        position_ids = torch.empty(seq_len, dtype=torch.long, device=attention_mask.device)
-        for start in range(0, seq_len, chunk_size):
-            end = min(start + chunk_size, seq_len)
-            # Only convert chunk to bool, sum, then discard
-            chunk_counts = attention_mask[start:end].bool().sum(dim=-1, dtype=torch.long)
-            position_ids[start:end] = torch.clamp_min(chunk_counts - 1, 0)
+        ancestor_counts = attention_mask.bool().sum(dim=-1, dtype=torch.long)
+        position_ids = torch.clamp_min(ancestor_counts - 1, 0)
 
     # TODO: check if work for megatron engine
     return position_ids.unsqueeze(0)
