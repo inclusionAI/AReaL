@@ -195,7 +195,7 @@ git clone https://github.com/YOUR-USERNAME/AReaL
 cd AReaL
 
 # Install in development mode
-pip install -e ".[dev,docs]"
+pip install -e ".[dev]"
 
 # Set up pre-commit hooks for automatic formatting
 pip install pre-commit

@@ -1,4 +1,4 @@
-FROM lmsysorg/sglang:v0.5.5.post1-cu129-amd64 AS base
+FROM lmsysorg/sglang:v0.5.7-cu129-amd64-runtime AS base
 
 WORKDIR /
 
@@ -59,7 +59,9 @@ RUN pip install nvidia-mathdx pybind11 \
     git+https://github.com/NVIDIA/TransformerEngine.git@stable
 
 # Install flash attention (v2.8.1 is the latest version that megatron supports)
-RUN uv pip -v install flash-attn==2.8.1 --no-build-isolation --system
+RUN uv pip -v install \
+    https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.22/flash_attn-2.8.1+cu128torch2.9-cp312-cp312-linux_x86_64.whl \
+    --no-build-isolation --system
 ##############################################################
 
 # Install flash-attn3
@@ -85,4 +87,4 @@ COPY . /AReaL
 # Install AReaL from local source
 # Avoid overwriting flash-attn by omitting the `[fa]` extra
 RUN cd /AReaL \
-    && uv pip install -e ".[dev,docs,vllm,sglang,megatron]" --system
+    && uv pip install -e ".[dev,vllm,sglang,megatron]" --system

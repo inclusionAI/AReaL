@@ -130,7 +130,7 @@ dependencies = [
 
 [project.optional-dependencies]
 fa = [
-    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.0/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl",
+    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.22/flash_attn-2.8.1+cu128torch2.9-cp312-cp312-linux_x86_64.whl",
 ]
 
 sglang = [
@@ -163,9 +163,6 @@ dev = [
     "mdformat-frontmatter",
     "plotly",
     "pre-commit",
-]
-
-docs = [
     "sphinx",
     "sphinx-nefertiti",
     "jupyter-book<2",
@@ -178,7 +175,6 @@ all = [
     "areal[tms]",
     "areal[megatron]",
     "areal[dev]",
-    "areal[docs]",
 ]
 
 [project.urls]
