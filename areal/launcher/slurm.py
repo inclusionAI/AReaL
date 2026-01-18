@@ -556,6 +556,7 @@ def slurm_main(config, run_id: int = 0):
                 config.experiment_name,
                 config.trial_name,
                 n_backend_servers,
+                timeout=144000,
             )
         except (TimeoutError, KeyboardInterrupt) as e:
             launcher.stop_all(force=True)
