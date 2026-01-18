@@ -258,26 +258,30 @@ def _maybe_dump_tree_pack_data(
     trie_filepath = os.path.join(dump_path, f"{base_filename}_trie.pkl")
 
     # Prepare data to dump (detach tensors to avoid issues)
+    _data = {
+        "input_ids": data["input_ids"],
+    }
+    print(f"Dump data shape: {_data['input_ids'].shape} dtype: {_data['input_ids'].dtype}")
     dump_data = {
         "input_data": {
-            k: v.detach().cpu() if torch.is_tensor(v) else v for k, v in data.items()
+            k: v.detach().cpu() if torch.is_tensor(v) else v for k, v in _data.items()
         },
-        "output_mbs": [
-            {
-                k: v.detach().cpu() if torch.is_tensor(v) else v
-                for k, v in mb.items()
-                if k != "trie_node"
-            }
-            for mb in mbs
-        ],
+        # "output_mbs": [
+        #     {
+        #         k: v.detach().cpu() if torch.is_tensor(v) else v
+        #         for k, v in mb.items()
+        #         if k != "trie_node"
+        #     }
+        #     for mb in mbs
+        # ],
     }
 
     # Prepare trie nodes to dump
-    trie_nodes = [mb["trie_node"] for mb in mbs if "trie_node" in mb]
+    # trie_nodes = [mb["trie_node"] for mb in mbs if "trie_node" in mb]
 
     torch.save(dump_data, filepath)
-    with open(trie_filepath, "wb") as f:
-        pickle.dump(trie_nodes, f)
+    # with open(trie_filepath, "wb") as f:
+    #     pickle.dump(trie_nodes, f)
     logger.info(f"Dumped tree pack data to {filepath} and {trie_filepath}")
 
 
