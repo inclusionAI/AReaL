@@ -26,7 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Update pip and install uv
-RUN pip install -U pip "setuptools<80,>=77.0.3" uv
+RUN pip install -U pip "setuptools<80,>=77.0.3" uv \
+    && mkdir /AReaL
+WORKDIR /AReaL
+RUN uv venv && source ~/.uv/venvs/default/bin/activate
 
 # Environment variables for build configuration
 ENV NVTE_WITH_USERBUFFERS=1
@@ -40,11 +43,11 @@ ENV MAX_JOBS=32
 # https://github.com/THUDM/slime/blob/ebf16c57c223d6f1f66ef89177d5e27938c6caaf/docker/Dockerfile
 
 # Install torch memory saver
-RUN uv pip install --no-build-isolation --system --no-cache-dir --force-reinstall \
+RUN uv pip install --no-build-isolation --no-cache-dir --force-reinstall \
     git+https://github.com/fzyzcjy/torch_memory_saver.git
 
 # Install grouped_gemm
-RUN uv pip install --no-build-isolation --system \
+RUN uv pip install --no-build-isolation \
     git+https://github.com/fanshiqing/grouped_gemm@v1.1.4
 
 # Install apex
@@ -61,20 +64,20 @@ RUN pip install nvidia-mathdx pybind11 \
 # Install flash attention (v2.8.1 is the latest version that megatron supports)
 RUN uv pip -v install \
     https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.22/flash_attn-2.8.1+cu128torch2.9-cp312-cp312-linux_x86_64.whl \
-    --no-build-isolation --system
+    --no-build-isolation
 ##############################################################
 
 # Install flash-attn3
 RUN git clone https://github.com/Dao-AILab/flash-attention -b v2.8.1 \
-    && uv pip install -v /flash-attention/hopper/ --no-build-isolation --system \
+    && uv pip install -v /flash-attention/hopper/ --no-build-isolation \
     && mkdir -p /usr/local/lib/python3.12/dist-packages/flash_attn_3/ \
     && cp /flash-attention/hopper/flash_attn_interface.py /usr/local/lib/python3.12/dist-packages/flash_attn_3/
 
 # Misc fixes
-RUN uv pip uninstall pynvml --system
+RUN uv pip uninstall pynvml
 # Update setuptools to fix a wandb bug
 # Install nvidia-ml-py to replace pynvml
-RUN uv pip install -U setuptools nvidia-ml-py --system
+RUN uv pip install -U setuptools nvidia-ml-py
 
 # Remove libcudnn9 to avoid conflicts with torch
 RUN apt-get --purge remove -y --allow-change-held-packages libcudnn9* \
@@ -87,4 +90,4 @@ COPY . /AReaL
 # Install AReaL from local source
 # Avoid overwriting flash-attn by omitting the `[fa]` extra
 RUN cd /AReaL \
-    && uv pip install -e ".[dev,vllm,sglang,megatron]" --system
+    && uv pip install -e ".[dev,vllm,sglang,megatron]"
