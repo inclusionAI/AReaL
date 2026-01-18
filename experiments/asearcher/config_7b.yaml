@@ -92,8 +92,23 @@ actor:
       mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
       env_vars:
-        # JINA_API_KEY: jina_89db187a69f44004ae58fd7ff1615232FbzlayNZYcsAHd7zW3-1H8KGXmIF
-        SERPER_API_KEY: 607608ef262aa0020bd69512b4c6a60eb53fb4a5
+        NCCL_DEBUG: "WARN"
+        NCCL_IB_DISABLE: "0"
+        NCCL_SOCKET_IFNAME: "bond0"
+        NCCL_NET: "IB"
+        NCCL_NET_PLUGIN: ""
+        NCCL_IB_GID_INDEX: "3"
+        NCCL_IB_TIMEOUT: "22"
+        NCCL_IB_RETRY_CNT: "7"
+        NCCL_IB_SL: "5"
+        NCCL_IB_TC: "136"
+        NCCL_IB_HCA: "mlx5_bond"
+        NCCL_IB_QPS_PER_CONNECTION: "8"
+        NCCL_SET_THREAD_NAME: "1"
+        PYTORCH_NPU_ALLOC_CONF: "expandable_segments:True"
+        WANDB_BASE_URL: http://8.150.1.98:8080
+        WANDB_API_KEY: local-8726acfd20a41b5ab8ac35fd51014b15169fa20a
+        RAG_SERVER_ADDR_DIR: /storage/openpsi/users/meizhiyu.mzy/workspace/rag_addr
 
 ref:
   experiment_name: ${experiment_name}
