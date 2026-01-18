@@ -2,7 +2,7 @@ LLaMA-Factory-direct-conversation/.sglang/
 LLaMA-Factory-direct-conversation/.llamafactory/
 LLaMA-Factory-direct-conversation/models/
 LLaMA-Factory-direct-conversation/s1-parallel/
-
+LLaMA-Factory-direct-conversation/runs/dev
 
 # Legacy codes
 .legacy/

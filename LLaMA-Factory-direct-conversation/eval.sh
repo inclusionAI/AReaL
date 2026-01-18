@@ -29,9 +29,21 @@ python new_batch_inference_new.py \
     --output-dir "$OUTPUT_DIR" \
     --port $PORT \
     --model "$MODEL"
-wait 
-
 exit 0
+
 ./eval.sh models/zzy/Qwen3-ins-4b-5-test ./logs/eval/output-qwen3-ins-4b-5-test
 eai-run -i --pty bash ./eval.sh models/zzy/Qwen3-ins-4b-5-test ./logs/eval/output-qwen3-ins-4b-5-test
 eai-run -i --pty bash ./eval.sh Qwen/Qwen3-4b-instruct-2507 ./logs/eval/qwen3-4b-instruct-2507
+
+for i in {1..32}; do
+# Limit to maximum 8 concurrent jobs
+while [ $(squeue --me | wc -l) -ge 10 ]; do
+    sleep 20
+done
+
+# eai-run -J qwen3-4b-instruct-$i bash ./eval.sh Qwen/Qwen3-4b-instruct-2507 ./logs/eval/qwen3-4b-instruct-2507-$i &
+eai-run -J psner-4b-5-test-$i bash ./eval.sh models/zzy/Qwen3-ins-4b-5-test ./logs/eval/output-qwen3-ins-4b-5-test-$i &
+
+sleep 5
+done
+wait 
