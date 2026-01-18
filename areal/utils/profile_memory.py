@@ -84,13 +84,30 @@ def profile_memory(
     # Start recording
     torch.cuda.memory._record_memory_history(max_entries=max_entries)
 
+    oom_error = None
     try:
         yield
+    except torch.cuda.OutOfMemoryError as e:
+        oom_error = e
+    except RuntimeError as e:
+        # Catch legacy OOM errors (older PyTorch versions)
+        if "CUDA out of memory" in str(e) or "out of memory" in str(e).lower():
+            oom_error = e
+        else:
+            raise
     finally:
-        # Save snapshot
-        torch.cuda.memory._dump_snapshot(full_path)
+        # Always attempt to dump snapshot, even on OOM
+        try:
+            torch.cuda.memory._dump_snapshot(full_path)
+        except Exception as dump_error:
+            print(f"Warning: Failed to dump memory snapshot to {full_path}: {dump_error}")
+
         # Stop recording
         torch.cuda.memory._record_memory_history(enabled=None)
+
+    # Re-raise OOM error after snapshot is saved
+    if oom_error is not None:
+        raise oom_error
 
 
 F = TypeVar("F", bound=Callable)
