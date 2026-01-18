@@ -1,7 +1,7 @@
 #!/bin/bash
 set -ex
 
-WIKI2018_WORK_DIR=/storage/openpsi/users/gjx/data/ASearcher-wiki-corpus-20251002
+WIKI2018_WORK_DIR=/storage/openpsi/users/meizhiyu.mzy/mydata/ASearcher-Local-Knowledge
 
 index_file=$WIKI2018_WORK_DIR/e5.index/e5_Flat.index
 corpus_file=$WIKI2018_WORK_DIR/wiki_corpus.jsonl

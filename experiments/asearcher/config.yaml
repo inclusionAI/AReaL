@@ -14,10 +14,10 @@ total_train_steps: null
 tokenizer_path: ${actor.path}
 allocation_mode: sglang:d6+d2
 
-max_turns: 32
+max_turns: 16
 force_turns: 4
-search_client_type: async-online-search-access
-topk: 10
+search_client_type: async-search-access
+topk: 5
 judge_engine:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -43,7 +43,7 @@ rollout:
   tokenizer_path: ${tokenizer_path}
 
 gconfig:
-  n_samples: 16
+  n_samples: 4
   min_new_tokens: 0
   max_new_tokens: 1024
   greedy: false
@@ -62,8 +62,8 @@ actor:
   pad_to_maximum: true
   optimizer:
     type: adam
-    lr: 5e-6
-    weight_decay: 0.01
+    lr: 1.7e-5
+    weight_decay: 0.017
     beta1: 0.9
     beta2: 0.999
     eps: 1e-8
@@ -125,7 +125,7 @@ vllm:
 
 # datasets
 train_dataset:
-  batch_size: 128
+  batch_size: 16
   shuffle: true
   pin_memory: true
   type: rl
