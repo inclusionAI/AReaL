@@ -3,7 +3,7 @@ trial_name: run1
 
 cluster:
   fileroot: /storage/openpsi/users/meizhiyu.mzy/experiments
-  n_nodes: 1
+  n_nodes: 4
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
@@ -12,12 +12,12 @@ seed: 1
 total_train_epochs: 10
 total_train_steps: 1000
 tokenizer_path: ${actor.path}
-allocation_mode: sglang:d6+d2
+allocation_mode: sglang.d24+d8
 
-max_turns: 16
+max_turns: 32
 force_turns: 4
 search_client_type: async-search-access
-topk: 5
+topk: 10
 judge_engine:
   experiment_name: mzy-asearcher-qwen72b-inst-server-only
   trial_name: run0
@@ -43,7 +43,7 @@ rollout:
   tokenizer_path: ${tokenizer_path}
 
 gconfig:
-  n_samples: 4
+  n_samples: 16
   min_new_tokens: 0
   max_new_tokens: 1024
   greedy: false
@@ -52,10 +52,10 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /storage/openpsi/models/Qwen__Qwen2-1.5B-Instruct/
+  path: /storage/openpsi/models/Qwen__Qwen2.5-7B-Instruct/
   init_from_scratch: false
   disable_dropout: true
-  gradient_checkpointing: false
+  gradient_checkpointing: true  # Enable for 7B to save memory
   dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 16384
@@ -114,7 +114,7 @@ sglang:
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 32768
-  mem_fraction_static: 0.8
+  mem_fraction_static: 0.8  # Lower for 7B to leave room for KV cache
 
 vllm:
   model: ${actor.path}
@@ -126,7 +126,7 @@ vllm:
 
 # datasets
 train_dataset:
-  batch_size: 16
+  batch_size: 128
   shuffle: true
   pin_memory: true
   type: rl
@@ -138,7 +138,7 @@ saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  freq_epochs: 1
+  freq_epochs: null
   freq_steps: null
   freq_secs: null
 
@@ -169,10 +169,10 @@ stats_logger:
 
 perf_tracer:
   enabled: false
-  experiment_name: ${experiment_name}  # Reuse top-level metadata
+  experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  fileroot: ${cluster.fileroot}        # Shared filesystem path
-  save_interval: 1                     # Write traces every step
+  fileroot: ${cluster.fileroot}
+  save_interval: 1
   session_tracer:
-    enabled: true                      # Track per-session lifecycle
-    flush_threshold: 100               # Buffer 100 sessions before flushing
+    enabled: true
+    flush_threshold: 100

@@ -18,21 +18,5 @@ srun --mpi=pmi2 -J mzy-asearcher --chdir /storage/openpsi/users/meizhiyu.mzy/wor
     /storage/openpsi/images/areal-latest.sif \
     bash -c "python3 -m areal.launcher.local examples/search_agent/asearcher/train.py \
         --config experiments/asearcher/config.yaml \
-        experiment_name=$expr_name \
-        trial_name=$trial_name \
-        stats_logger.wandb.mode=online \
-        cluster.fileroot=/storage/openpsi/users/meizhiyu.mzy/experiments \
-        cluster.name_resolve.type=nfs \
-        cluster.name_resolve.nfs_record_root=/storage/openpsi/users/meizhiyu.mzy/experiments/name_resolve \
-        cluster.n_nodes=1 \
-        cluster.n_gpus_per_node=8 \
-        allocation_mode=sglang:d6+d2 \
-        actor.path=/storage/openpsi/models/Qwen__Qwen3-1.7B/ \
-        train_dataset.path=/storage/openpsi/users/meizhiyu.mzy/mydata/asearcher/ASearcher-LRM-35k.jsonl \
-        judge_engine.experiment_name=mzy-asearcher-qwen72b-inst-server-only \
-        judge_engine.trial_name=run0 \
-        +total_train_steps=1000 \
-        rollout.enable_rollout_tracing=True \
-        +actor.enable_tree_training=True \
-        actor.pad_to_maximum=True"
-
+        expr_name=$expr_name \
+        trial_name=$trial_name"
