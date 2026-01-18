@@ -26,10 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Update pip and install uv
-RUN pip install -U pip "setuptools<80,>=77.0.3" uv \
-    && mkdir /AReaL
+RUN pip install -U pip "setuptools<80,>=77.0.3" uv
+RUN mkdir /AReaL
 WORKDIR /AReaL
-RUN uv venv && source ~/.uv/venvs/default/bin/activate
+RUN uv venv && bash -c "source ~/.uv/venvs/default/bin/activate"
 
 # Environment variables for build configuration
 ENV NVTE_WITH_USERBUFFERS=1
