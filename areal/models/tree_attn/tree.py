@@ -842,10 +842,16 @@ def _pack_extra_data(
 def get_packed_tree_position_ids(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
+    chunk_size: int = 1024,
 ) -> torch.Tensor:
     """Generate position IDs for packed tree inputs.
     Position IDs are computed from the attention mask by counting the number
     of ancestors each token can attend to (minus 1 for 0-indexing).
+
+    Args:
+        input_ids: Input token IDs, shape (1, seq_len) or (seq_len,).
+        attention_mask: Square attention mask, shape (seq_len, seq_len).
+        chunk_size: Process rows in chunks to reduce peak memory usage.
     """
     input_ids = input_ids.squeeze()
     if input_ids.ndim != 1:
@@ -855,11 +861,18 @@ def get_packed_tree_position_ids(
     if attention_mask.shape[0] != input_ids.shape[0]:
         raise ValueError("Packed tree attention_mask must align with input_ids length.")
 
-    if attention_mask.shape[0] == 0:
+    seq_len = attention_mask.shape[0]
+    if seq_len == 0:
         position_ids = torch.empty(0, dtype=torch.long, device=attention_mask.device)
     else:
-        ancestor_counts = attention_mask.bool().sum(dim=-1, dtype=torch.long)
-        position_ids = torch.clamp_min(ancestor_counts - 1, 0)
+        # Process in chunks to avoid OOM from creating full bool copy
+        # Each chunk processes `chunk_size` rows at a time
+        position_ids = torch.empty(seq_len, dtype=torch.long, device=attention_mask.device)
+        for start in range(0, seq_len, chunk_size):
+            end = min(start + chunk_size, seq_len)
+            # Only convert chunk to bool, sum, then discard
+            chunk_counts = attention_mask[start:end].bool().sum(dim=-1, dtype=torch.long)
+            position_ids[start:end] = torch.clamp_min(chunk_counts - 1, 0)
 
     # TODO: check if work for megatron engine
     return position_ids.unsqueeze(0)
