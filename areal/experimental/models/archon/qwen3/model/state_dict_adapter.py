@@ -52,13 +52,8 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
             "model.layers.{}.mlp.experts.{}.gate_proj.weight": "layers.{}.moe.experts.w1",
             "model.layers.{}.mlp.experts.{}.up_proj.weight": "layers.{}.moe.experts.w3",
             "model.layers.{}.mlp.experts.{}.down_proj.weight": "layers.{}.moe.experts.w2",
-            # MoE shared expert (dense)
-            "model.layers.{}.mlp.shared_expert.gate_proj.weight": "layers.{}.moe.shared_expert.w1.weight",
-            "model.layers.{}.mlp.shared_expert.up_proj.weight": "layers.{}.moe.shared_expert.w3.weight",
-            "model.layers.{}.mlp.shared_expert.down_proj.weight": "layers.{}.moe.shared_expert.w2.weight",
             # MoE router
             "model.layers.{}.mlp.gate.weight": "layers.{}.moe.router.gate.weight",
-            "model.layers.{}.mlp.shared_expert_gate.weight": "layers.{}.moe.shared_expert_gate.weight",
             # Final norm and output
             "model.norm.weight": "norm.weight",
             "lm_head.weight": "output.weight",
@@ -71,9 +66,13 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
                 self.to_hf_map[archon_key] = hf_key
 
         # MoE configuration
-        self.moe_enabled = getattr(model_config, "num_local_experts", 0) > 0
+        # Check both num_experts and num_local_experts (HF uses different names)
+        num_experts = getattr(model_config, "num_experts", None)
+        if num_experts is None:
+            num_experts = getattr(model_config, "num_local_experts", None)
+        self.moe_enabled = num_experts is not None and num_experts > 1
         if self.moe_enabled:
-            self.num_experts = model_config.num_local_experts
+            self.num_experts = num_experts
 
         # Weight tying configuration
         self.enable_weight_tying = getattr(model_config, "tie_word_embeddings", False)
@@ -123,7 +122,7 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
             hf_state_dict["lm_head.weight"] = hf_state_dict["model.embed_tokens.weight"]
 
         state_dict = {}
-        expert_buffer: dict[str, dict[int, torch.Tensor]] = {}
+        expert_buffer: dict[str, tuple[torch.Tensor, int]] = {}
 
         for key, value in hf_state_dict.items():
             if ".mlp.experts." in key:
@@ -211,7 +210,7 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
             weight_3d: shape (num_experts, out_dim, in_dim)
 
         Returns:
-            Dict mapping HF keys to 2D weights.
+            Dict mapping HF keys to 2D weights (views, not copies).
         """
         # Handle DTensor
         if isinstance(weight_3d, DTensor):
@@ -233,13 +232,16 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
         else:
             return {}
 
+        # Use torch.unbind to split into views (no memory allocation)
+        # Returns tuple of (out_dim, in_dim) tensors
+        expert_weights = torch.unbind(weight_3d, dim=0)
+
         result = {}
-        num_experts = weight_3d.shape[0]
-        for expert_id in range(num_experts):
+        for expert_id, expert_weight in enumerate(expert_weights):
             hf_key = (
                 f"model.layers.{layer_num}.mlp.experts.{expert_id}.{hf_proj}.weight"
             )
-            result[hf_key] = weight_3d[expert_id].clone()
+            result[hf_key] = expert_weight
 
         return result
 
@@ -247,15 +249,17 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
         self,
         hf_key: str,
         weight_2d: torch.Tensor,
-        buffer: dict[str, dict[int, torch.Tensor]],
+        buffer: dict[str, tuple[torch.Tensor, int]],
         state_dict: dict[str, Any],
     ):
         """Collect expert weights and merge into 3D when complete.
 
+        Uses pre-allocated 3D tensor for better performance with large MoE models.
+
         Args:
             hf_key: e.g., "model.layers.0.mlp.experts.0.gate_proj.weight"
             weight_2d: shape (out_dim, in_dim)
-            buffer: Temporary storage for collecting expert weights
+            buffer: Temporary storage mapping archon_key -> (3D tensor, count)
             state_dict: Output state dict to write merged 3D weights
         """
         # Parse key: extract layer_num, expert_num, and proj type
@@ -274,14 +278,24 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
         proj_map = {"gate_proj": "w1", "up_proj": "w3", "down_proj": "w2"}
         archon_key = f"layers.{layer_num}.moe.experts.{proj_map[proj_type]}"
 
-        # Store in buffer
+        # Pre-allocate 3D tensor on first expert, then fill in-place
         if archon_key not in buffer:
-            buffer[archon_key] = {}
-        buffer[archon_key][expert_num] = weight_2d
+            # Create pre-allocated 3D tensor: (num_experts, out_dim, in_dim)
+            weight_3d = torch.empty(
+                self.num_experts,
+                weight_2d.shape[0],
+                weight_2d.shape[1],
+                dtype=weight_2d.dtype,
+                device=weight_2d.device,
+            )
+            buffer[archon_key] = (weight_3d, 0)
+
+        # Fill in-place using copy_ to avoid intermediate tensors
+        weight_3d, count = buffer[archon_key]
+        weight_3d[expert_num].copy_(weight_2d)
+        buffer[archon_key] = (weight_3d, count + 1)
 
         # Check if all experts collected
-        if len(buffer[archon_key]) == self.num_experts:
-            # Stack into 3D tensor
-            weights = [buffer[archon_key][i] for i in range(self.num_experts)]
-            state_dict[archon_key] = torch.stack(weights, dim=0)
+        if buffer[archon_key][1] == self.num_experts:
+            state_dict[archon_key] = buffer[archon_key][0]
             del buffer[archon_key]

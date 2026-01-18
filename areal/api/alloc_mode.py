@@ -303,11 +303,6 @@ class ModelAllocation:
                     f"Archon backend does not support pipeline parallelism. "
                     f"Got pp={self.parallel.pipeline_parallel_size}"
                 )
-            if self.parallel.expert_parallel_size > 1:
-                raise AllocationValidationError(
-                    f"Archon backend does not support expert parallelism. "
-                    f"Got ep={self.parallel.expert_parallel_size}"
-                )
 
     @property
     def world_size(self):

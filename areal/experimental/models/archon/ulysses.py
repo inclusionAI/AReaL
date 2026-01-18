@@ -56,9 +56,9 @@ def ulysses_slice_inputs(
     inputs["input_ids"] = _ulysses_slice_tensor(inputs["input_ids"], cp_rank, cp_size)
     labels = _ulysses_slice_tensor(labels, cp_rank, cp_size)
 
-    position_ids = inputs.get("position_ids")
-    if position_ids is not None:
-        inputs["position_ids"] = _ulysses_slice_tensor(position_ids, cp_rank, cp_size)
+    inputs["position_ids"] = _ulysses_slice_tensor(
+        inputs["position_ids"], cp_rank, cp_size
+    )
 
     return inputs, labels
 
@@ -66,6 +66,7 @@ def ulysses_slice_inputs(
 def ulysses_gather_output(
     output: Tensor,
     cp_group: ProcessGroup,
+    seq_dim: int = 0,
 ) -> Tensor:
     """Gather output tensor from all CP ranks after forward pass."""
     if cp_group is None:
@@ -76,4 +77,4 @@ def ulysses_gather_output(
         return output
 
     gathered = dist_F.all_gather(output, group=cp_group)
-    return torch.cat(gathered, dim=0)
+    return torch.cat(gathered, dim=seq_dim)

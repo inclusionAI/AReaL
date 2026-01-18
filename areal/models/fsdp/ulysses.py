@@ -1,12 +1,10 @@
 # Adapted from verl
 
-from typing import Any
-
 import torch
 import torch.distributed as dist
-import torch.distributed.nn.functional as dist_F
 from torch import Tensor
 from torch.distributed import ProcessGroup
+from torch.distributed._functional_collectives import all_to_all_single_autograd
 
 _ULYSSES_SEQUENCE_PARALLEL_GROUP = None
 
@@ -58,7 +56,7 @@ def _gather_seq_scatter_heads(
     if sp_world <= 1:
         return x
 
-    x = SeqAllToAll.apply(group, x, head_dim, seq_dim)
+    x = all_to_all_tensor(x, scatter_dim=head_dim, gather_dim=seq_dim, group=group)
 
     if unpadded_dim_size and unpadded_dim_size % sp_world != 0:
         padding_size = x.size(seq_dim) - unpadded_dim_size
@@ -87,7 +85,7 @@ def _gather_heads_scatter_seq(
         padding_size = sp_world - (dim_size % sp_world)
         x = _pad_tensor(x, seq_dim, padding_size)
 
-    return SeqAllToAll.apply(group, x, seq_dim, head_dim)
+    return all_to_all_tensor(x, scatter_dim=seq_dim, gather_dim=head_dim, group=group)
 
 
 def gather_seq_scatter_heads(
@@ -156,41 +154,52 @@ def all_to_all_tensor(
     gather_dim: int,
     group: dist.ProcessGroup | None = None,
 ) -> Tensor:
+    """
+    All-to-all communication for multi-dimensional tensors.
+
+    Uses all_to_all_single_autograd for torch.compile compatibility.
+    Autograd is handled internally by all_to_all_single_autograd.
+
+    Args:
+        local_input: Input tensor
+        scatter_dim: Dimension to scatter across ranks
+        gather_dim: Dimension where gathered data will be concatenated
+        group: Process group for communication
+
+    Returns:
+        Tensor with scatter_dim reduced by world_size and gather_dim
+        multiplied by world_size
+    """
     group = get_ulysses_sequence_parallel_group() if group is None else group
     sp_world_size = dist.get_world_size(group)
-    input_list = [
-        t.contiguous()
-        for t in torch.tensor_split(local_input, sp_world_size, scatter_dim)
-    ]
-    output_list = [torch.empty_like(input_list[0]) for _ in range(sp_world_size)]
-    output_tuple = dist_F.all_to_all(output_list, input_list, group=group)
-    return torch.cat(output_tuple, dim=gather_dim).contiguous()
 
+    # Split input along scatter_dim
+    # Each chunk has size: [..., scatter_dim_size // world_size, ...]
+    chunks = list(torch.chunk(local_input, sp_world_size, dim=scatter_dim))
 
-class SeqAllToAll(torch.autograd.Function):
-    @staticmethod
-    def forward(
-        ctx: Any,
-        group: dist.ProcessGroup,
-        local_input: Tensor,
-        scatter_dim: int,
-        gather_dim: int,
-    ) -> Tensor:
-        ctx.group = group
-        ctx.scatter_dim = scatter_dim
-        ctx.gather_dim = gather_dim
-        return all_to_all_tensor(local_input, scatter_dim, gather_dim, group)
+    # Stack chunks: [world_size, ...original_shape_with_reduced_scatter_dim...]
+    stacked = torch.stack(chunks, dim=0)
+    stacked_shape = stacked.shape
 
-    @staticmethod
-    def backward(ctx: Any, *grad_output: Tensor) -> tuple[None, Tensor, None, None]:
-        return (
-            None,
-            all_to_all_tensor(
-                grad_output[0], ctx.gather_dim, ctx.scatter_dim, ctx.group
-            ),
-            None,
-            None,
-        )
+    # Flatten to 1D for all_to_all_single_autograd
+    stacked_flat = stacked.reshape(-1).contiguous()
+
+    # Perform all-to-all with built-in autograd support (equal split)
+    received_flat = all_to_all_single_autograd(
+        stacked_flat,
+        output_split_sizes=None,
+        input_split_sizes=None,
+        group=group,
+    )
+
+    # Reshape back to [world_size, ...chunk_shape...]
+    received = received_flat.reshape(stacked_shape)
+
+    # Unbind world_size dimension and concatenate along gather_dim
+    chunks_received = torch.unbind(received, dim=0)
+    output = torch.cat(chunks_received, dim=gather_dim)
+
+    return output.contiguous()
 
 
 def ulysses_pad(

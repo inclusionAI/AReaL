@@ -30,7 +30,7 @@ def apply_compile(model: Compilable) -> None:
         model.layers[name] = torch.compile(
             block,
             backend="inductor",
-            fullgraph=False,  # Allow graph breaks for dynamic shapes (packed sequences)
+            fullgraph=True,
         )
 
     logger.info(f"Compiled {len(model.layers)} TransformerBlocks with torch.compile")

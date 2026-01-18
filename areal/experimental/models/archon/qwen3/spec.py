@@ -12,7 +12,7 @@ QWEN3_SPEC = ModelSpec(
     model_args_class=Qwen3ModelArgs,
     state_dict_adapter_class=Qwen3StateDictAdapter,
     parallelize_fn=parallelize_qwen3,
-    supported_model_types=frozenset({"qwen3"}),
+    supported_model_types=frozenset({"qwen3", "qwen3_moe"}),
 )
 
 # Auto-register when module is imported

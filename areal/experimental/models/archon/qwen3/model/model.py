@@ -11,6 +11,7 @@ from areal.experimental.models.archon.attention import (
     SDPAWrapper,
     VarlenAttentionWrapper,
 )
+from areal.experimental.models.archon.moe import MoE
 from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
 from areal.experimental.models.archon.qwen3.model.rope import (
     apply_rotary_emb,
@@ -28,6 +29,40 @@ def maybe_to_local(x: torch.Tensor) -> torch.Tensor:
     if isinstance(x, DTensor):
         return x.to_local()
     return x
+
+
+def _is_moe_layer(layer_id: int, model_args: Qwen3ModelArgs) -> bool:
+    """Determine if a layer should use MoE instead of dense FFN.
+
+    Args:
+        layer_id: The layer index (0-based).
+        model_args: Model configuration.
+
+    Returns:
+        True if this layer should use MoE, False otherwise.
+
+    Examples:
+        - decoder_sparse_step=1: All layers are MoE (layers 0,1,2,3,... are MoE)
+        - decoder_sparse_step=2: Every other layer starting from layer 1
+          (layers 1,3,5,... are MoE; layers 0,2,4,... are dense)
+        - decoder_sparse_step=0 or negative: No MoE layers
+    """
+    if not model_args.moe_enabled:
+        return False
+
+    if model_args.moe_args is None:
+        return False
+
+    sparse_step = model_args.decoder_sparse_step
+    if sparse_step <= 0:
+        return False
+
+    # (layer_id + 1) % sparse_step == 0 means:
+    # - sparse_step=1: all layers are MoE
+    # - sparse_step=2: layers 1,3,5,... are MoE
+    # This follows HuggingFace Qwen3-MoE convention where layer numbering is 1-based
+    # for the sparse step check (i.e., "every Nth layer" counts from 1, not 0).
+    return (layer_id + 1) % sparse_step == 0
 
 
 class RMSNorm(nn.Module):
@@ -147,9 +182,9 @@ class Attention(nn.Module):
         self,
         x: torch.Tensor,
         rope_cache: torch.Tensor,
-        positions: torch.Tensor | None = None,
-        cu_seqlens: torch.Tensor | None = None,
-        max_seqlen: int | None = None,
+        positions: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
     ) -> torch.Tensor:
         bs, seqlen, _ = x.shape
 
@@ -247,7 +282,7 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    """Pre-norm transformer block with attention and feedforward."""
+    """Pre-norm transformer block with attention and feedforward/MoE."""
 
     def __init__(self, layer_id: int, model_args: Qwen3ModelArgs):
         super().__init__()
@@ -255,11 +290,25 @@ class TransformerBlock(nn.Module):
         self.dim = model_args.dim
 
         self.attention = Attention(model_args)
-        self.feed_forward = FeedForward(
-            dim=model_args.dim, hidden_dim=model_args.hidden_dim
-        )
         self.attention_norm = RMSNorm(model_args.dim, eps=model_args.norm_eps)
         self.ffn_norm = RMSNorm(model_args.dim, eps=model_args.norm_eps)
+
+        # Determine if this layer uses MoE or dense FFN
+        self.moe_enabled = _is_moe_layer(layer_id, model_args)
+        if self.moe_enabled:
+            # MoE layer uses moe_inter_dim for expert hidden dimension
+            self.moe = MoE(
+                model_args.moe_args,
+                dim=model_args.dim,
+                hidden_dim=model_args.moe_inter_dim,
+            )
+            self.feed_forward = None
+        else:
+            # Dense layer uses hidden_dim
+            self.moe = None
+            self.feed_forward = FeedForward(
+                dim=model_args.dim, hidden_dim=model_args.hidden_dim
+            )
 
         if model_args.depth_init:
             self.weight_init_std = 0.02 / (2 * (layer_id + 1)) ** 0.5
@@ -270,9 +319,9 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         rope_cache: torch.Tensor,
-        positions: torch.Tensor | None = None,
-        cu_seqlens: torch.Tensor | None = None,
-        max_seqlen: int | None = None,
+        positions: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
     ) -> torch.Tensor:
         x = x + self.attention(
             self.attention_norm(x),
@@ -281,14 +330,20 @@ class TransformerBlock(nn.Module):
             cu_seqlens,
             max_seqlen,
         )
-        x = x + self.feed_forward(self.ffn_norm(x))
+        if self.moe_enabled:
+            x = x + self.moe(self.ffn_norm(x))
+        else:
+            x = x + self.feed_forward(self.ffn_norm(x))
         return x
 
     def init_weights(self, buffer_device: torch.device):
         for norm in (self.attention_norm, self.ffn_norm):
             norm.reset_parameters()
         self.attention.init_weights(self.weight_init_std)
-        self.feed_forward.init_weights(self.weight_init_std)
+        if self.moe_enabled:
+            self.moe.init_weights(self.weight_init_std)
+        else:
+            self.feed_forward.init_weights(self.weight_init_std)
 
 
 class Qwen3Model(nn.Module):
@@ -368,9 +423,9 @@ class Qwen3Model(nn.Module):
     def forward(
         self,
         tokens: torch.Tensor,
-        positions: torch.Tensor | None = None,
-        cu_seqlens: torch.Tensor | None = None,
-        max_seqlen: int | None = None,
+        positions: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
     ) -> torch.Tensor:
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 

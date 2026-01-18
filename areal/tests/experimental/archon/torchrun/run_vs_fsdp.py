@@ -20,6 +20,7 @@ from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPLMEngine
 from areal.experimental.engine.archon_engine import ArchonLMEngine
 from areal.platforms import current_platform
+from areal.tests.experimental.archon.torchrun.utils import write_result
 from areal.tests.utils import get_dataset_path, get_model_path
 from areal.utils.data import pad_sequences_to_tensors
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -87,8 +88,17 @@ def create_config(engine_type: str, model_path: str) -> TrainEngineConfig:
     )
 
 
-def test_archon_vs_fsdp_logits(model_type: str):
-    """Compare Archon and FSDP engine logits."""
+def test_archon_vs_fsdp_logits(model_type: str, output: str | None = None):
+    """Compare Archon and FSDP engine logits.
+
+    Verify:
+    - max_diff < 5.0 (SDPA vs FlashAttention may have numerical differences)
+    - mean_diff < 0.2
+
+    Args:
+        model_type: Type of model to test
+        output: Output file path for pytest verification (Passed/Failed)
+    """
     setup_distributed_environment()
 
     rank = dist.get_rank() if dist.is_initialized() else 0
@@ -171,10 +181,20 @@ def test_archon_vs_fsdp_logits(model_type: str):
 
         # SDPA vs FlashAttention may have some numerical differences
         # Relaxed thresholds: raw logits diff is not a great metric
-        assert max_diff < 5.0, f"Non-padding logits max_diff too large: {max_diff}"
-        assert mean_diff < 0.2, f"Non-padding logits mean_diff too large: {mean_diff}"
+        success = True
+        if max_diff >= 5.0:
+            print(
+                f"[Rank {rank}] FAILED: Non-padding logits max_diff too large: {max_diff}"
+            )
+            success = False
+        if mean_diff >= 0.2:
+            print(
+                f"[Rank {rank}] FAILED: Non-padding logits mean_diff too large: {mean_diff}"
+            )
+            success = False
 
-        print(f"[Rank {rank}] Test passed!")
+        if success:
+            print(f"[Rank {rank}] Test passed!")
 
     finally:
         archon_engine.destroy()
@@ -182,8 +202,13 @@ def test_archon_vs_fsdp_logits(model_type: str):
 
     if dist.is_initialized():
         dist.barrier()
-        print(f"[Rank {rank}] All ranks completed successfully")
+        if rank == 0 and output:
+            write_result(output, success)
+        if success:
+            print(f"[Rank {rank}] All ranks completed successfully")
         dist.destroy_process_group()
+
+    return success
 
 
 def main():
@@ -197,8 +222,16 @@ def main():
         default="qwen2",
         help="Type of model to test",
     )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Output file for test result (Passed/Failed)",
+    )
     args = parser.parse_args()
-    test_archon_vs_fsdp_logits(args.model_type)
+    success = test_archon_vs_fsdp_logits(args.model_type, args.output)
+    if not success:
+        raise AssertionError("Archon vs FSDP logits comparison failed")
 
 
 if __name__ == "__main__":

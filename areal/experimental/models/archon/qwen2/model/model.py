@@ -118,9 +118,9 @@ class Attention(nn.Module):
         self,
         x: torch.Tensor,
         rope_cache: torch.Tensor,
-        positions: torch.Tensor | None = None,
-        cu_seqlens: torch.Tensor | None = None,
-        max_seqlen: int | None = None,
+        positions: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
     ) -> torch.Tensor:
         bs, seqlen, _ = x.shape
 
@@ -231,9 +231,9 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         rope_cache: torch.Tensor,
-        positions: torch.Tensor | None = None,
-        cu_seqlens: torch.Tensor | None = None,
-        max_seqlen: int | None = None,
+        positions: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
     ) -> torch.Tensor:
         x = x + self.attention(
             self.attention_norm(x), rope_cache, positions, cu_seqlens, max_seqlen
@@ -325,9 +325,9 @@ class Qwen2Model(nn.Module):
     def forward(
         self,
         tokens: torch.Tensor,
-        positions: torch.Tensor | None = None,
-        cu_seqlens: torch.Tensor | None = None,
-        max_seqlen: int | None = None,
+        positions: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
     ) -> torch.Tensor:
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 

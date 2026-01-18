@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from areal.experimental.models.archon.base import BaseModelArgs
+from areal.experimental.models.archon.moe import MoEArgs
 
 if TYPE_CHECKING:
     from transformers import PretrainedConfig
@@ -13,7 +14,16 @@ if TYPE_CHECKING:
 
 @dataclass
 class Qwen3ModelArgs(BaseModelArgs):
-    """Model arguments for Qwen3. Default values are for Qwen3-0.6B."""
+    """Model arguments for Qwen3. Default values are for Qwen3-0.6B.
+
+    Attributes:
+        moe_enabled: Whether MoE is enabled for this model.
+        moe_inter_dim: Intermediate dimension for MoE experts.
+        moe_args: MoE configuration (num_experts, top_k, etc.).
+        decoder_sparse_step: Interval for MoE layers. If 1, all layers use MoE.
+            If 2, every other layer uses MoE (starting from layer 1).
+            If 0 or negative, MoE is disabled.
+    """
 
     dim: int = 1024
     n_layers: int = 28
@@ -33,9 +43,12 @@ class Qwen3ModelArgs(BaseModelArgs):
     enable_weight_tying: bool = False
     is_critic: bool = False
     num_labels: int = 1
+
+    # MoE configuration
     moe_enabled: bool = False
     moe_inter_dim: int = 768
-    moe_args: dict = field(default_factory=dict)
+    moe_args: MoEArgs | None = None
+    decoder_sparse_step: int = 1  # Every layer is MoE if moe_enabled
 
     @classmethod
     def from_hf_config(
@@ -44,7 +57,22 @@ class Qwen3ModelArgs(BaseModelArgs):
         is_critic: bool = False,
         **kwargs,
     ) -> Qwen3ModelArgs:
-        moe_enabled = hasattr(hf_config, "num_experts") and hf_config.num_experts > 1
+        # Check if MoE is enabled
+        num_experts = getattr(hf_config, "num_experts", None)
+        if num_experts is None:
+            num_experts = getattr(hf_config, "num_local_experts", None)
+        moe_enabled = num_experts is not None and num_experts > 1
+
+        # Build MoEArgs from HF config if MoE is enabled
+        moe_args = None
+        if moe_enabled:
+            moe_args = MoEArgs.from_hf_config(hf_config)
+            # Override with additional fields from HF config
+            if hasattr(hf_config, "num_shared_experts"):
+                moe_args.num_shared_experts = hf_config.num_shared_experts
+
+        # Get decoder_sparse_step (default to 1 = all MoE layers)
+        decoder_sparse_step = getattr(hf_config, "decoder_sparse_step", 1)
 
         return cls(
             dim=hf_config.hidden_size,
@@ -69,6 +97,8 @@ class Qwen3ModelArgs(BaseModelArgs):
             is_critic=is_critic,
             moe_enabled=moe_enabled,
             moe_inter_dim=getattr(hf_config, "moe_intermediate_size", 768),
+            moe_args=moe_args,
+            decoder_sparse_step=decoder_sparse_step,
             attn_type=kwargs.get("attn_type", BaseModelArgs.attn_type),
         )
 

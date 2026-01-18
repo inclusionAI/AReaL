@@ -1,15 +1,15 @@
-"""Tests for Archon State Dict Adapter and weight conversion.
+"""Tests for Archon State Dict Adapter key conversion logic.
 
 These tests verify:
 1. Key conversion between HuggingFace and Archon formats
-2. Dense and MoE model weight conversion
+2. Dense and MoE model key conversion
 3. Roundtrip conversion consistency
-4. Weight values match after loading
+4. MoE expert weight splitting and collection
 
 Run tests:
     pytest areal/tests/experimental/archon/test_state_dict_adapter.py -v
 
-Note: Some tests require GPU and are marked as slow.
+Note: For weight completeness and shape matching tests, see test_weight_sync.py
 """
 
 import pytest
@@ -294,67 +294,454 @@ class TestQwen3StateDictAdapterMoE:
             assert hf_name == f"model.layers.0.mlp.experts.{i}.gate_proj.weight"
             assert hf_tensor.shape == (11008, 4096)
 
+    def test_router_key_conversion(self, adapter):
+        """Test MoE router gate key conversion."""
+        hf_key = "model.layers.0.mlp.gate.weight"
+        archon_key = "layers.0.moe.router.gate.weight"
+
+        assert adapter._convert_key_from_hf(hf_key) == archon_key
+        assert adapter._convert_key_to_hf(archon_key) == hf_key
+
+    def test_full_moe_state_dict_roundtrip(self, adapter):
+        """Test roundtrip for complete MoE layer state dict including router."""
+        # Create full MoE layer state dict
+        archon_state = {
+            # Expert weights
+            "layers.0.moe.experts.w1": torch.randn(8, 1024, 512),
+            "layers.0.moe.experts.w2": torch.randn(8, 512, 1024),
+            "layers.0.moe.experts.w3": torch.randn(8, 1024, 512),
+            # Router
+            "layers.0.moe.router.gate.weight": torch.randn(8, 512),
+        }
+
+        # Archon -> HF
+        hf_state = adapter.to_hf(archon_state)
+
+        # Should have 24 expert keys + 1 router key
+        assert len(hf_state) == 25
+        assert "model.layers.0.mlp.gate.weight" in hf_state
+
+        # HF -> Archon
+        roundtrip_state = adapter.from_hf(hf_state)
+
+        # Verify roundtrip for experts
+        for key in [
+            "layers.0.moe.experts.w1",
+            "layers.0.moe.experts.w2",
+            "layers.0.moe.experts.w3",
+        ]:
+            assert key in roundtrip_state
+            assert torch.allclose(archon_state[key], roundtrip_state[key])
+
+        # Verify roundtrip for router
+        router_key = "layers.0.moe.router.gate.weight"
+        assert router_key in roundtrip_state
+        assert torch.allclose(archon_state[router_key], roundtrip_state[router_key])
+
+    def test_activation_checkpoint_wrapper_prefix_stripped(self, adapter):
+        """Test that activation checkpoint wrapper prefix is stripped."""
+        archon_name = "layers.0._checkpoint_wrapped_module.moe.experts.w1"
+        tensor = torch.randn(8, 1024, 512)
+
+        result = adapter.convert_single_to_hf(archon_name, tensor)
+
+        # Should correctly convert despite wrapper prefix
+        assert len(result) == 8
+        assert result[0][0] == "model.layers.0.mlp.experts.0.gate_proj.weight"
+
+    def test_torch_compile_prefix_stripped(self, adapter):
+        """Test that torch.compile wrapper prefix is stripped."""
+        archon_name = "layers.0._orig_mod.moe.router.gate.weight"
+        tensor = torch.randn(8, 512)
+
+        result = adapter.convert_single_to_hf(archon_name, tensor)
+
+        assert len(result) == 1
+        assert result[0][0] == "model.layers.0.mlp.gate.weight"
+
 
 # =============================================================================
-# Integration Tests: Weight Loading (GPU required)
+# Integration Tests: MoE Weight Loading (CPU/CUDA)
 # =============================================================================
 
-# Skip if no CUDA available
-cuda_required = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="CUDA not available"
-)
 
+class TestMoEWeightLoadingRoundtrip:
+    """Tests for MoE model weight save/load roundtrip."""
 
-@cuda_required
-@pytest.mark.slow
-def test_archon_weights_match_hf():
-    """Verify Archon weight conversion from HuggingFace is correct.
+    @pytest.fixture
+    def moe_model_args(self):
+        """Create model args for MoE model."""
+        from areal.experimental.models.archon.moe import MoEArgs
+        from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
 
-    This test loads actual models and compares weights to ensure
-    the state dict adapter correctly converts between formats.
-    """
-    from areal.tests.experimental.archon.utils import (
-        MODEL_PATHS,
-        load_archon_model,
-        load_hf_model,
-        setup_environment,
-    )
-
-    setup_environment()
-
-    model_path = MODEL_PATHS["qwen2"]
-    dtype = torch.bfloat16
-
-    hf_model = load_hf_model(model_path, dtype=dtype)
-    archon_model, _ = load_archon_model(model_path, dtype=dtype)
-
-    # Key mappings: archon_key -> hf_key
-    key_mappings = [
-        ("tok_embeddings.weight", "model.embed_tokens.weight"),
-        ("layers.0.attention.wq.weight", "model.layers.0.self_attn.q_proj.weight"),
-        ("layers.0.attention.wk.weight", "model.layers.0.self_attn.k_proj.weight"),
-        ("layers.0.attention.wv.weight", "model.layers.0.self_attn.v_proj.weight"),
-        ("layers.0.attention.wo.weight", "model.layers.0.self_attn.o_proj.weight"),
-        ("layers.0.feed_forward.w1.weight", "model.layers.0.mlp.gate_proj.weight"),
-        ("layers.0.feed_forward.w2.weight", "model.layers.0.mlp.down_proj.weight"),
-        ("layers.0.feed_forward.w3.weight", "model.layers.0.mlp.up_proj.weight"),
-        ("norm.weight", "model.norm.weight"),
-        ("output.weight", "lm_head.weight"),
-    ]
-
-    archon_params = dict(archon_model.named_parameters())
-    hf_params = dict(hf_model.named_parameters())
-
-    for archon_key, hf_key in key_mappings:
-        if archon_key not in archon_params or hf_key not in hf_params:
-            continue
-
-        archon_w = archon_params[archon_key].data
-        hf_w = hf_params[hf_key].data
-
-        assert archon_w.shape == hf_w.shape, (
-            f"Shape mismatch for {archon_key}: {archon_w.shape} vs {hf_w.shape}"
+        return Qwen3ModelArgs(
+            dim=64,
+            hidden_dim=128,
+            n_heads=4,
+            n_kv_heads=2,
+            head_dim=16,
+            n_layers=4,
+            vocab_size=1000,
+            max_seq_len=32,
+            attn_type="sdpa",
+            moe_enabled=True,
+            moe_inter_dim=128,
+            moe_args=MoEArgs(num_experts=4, top_k=2),
+            decoder_sparse_step=2,  # Mixed MoE/dense layers
         )
 
-        max_diff = (archon_w.float() - hf_w.float()).abs().max().item()
-        assert max_diff < 1e-5, f"Weight mismatch for {archon_key}: max_diff={max_diff}"
+    @pytest.fixture
+    def moe_adapter_config(self):
+        """Create mock config for adapter."""
+
+        class MockConfig:
+            model_type = "qwen3_moe"
+            num_local_experts = 4
+            tie_word_embeddings = False
+
+        return MockConfig()
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="MoE forward requires CUDA"
+    )
+    def test_moe_weight_roundtrip_forward_match(
+        self, moe_model_args, moe_adapter_config
+    ):
+        """Test that model forward output matches after save/load roundtrip."""
+        from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+
+        device = torch.device("cuda")
+
+        # Create and initialize model
+        model1 = Qwen3Model(moe_model_args)
+        model1.init_weights(device)
+        model1.to(device)
+
+        # Create adapter
+        adapter = Qwen3StateDictAdapter(moe_adapter_config)
+
+        # Model -> Archon state dict -> HF state dict
+        archon_state = model1.state_dict()
+        hf_state = adapter.to_hf(archon_state)
+
+        # HF state dict -> Archon state dict -> Model
+        # Note: strict=False because expert_bias is an Archon-only buffer
+        # that doesn't exist in HF models (it's initialized to zeros)
+        roundtrip_archon_state = adapter.from_hf(hf_state)
+        model2 = Qwen3Model(moe_model_args)
+        model2.load_state_dict(roundtrip_archon_state, strict=False)
+        model2.to(device)
+
+        # Compare forward outputs
+        torch.manual_seed(42)
+        tokens = torch.randint(0, 1000, (1, 16), device=device)
+
+        # Create packed input
+        cu_seqlens = torch.tensor([0, 16], dtype=torch.int32, device=device)
+        max_seqlen = 16
+        positions = torch.arange(16, device=device).unsqueeze(0)
+
+        with torch.no_grad():
+            out1 = model1(
+                tokens, positions, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen
+            )
+            out2 = model2(
+                tokens, positions, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen
+            )
+
+        assert torch.allclose(out1, out2, rtol=1e-5, atol=1e-5), (
+            f"Forward output mismatch after roundtrip: max_diff={torch.abs(out1 - out2).max()}"
+        )
+
+    def test_moe_weight_keys_preserved(self, moe_model_args, moe_adapter_config):
+        """Test that all weight keys are preserved in roundtrip."""
+        from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+
+        model = Qwen3Model(moe_model_args)
+        model.init_weights(torch.device("cpu"))
+
+        archon_state = model.state_dict()
+        adapter = Qwen3StateDictAdapter(moe_adapter_config)
+
+        # Archon -> HF -> Archon
+        hf_state = adapter.to_hf(archon_state)
+        roundtrip_state = adapter.from_hf(hf_state)
+
+        # expert_bias is an Archon-only buffer, not present in HF models
+        # It's initialized to zeros and is not persisted in HF checkpoints
+        archon_keys = {k for k in archon_state.keys() if "expert_bias" not in k}
+        roundtrip_keys = set(roundtrip_state.keys())
+
+        # Verify all keys preserved (excluding Archon-only buffers)
+        missing_keys = archon_keys - roundtrip_keys
+        extra_keys = roundtrip_keys - archon_keys
+
+        assert not missing_keys, f"Missing keys after roundtrip: {missing_keys}"
+        assert not extra_keys, f"Extra keys after roundtrip: {extra_keys}"
+
+    def test_moe_weight_values_preserved(self, moe_model_args, moe_adapter_config):
+        """Test that all weight values are preserved in roundtrip."""
+        from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+
+        model = Qwen3Model(moe_model_args)
+        model.init_weights(torch.device("cpu"))
+
+        archon_state = model.state_dict()
+        adapter = Qwen3StateDictAdapter(moe_adapter_config)
+
+        # Archon -> HF -> Archon
+        hf_state = adapter.to_hf(archon_state)
+        roundtrip_state = adapter.from_hf(hf_state)
+
+        # Verify all values match (excluding Archon-only buffers like expert_bias)
+        for key in archon_state:
+            if "expert_bias" in key:
+                # expert_bias is an Archon-only buffer, not in HF models
+                continue
+            assert key in roundtrip_state, f"Missing key: {key}"
+            original = archon_state[key]
+            roundtrip = roundtrip_state[key]
+            assert original.shape == roundtrip.shape, (
+                f"Shape mismatch for {key}: {original.shape} vs {roundtrip.shape}"
+            )
+            assert torch.allclose(original, roundtrip), (
+                f"Value mismatch for {key}: max_diff={torch.abs(original - roundtrip).max()}"
+            )
+
+    def test_mixed_moe_dense_layers_preserved(self, moe_model_args, moe_adapter_config):
+        """Test roundtrip with mixed MoE and dense layers."""
+        from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+
+        # decoder_sparse_step=2 means:
+        # - layer 0: dense (FFN)
+        # - layer 1: MoE
+        # - layer 2: dense (FFN)
+        # - layer 3: MoE
+        model = Qwen3Model(moe_model_args)
+        model.init_weights(torch.device("cpu"))
+
+        # Verify layer structure
+        assert model.layers["0"].moe is None
+        assert model.layers["0"].feed_forward is not None
+        assert model.layers["1"].moe is not None
+        assert model.layers["1"].feed_forward is None
+        assert model.layers["2"].moe is None
+        assert model.layers["3"].moe is not None
+
+        archon_state = model.state_dict()
+        adapter = Qwen3StateDictAdapter(moe_adapter_config)
+
+        # Verify both dense FFN and MoE keys exist
+        dense_ffn_key = "layers.0.feed_forward.w1.weight"
+        moe_expert_key = "layers.1.moe.experts.w1"
+        moe_router_key = "layers.1.moe.router.gate.weight"
+
+        assert dense_ffn_key in archon_state
+        assert moe_expert_key in archon_state
+        assert moe_router_key in archon_state
+
+        # Roundtrip
+        hf_state = adapter.to_hf(archon_state)
+        roundtrip_state = adapter.from_hf(hf_state)
+
+        # Verify both types preserved
+        assert dense_ffn_key in roundtrip_state
+        assert moe_expert_key in roundtrip_state
+        assert moe_router_key in roundtrip_state
+
+        # Verify values
+        assert torch.allclose(
+            archon_state[dense_ffn_key], roundtrip_state[dense_ffn_key]
+        )
+        assert torch.allclose(
+            archon_state[moe_expert_key], roundtrip_state[moe_expert_key]
+        )
+        assert torch.allclose(
+            archon_state[moe_router_key], roundtrip_state[moe_router_key]
+        )
+
+
+# =============================================================================
+# Lightweight Config-Only Tests (No Weight Loading, Fast)
+# =============================================================================
+
+
+class TestStateDictAdapterWithRealConfigs:
+    """Lightweight tests using real HF configs but no weight loading.
+
+    These tests are fast (seconds) because they only load configs, not weights.
+    Use these to verify adapter logic for all supported model types.
+    """
+
+    @pytest.fixture(scope="class")
+    def model_configs(self):
+        """Load configs for all model types that have paths configured."""
+        from transformers import AutoConfig
+
+        from areal.tests.experimental.archon.utils import (
+            MODEL_PATHS,
+        )
+
+        configs = {}
+        for model_type, path in MODEL_PATHS.items():
+            if path is not None:
+                try:
+                    config = AutoConfig.from_pretrained(path, trust_remote_code=True)
+                    configs[model_type] = config
+                except Exception:
+                    pass  # Skip if config can't be loaded
+        return configs
+
+    def test_adapter_key_mapping_for_all_models(self, model_configs):
+        """Test key mapping for all configured model types."""
+        from areal.experimental.models.archon import get_model_spec
+
+        for model_type, config in model_configs.items():
+            spec = get_model_spec(model_type)
+            adapter = spec.state_dict_adapter_class(config)
+
+            # Test basic keys that should work for all models
+            basic_hf_keys = [
+                "model.embed_tokens.weight",
+                "model.layers.0.self_attn.q_proj.weight",
+                "model.layers.0.self_attn.k_proj.weight",
+                "model.layers.0.self_attn.v_proj.weight",
+                "model.layers.0.self_attn.o_proj.weight",
+                "model.layers.0.input_layernorm.weight",
+                "model.layers.0.post_attention_layernorm.weight",
+                "model.norm.weight",
+            ]
+
+            for hf_key in basic_hf_keys:
+                archon_key = adapter._convert_key_from_hf(hf_key)
+                assert archon_key is not None, (
+                    f"[{model_type}] Failed to convert HF key: {hf_key}"
+                )
+                hf_key_back = adapter._convert_key_to_hf(archon_key)
+                assert hf_key_back == hf_key, (
+                    f"[{model_type}] Roundtrip failed: {hf_key} -> {archon_key} -> {hf_key_back}"
+                )
+
+    def test_moe_adapter_expert_split_with_real_config(self, model_configs):
+        """Test MoE expert splitting with real config (no weights)."""
+        from areal.experimental.models.archon import get_model_spec
+
+        for model_type, config in model_configs.items():
+            # Check if MoE
+            num_experts = getattr(config, "num_experts", None)
+            if num_experts is None:
+                num_experts = getattr(config, "num_local_experts", None)
+            if num_experts is None or num_experts <= 1:
+                continue
+
+            spec = get_model_spec(model_type)
+            adapter = spec.state_dict_adapter_class(config)
+
+            # Create small fake 3D weight
+            out_dim, in_dim = 16, 32
+            fake_weight = torch.randn(num_experts, out_dim, in_dim)
+
+            # Test split
+            for weight_name, hf_proj in [
+                ("w1", "gate_proj"),
+                ("w2", "down_proj"),
+                ("w3", "up_proj"),
+            ]:
+                archon_key = f"layers.0.moe.experts.{weight_name}"
+                result = adapter._split_moe_experts(archon_key, fake_weight)
+
+                assert len(result) == num_experts, (
+                    f"[{model_type}] Expected {num_experts} experts, got {len(result)}"
+                )
+
+                for expert_id in range(num_experts):
+                    expected_key = (
+                        f"model.layers.0.mlp.experts.{expert_id}.{hf_proj}.weight"
+                    )
+                    assert expected_key in result, (
+                        f"[{model_type}] Missing {expected_key}"
+                    )
+
+    def test_moe_adapter_expert_collect_with_real_config(self, model_configs):
+        """Test MoE expert collection with real config (no weights)."""
+        from areal.experimental.models.archon import get_model_spec
+
+        for model_type, config in model_configs.items():
+            # Check if MoE
+            num_experts = getattr(config, "num_experts", None)
+            if num_experts is None:
+                num_experts = getattr(config, "num_local_experts", None)
+            if num_experts is None or num_experts <= 1:
+                continue
+
+            spec = get_model_spec(model_type)
+            adapter = spec.state_dict_adapter_class(config)
+
+            # Create fake 2D weights and collect them
+            out_dim, in_dim = 16, 32
+
+            for hf_proj, archon_weight_name in [
+                ("gate_proj", "w1"),
+                ("down_proj", "w2"),
+                ("up_proj", "w3"),
+            ]:
+                fake_weights = [
+                    torch.randn(out_dim, in_dim) for _ in range(num_experts)
+                ]
+                buffer = {}
+                state_dict = {}
+
+                for expert_id in range(num_experts):
+                    hf_key = f"model.layers.0.mlp.experts.{expert_id}.{hf_proj}.weight"
+                    adapter._collect_expert_weight(
+                        hf_key, fake_weights[expert_id], buffer, state_dict
+                    )
+
+                expected_archon_key = f"layers.0.moe.experts.{archon_weight_name}"
+                assert expected_archon_key in state_dict, (
+                    f"[{model_type}] Expected {expected_archon_key} in state_dict"
+                )
+                assert state_dict[expected_archon_key].shape == (
+                    num_experts,
+                    out_dim,
+                    in_dim,
+                ), f"[{model_type}] Wrong shape for {expected_archon_key}"
+
+    def test_weight_tying_matches_config(self, model_configs):
+        """Test that adapter weight tying matches HF config."""
+        from areal.experimental.models.archon import get_model_spec
+
+        for model_type, config in model_configs.items():
+            spec = get_model_spec(model_type)
+            adapter = spec.state_dict_adapter_class(config)
+
+            expected_tying = getattr(config, "tie_word_embeddings", False)
+            assert adapter.enable_weight_tying == expected_tying, (
+                f"[{model_type}] Weight tying mismatch: "
+                f"adapter={adapter.enable_weight_tying}, config={expected_tying}"
+            )
+
+    def test_all_layer_indices_handled(self, model_configs):
+        """Test that adapter handles all layer indices correctly."""
+        from areal.experimental.models.archon import get_model_spec
+
+        for model_type, config in model_configs.items():
+            spec = get_model_spec(model_type)
+            adapter = spec.state_dict_adapter_class(config)
+
+            num_layers = getattr(config, "num_hidden_layers", 12)
+            test_layers = [0, 1, num_layers // 2, num_layers - 1]
+
+            for layer_idx in test_layers:
+                hf_key = f"model.layers.{layer_idx}.self_attn.q_proj.weight"
+                archon_key = adapter._convert_key_from_hf(hf_key)
+
+                assert archon_key is not None, (
+                    f"[{model_type}] Failed for layer {layer_idx}"
+                )
+                assert f"layers.{layer_idx}." in archon_key
+
+                hf_key_back = adapter._convert_key_to_hf(archon_key)
+                assert hf_key_back == hf_key, (
+                    f"[{model_type}] Roundtrip failed for layer {layer_idx}"
+                )

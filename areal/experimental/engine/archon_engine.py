@@ -49,6 +49,7 @@ from areal.engine.core.train_engine import (
     reorder_and_pad_outputs,
 )
 from areal.experimental.models.archon import (
+    ArchonParallelDims,
     BaseStateDictAdapter,
     ModelSpec,
     get_model_spec,
@@ -62,7 +63,6 @@ from areal.experimental.models.archon.ulysses import (
     ulysses_gather_output,
     ulysses_slice_inputs,
 )
-from areal.experimental.utils.archon.parallel import ArchonParallelDims
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
 from areal.utils.constants import DEFAULT_PAGE_SIZE_BYTES, DIST_GROUP_DEFAULT_TIMEOUT
@@ -177,23 +177,35 @@ class ArchonEngine(TrainEngine):
         tp_size = parallel_strategy.tensor_parallel_size
         dp_size = parallel_strategy.data_parallel_size
         cp_size = parallel_strategy.context_parallel_size
+        ep_size = parallel_strategy.expert_parallel_size
         self.parallel_dims = ArchonParallelDims(
             dp_shard=dp_size,
             tp=tp_size,
             cp=cp_size,
+            ep=ep_size,
             world_size=self.world_size,
             device_type=current_platform.device_type,
         )
 
         self._world_mesh = self.parallel_dims.world_mesh
-        self._mp_group = self.parallel_dims.mp_group
+        self._cp_tp_group = self.parallel_dims.get_group("cp_tp")
+
+        # Compute dp_rank: the rank within the dp dimension (for data loading)
+        dp_mesh = self.parallel_dims.get_mesh("dp")
+        if dp_mesh is not None:
+            self._dp_rank = dp_mesh.get_local_rank()
+        else:
+            self._dp_rank = 0
+
+        # Compute dp_head: the rank that holds the batch for this cp_tp group
+        self._dp_head = dist.get_process_group_ranks(self._cp_tp_group)[0]
 
         self.weight_update_group_name = "update_weight_group"
 
         self.logger.info(
             f"Initialized Archon engine with parallel dims: "
             f"dp_shard={self.parallel_dims.dp_shard}, tp={self.parallel_dims.tp}, "
-            f"cp={self.parallel_dims.cp} (Ulysses SP)"
+            f"cp={self.parallel_dims.cp} (Ulysses SP), ep={self.parallel_dims.ep}"
         )
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
@@ -211,30 +223,21 @@ class ArchonEngine(TrainEngine):
         element_size = torch.empty([], dtype=param_dtype).element_size()
         self.page_size = max(DEFAULT_PAGE_SIZE_BYTES // hidden_size // element_size, 1)
 
-        tp_mesh = self.world_mesh["tp"] if self.parallel_dims.tp_enabled else None
-        dp_mesh = self.world_mesh["dp"]
         ac_config = self._build_ac_config()
         enable_compile = self.config.archon.enable_compile
 
-        if (
-            tp_mesh is not None
-            and ac_config is not None
-            and ac_config.mode != "none"
-            and enable_compile
-        ):
+        # Force pad_to_maximum when compile is enabled to avoid dynamic shape issues
+        if enable_compile and not self.config.pad_to_maximum:
             self.logger.info(
-                "Tensor Parallelism + Activation Checkpointing + torch.compile enabled: "
-                "AsyncCollectiveTensor from SequenceParallel is explicitly waited "
-                "before entering checkpoint region. This has minimal performance impact "
-                "as the async collective op must complete anyway before the next layer."
+                "torch.compile is enabled: forcing pad_to_maximum=True to avoid "
+                "dynamic shape issues with Inductor. Original pad_to_maximum=False."
             )
+            self.config.pad_to_maximum = True
 
         tik = time.perf_counter()
         self.spec.parallelize_fn(
             model=self.model,
-            tp_mesh=tp_mesh,
-            dp_mesh=dp_mesh,
-            cp_group=self.parallel_dims.cp_group,
+            parallel_dims=self.parallel_dims,
             param_dtype=param_dtype,
             reduce_dtype=torch.float32,
             loss_parallel=True,
@@ -262,26 +265,25 @@ class ArchonEngine(TrainEngine):
 
     @property
     def data_parallel_group(self) -> dist.ProcessGroup:
-        return self.world_mesh["dp"].get_group()
+        return self.parallel_dims.world_mesh["dp"].get_group()
 
     @property
     def data_parallel_rank(self) -> int:
-        return dist.get_rank(self.data_parallel_group)
+        return self._dp_rank
 
     @property
     def data_parallel_world_size(self) -> int:
         return self.parallel_dims.dp_shard
 
     def current_data_parallel_head(self) -> int:
-        tp_rank = dist.get_rank(self._mp_group)
-        return self.rank - tp_rank
+        return self._dp_head
 
     def is_data_parallel_head(self) -> bool:
-        return dist.get_rank(self._mp_group) == 0
+        return self.rank == self._dp_head
 
     @property
     def context_and_model_parallel_group(self) -> dist.ProcessGroup:
-        return self._mp_group
+        return self._cp_tp_group
 
     @property
     def cpu_group(self) -> dist.ProcessGroup:
@@ -326,14 +328,11 @@ class ArchonEngine(TrainEngine):
         assert self.optimizer_config is not None
         assert self.lr_scheduler is not None
 
-        tp_group = (
-            self.parallel_dims.tp_group if self.parallel_dims.tp_enabled else None
-        )
         grad_norm = fsdp2_clip_grad_norm(
             list(self.model.parameters()),
             max_norm=self.optimizer_config.gradient_clipping,
             fsdp_group=self.data_parallel_group,
-            tp_group=tp_group,
+            tp_group=self.parallel_dims.get_group("tp"),
             offload_params=self.config.archon.offload_params,
         )
 
@@ -367,16 +366,11 @@ class ArchonEngine(TrainEngine):
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
-            cu_seqlens = inputs.get("cu_seqlens")
-            max_seqlen = (
-                int(inputs.get("max_seqlen", 0)) if cu_seqlens is not None else None
-            )
-
             logits = self.model(
                 inputs["input_ids"],
-                inputs.get("position_ids"),
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen,
+                inputs["position_ids"],
+                cu_seqlens=inputs["cu_seqlens"],
+                max_seqlen=int(inputs["max_seqlen"]),
             )
             logits = logits.squeeze(0)
 
@@ -1090,10 +1084,11 @@ class ArchonEngine(TrainEngine):
         labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
 
         if self.parallel_dims.cp_enabled:
+            cp_mesh = self.parallel_dims.get_mesh("cp")
             inputs, labels = ulysses_slice_inputs(
                 inputs,
                 labels,
-                self.parallel_dims.cp_rank,
+                cp_mesh.get_local_rank(),
                 self.parallel_dims.cp,
             )
 
@@ -1121,8 +1116,9 @@ class ArchonEngine(TrainEngine):
             logprobs, entropy = self._compute_logprobs_entropy(logits, ctx.labels)
 
             if self.parallel_dims.cp_enabled:
-                logprobs = ulysses_gather_output(logprobs, self.parallel_dims.cp_group)
-                entropy = ulysses_gather_output(entropy, self.parallel_dims.cp_group)
+                cp_group = self.parallel_dims.get_group("cp")
+                logprobs = ulysses_gather_output(logprobs, cp_group)
+                entropy = ulysses_gather_output(entropy, cp_group)
 
             if ctx.pad_length > 0:
                 logprobs = logprobs[: -ctx.pad_length]
@@ -1133,7 +1129,9 @@ class ArchonEngine(TrainEngine):
             values = logits.squeeze(-1)
 
             if self.parallel_dims.cp_enabled:
-                values = ulysses_gather_output(values, self.parallel_dims.cp_group)
+                values = ulysses_gather_output(
+                    values, self.parallel_dims.get_group("cp")
+                )
 
             if ctx.pad_length > 0:
                 values = values[: -ctx.pad_length]
@@ -1149,14 +1147,11 @@ class ArchonEngine(TrainEngine):
         labels: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute log probabilities and entropy from logits."""
-        tp_group = (
-            self.parallel_dims.tp_group if self.parallel_dims.tp_enabled else None
-        )
         logprobs, entropy = gather_logprobs_entropy(
             logits,
             labels,
             temperature=self.config.temperature,
-            tp_group=tp_group,
+            tp_group=self.parallel_dims.get_group("tp"),
         )
         return logprobs, entropy
 
@@ -1172,7 +1167,7 @@ class ArchonEngine(TrainEngine):
             result = logits.squeeze(-1)
 
         if self.parallel_dims.cp_enabled:
-            result = ulysses_gather_output(result, self.parallel_dims.cp_group)
+            result = ulysses_gather_output(result, self.parallel_dims.get_group("cp"))
 
         if ctx.pad_length > 0:
             result = result[: -ctx.pad_length]
@@ -1185,14 +1180,11 @@ class ArchonEngine(TrainEngine):
         labels: torch.Tensor,
     ) -> torch.Tensor:
         """Compute log probabilities from logits (without entropy)."""
-        tp_group = (
-            self.parallel_dims.tp_group if self.parallel_dims.tp_enabled else None
-        )
         logprobs = gather_logprobs(
             logits,
             labels,
             temperature=self.config.temperature,
-            tp_group=tp_group,
+            tp_group=self.parallel_dims.get_group("tp"),
         )
         return logprobs
 

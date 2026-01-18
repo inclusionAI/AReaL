@@ -15,6 +15,7 @@ For multi-GPU tests (DP, TP, CP), see test_distributed.py.
 
 import pytest
 import torch
+import torch.distributed as dist
 from transformers import AutoConfig
 
 from areal.platforms import current_platform
@@ -133,6 +134,9 @@ def test_archon_forward_matches_hf():
         f"Logprob max_diff too large: {logprob_diff.max().item()}"
     )
 
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
 
 @pytest.mark.slow
 def test_archon_packed_sequence_logits():
@@ -181,6 +185,9 @@ def test_archon_packed_sequence_logits():
     # Check that logits are reasonable (not all same value)
     assert logits.std() > 0.1, "Logits have too low variance"
 
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
 
 # =============================================================================
 # Precision Comparison Tests
@@ -207,6 +214,9 @@ class TestArchonHFPrecision:
         self.model_path = MODEL_PATHS["qwen2"]
         self.dtype = torch.bfloat16
         self.device = torch.device(current_platform.device_type)
+        yield
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
     @pytest.mark.slow
     def test_precision_random_input(self):

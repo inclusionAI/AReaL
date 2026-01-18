@@ -24,6 +24,7 @@ from areal.experimental.models.archon.utils import (
 from areal.utils import logging
 
 if TYPE_CHECKING:
+    from areal.experimental.models.archon import ArchonParallelDims
     from areal.experimental.models.archon.activation_checkpoint import (
         ActivationCheckpointConfig,
     )
@@ -33,9 +34,7 @@ logger = logging.getLogger("ArchonQwen2Parallelize")
 
 def parallelize_qwen2(
     model: nn.Module,
-    tp_mesh: DeviceMesh | None = None,
-    dp_mesh: DeviceMesh | None = None,
-    cp_group: ProcessGroup | None = None,
+    parallel_dims: ArchonParallelDims,
     param_dtype: torch.dtype = torch.bfloat16,
     reduce_dtype: torch.dtype = torch.float32,
     loss_parallel: bool = True,
@@ -47,9 +46,7 @@ def parallelize_qwen2(
     """Apply parallelization to Qwen2 model.
 
     This is the main entry point for parallelizing a Qwen2 model.
-    It applies TP (if tp_mesh provided), CP (if cp_group provided),
-    AC (if ac_config provided), torch.compile (if enable_compile),
-    and FSDP (if dp_mesh provided).
+    It applies parallelization strategies based on parallel_dims configuration.
 
     Order of operations:
     1. Apply TP (Tensor Parallelism)
@@ -60,9 +57,7 @@ def parallelize_qwen2(
 
     Args:
         model: The Qwen2 model to parallelize.
-        tp_mesh: Device mesh for tensor parallelism. If None, TP is not applied.
-        dp_mesh: Device mesh for data parallelism (FSDP). If None, FSDP is not applied.
-        cp_group: Process group for context parallelism (Ulysses SP). If None, CP is not applied.
+        parallel_dims: Parallel dimensions configuration containing mesh and group info.
         param_dtype: Data type for model parameters.
         reduce_dtype: Data type for gradient reduction.
         loss_parallel: Whether to keep output sharded for loss parallelism.
@@ -78,12 +73,15 @@ def parallelize_qwen2(
         Context Parallelism (CP) implements Ulysses Sequence Parallelism using
         All-to-All communication. It scatters attention heads and gathers sequences.
     """
+    # Apply TP (Tensor Parallelism)
+    tp_mesh = parallel_dims.get_mesh("tp") if parallel_dims.tp_enabled else None
     if tp_mesh is not None:
         apply_tp(model, tp_mesh, loss_parallel=loss_parallel)
 
-    tp_size = tp_mesh.size() if tp_mesh is not None else 1
-    if cp_group is not None:
-        apply_cp(model, cp_group, tp_size=tp_size)
+    # Apply CP (Context Parallelism / Ulysses SP)
+    if parallel_dims.cp_enabled:
+        cp_group = parallel_dims.get_group("cp")
+        apply_cp(model, cp_group, tp_size=parallel_dims.tp)
 
     # AC must be after TP/CP
     if ac_config is not None and ac_config.mode != "none":
@@ -99,6 +97,8 @@ def parallelize_qwen2(
 
         apply_compile(model)
 
+    # Apply FSDP
+    dp_mesh = parallel_dims.get_mesh("dp_shard_cp")
     if dp_mesh is not None:
         apply_fsdp(
             model,
