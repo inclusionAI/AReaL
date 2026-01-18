@@ -155,7 +155,8 @@ def main(args):
         dump_dir=os.path.join(
             StatsLogger.get_log_path(config.stats_logger), "generated"
         ),
-        reward_shaping_mode=None,  # Options: None, "parallel_ratio", "latency"
+        reward_shaping_mode="latency",  # Options: None, "parallel_ratio", "latency"
+        reward_shaping_alpha=1.2
     )
     eval_workflow = ParallelGenerationWorkflow(
         reward_fn=gsm8k_reward_fn,
