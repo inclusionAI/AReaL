@@ -41,7 +41,7 @@ classifiers = [
 
 dependencies = [
     # Core ML/AI libraries
-    "torch==2.8.0",
+    "torch==2.9.1",
     "torchaudio",
     "torchvision",
     "torchdata",
@@ -130,15 +130,15 @@ dependencies = [
 
 [project.optional-dependencies]
 fa = [
-    "flash-attn==2.8.3",
+    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.0/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl",
 ]
 
 sglang = [
-    "sglang==0.5.5.post1",
+    "sglang[tracing]==0.5.7",
 ]
 
 vllm = [
-    "vllm==0.11.0",
+    "vllm==0.14.0",
 ]
 
 tms = [
@@ -154,7 +154,6 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "ipython",
-    "autoflake==2.3.1",
     "ruff==0.14.9",
     "clang-format==19.1.7",
     "sh",
@@ -206,7 +205,7 @@ override-dependencies=[
 latex2sympy2 = { path = "./evaluation/latex2sympy" }
 
 [tool.uv.extra-build-dependencies]
-flash-attn = ["torch==2.8.0"]
+flash-attn = ["torch==2.9.1"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -253,14 +252,3 @@ section-order = [
     "local-folder",
 ]
 from-first = false
-
-# The following tools are remained as legacy.
-# We will use `ruff` instead in future development
-[tool.black]
-line-length = 88
-
-[tool.autoflake]
-in-place = true
-recursive = true
-remove-all-unused-imports = true
-remove-unused-variables = true

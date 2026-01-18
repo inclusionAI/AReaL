@@ -3,6 +3,8 @@
 .data/
 .idea/
 
+# claude
+.claude/
 
 # Ruff
 .ruff_cache/
