@@ -32,7 +32,7 @@ import torch
 # Environment variable to control memory profiling
 CUDA_MEMORY_PROFILE_PATH_ENV = os.environ.get(
     "AREAL_CUDA_MEMORY_PROFILE_PATH", 
-    "/storage/openpsi/users/meizhiyu.mzy/zeta/tracefiles",
+    None,
 )
 
 # Global counter for unique snapshot names
@@ -65,8 +65,9 @@ def profile_memory(
         # Snapshot saved to /tmp/memory_profiles/attention_0.pickle
     """
     global _snapshot_counter
-
-    dump_path = os.environ.get(CUDA_MEMORY_PROFILE_PATH_ENV)
+    global CUDA_MEMORY_PROFILE_PATH_ENV
+    
+    dump_path = CUDA_MEMORY_PROFILE_PATH_ENV
 
     if not dump_path or not torch.cuda.is_available():
         # Profiling disabled, just yield
