@@ -27,9 +27,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Update pip and install uv
 RUN pip install -U pip "setuptools<80,>=77.0.3" uv
-RUN mkdir /AReaL
+
+# The following uv-specific block is copied from https://github.com/astral-sh/uv-docker-example/blob/main/Dockerfile
 WORKDIR /AReaL
-RUN uv venv && bash -c "source ~/.uv/venvs/default/bin/activate"
+
+# Enable bytecode compilation
+ENV UV_COMPILE_BYTECODE=1
+
+# Copy from the cache instead of linking since it's a mounted volume
+ENV UV_LINK_MODE=copy
+
+# Omit development dependencies
+ENV UV_NO_DEV=1
+
+# Ensure installed tools can be executed out of the box
+ENV UV_TOOL_BIN_DIR=/usr/local/bin
+
+# Install the project's dependencies using the lockfile and settings
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project
 
 # Environment variables for build configuration
 ENV NVTE_WITH_USERBUFFERS=1
