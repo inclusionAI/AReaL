@@ -28,6 +28,7 @@ from contextlib import contextmanager
 from typing import Callable, Generator, TypeVar
 
 import torch
+import torch.distributed as dist
 
 # Environment variable to control memory profiling
 CUDA_MEMORY_PROFILE_PATH_ENV = os.environ.get(
@@ -39,6 +40,13 @@ CUDA_MEMORY_PROFILE_PATH_ENV = os.environ.get(
 _snapshot_counter = 0
 
 
+def _get_rank() -> int:
+    """Get the distributed rank, or 0 if not in distributed mode."""
+    if dist.is_initialized():
+        return dist.get_rank()
+    return 0
+
+
 @contextmanager
 def profile_memory(
     name: str = "snapshot",
@@ -48,11 +56,11 @@ def profile_memory(
 
     Records memory allocation history and dumps a snapshot when the context
     exits. Profiling is only enabled when CUDA_MEMORY_PROFILE_PATH environment
-    variable is set.
+    variable is set. In distributed settings, each rank dumps to a separate file.
 
     Args:
         name: Name prefix for the snapshot file. The final filename will be
-            "{name}_{counter}.pickle" appended to the path from env var.
+            "{name}_rank{rank}_{counter}.pickle" appended to the path from env var.
         max_entries: Maximum number of entries to record in memory history.
 
     Example:
@@ -62,7 +70,7 @@ def profile_memory(
             # Memory allocations here will be recorded
             output = model(input)
 
-        # Snapshot saved to /tmp/memory_profiles/attention_0.pickle
+        # Snapshot saved to /tmp/memory_profiles/attention_rank0_0.pickle
     """
     global _snapshot_counter
     global CUDA_MEMORY_PROFILE_PATH_ENV
@@ -77,8 +85,9 @@ def profile_memory(
     # Ensure directory exists
     os.makedirs(dump_path, exist_ok=True)
 
-    # Generate unique filename
-    filename = f"{name}_{_snapshot_counter}.pickle"
+    # Generate unique filename with rank for distributed runs
+    rank = _get_rank()
+    filename = f"{name}_rank{rank}_{_snapshot_counter}.pickle"
     full_path = os.path.join(dump_path, filename)
     _snapshot_counter += 1
 

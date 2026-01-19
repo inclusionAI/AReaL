@@ -492,6 +492,7 @@ class FSDPEngine(TrainEngine):
         ],
         forward_only: bool = False,
     ) -> None:
+        loss_sum = torch.tensor(0.0, device=self.device)
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
@@ -518,6 +519,8 @@ class FSDPEngine(TrainEngine):
                 "trie_node": ctx.trie_node,
             }
             loss = process_output_fn(logits, ctx_dict)
+            loss_sum += loss if loss is not None else 0.0
+            print(f"[Debug] loss value = {loss}, loss_sum = {loss_sum.item()}")
 
             if not forward_only and loss is not None:
                 with trace_scope("fsdp_engine.backward"):
@@ -1518,6 +1521,8 @@ class FSDPEngine(TrainEngine):
             loss = loss_fn(values, ctx.mb_input)
 
         loss_scale = loss_weight_fn(ctx.mb_input) / total_loss_weight * loss_multiplier
+        print(f"[debug] Loss: {loss.item()}, Loss scale: {loss_scale.item()}, final result: {(loss * loss_scale).item()}")
+
         return loss * loss_scale
 
     def _compute_forward_result(
