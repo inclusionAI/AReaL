@@ -7,8 +7,6 @@ from threading import Lock
 import traceback
 
 # Initialize client
-# api_key = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IjEzOGQ4MDFlLTllN2ItNDVjNC05OTU1LWZiZTU0YzE4NDc0MCIsInNlY3JldCI6InVteTY2YVZNWDFuZE54ckxwejZ2VkpOTm5wcmRUOGJ1RXlzeklzblo0SUE9In0.Y1VXsU5CfxnMbxbMPYyZT4j4pVhYdIrG1QrChDclJTg"
-# api_base = "https://llm-proxy.perflab.nvidia.com"
 api_key = os.environ.get("AZURE_OPENAI_API_KEY", None)
 api_base = os.environ.get("AZURE_OPENAI_BASE", None)
 assert api_key is not None, "AZURE_OPENAI_API_KEY not set"
@@ -39,6 +37,7 @@ write_lock = Lock()
 def write_result(filename, data):
     """Thread-safe result writing"""
     with write_lock:
+        print(f"\t [write_result] Writing result to {filename}...")
         with open(filename, 'a', encoding='utf-8') as f:
             f.write(json.dumps(data, ensure_ascii=False) + '\n')
 
@@ -105,7 +104,7 @@ def process_problem(problem_data, file_source):
     result['expected_answer'] = problem_data.get('answer', None)
     
     # Write result to file
-    output_file = os.path.join(OUTPUT_DIR, f"{file_source}_results.jsonl")
+    output_file = os.path.join(OUTPUT_DIR, f"{file_source}_{deployment_name}_results.jsonl")
     write_result(output_file, result)
     
     status = "✓" if result['success'] else "✗"
