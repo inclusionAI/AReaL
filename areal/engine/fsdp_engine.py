@@ -1521,6 +1521,7 @@ class FSDPEngine(TrainEngine):
             loss = loss_fn(values, ctx.mb_input)
 
         loss_scale = loss_weight_fn(ctx.mb_input) / total_loss_weight * loss_multiplier
+        print(f"[debug] loss_weight_fn(ctx.mb_input)={loss_weight_fn(ctx.mb_input).item()}, total_loss_weight={total_loss_weight.item()}")
         print(f"[debug] Loss: {loss.item()}, Loss scale: {loss_scale.item()}, final result: {(loss * loss_scale).item()}")
 
         return loss * loss_scale
