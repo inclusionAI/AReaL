@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from torch import nn
 from torch.distributed.tensor import DTensor
 
+from areal.experimental.models.archon.moe.utils import indices_padding_wrapper
+
 
 def _run_experts_for_loop(
     w1: torch.Tensor,
@@ -182,7 +184,16 @@ class GroupedExperts(nn.Module):
             w3 = self.w3
 
         if self.use_grouped_mm:
-            return _run_experts_grouped_mm(w1, w2, w3, x, num_tokens_per_expert)
+            # If EP is not used, apply padding wrapper;
+            # otherwise, EP hooks already handle padding.
+            if (
+                not isinstance(self.w1, DTensor)
+                or "ep" not in self.w1.device_mesh.mesh_dim_names
+            ):
+                run_experts_fn = indices_padding_wrapper(_run_experts_grouped_mm)
+            else:
+                run_experts_fn = _run_experts_grouped_mm
+            return run_experts_fn(w1, w2, w3, x, num_tokens_per_expert)
         else:
             return _run_experts_for_loop(w1, w2, w3, x, num_tokens_per_expert)
 
