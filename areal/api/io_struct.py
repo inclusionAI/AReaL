@@ -85,9 +85,37 @@ class ModelResponse:
         return len(self.output_tokens)
 
     @property
+    def end_with_eos(self) -> bool:
+        if self.tokenizer is None:
+            raise ValueError("tokenizer is None, cannot check end_with_eos")
+        eos_id = self.tokenizer.eos_token_id
+        pad_id = self.tokenizer.pad_token_id
+        if len(self.output_tokens) == 0:
+            return False
+        if eos_id is not None and self.output_tokens[-1] == eos_id:
+            return True
+        if pad_id is not None and self.output_tokens[-1] == pad_id:
+            return True
+        return False
+
+    @property
     def output_tokens_without_stop(self) -> list[int]:
+        if self.tokenizer is None:
+            raise ValueError("tokenizer is None, cannot check end_with_eos")
         if self.stop_reason not in ["length", "abort"] and self.output_tokens:
-            return self.output_tokens[:-1]
+            if not self.end_with_eos:
+                raise ValueError(
+                    f"output_tokens does not end with eos or pad token, but stop_reason is {self.stop_reason}"
+                )
+            pad_or_eos_len = 0
+            for tok in reversed(self.output_tokens):
+                eos_id = self.tokenizer.eos_token_id
+                pad_id = self.tokenizer.pad_token_id
+                if tok == eos_id or tok == pad_id:
+                    pad_or_eos_len += 1
+                else:
+                    break
+            return self.output_tokens[:-pad_or_eos_len]
         return self.output_tokens
 
 
