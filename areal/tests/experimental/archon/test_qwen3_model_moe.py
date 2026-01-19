@@ -33,10 +33,18 @@ def _create_packed_input(
         - max_seqlen: int
     """
     bs, seq_len = tokens.shape
+    device = tokens.device
     tokens_packed = tokens.view(1, bs * seq_len)
     # Create positions: each sequence has positions 0, 1, 2, ..., seq_len-1
-    positions = torch.arange(seq_len).unsqueeze(0).repeat(bs, 1).view(1, bs * seq_len)
-    cu_seqlens = torch.tensor([i * seq_len for i in range(bs + 1)], dtype=torch.int32)
+    positions = (
+        torch.arange(seq_len, device=device)
+        .unsqueeze(0)
+        .repeat(bs, 1)
+        .view(1, bs * seq_len)
+    )
+    cu_seqlens = torch.tensor(
+        [i * seq_len for i in range(bs + 1)], dtype=torch.int32, device=device
+    )
     return tokens_packed, positions, cu_seqlens, seq_len
 
 
@@ -223,20 +231,25 @@ class TestTransformerBlockMoE:
         assert out.shape == x_packed.shape
         assert not torch.any(torch.isnan(out))
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_moe_block_forward(self, moe_args):
         """Test forward pass for MoE TransformerBlock."""
-        block = TransformerBlock(layer_id=0, model_args=moe_args)
-        block.init_weights(torch.device("cpu"))
+        block = TransformerBlock(layer_id=0, model_args=moe_args).cuda()
+        block.init_weights(torch.device("cuda"))
 
         bs, seq_len = 2, 8
-        x = torch.randn(bs, seq_len, moe_args.dim)
+        x = torch.randn(bs, seq_len, moe_args.dim, device="cuda")
         # Use proper rope_cache shape: [max_seq_len, head_dim * 2]
         rope_cache = precompute_rope_cache(
             moe_args.head_dim, moe_args.max_seq_len, moe_args.rope_theta
-        )
+        ).cuda()
         # Create cu_seqlens for packed sequences
         cu_seqlens_packed = torch.tensor(
-            [0] + [i * seq_len for i in range(1, bs + 1)], dtype=torch.int32
+            [0] + [i * seq_len for i in range(1, bs + 1)],
+            dtype=torch.int32,
+            device="cuda",
         )
         max_seqlen = seq_len
 
@@ -244,7 +257,10 @@ class TestTransformerBlockMoE:
         x_packed = x.view(1, bs * seq_len, moe_args.dim)
         # Create positions for packed sequences
         positions = (
-            torch.arange(seq_len).unsqueeze(0).repeat(bs, 1).view(1, bs * seq_len)
+            torch.arange(seq_len, device="cuda")
+            .unsqueeze(0)
+            .repeat(bs, 1)
+            .view(1, bs * seq_len)
         )
 
         out = block(
@@ -258,20 +274,25 @@ class TestTransformerBlockMoE:
         assert out.shape == x_packed.shape
         assert not torch.any(torch.isnan(out))
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_moe_block_gradient_flow(self, moe_args):
         """Test gradient flow through MoE TransformerBlock."""
-        block = TransformerBlock(layer_id=0, model_args=moe_args)
-        block.init_weights(torch.device("cpu"))
+        block = TransformerBlock(layer_id=0, model_args=moe_args).cuda()
+        block.init_weights(torch.device("cuda"))
 
         bs, seq_len = 2, 8
-        x = torch.randn(bs, seq_len, moe_args.dim, requires_grad=True)
+        x = torch.randn(bs, seq_len, moe_args.dim, device="cuda", requires_grad=True)
         # Use proper rope_cache shape: [max_seq_len, head_dim * 2]
         rope_cache = precompute_rope_cache(
             moe_args.head_dim, moe_args.max_seq_len, moe_args.rope_theta
-        )
+        ).cuda()
         # Create cu_seqlens for packed sequences
         cu_seqlens_packed = torch.tensor(
-            [0] + [i * seq_len for i in range(1, bs + 1)], dtype=torch.int32
+            [0] + [i * seq_len for i in range(1, bs + 1)],
+            dtype=torch.int32,
+            device="cuda",
         )
         max_seqlen = seq_len
 
@@ -279,7 +300,10 @@ class TestTransformerBlockMoE:
         x_packed = x.view(1, bs * seq_len, moe_args.dim)
         # Create positions for packed sequences
         positions = (
-            torch.arange(seq_len).unsqueeze(0).repeat(bs, 1).view(1, bs * seq_len)
+            torch.arange(seq_len, device="cuda")
+            .unsqueeze(0)
+            .repeat(bs, 1)
+            .view(1, bs * seq_len)
         )
 
         out = block(
@@ -372,13 +396,18 @@ class TestQwen3ModelMoE:
         assert out.shape == (1, bs * seq_len, dense_model_args.vocab_size)
         assert not torch.any(torch.isnan(out))
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_moe_model_forward(self, moe_model_args):
         """Test forward pass for full MoE model."""
-        model = Qwen3Model(moe_model_args)
+        model = Qwen3Model(moe_model_args).cuda()
         model.init_weights()
 
         bs, seq_len = 2, 16
-        tokens = torch.randint(0, moe_model_args.vocab_size, (bs, seq_len))
+        tokens = torch.randint(
+            0, moe_model_args.vocab_size, (bs, seq_len), device="cuda"
+        )
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         out = model(
@@ -391,13 +420,18 @@ class TestQwen3ModelMoE:
         assert out.shape == (1, bs * seq_len, moe_model_args.vocab_size)
         assert not torch.any(torch.isnan(out))
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_mixed_model_forward(self, mixed_model_args):
         """Test forward pass for mixed MoE/dense model."""
-        model = Qwen3Model(mixed_model_args)
+        model = Qwen3Model(mixed_model_args).cuda()
         model.init_weights()
 
         bs, seq_len = 2, 16
-        tokens = torch.randint(0, mixed_model_args.vocab_size, (bs, seq_len))
+        tokens = torch.randint(
+            0, mixed_model_args.vocab_size, (bs, seq_len), device="cuda"
+        )
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         out = model(
@@ -439,13 +473,18 @@ class TestQwen3ModelMoE:
             "Layer 3 should not have feed_forward"
         )
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_moe_model_gradient_flow(self, moe_model_args):
         """Test gradient flow through MoE model."""
-        model = Qwen3Model(moe_model_args)
+        model = Qwen3Model(moe_model_args).cuda()
         model.init_weights()
 
         bs, seq_len = 2, 16
-        tokens = torch.randint(0, moe_model_args.vocab_size, (bs, seq_len))
+        tokens = torch.randint(
+            0, moe_model_args.vocab_size, (bs, seq_len), device="cuda"
+        )
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         out = model(
@@ -470,13 +509,18 @@ class TestQwen3ModelMoE:
                 f"Layer {layer_id} experts.w1 should have grad"
             )
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_mixed_model_gradient_flow(self, mixed_model_args):
         """Test gradient flow through mixed MoE/dense model."""
-        model = Qwen3Model(mixed_model_args)
+        model = Qwen3Model(mixed_model_args).cuda()
         model.init_weights()
 
         bs, seq_len = 2, 16
-        tokens = torch.randint(0, mixed_model_args.vocab_size, (bs, seq_len))
+        tokens = torch.randint(
+            0, mixed_model_args.vocab_size, (bs, seq_len), device="cuda"
+        )
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         out = model(
@@ -499,13 +543,18 @@ class TestQwen3ModelMoE:
         assert model.layers["0"].feed_forward.w1.weight.grad is not None
         assert model.layers["2"].feed_forward.w1.weight.grad is not None
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_moe_model_with_positions(self, moe_model_args):
         """Test MoE model with explicit positions."""
-        model = Qwen3Model(moe_model_args)
+        model = Qwen3Model(moe_model_args).cuda()
         model.init_weights()
 
         bs, seq_len = 2, 16
-        tokens = torch.randint(0, moe_model_args.vocab_size, (bs, seq_len))
+        tokens = torch.randint(
+            0, moe_model_args.vocab_size, (bs, seq_len), device="cuda"
+        )
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         out = model(
@@ -518,6 +567,9 @@ class TestQwen3ModelMoE:
         assert out.shape == (1, bs * seq_len, moe_model_args.vocab_size)
         assert not torch.any(torch.isnan(out))
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_moe_critic_model(self):
         """Test MoE model in critic mode."""
         model_args = Qwen3ModelArgs(
@@ -537,11 +589,11 @@ class TestQwen3ModelMoE:
             num_labels=1,
             attn_type="sdpa",  # Use SDPA for testing
         )
-        model = Qwen3Model(model_args)
+        model = Qwen3Model(model_args).cuda()
         model.init_weights()
 
         bs, seq_len = 2, 16
-        tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len))
+        tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len), device="cuda")
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         out = model(
@@ -559,6 +611,9 @@ class TestQwen3ModelMoE:
 class TestQwen3MoEConfigurations:
     """Tests for various Qwen3-MoE configurations."""
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_qwen3_30b_a3b_like_config(self):
         """Test configuration similar to Qwen3-30B-A3B."""
         model_args = Qwen3ModelArgs(
@@ -583,11 +638,11 @@ class TestQwen3MoEConfigurations:
             attn_type="sdpa",  # Use SDPA for testing
         )
 
-        model = Qwen3Model(model_args)
+        model = Qwen3Model(model_args).cuda()
         model.init_weights()
 
         bs, seq_len = 1, 16
-        tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len))
+        tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len), device="cuda")
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         out = model(
@@ -600,6 +655,9 @@ class TestQwen3MoEConfigurations:
         assert out.shape == (1, bs * seq_len, model_args.vocab_size)
         assert not torch.any(torch.isnan(out))
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_with_shared_experts(self):
         """Test MoE model with shared experts."""
         model_args = Qwen3ModelArgs(
@@ -623,11 +681,11 @@ class TestQwen3MoEConfigurations:
             attn_type="sdpa",  # Use SDPA for testing
         )
 
-        model = Qwen3Model(model_args)
+        model = Qwen3Model(model_args).cuda()
         model.init_weights()
 
         bs, seq_len = 2, 8
-        tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len))
+        tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len), device="cuda")
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         out = model(
@@ -645,6 +703,9 @@ class TestQwen3MoEConfigurations:
             assert layer.moe is not None
             assert layer.moe.shared_experts is not None
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_single_token_inference(self):
         """Test MoE model with single token (generation scenario)."""
         model_args = Qwen3ModelArgs(
@@ -663,12 +724,12 @@ class TestQwen3MoEConfigurations:
             attn_type="sdpa",  # Use SDPA for testing
         )
 
-        model = Qwen3Model(model_args)
+        model = Qwen3Model(model_args).cuda()
         model.init_weights()
         model.eval()
 
         bs = 1
-        tokens = torch.randint(0, model_args.vocab_size, (bs, 1))
+        tokens = torch.randint(0, model_args.vocab_size, (bs, 1), device="cuda")
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         with torch.no_grad():
@@ -682,6 +743,9 @@ class TestQwen3MoEConfigurations:
         assert out.shape == (1, 1, model_args.vocab_size)
         assert not torch.any(torch.isnan(out))
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
+    )
     def test_batch_size_1(self):
         """Test MoE model with batch size 1."""
         model_args = Qwen3ModelArgs(
@@ -700,11 +764,11 @@ class TestQwen3MoEConfigurations:
             attn_type="sdpa",  # Use SDPA for testing
         )
 
-        model = Qwen3Model(model_args)
+        model = Qwen3Model(model_args).cuda()
         model.init_weights()
 
         bs, seq_len = 1, 32
-        tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len))
+        tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len), device="cuda")
         tokens_packed, positions, cu_seqlens, max_seqlen = _create_packed_input(tokens)
 
         out = model(

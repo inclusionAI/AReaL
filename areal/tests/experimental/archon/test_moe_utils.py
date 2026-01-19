@@ -18,6 +18,9 @@ from areal.experimental.models.archon.moe.utils import (
 )
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA required for histc with int64"
+)
 class TestPermuteTokens:
     """Tests for permute_tokens and unpermute_tokens."""
 
@@ -28,9 +31,9 @@ class TestPermuteTokens:
         num_experts = 3
         top_k = 2
 
-        tokens = torch.randn(num_tokens, dim)
+        tokens = torch.randn(num_tokens, dim, device="cuda")
         # Expert assignments: token 0 -> [0,1], token 1 -> [2,0], etc.
-        indices = torch.tensor([[0, 1], [2, 0], [1, 2], [0, 1]])
+        indices = torch.tensor([[0, 1], [2, 0], [1, 2], [0, 1]], device="cuda")
 
         permuted, sorted_idx, num_per_expert = permute_tokens(
             tokens, indices, num_experts
@@ -50,9 +53,9 @@ class TestPermuteTokens:
         dim = 8
         num_experts = 2
 
-        tokens = torch.randn(num_tokens, dim)
+        tokens = torch.randn(num_tokens, dim, device="cuda")
         # Token 0,2 go to expert 0; token 1,3 go to expert 1
-        indices = torch.tensor([[0], [1], [0], [1]])
+        indices = torch.tensor([[0], [1], [0], [1]], device="cuda")
 
         permuted, sorted_idx, num_per_expert = permute_tokens(
             tokens, indices, num_experts
@@ -74,8 +77,8 @@ class TestPermuteTokens:
         num_experts = 4
         top_k = 2
 
-        tokens = torch.randn(num_tokens, dim)
-        indices = torch.randint(0, num_experts, (num_tokens, top_k))
+        tokens = torch.randn(num_tokens, dim, device="cuda")
+        indices = torch.randint(0, num_experts, (num_tokens, top_k), device="cuda")
 
         permuted, sorted_idx, _ = permute_tokens(tokens, indices, num_experts)
 
@@ -94,9 +97,9 @@ class TestPermuteTokens:
         dim = 32
         num_experts = 4
 
-        tokens = torch.randn(num_tokens, dim)
+        tokens = torch.randn(num_tokens, dim, device="cuda")
         # Only experts 0 and 1 receive tokens; experts 2,3 are empty
-        indices = torch.tensor([[0], [1], [0], [1]])
+        indices = torch.tensor([[0], [1], [0], [1]], device="cuda")
 
         permuted, sorted_idx, num_per_expert = permute_tokens(
             tokens, indices, num_experts
@@ -270,6 +273,9 @@ class TestIndicesPaddingWrapper:
         assert torch.allclose(result, x)
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA required for histc with int64"
+)
 class TestEndToEndPermutation:
     """End-to-end tests simulating MoE forward pass."""
 
@@ -282,11 +288,15 @@ class TestEndToEndPermutation:
         top_k = 2
 
         # Input tokens
-        tokens = torch.randn(batch_size * seq_len, dim)
+        tokens = torch.randn(batch_size * seq_len, dim, device="cuda")
 
         # Simulate router output
-        indices = torch.randint(0, num_experts, (batch_size * seq_len, top_k))
-        scores = torch.softmax(torch.randn(batch_size * seq_len, top_k), dim=-1)
+        indices = torch.randint(
+            0, num_experts, (batch_size * seq_len, top_k), device="cuda"
+        )
+        scores = torch.softmax(
+            torch.randn(batch_size * seq_len, top_k, device="cuda"), dim=-1
+        )
 
         # Step 1: Permute tokens by expert
         permuted, sorted_idx, num_per_expert = permute_tokens(
@@ -320,8 +330,8 @@ class TestEndToEndPermutation:
         num_experts = 2
         top_k = 1
 
-        tokens = torch.randn(num_tokens, dim, requires_grad=True)
-        indices = torch.randint(0, num_experts, (num_tokens, top_k))
+        tokens = torch.randn(num_tokens, dim, device="cuda", requires_grad=True)
+        indices = torch.randint(0, num_experts, (num_tokens, top_k), device="cuda")
 
         permuted, sorted_idx, _ = permute_tokens(tokens, indices, num_experts)
 

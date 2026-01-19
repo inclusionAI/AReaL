@@ -9,6 +9,11 @@ import torch
 
 from areal.experimental.models.archon.moe.router import TokenChoiceTopKRouter
 
+# Skip all tests if CUDA is not available
+pytestmark = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA required for histc with int64 input"
+)
+
 
 class TestTokenChoiceTopKRouterBasic:
     """Basic tests for TokenChoiceTopKRouter."""
@@ -33,10 +38,10 @@ class TestTokenChoiceTopKRouterBasic:
         top_k = 2
         num_tokens = 16
 
-        router = TokenChoiceTopKRouter(dim, num_experts, top_k)
+        router = TokenChoiceTopKRouter(dim, num_experts, top_k).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         top_scores, selected_indices, num_per_expert = router(x)
 
         assert top_scores.shape == (num_tokens, top_k)
@@ -50,10 +55,10 @@ class TestTokenChoiceTopKRouterBasic:
         top_k = 2
         num_tokens = 32
 
-        router = TokenChoiceTopKRouter(dim, num_experts, top_k)
+        router = TokenChoiceTopKRouter(dim, num_experts, top_k).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         _, _, num_per_expert = router(x)
 
         # Total should be num_tokens * top_k
@@ -66,10 +71,10 @@ class TestTokenChoiceTopKRouterBasic:
         top_k = 2
         num_tokens = 32
 
-        router = TokenChoiceTopKRouter(dim, num_experts, top_k)
+        router = TokenChoiceTopKRouter(dim, num_experts, top_k).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         _, selected_indices, _ = router(x)
 
         assert selected_indices.min() >= 0
@@ -86,10 +91,12 @@ class TestScoreFunctions:
         top_k = 2
         num_tokens = 16
 
-        router = TokenChoiceTopKRouter(dim, num_experts, top_k, score_func="sigmoid")
+        router = TokenChoiceTopKRouter(
+            dim, num_experts, top_k, score_func="sigmoid"
+        ).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         top_scores, _, _ = router(x)
 
         # Sigmoid scores should be in (0, 1) before scaling
@@ -104,10 +111,12 @@ class TestScoreFunctions:
         top_k = 2
         num_tokens = 16
 
-        router = TokenChoiceTopKRouter(dim, num_experts, top_k, score_func="softmax")
+        router = TokenChoiceTopKRouter(
+            dim, num_experts, top_k, score_func="softmax"
+        ).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         top_scores, _, _ = router(x)
 
         # Softmax scores should be positive
@@ -122,10 +131,10 @@ class TestScoreFunctions:
 
         router = TokenChoiceTopKRouter(
             dim, num_experts, top_k, route_norm=True, route_scale=1.0
-        )
+        ).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         top_scores, _, _ = router(x)
 
         # Normalized scores should sum to ~1 per token
@@ -142,10 +151,10 @@ class TestScoreFunctions:
 
         router_unscaled = TokenChoiceTopKRouter(
             dim, num_experts, top_k, route_scale=1.0
-        )
+        ).cuda()
         router_scaled = TokenChoiceTopKRouter(
             dim, num_experts, top_k, route_scale=scale
-        )
+        ).cuda()
 
         # Copy weights
         with torch.no_grad():
@@ -155,7 +164,7 @@ class TestScoreFunctions:
         with torch.no_grad():
             router_scaled.gate.weight.copy_(router_unscaled.gate.weight)
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         scores_unscaled, _, _ = router_unscaled(x)
         scores_scaled, _, _ = router_scaled(x)
 
@@ -173,16 +182,18 @@ class TestExpertBias:
         top_k = 1
         num_tokens = 100
 
-        router = TokenChoiceTopKRouter(dim, num_experts, top_k)
+        router = TokenChoiceTopKRouter(dim, num_experts, top_k).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
 
         # Without bias
         _, indices_no_bias, counts_no_bias = router(x, expert_bias=None)
 
         # With strong bias towards expert 0
-        bias = torch.tensor([-10.0, -10.0, -10.0, 10.0])  # Favor expert 3
+        bias = torch.tensor(
+            [-10.0, -10.0, -10.0, 10.0], device="cuda"
+        )  # Favor expert 3
         _, indices_with_bias, counts_with_bias = router(x, expert_bias=bias)
 
         # Expert 3 should get more tokens with bias
@@ -195,18 +206,18 @@ class TestExpertBias:
         top_k = 1
         num_tokens = 16
 
-        router = TokenChoiceTopKRouter(dim, num_experts, top_k)
+        router = TokenChoiceTopKRouter(dim, num_experts, top_k).cuda()
         router.init_weights()
 
         # Small bias shouldn't change scores much
-        bias = torch.tensor([0.01, 0.0, 0.0, -0.01])
+        bias = torch.tensor([0.01, 0.0, 0.0, -0.01], device="cuda")
 
         torch.manual_seed(42)
-        x1 = torch.randn(num_tokens, dim)
+        x1 = torch.randn(num_tokens, dim, device="cuda")
         scores_no_bias, indices_no_bias, _ = router(x1, expert_bias=None)
 
         torch.manual_seed(42)
-        x2 = torch.randn(num_tokens, dim)
+        x2 = torch.randn(num_tokens, dim, device="cuda")
         scores_with_bias, indices_with_bias, _ = router(x2, expert_bias=bias)
 
         # Where indices match, scores should be identical
@@ -235,10 +246,10 @@ class TestNodeLimitedRouting:
             top_k,
             num_expert_groups=num_expert_groups,
             num_limited_groups=num_limited_groups,
-        )
+        ).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         top_scores, selected_indices, num_per_expert = router(x)
 
         assert top_scores.shape == (num_tokens, top_k)
@@ -259,10 +270,10 @@ class TestNodeLimitedRouting:
             top_k,
             num_expert_groups=num_expert_groups,
             num_limited_groups=num_limited_groups,
-        )
+        ).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         _, selected_indices, _ = router(x)
 
         # For each token, experts should be from same group or at most 2 groups
@@ -281,16 +292,16 @@ class TestNodeLimitedRouting:
         # num_limited_groups required when num_expert_groups is set
         router = TokenChoiceTopKRouter(
             dim, num_experts, top_k, num_expert_groups=2, num_limited_groups=None
-        )
+        ).cuda()
 
-        x = torch.randn(10, dim)
+        x = torch.randn(10, dim, device="cuda")
         with pytest.raises(ValueError, match="num_limited_groups must be set"):
             router(x)
 
         # num_experts must be divisible by num_expert_groups
         router = TokenChoiceTopKRouter(
             dim, num_experts, top_k, num_expert_groups=3, num_limited_groups=1
-        )
+        ).cuda()
         with pytest.raises(ValueError, match="must be divisible by"):
             router(x)
 
@@ -307,10 +318,10 @@ class TestDebugForceLoadBalance:
 
         router = TokenChoiceTopKRouter(
             dim, num_experts, top_k, _debug_force_load_balance=True
-        )
+        ).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         _, _, num_per_expert = router(x)
 
         # With round-robin, each expert should get ~25 tokens
@@ -327,10 +338,10 @@ class TestDebugForceLoadBalance:
 
         router = TokenChoiceTopKRouter(
             dim, num_experts, top_k, _debug_force_load_balance=True
-        )
+        ).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim)
+        x = torch.randn(num_tokens, dim, device="cuda")
         _, _, num_per_expert = router(x)
 
         # With round-robin, each expert should get 50 assignments
@@ -349,10 +360,10 @@ class TestRouterGradients:
         top_k = 2
         num_tokens = 16
 
-        router = TokenChoiceTopKRouter(dim, num_experts, top_k)
+        router = TokenChoiceTopKRouter(dim, num_experts, top_k).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim, requires_grad=True)
+        x = torch.randn(num_tokens, dim, device="cuda", requires_grad=True)
         top_scores, _, _ = router(x)
 
         loss = top_scores.sum()
@@ -368,11 +379,63 @@ class TestRouterGradients:
         top_k = 2
         num_tokens = 16
 
-        router = TokenChoiceTopKRouter(dim, num_experts, top_k)
+        router = TokenChoiceTopKRouter(dim, num_experts, top_k).cuda()
         router.init_weights()
 
-        x = torch.randn(num_tokens, dim, requires_grad=True)
+        x = torch.randn(num_tokens, dim, device="cuda", requires_grad=True)
         top_scores, selected_indices, _ = router(x)
 
         # Indices should not require gradients
         assert not selected_indices.requires_grad
+
+
+class TestHistcBehavior:
+    """Tests for histc token counting behavior.
+
+    These tests verify the correct behavior of torch.histc for counting
+    tokens per expert, particularly around boundary conditions.
+    """
+
+    def test_histc_counts_boundary_expert(self):
+        """Test that tokens assigned to the last expert are counted correctly.
+
+        This test verifies the fix for the histc max parameter bug where tokens
+        assigned to expert (num_experts - 1) could be miscounted when using
+        max=num_experts-1 instead of max=num_experts.
+        """
+        num_experts = 4
+        # All tokens go to the last expert (index 3)
+        indices = torch.tensor([3, 3, 3, 3], device="cuda")
+
+        counts = torch.histc(indices, bins=num_experts, min=0, max=num_experts).to(
+            torch.int64
+        )
+
+        expected = torch.tensor([0, 0, 0, 4], device="cuda")
+        assert torch.equal(counts, expected), f"Expected {expected}, got {counts}"
+
+    def test_histc_counts_all_experts(self):
+        """Test histc correctly counts tokens distributed across all experts."""
+        num_experts = 4
+        # 2 tokens to expert 0, 3 to expert 1, 1 to expert 2, 0 to expert 3
+        indices = torch.tensor([0, 0, 1, 1, 1, 2], device="cuda")
+
+        counts = torch.histc(indices, bins=num_experts, min=0, max=num_experts).to(
+            torch.int64
+        )
+
+        expected = torch.tensor([2, 3, 1, 0], device="cuda")
+        assert torch.equal(counts, expected), f"Expected {expected}, got {counts}"
+
+    def test_histc_counts_single_expert(self):
+        """Test histc when all tokens go to a single middle expert."""
+        num_experts = 8
+        # All tokens go to expert 4
+        indices = torch.tensor([4, 4, 4, 4, 4], device="cuda")
+
+        counts = torch.histc(indices, bins=num_experts, min=0, max=num_experts).to(
+            torch.int64
+        )
+
+        expected = torch.tensor([0, 0, 0, 0, 5, 0, 0, 0], device="cuda")
+        assert torch.equal(counts, expected), f"Expected {expected}, got {counts}"
