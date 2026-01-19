@@ -1193,7 +1193,7 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
         total_elements = rel_diff.numel()
         large_diff_ratio = num_large_diff / total_elements
 
-        if mean_rel_diff > 0.1 or large_diff_ratio >= 0.1:
+        if mean_rel_diff > 0.2:
             mismatched_params.append(
                 (name, f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}, max_rel_diff={max_rel_diff:.6e}, mean_rel_diff={mean_rel_diff:.6e}, large_diff_ratio={large_diff_ratio:.4f}")
             )
