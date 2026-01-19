@@ -1,4 +1,7 @@
 .llamafactory-new/
+nv_oai_example.py
+claude_results
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

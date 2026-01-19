@@ -114,10 +114,10 @@ def main():
     
     # Load problems from both files
     print("\nLoading problems...")
-    problems = load_problems_from_file('data_100.jsonl')
+    problems = load_problems_from_file('s1-parallel/data_100.jsonl')
     # aime25_problems = load_problems_from_file('AIME25.jsonl')
     
-    print(f"Loaded {len(problems)} problems from data_100.jsonl")
+    print(f"Loaded {len(problems)} problems from s1-parallel/data_100.jsonl")
     print(f"Total: {len(problems)} problems")
     
     # Prepare task list
