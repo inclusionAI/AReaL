@@ -336,9 +336,80 @@ def apply_fsdp(
 
     fully_shard(model, **fsdp_config)
 
+    # Set up explicit prefetching when EP is enabled
+    # D2H syncs in EP token dispatch can interfere with FSDP's implicit prefetching
+    if ep_degree > 1:
+        _setup_fsdp_prefetch(model)
+
     logger.info("Applied FSDP to the model")
     if cpu_offload:
         logger.info("Applied CPU Offloading to the model")
+
+
+def _setup_fsdp_prefetch(model: nn.Module) -> None:
+    """Set up explicit FSDP prefetching for EP.
+
+    When EP is enabled, D2H syncs in token dispatch can interfere with
+    FSDP's implicit prefetching. This function sets up explicit prefetch
+    chains to ensure optimal overlap.
+
+    Args:
+        model: The FSDP-wrapped model.
+    """
+    transformer_blocks = list(model.layers.values())
+    if not transformer_blocks:
+        return
+
+    # === Forward prefetch ===
+    # tok_embeddings -> first block
+    if model.tok_embeddings is not None:
+        model.tok_embeddings.set_modules_to_forward_prefetch([transformer_blocks[0]])
+
+    # block[i] -> block[i+1] (+ experts if MoE), or -> final layers for last block
+    next_blocks = transformer_blocks[1:] + [None]
+    for block, next_block in zip(transformer_blocks, next_blocks):
+        if next_block is not None:
+            if getattr(next_block, "moe_enabled", False):
+                block.set_modules_to_forward_prefetch(
+                    [next_block, next_block.moe.experts]
+                )
+            else:
+                block.set_modules_to_forward_prefetch([next_block])
+        else:
+            # Last block -> final layers (norm, output/score)
+            # These are wrapped together in apply_fsdp
+            forward_final = [model.norm] if model.norm is not None else []
+            if model.output is not None:
+                forward_final.append(model.output)
+            if hasattr(model, "score") and model.score is not None:
+                forward_final.append(model.score)
+            if forward_final:
+                block.set_modules_to_forward_prefetch(forward_final)
+
+    # === Backward prefetch ===
+    reversed_blocks = list(reversed(transformer_blocks))
+    prev_blocks = reversed_blocks[1:] + [None]
+
+    # final layer (output or score) -> last block
+    if model.output is not None:
+        model.output.set_modules_to_backward_prefetch([reversed_blocks[0]])
+    elif hasattr(model, "score") and model.score is not None:
+        model.score.set_modules_to_backward_prefetch([reversed_blocks[0]])
+
+    # block[i] -> block[i-1] (+ experts if MoE), or -> tok_embeddings for first block
+    for block, prev_block in zip(reversed_blocks, prev_blocks):
+        if prev_block is not None:
+            if getattr(prev_block, "moe_enabled", False):
+                block.set_modules_to_backward_prefetch(
+                    [prev_block, prev_block.moe.experts]
+                )
+            else:
+                block.set_modules_to_backward_prefetch([prev_block])
+        elif model.tok_embeddings is not None:
+            # First block -> tok_embeddings
+            block.set_modules_to_backward_prefetch([model.tok_embeddings])
+
+    logger.info("Set up explicit FSDP prefetching for EP")
 
 
 def apply_cp(
