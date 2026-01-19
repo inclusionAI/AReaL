@@ -31,9 +31,9 @@ MODEL_PATH = get_model_path(
 
 @pytest.fixture(scope="module")
 def mock_tree_input(
-    batch_size=4,
-    tree_tokens=128,
-    total_tokens=256,
+    batch_size=16,
+    tree_tokens=8192,
+    total_tokens=16384,
     device=current_platform.device_type,
 ):
     if batch_size <= 0:
@@ -924,7 +924,7 @@ def _collect_fsdp_gradients(engine: FSDPEngine) -> dict[str, torch.Tensor]:
     grads = {}
     for name, param in engine.model.named_parameters():
         if param.grad is not None:
-            grads[name] = param.grad.clone()
+            grads[name] = param.grad.clone().detach()
     return grads
 
 
@@ -1039,7 +1039,7 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
         experiment_name="test_baseline",
         trial_name="test",
         path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=16384, n_mbs=2),
         optimizer=OptimizerConfig(),
         fsdp=FSDPEngineConfig(),
     )
@@ -1053,11 +1053,15 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
     )
     baseline_engine.train()
 
+    def loss_weight_fn(input_data):
+        print(f"[debug] in loss_weight_fn input_data.keys()={input_data.keys()}")
+        return input_data["loss_mask"].count_nonzero()
+
     # Run baseline forward-backward
     _ = baseline_engine.train_batch(
         mock_tree_input,
         loss_fn=loss_fn,
-        loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+        loss_weight_fn=loss_weight_fn,
     )
 
     # Collect baseline gradients and parameters
@@ -1082,7 +1086,7 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
         experiment_name="test_tree",
         trial_name="test",
         path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=1024),
+        mb_spec=MicroBatchSpec(max_tokens_per_mb=16384),
         optimizer=OptimizerConfig(),
         fsdp=FSDPEngineConfig(),
         enable_tree_training=True,
@@ -1095,15 +1099,11 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
     )
     tree_engine.train()
 
-    def loss_weight_fn(input_data):
-        print(f"[debug] in loss_weight_fn input_data.keys()={input_data.keys()}")
-        return input_data["loss_mask"].count_nonzero()
-
     # Run tree training forward-backward
     _ = tree_engine.train_batch(
         mock_tree_input,
         loss_fn=loss_fn,
-        loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+        loss_weight_fn=loss_weight_fn,
     )
 
     # Collect tree training gradients and parameters
