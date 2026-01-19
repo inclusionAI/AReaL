@@ -129,15 +129,15 @@ def visualize_dump(
         logger.info("No trie nodes found.")
 
     # Visualize attention masks
-    logger.info("")
-    logger.info("=" * 60)
-    logger.info("Attention Mask Visualizations")
-    logger.info("=" * 60)
-    for i, mb in enumerate(output_mbs):
-        attention_mask = mb.get("attention_mask")
-        if attention_mask is not None:
-            logger.info(f"\nMicroBatch {i} Attention Mask:")
-            visualize_attention_mask(attention_mask, granularity=mask_granularity)
+    # logger.info("")
+    # logger.info("=" * 60)
+    # logger.info("Attention Mask Visualizations")
+    # logger.info("=" * 60)
+    # for i, mb in enumerate(output_mbs):
+    #     attention_mask = mb.get("attention_mask")
+    #     if attention_mask is not None:
+    #         logger.info(f"\nMicroBatch {i} Attention Mask:")
+    #         visualize_attention_mask(attention_mask, granularity=mask_granularity)
 
 
 def list_available_dumps(dump_dir: Path) -> list[tuple[int, int]]:

@@ -92,9 +92,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         qid = str(qid) or uuid.uuid4().hex
         data["qid"] = qid
 
-        client = ArealOpenAI(
-            engine=engine, tokenizer=self.tokenizer, chat_template_type="concat"
-        )
+        client = ArealOpenAI(engine=engine, tokenizer=self.tokenizer)
 
         # Collect single trajectory
         stats = await self.agent.make_trajectory(
@@ -103,8 +101,7 @@ class TongyiDeepResearchReactWorkflow(RolloutWorkflow):
         )
         stats_tracker.get(workflow_context.stat_scope()).scalar(**stats)
 
-        completion_with_rewards = client.export_interactions(style="concat")
-        assert len(completion_with_rewards) == 1, len(completion_with_rewards)
+        completion_with_rewards = client.export_interactions(style="individual")
         return completion_with_rewards
 
 
@@ -121,15 +118,6 @@ class AgentRLConfig(GRPOConfig):
         metadata={
             "help": "Maximum number of tokens per trajectory. By default max_tokens_per_trajectory=32768."
         },
-    )
-    # Logging Agent Trajectories
-    log_agent_stats: bool = field(
-        default=False,
-        metadata={"help": "Log stats for agent trajectories"},
-    )
-    log_agent_stats_keys: list[str] = field(
-        default_factory=lambda: [],
-        metadata={"help": "Keys of log stats for agent trajectories"},
     )
     judge_engine: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
 

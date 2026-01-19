@@ -14,7 +14,7 @@ from megatron.core.transformer.transformer_layer import (
     TransformerLayer,
     TransformerLayerSubmodules,
 )
-from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
 
 from areal.utils import logging
 
@@ -53,12 +53,64 @@ logger.info(
 # Stores: {"key": (mask_data_ptr, q_len, device), "block_mask": block_mask}
 _block_mask_cache: dict = {"key": None, "block_mask": None}
 
-def make_block_mask_or_score_mod(
+
+def create_block_mask_from_dense(
     attention_mask: torch.Tensor,
+    seq_len: int,
+    device: torch.device,
+) -> BlockMask:
+    """Create a flex attention block mask from a dense attention mask.
+
+    This function should be called early (during data preparation) to allow
+    the dense mask to be released and save memory.
+
+    Parameters
+    ----------
+    attention_mask : torch.Tensor
+        Dense attention mask of shape (seq_len, seq_len).
+    seq_len : int
+        Sequence length.
+    device : torch.device
+        Device to create the block mask on.
+
+    Returns
+    -------
+    BlockMask
+        The created block mask for use with flex_attention.
+    """
+    def arbitrary_mask(
+        batch: torch.Tensor,
+        head: torch.Tensor,
+        q_idx: torch.Tensor,
+        k_idx: torch.Tensor,
+    ):
+        return attention_mask[q_idx, k_idx]
+
+    block_mask = create_block_mask(
+        arbitrary_mask,
+        B=1,
+        H=1,
+        Q_LEN=seq_len,
+        KV_LEN=seq_len,
+        BLOCK_SIZE=BLOCK_SIZE,
+        device=device,
+        _compile=False,
+    )
+    return block_mask
+
+
+def make_block_mask_or_score_mod(
+    attention_mask: torch.Tensor | None,
     q_len: int,
     device: torch.device,
+    block_mask: BlockMask | None = None,
 ):
     if USE_BLOCK_MASK:
+        # Use pre-created block mask if provided
+        if block_mask is not None:
+            return block_mask, None
+
+        # Fallback: create from dense mask (existing logic)
         # Check cache for existing block mask
         cache_key = (attention_mask.data_ptr(), q_len, device)
         if _block_mask_cache["key"] == cache_key:
@@ -133,7 +185,7 @@ class PytorchFlexAttention(torch.nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        attention_mask: torch.Tensor,
+        attention_mask: torch.Tensor | BlockMask,
         attn_mask_type: AttnMaskType,
         attention_bias: torch.Tensor = None,
         packed_seq_params: PackedSeqParams = None,
@@ -141,7 +193,7 @@ class PytorchFlexAttention(torch.nn.Module):
         # query: [S, B, H, D] in which B should be 1 in current tree training implementation
         # key: [S, B, H, D]
         # value: [S, B, H, D]
-        # attention_mask: [1, 1, S, S]
+        # attention_mask: [1, 1, S, S] or BlockMask (pre-created)
         # attention_mask_type: arbitrary
 
         if attention_bias is not None:
@@ -159,13 +211,17 @@ class PytorchFlexAttention(torch.nn.Module):
         value = value.permute(1, 2, 0, 3)
         enable_gqa = query.shape[1] != key.shape[1]
 
-        q_len = attention_mask.shape[0]
-
-        block_mask, score_mod = make_block_mask_or_score_mod(
-            attention_mask,
-            q_len,
-            query.device,
-        )
+        # Check if attention_mask is already a BlockMask (pre-created)
+        if isinstance(attention_mask, BlockMask):
+            block_mask = attention_mask
+            score_mod = None
+        else:
+            q_len = attention_mask.shape[0]
+            block_mask, score_mod = make_block_mask_or_score_mod(
+                attention_mask,
+                q_len,
+                query.device,
+            )
 
         output = _flex_attention(
             query,
@@ -195,8 +251,25 @@ def _tree_attn_fwd_func(
     *args,
     **kwargs
 ):
-    assert "full_attention_mask" in kwargs, "full_attention_mask is required for tree attention"
-    attention_mask = kwargs["full_attention_mask"]
+    # Check for pre-created block_mask first
+    pre_block_mask = kwargs.get("block_mask", None)
+
+    if pre_block_mask is not None:
+        # Use pre-created block mask directly
+        block_mask = pre_block_mask
+        score_mod = None
+        q_len = block_mask.shape[-1] if hasattr(block_mask, 'shape') else query.shape[2]
+    else:
+        # Fallback to creating from dense mask
+        assert "full_attention_mask" in kwargs, "full_attention_mask is required for tree attention when block_mask not provided"
+        attention_mask = kwargs["full_attention_mask"]
+        q_len = attention_mask.shape[0]
+        block_mask, score_mod = make_block_mask_or_score_mod(
+            attention_mask,
+            q_len,
+            query.device,
+        )
+
     # [B, S, H, D] -> [B, H, S, D]
     query = query.permute(0, 2, 1, 3).contiguous()
     key = key.permute(0, 2, 1, 3).contiguous()
@@ -204,13 +277,6 @@ def _tree_attn_fwd_func(
 
     enable_gqa = query.shape[1] != key.shape[1]
 
-    q_len = attention_mask.shape[0]
-    block_mask, score_mod = make_block_mask_or_score_mod(
-        attention_mask,
-        q_len,
-        query.device,
-    )
-    
     output = _flex_attention(
         query,
         key,

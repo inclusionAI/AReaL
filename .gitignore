@@ -193,3 +193,5 @@ wandb/
 outputs/
 sympy/
 !/docs/figures/*
+
+*.pt

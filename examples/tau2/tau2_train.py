@@ -128,8 +128,8 @@ class Tau2Runner:
             """Completion function that uses ArealOpenAI client."""
             start_time = time.perf_counter()
             kwargs.update(
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-                thinking=False,
+                extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+                thinking=True,
             )
             # Remove litellm-specific arguments
             kwargs.pop("num_retries", None)
@@ -137,6 +137,8 @@ class Tau2Runner:
                 # Use ArealOpenAI client for inference
                 completion = await self.client.chat.completions.create(*args, **kwargs)
                 return completion
+            except ValueError as e:
+                logger.warning(f"ValueError in _acompletion_via_client: {e}")
             finally:
                 run_info.agent_time.append(time.perf_counter() - start_time)
 

@@ -325,7 +325,7 @@ class MultiTurnReactAgent(FnCallAgent):
         result = await self.run_agent(data, client, save_path=save_path)
         reward = await self.calc_reward_with_llm_judge(result)
         completions = result["completions"]
-        last_completion = completions[-1]
-        client.set_reward(last_completion.id, reward)
+        for completion in completions:
+            client.set_reward(completion.id, reward)
         stats = result["stats"]
         return stats

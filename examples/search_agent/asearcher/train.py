@@ -70,7 +70,7 @@ class ASearcherReasoningWorkflow(RolloutWorkflow):
         self.topk = topk
         self.search_client_type = search_client_type
 
-        self.toolbox = SearchToolBox(dataset_path=dataset_path, reward_type="F1", topk=self.topk, search_client_type=self.search_client_type)
+        self.toolbox = SearchToolBox(dataset_path=dataset_path, reward_type="F1", topk=self.topk, search_client_type=self.search_client_type, use_jina=True)
         self.judge_client = ArealOpenAI(engine=judge_engine, tokenizer= tokenizer)
     
     async def arun_episode(self, engine, data):
@@ -143,6 +143,12 @@ class AgentRLConfig(GRPOConfig):
             "help": "search returns the top-k results. Default top_k=10"
         }
     )
+    dump_dir: str | None = field(
+        default=None,
+        metadata={
+            "help": "directory to dump agent trajectories"
+        }
+    )
     # Logging Agent Trajectories
     judge_engine: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
 
@@ -177,7 +183,7 @@ def main(args):
             gconfig=config.gconfig,
             tokenizer=tokenizer,
             dataset_path=config.train_dataset.path,
-            dump_dir=None,
+            dump_dir=config.dump_dir,
             max_turns=config.max_turns,
             force_turns=config.force_turns,
             search_client_type=config.search_client_type,

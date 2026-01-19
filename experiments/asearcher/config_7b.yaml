@@ -1,27 +1,39 @@
-experiment_name: tongyi-deepresearch
-trial_name: trial0
+experiment_name: mzy-asearcher
+trial_name: run1
 
 cluster:
-  fileroot: /storage/experiments
-  n_nodes: 1
+  fileroot: /storage/openpsi/users/meizhiyu.mzy/experiments
+  n_nodes: 2
   n_gpus_per_node: 8
   name_resolve:
     type: nfs
-    nfs_record_root: /storage/experiments/name_resolve
+    nfs_record_root: /storage/openpsi/users/meizhiyu.mzy/experiments/name_resolve
 seed: 1
-enable_offload: false
 total_train_epochs: 10
-total_train_steps: null
+total_train_steps: 1000
 tokenizer_path: ${actor.path}
-allocation_mode: sglang:d4p1t1+megatron:d2p2t1
+allocation_mode: sglang:d8+d8
 
-scheduler:
-  type: null
+max_turns: 32
+force_turns: 4
+search_client_type: async-online-search-access
+topk: 10
+judge_engine:
+  experiment_name: mzy-asearcher-qwen72b-inst-server-only
+  trial_name: run0
+  max_concurrent_rollouts: 16
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 4
+  enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
 
 rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 160
+  max_concurrent_rollouts: 256
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 4
@@ -29,10 +41,9 @@ rollout:
   scheduling_spec: ${actor.scheduling_spec}
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
-  dump_to_file: true
 
 gconfig:
-  n_samples: 8
+  n_samples: 16
   min_new_tokens: 0
   max_new_tokens: 8192
   greedy: false
@@ -41,7 +52,7 @@ gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen3-1.7B
+  path: /storage/openpsi/models/Qwen__Qwen3-8B/
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -49,19 +60,17 @@ actor:
   mb_spec:
     max_tokens_per_mb: 16384
   pad_to_maximum: true
+  enable_tree_training: true
   optimizer:
     type: adam
-    lr: 3e-6
-    weight_decay: 0.003
+    lr: 1.7e-5
+    weight_decay: 0.017
     beta1: 0.9
     beta2: 0.999
     eps: 1e-8
     lr_scheduler_type: constant
-    gradient_clipping: 1.0
+    gradient_clipping: 0.2
     warmup_steps_proportion: 0.001
-  adv_norm:
-    mean_level: batch
-    std_level: batch
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -71,13 +80,10 @@ actor:
   recompute_logprob: true
   use_decoupled_loss: true
   behav_imp_weight_cap: 5.0
-  megatron:
-    use_deterministic_algorithms: true
-    recompute_granularity: full
-    recompute_method: uniform
-    recompute_num_layers: 1
-    distribute_saved_activations: null
-    recompute_modules: null
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  max_new_tokens: ${gconfig.max_new_tokens}
   scheduling_spec:
     - task_type: worker
       port_count: 2
@@ -85,32 +91,47 @@ actor:
       cpu: 4
       mem: 32
       cmd: python3 -m areal.scheduler.rpc.rpc_server
-      env_vars: {}
+      env_vars:
+        NCCL_DEBUG: "WARN"
+        NCCL_IB_DISABLE: "0"
+        NCCL_SOCKET_IFNAME: "bond0"
+        NCCL_NET: "IB"
+        NCCL_NET_PLUGIN: ""
+        NCCL_IB_GID_INDEX: "3"
+        NCCL_IB_TIMEOUT: "22"
+        NCCL_IB_RETRY_CNT: "7"
+        NCCL_IB_SL: "5"
+        NCCL_IB_TC: "136"
+        NCCL_IB_HCA: "mlx5_bond"
+        NCCL_IB_QPS_PER_CONNECTION: "8"
+        NCCL_SET_THREAD_NAME: "1"
+        PYTORCH_NPU_ALLOC_CONF: "expandable_segments:True"
+        WANDB_BASE_URL: http://8.150.1.98:8080
+        WANDB_API_KEY: local-8726acfd20a41b5ab8ac35fd51014b15169fa20a
+        RAG_SERVER_ADDR_DIR: /storage/openpsi/users/meizhiyu.mzy/workspace/rag_addr
+        JINA_API_KEY: <placeholder_for_jina_api_key>
+        SERPER_API_KEY: <placeholder_for_serper_api_key>
 
 ref:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: ${actor.path}
   init_from_scratch: false
+  disable_dropout: true
   dtype: ${actor.dtype}
   mb_spec:
     max_tokens_per_mb: 16384
   optimizer: null
-  scheduling_strategy:
-    type: colocation
-    target: actor
-  scheduling_spec: ${actor.scheduling_spec}
 
 # SGLang
 sglang:
   model_path: ${actor.path}
   random_seed: ${seed}
-  skip_tokenizer_init: false
+  skip_tokenizer_init: true
   dtype: ${actor.dtype}
   max_running_requests: null
   context_length: 32768
-  mem_fraction_static: 0.8
-  attention_backend: fa3
+  mem_fraction_static: 0.8  # Lower for 7B to leave room for KV cache
 
 vllm:
   model: ${actor.path}
@@ -126,25 +147,27 @@ train_dataset:
   shuffle: true
   pin_memory: true
   type: rl
-  path: inclusionAI__Asearcher-train-data/ASearcher-LRM-35k.jsonl
+  num_workers: 4
+  path: /storage/openpsi/users/meizhiyu.mzy/mydata/asearcher/ASearcher-LRM-35k.jsonl
 
 # Utilities
 saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  freq_epochs: 1
-  freq_steps: 10
-  freq_secs: 3600
-
-
-recover:
-  experiment_name: ${experiment_name}
-  trial_name: ${trial_name}
-  fileroot: ${cluster.fileroot}
   freq_epochs: null
   freq_steps: null
   freq_secs: null
+
+recover:
+  mode: disabled
+  retries: 10
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 600
 
 evaluator:
   experiment_name: ${experiment_name}
@@ -159,25 +182,14 @@ stats_logger:
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   wandb:
-    mode: disabled
+    mode: online
 
 perf_tracer:
+  enabled: false
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  enabled: false
+  save_interval: 1
   session_tracer:
-    enabled: false
-
-judge_engine:
-  experiment_name: llm-judge
-  trial_name: trial0
-  max_concurrent_rollouts: 32
-  queue_size: null
-  consumer_batch_size: ${train_dataset.batch_size}
-  max_head_offpolicyness: 10000000
-  enable_rollout_tracing: false
-
-max_llm_calls_per_run: 16
-max_tokens_per_trajectory: 16384
-log_agent_stats: false
+    enabled: true
+    flush_threshold: 100

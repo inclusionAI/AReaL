@@ -130,7 +130,7 @@ class Tau2EnvConfig:
         default=100, metadata={"help": "Maximum number of steps per episode."}
     )
     add_thinking_tool: bool = field(
-        default=True, metadata={"help": "Whether to add a thinking tool."}
+        default=False, metadata={"help": "Whether to add a thinking tool."}
     )
     solo_mode: bool = field(
         default=False, metadata={"help": "Whether to use solo mode."}
