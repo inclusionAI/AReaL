@@ -192,6 +192,66 @@ tools = [
 
 
 @pytest.mark.asyncio
+async def test_streaming_with_tool_calling(openai_client):
+    """Test streaming mode with tool calling."""
+    chunks = []
+    stream = await openai_client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a helpful assistant with access to weather information.",
+            },
+            {"role": "user", "content": "What's the weather like in San Francisco?"},
+        ],
+        tools=tools,
+        tool_choice="auto",
+        max_completion_tokens=8192,
+        stream=True,
+    )
+
+    async for chunk in stream:
+        chunks.append(chunk)
+
+    # Verify we got multiple chunks
+    assert len(chunks) > 0, "Should receive at least one chunk"
+
+    # Verify chunk structure
+    for chunk in chunks:
+        assert chunk.id is not None
+        assert chunk.object == "chat.completion.chunk"
+        assert len(chunk.choices) == 1
+
+    # Find chunks with tool calls
+    tool_call_chunks = [
+        chunk
+        for chunk in chunks
+        if chunk.choices[0].delta.tool_calls is not None
+        and len(chunk.choices[0].delta.tool_calls) > 0
+    ]
+
+    # Verify tool calls are present and properly structured
+    if tool_call_chunks:
+        for chunk in tool_call_chunks:
+            for tool_call in chunk.choices[0].delta.tool_calls:
+                # Verify tool_call has required fields (simplified access after our fix)
+                assert tool_call.id is not None
+                assert tool_call.type == "function"
+                assert tool_call.function is not None
+                assert tool_call.function.name is not None
+                assert tool_call.function.arguments is not None
+
+    # Find the final chunk with finish_reason
+    final_chunks = [
+        chunk for chunk in chunks if chunk.choices[0].finish_reason is not None
+    ]
+    assert len(final_chunks) == 1, "Should have exactly one chunk with finish_reason"
+
+    # If tool calls were made, verify finish_reason is "tool_calls"
+    if tool_call_chunks:
+        assert final_chunks[0].choices[0].finish_reason == "tool_calls"
+
+
+@pytest.mark.asyncio
 async def test_single_round_tool_calling(openai_client):
     """Test single-round conversation with tool calling."""
 
