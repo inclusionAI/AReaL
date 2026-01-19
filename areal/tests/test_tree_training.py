@@ -103,6 +103,7 @@ def mock_tree_input(
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
+        "loss_mask": attention_mask.clone(),
     }
 
 
@@ -1022,7 +1023,7 @@ def test_fsdp_tree_training_forward(fsdp_engine, mock_tree_input):
 def test_fsdp_tree_training_forward_backward(mock_tree_input):
     """Test FSDP tree training forward-backward pass produces correct gradients."""
     def loss_fn(logprobs, entropy, input_data):
-        return logprobs.sum()
+        return logprobs.mean()
 
     # ========== Setup baseline FSDP engine ==========
     os.environ.update(
@@ -1056,7 +1057,7 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
     _ = baseline_engine.train_batch(
         mock_tree_input,
         loss_fn=loss_fn,
-        loss_weight_fn=lambda x: torch.tensor(1.0, device=baseline_engine.device),
+        loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
     )
 
     # Collect baseline gradients and parameters
@@ -1094,11 +1095,15 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
     )
     tree_engine.train()
 
+    def loss_weight_fn(input_data):
+        print(f"[debug] in loss_weight_fn input_data.keys()={input_data.keys()}")
+        return input_data["loss_mask"].count_nonzero()
+
     # Run tree training forward-backward
     _ = tree_engine.train_batch(
         mock_tree_input,
         loss_fn=loss_fn,
-        loss_weight_fn=lambda x: torch.tensor(1.0, device=tree_engine.device),
+        loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
     )
 
     # Collect tree training gradients and parameters
@@ -1172,21 +1177,25 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
             )
             continue
 
-        diff = (baseline_grad - tree_grad).abs()
-        max_diff = diff.max().item()
-        mean_diff = diff.mean().item()
-        max_diff_overall = max(max_diff_overall, max_diff)
-
-        if mean_diff > 1e-3:
+        if not torch.allclose(baseline_grad, tree_grad, atol=0, rtol=0.1):
+            diff = (baseline_grad - tree_grad).abs()
+            max_diff = diff.max().item()
+            mean_diff = diff.mean().item()
+            # Compute relative difference: |a - b| / max(|a|, |b|)
+            abs_max = torch.maximum(baseline_grad.abs(), tree_grad.abs())
+            rel_diff = torch.where(abs_max > 0, diff / abs_max, torch.zeros_like(diff))
+            max_rel_diff = rel_diff.max().item()
+            mean_rel_diff = rel_diff.mean().item()
             mismatched_params.append(
-                (name, f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}")
+                (name, f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}, max_rel_diff={max_rel_diff:.6e}, mean_rel_diff={mean_rel_diff:.6e}")
             )
             fsdp_logger.info(
                 f"Gradient mismatch for {name}: "
                 f"Shape: {baseline_grad.shape}, "
                 f"Baseline grad mean: {baseline_grad.float().mean().item():.6e}, "
                 f"Tree grad mean: {tree_grad.float().mean().item():.6e}, "
-                f"Max diff: {max_diff:.6e}, Mean diff: {mean_diff:.6e}"
+                f"Max diff: {max_diff:.6e}, Mean diff: {mean_diff:.6e}, "
+                f"Max rel diff: {max_rel_diff:.6e}, Mean rel diff: {mean_rel_diff:.6e}"
             )
 
     assert len(only_in_baseline) == 0, (
