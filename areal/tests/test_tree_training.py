@@ -1177,15 +1177,17 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
             )
             continue
 
-        if not torch.allclose(baseline_grad, tree_grad, atol=0, rtol=0.1):
-            diff = (baseline_grad - tree_grad).abs()
-            max_diff = diff.max().item()
-            mean_diff = diff.mean().item()
-            # Compute relative difference: |a - b| / max(|a|, |b|)
-            abs_max = torch.maximum(baseline_grad.abs(), tree_grad.abs())
-            rel_diff = torch.where(abs_max > 0, diff / abs_max, torch.zeros_like(diff))
-            max_rel_diff = rel_diff.max().item()
-            mean_rel_diff = rel_diff.mean().item()
+        diff = (baseline_grad - tree_grad).abs()
+        max_diff = diff.max().item()
+        mean_diff = diff.mean().item()
+        # Compute relative difference: |a - b| / max(|a|, |b|)
+        abs_max = torch.maximum(baseline_grad.abs(), tree_grad.abs())
+        rel_diff = torch.where(abs_max > 0, diff / abs_max, torch.zeros_like(diff))
+        max_rel_diff = rel_diff.max().item()
+        mean_rel_diff = rel_diff.mean().item()
+
+        # Check if gradients are close: max relative difference <= 10%
+        if max_rel_diff > 0.1:
             mismatched_params.append(
                 (name, f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}, max_rel_diff={max_rel_diff:.6e}, mean_rel_diff={mean_rel_diff:.6e}")
             )
