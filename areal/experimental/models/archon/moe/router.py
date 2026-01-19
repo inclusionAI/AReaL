@@ -188,10 +188,10 @@ class TokenChoiceTopKRouter(nn.Module):
 
         # Count tokens per expert
         num_tokens_per_expert = torch.histc(
-            selected_experts_indices.view(-1).float(),
+            selected_experts_indices.view(-1),
             bins=self.num_experts,
             min=0,
-            max=self.num_experts - 1,
+            max=self.num_experts,
         ).to(torch.int64)
 
         return top_scores, selected_experts_indices, num_tokens_per_expert

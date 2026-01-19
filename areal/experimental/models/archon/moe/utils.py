@@ -63,10 +63,10 @@ def permute_tokens(
 
     # Count tokens per expert using histogram
     num_tokens_per_expert = torch.histc(
-        flat_indices.float(),
+        flat_indices,
         bins=num_experts,
         min=0,
-        max=num_experts - 1,
+        max=num_experts,
     ).to(torch.int64)
 
     return permuted_tokens, sorted_indices, num_tokens_per_expert
