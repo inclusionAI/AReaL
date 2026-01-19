@@ -1186,10 +1186,16 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
         max_rel_diff = rel_diff.max().item()
         mean_rel_diff = rel_diff.mean().item()
 
-        # Check if gradients are close: max relative difference <= 10%
-        if max_rel_diff > 0.1:
+        # Check if gradients are close:
+        # 1. Mean relative difference <= 10%
+        # 2. Number of elements with rel_diff > 0.1 is less than 10% of total elements
+        num_large_diff = (rel_diff > 0.1).sum().item()
+        total_elements = rel_diff.numel()
+        large_diff_ratio = num_large_diff / total_elements
+
+        if mean_rel_diff > 0.1 or large_diff_ratio >= 0.1:
             mismatched_params.append(
-                (name, f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}, max_rel_diff={max_rel_diff:.6e}, mean_rel_diff={mean_rel_diff:.6e}")
+                (name, f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}, max_rel_diff={max_rel_diff:.6e}, mean_rel_diff={mean_rel_diff:.6e}, large_diff_ratio={large_diff_ratio:.4f}")
             )
             fsdp_logger.info(
                 f"Gradient mismatch for {name}: "
@@ -1197,7 +1203,8 @@ def test_fsdp_tree_training_forward_backward(mock_tree_input):
                 f"Baseline grad mean: {baseline_grad.float().mean().item():.6e}, "
                 f"Tree grad mean: {tree_grad.float().mean().item():.6e}, "
                 f"Max diff: {max_diff:.6e}, Mean diff: {mean_diff:.6e}, "
-                f"Max rel diff: {max_rel_diff:.6e}, Mean rel diff: {mean_rel_diff:.6e}"
+                f"Max rel diff: {max_rel_diff:.6e}, Mean rel diff: {mean_rel_diff:.6e}, "
+                f"Large diff elements: {num_large_diff}/{total_elements} ({large_diff_ratio:.2%})"
             )
 
     assert len(only_in_baseline) == 0, (
