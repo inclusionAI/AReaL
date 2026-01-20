@@ -34,7 +34,7 @@ rollout:
   openai:
     mode: inline
     tool_call_parser: qwen25
-    reasoning_parser: qwen25
+    reasoning_parser: qwen3
     export_style: individual
     turn_discount: 1.0
 
@@ -55,6 +55,7 @@ actor:
   dtype: bfloat16
   mb_spec:
     max_tokens_per_mb: 10240
+    # max_tokens_per_mb: 24576
   optimizer:
     type: adam
     lr: 1.70e-5

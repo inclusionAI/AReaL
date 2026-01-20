@@ -5,6 +5,7 @@ This module provides math agents using:
 2. MathToolAgent - claude_agent_sdk based agent with calculator tools via MCP server
 """
 
+import os
 from typing import Any
 
 import anthropic
@@ -166,7 +167,8 @@ class MathToolAgent(AgentWorkflow):
     Claude Code which can be configured to use a proxy via ANTHROPIC_BASE_URL.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, use_mcp_tools: bool = False, **kwargs):
+        self.use_mcp_tools = use_mcp_tools
         self.kwargs = kwargs
 
     async def run(self, data: dict, **extra_kwargs):
@@ -174,27 +176,49 @@ class MathToolAgent(AgentWorkflow):
 
         Args:
             data: Input data containing "messages" and "answer"
-            **extra_kwargs: Contains base_url and http_client from proxy
+            **extra_kwargs: Contains base_url and http_client from proxy (inline mode)
 
         Returns:
             Reward value for this trajectory
+
+        Notes:
+            - inline mode: base_url comes from extra_kwargs
+            - subproc mode: base_url comes from OPENAI_BASE_URL env var
         """
+
         content = data["messages"][-1]["content"]
-        base_url = extra_kwargs.get("base_url", None)
+
+        base_url = extra_kwargs.get("base_url", None) or os.environ.get(
+            "OPENAI_BASE_URL"
+        )
 
         # Build environment variables
         env = {}
         if base_url:
             env["ANTHROPIC_BASE_URL"] = base_url
+            env["ANTHROPIC_API_KEY"] = os.environ.get("OPENAI_API_KEY", "placeholder")
+            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
+                extra_kwargs.get("max_tokens", 1024)
+            )
 
-        # Configure agent options with MCP server
-        options = ClaudeAgentOptions(
-            system_prompt="Answer the user's math questions using the available calculator tools. Don't give the answer directly, you must use tools to do the mathematical calculation.",
-            mcp_servers={"calc": calculator_server},
-            allowed_tools=["Read"],
-            max_turns=self.kwargs.get("max_turns", 10),
-            env=env,
-        )
+        # Configure agent options
+        if self.use_mcp_tools:
+            # With MCP server for calculator tools
+            options = ClaudeAgentOptions(
+                system_prompt="Answer the user's math questions using the available calculator tools. Don't give the answer directly, you must use tools to do the mathematical calculation.",
+                mcp_servers={"calc": calculator_server},
+                allowed_tools=["Read"],
+                max_turns=self.kwargs.get("max_turns", 10),
+                env=env,
+            )
+        else:
+            # Without MCP tools - simpler setup for debugging
+            options = ClaudeAgentOptions(
+                system_prompt="Answer the user's math questions. Show your work step by step. Do not use tools.",
+                allowed_tools=["Read"],
+                max_turns=self.kwargs.get("max_turns", 10),
+                env=env,
+            )
 
         # Run query and collect final output
         final_output = ""
