@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import inspect
 import os
 import threading
@@ -425,6 +426,71 @@ async def responses(request: ResponseCreateParams, session_id: str) -> Response:
     )
 
 
+def _translate_anthropic_to_openai_request(anthropic_request: dict[str, Any]) -> dict:
+    """Translate an Anthropic Messages API request to OpenAI format.
+
+    Uses LiteLLM's AnthropicAdapter for the base translation, then applies
+    additional fixes for content block formats.
+
+    Args:
+        anthropic_request: The original Anthropic-format request dict.
+
+    Returns:
+        A dict in OpenAI chat completion request format.
+
+    Raises:
+        ValueError: If the translation fails.
+    """
+    openai_request = _adapter.translate_completion_input_params(
+        anthropic_request.copy()
+    )
+    if openai_request is None:
+        raise ValueError("Failed to translate request")
+    openai_request = dict(openai_request)
+
+    # Fix message content if it's a list (Anthropic format with content blocks)
+    # LiteLLM's adapter may not properly convert content from list to string
+    # Claude Code CLI sends content as: [{"type":"text","text":"...","cache_control":{...}}, ...]
+    if "messages" in openai_request:
+        for msg in openai_request["messages"]:
+            if isinstance(msg.get("content"), list):
+                # Convert list of content blocks to string
+                text_parts = []
+                for block in msg["content"]:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif isinstance(block, str):
+                        text_parts.append(block)
+                msg["content"] = "\n".join(text_parts)
+
+    return openai_request
+
+
+async def _safe_stream_wrapper(
+    stream: AsyncGenerator,
+) -> AsyncGenerator:
+    """Wrap an async generator to handle client disconnection gracefully.
+
+    Ensures proper cleanup of the underlying stream when the client disconnects
+    or an error occurs during streaming.
+
+    Args:
+        stream: The async generator to wrap.
+
+    Yields:
+        Chunks from the underlying stream.
+    """
+    try:
+        async for chunk in stream:
+            yield chunk
+    except asyncio.CancelledError:
+        logger.info("Streaming cancelled by client disconnect")
+        raise
+    finally:
+        if hasattr(stream, "aclose"):
+            await stream.aclose()
+
+
 @app.post(
     "/{session_id}/" + ANTHROPIC_MESSAGES_PATHNAME,
     dependencies=[Depends(validate_json_request)],
@@ -440,6 +506,12 @@ async def anthropic_messages(
     Anthropic format.
 
     Uses LiteLLM's AnthropicAdapter for format conversion.
+
+    For streaming requests (stream=True in the request body), returns a
+    StreamingResponse with Server-Sent Events (SSE) in Anthropic format.
+    The SSE stream includes message_start, content_block_start,
+    content_block_delta, content_block_stop, and message_stop events
+    following the Anthropic streaming protocol.
     """
 
     if _openai_client is None:
@@ -454,27 +526,7 @@ async def anthropic_messages(
     is_streaming = anthropic_request.get("stream", False)
 
     try:
-        openai_request = _adapter.translate_completion_input_params(
-            anthropic_request.copy()
-        )
-        if openai_request is None:
-            raise ValueError("Failed to translate request")
-        openai_request = dict(openai_request)
-
-        # Fix message content if it's a list (Anthropic format with content blocks)
-        # LiteLLM's adapter may not properly convert content from list to string
-        # Claude Code CLI sends content as: [{"type":"text","text":"...","cache_control":{...}}, ...]
-        if "messages" in openai_request:
-            for msg in openai_request["messages"]:
-                if isinstance(msg.get("content"), list):
-                    # Convert list of content blocks to string
-                    text_parts = []
-                    for block in msg["content"]:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            text_parts.append(block.get("text", ""))
-                        elif isinstance(block, str):
-                            text_parts.append(block)
-                    msg["content"] = "\n".join(text_parts)
+        openai_request = _translate_anthropic_to_openai_request(anthropic_request)
     except (ValueError, TypeError, KeyError) as e:
         logger.warning(
             f"Failed to convert Anthropic request to OpenAI format due to invalid input: {e}"
@@ -492,30 +544,43 @@ async def anthropic_messages(
         )
 
     if is_streaming:
-        # Get streaming response from OpenAI client
-        openai_stream = await _call_client_create(
-            create_fn=_openai_client.chat.completions.create,
-            request=openai_request,
-            session_id=session_id,
-            stream=True,
-        )
+        openai_stream = None
+        try:
+            # Get streaming response from OpenAI client
+            openai_stream = await _call_client_create(
+                create_fn=_openai_client.chat.completions.create,
+                request=openai_request,
+                session_id=session_id,
+                stream=True,
+            )
 
-        # Use LiteLLM's adapter to convert to Anthropic SSE format
-        anthropic_sse_stream = _adapter.translate_completion_output_params_streaming(
-            completion_stream=openai_stream,
-            model=anthropic_request.get("model", "default"),
-        )
+            # Use LiteLLM's adapter to convert to Anthropic SSE format
+            anthropic_sse_stream = (
+                _adapter.translate_completion_output_params_streaming(
+                    completion_stream=openai_stream,
+                    model=anthropic_request.get("model", "default"),
+                )
+            )
 
-        # Return streaming response
-        return StreamingResponse(
-            anthropic_sse_stream,
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+            # Wrap the stream to handle client disconnection gracefully
+            safe_stream = _safe_stream_wrapper(anthropic_sse_stream)
+
+            # Return streaming response
+            return StreamingResponse(
+                safe_stream,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        except Exception as e:
+            # Clean up stream on error during setup
+            if openai_stream is not None and hasattr(openai_stream, "aclose"):
+                await openai_stream.aclose()
+            logger.error(f"Error setting up streaming response: {e}")
+            raise HTTPException(status_code=500, detail=f"Streaming setup failed: {e}")
 
     # Non-streaming
     openai_response = await _call_client_create(
