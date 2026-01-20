@@ -2,9 +2,9 @@ import datetime
 import json
 import os
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import AsyncGenerator, Iterable, Mapping
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, overload
 
 from pydantic import BaseModel
 
@@ -16,11 +16,14 @@ from openai.resources.chat.completions.completions import (
 from openai.resources.responses.responses import AsyncResponses as BaseAsyncResponses
 from openai.types.chat import (
     ChatCompletion,
+    ChatCompletionChunk,
     ChatCompletionMessage,
     ChatCompletionToolMessageParam,
     ChatCompletionToolParam,
 )
 from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_tool_choice_option_param import (
     ChatCompletionToolChoiceOptionParam,
@@ -227,10 +230,12 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         self.engine_max_tokens = engine_max_tokens
         self.chat_template_type = chat_template_type
 
+    @overload
     async def create(
         self,
         *,
         messages: Iterable[ChatCompletionMessageParam],
+        stream: Literal[True],
         frequency_penalty: float | None | NotGiven = NOT_GIVEN,
         max_completion_tokens: int | None | NotGiven = NOT_GIVEN,
         max_tokens: int | None | NotGiven = NOT_GIVEN,
@@ -246,8 +251,56 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         extra_body: Body | None = None,
         areal_cache: InteractionCache | None = None,
         **kwargs: Any,
-    ) -> ChatCompletion:
+    ) -> AsyncGenerator[ChatCompletionChunk, None]: ...
+
+    @overload
+    async def create(
+        self,
+        *,
+        messages: Iterable[ChatCompletionMessageParam],
+        stream: Literal[False] | NotGiven = NOT_GIVEN,
+        frequency_penalty: float | None | NotGiven = NOT_GIVEN,
+        max_completion_tokens: int | None | NotGiven = NOT_GIVEN,
+        max_tokens: int | None | NotGiven = NOT_GIVEN,
+        max_total_tokens: int | None | NotGiven = NOT_GIVEN,
+        metadata: Metadata | None | NotGiven = NOT_GIVEN,
+        n: int | None | NotGiven = NOT_GIVEN,
+        stop: str | None | list[str] | None | NotGiven = NOT_GIVEN,
+        store: bool | None | NotGiven = NOT_GIVEN,
+        temperature: float | None | NotGiven = NOT_GIVEN,
+        tool_choice: ChatCompletionToolChoiceOptionParam | NotGiven = NOT_GIVEN,
+        tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
+        top_p: float | None | NotGiven = NOT_GIVEN,
+        extra_body: Body | None = None,
+        areal_cache: InteractionCache | None = None,
+        **kwargs: Any,
+    ) -> ChatCompletion: ...
+
+    async def create(
+        self,
+        *,
+        messages: Iterable[ChatCompletionMessageParam],
+        stream: bool | NotGiven = NOT_GIVEN,
+        frequency_penalty: float | None | NotGiven = NOT_GIVEN,
+        max_completion_tokens: int | None | NotGiven = NOT_GIVEN,
+        max_tokens: int | None | NotGiven = NOT_GIVEN,
+        max_total_tokens: int | None | NotGiven = NOT_GIVEN,
+        metadata: Metadata | None | NotGiven = NOT_GIVEN,
+        n: int | None | NotGiven = NOT_GIVEN,
+        stop: str | None | list[str] | None | NotGiven = NOT_GIVEN,
+        store: bool | None | NotGiven = NOT_GIVEN,
+        temperature: float | None | NotGiven = NOT_GIVEN,
+        tool_choice: ChatCompletionToolChoiceOptionParam | NotGiven = NOT_GIVEN,
+        tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
+        top_p: float | None | NotGiven = NOT_GIVEN,
+        extra_body: Body | None = None,
+        areal_cache: InteractionCache | None = None,
+        **kwargs: Any,
+    ) -> ChatCompletion | AsyncGenerator[ChatCompletionChunk, None]:
         """Override create method to use AReaL engine and cache responses."""
+
+        is_streaming = not is_omitted(stream) and stream is True
+
         # Extract and validate supported parameters
         cache, interaction = None, None
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
@@ -430,6 +483,17 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 f"{output_text}"
             )
 
+        # If streaming is requested, return an async generator
+        if is_streaming:
+            return self._create_stream(
+                completion_id=completion_id,
+                current_time=current_time,
+                output_text=output_text,
+                tool_calls=tool_calls,
+                response=response,
+                cache=cache,
+            )
+
         # Create proper ChatCompletion object with all required fields
         output_message = ChatCompletionMessage(
             content=output_text,
@@ -466,6 +530,151 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 output_message.model_dump(exclude_none=True)
             ]
         return chat_completion
+
+    async def _create_stream(
+        self,
+        completion_id: str,
+        current_time: int,
+        output_text: str,
+        tool_calls: list | None,
+        response: ModelResponse,
+        cache: InteractionCache | None,
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
+        """Generate streaming ChatCompletionChunk objects.
+
+        Since AReaL engine doesn't support true streaming, we simulate it by
+        yielding the complete response as chunks.
+        """
+        # First chunk: role
+        yield ChatCompletionChunk(
+            id=completion_id,
+            choices=[
+                ChunkChoice(
+                    delta=ChoiceDelta(role="assistant", content=""),
+                    index=0,
+                    finish_reason=None,
+                )
+            ],
+            created=current_time,
+            model="None",
+            object="chat.completion.chunk",
+        )
+
+        # Content chunks - yield the full text as one chunk
+        # (In a true streaming implementation, this would be broken into smaller pieces)
+        if output_text:
+            yield ChatCompletionChunk(
+                id=completion_id,
+                choices=[
+                    ChunkChoice(
+                        delta=ChoiceDelta(content=output_text),
+                        index=0,
+                        finish_reason=None,
+                    )
+                ],
+                created=current_time,
+                model="None",
+                object="chat.completion.chunk",
+            )
+
+        # Tool calls chunks (if any)
+        if tool_calls:
+            from openai.types.chat.chat_completion_chunk import (
+                ChoiceDeltaToolCall,
+                ChoiceDeltaToolCallFunction,
+            )
+
+            for idx, tool_call in enumerate(tool_calls):
+                yield ChatCompletionChunk(
+                    id=completion_id,
+                    choices=[
+                        ChunkChoice(
+                            delta=ChoiceDelta(
+                                tool_calls=[
+                                    ChoiceDeltaToolCall(
+                                        index=idx,
+                                        id=tool_call.id
+                                        if hasattr(tool_call, "id")
+                                        else f"call_{idx}",
+                                        type="function",
+                                        function=ChoiceDeltaToolCallFunction(
+                                            name=tool_call.function.name
+                                            if hasattr(tool_call, "function")
+                                            else tool_call.get("function", {}).get(
+                                                "name"
+                                            ),
+                                            arguments=tool_call.function.arguments
+                                            if hasattr(tool_call, "function")
+                                            else tool_call.get("function", {}).get(
+                                                "arguments"
+                                            ),
+                                        ),
+                                    )
+                                ]
+                            ),
+                            index=0,
+                            finish_reason=None,
+                        )
+                    ],
+                    created=current_time,
+                    model="None",
+                    object="chat.completion.chunk",
+                )
+
+        # Final chunk with finish_reason and usage
+        yield ChatCompletionChunk(
+            id=completion_id,
+            choices=[
+                ChunkChoice(
+                    delta=ChoiceDelta(),
+                    index=0,
+                    finish_reason=response.stop_reason,
+                )
+            ],
+            created=current_time,
+            model="None",
+            object="chat.completion.chunk",
+            usage=CompletionUsage(
+                completion_tokens=len(response.output_tokens),
+                prompt_tokens=len(response.input_tokens),
+                total_tokens=len(response.input_tokens) + len(response.output_tokens),
+            ),
+        )
+
+        # Update cache
+        if cache is not None:
+            output_message = ChatCompletionMessage(
+                content=output_text,
+                role="assistant",
+                tool_calls=tool_calls or None,
+            )
+            chat_completion = ChatCompletion(
+                id=completion_id,
+                choices=[
+                    Choice(
+                        finish_reason=response.stop_reason,
+                        index=0,
+                        logprobs=None,
+                        message=output_message,
+                    )
+                ],
+                created=current_time,
+                model="None",
+                object="chat.completion",
+                service_tier=None,
+                system_fingerprint=None,
+                usage=CompletionUsage(
+                    completion_tokens=len(response.output_tokens),
+                    prompt_tokens=len(response.input_tokens),
+                    total_tokens=len(response.input_tokens)
+                    + len(response.output_tokens),
+                ),
+            )
+            cache[completion_id].completion = chat_completion
+            cache[completion_id].model_response = response
+            cache[completion_id].output_message_list = [
+                output_message.model_dump(exclude_none=True)
+            ]
 
 
 class AsyncResponsesWithReward(BaseAsyncResponses):
