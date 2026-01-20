@@ -14,7 +14,11 @@ from megatron.core.transformer.transformer_layer import (
     TransformerLayer,
     TransformerLayerSubmodules,
 )
-from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
+from torch.nn.attention.flex_attention import (
+    BlockMask,
+    create_block_mask,
+    flex_attention,
+)
 
 from areal.utils import logging
 
@@ -66,6 +70,7 @@ def create_block_mask_from_dense(
     BlockMask
         The created block mask for use with flex_attention.
     """
+
     def arbitrary_mask(
         batch: torch.Tensor,
         head: torch.Tensor,
@@ -180,7 +185,7 @@ def _tree_attn_fwd_func(
     attention_mask: torch.Tensor | None = None,
     softmax_scale: float | None = None,
     *args,
-    **kwargs
+    **kwargs,
 ):
     # Require pre-created block_mask
     block_mask = kwargs.get("block_mask", None)
@@ -264,10 +269,11 @@ def patch_bridge_for_tree_training(enable: bool = True):
 
 ORIGINAL_FLASH_ATTENTION_FORWARD = None
 
+
 def patch_fsdp_for_tree_training(enable: bool = True):
     if not enable:
         return
-    
+
     from transformers.integrations import flash_attention
 
     global ORIGINAL_FLASH_ATTENTION_FORWARD
@@ -277,6 +283,7 @@ def patch_fsdp_for_tree_training(enable: bool = True):
         "Patched transformers.integrations.flash_attention._flash_attention_forward "
         "with tree implementation."
     )
+
 
 # Only used in testing to restore original function
 def restore_patch_fsdp_for_tree_training():

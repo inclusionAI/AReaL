@@ -1,9 +1,7 @@
 import os
-from typing import Union
 
 import pytest
 import torch
-import torch.distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
@@ -14,10 +12,10 @@ from areal.api.cli_args import (
 from areal.api.io_struct import FinetuneSpec
 from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
+from areal.models.tree_attn.module import restore_patch_fsdp_for_tree_training
 from areal.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils import logging
-from areal.models.tree_attn.module import restore_patch_fsdp_for_tree_training
 
 logger = logging.getLogger("TreeTraining Test")
 
@@ -104,7 +102,7 @@ def mock_tree_input(
     }
 
 
-def _collect_gradients(engine: Union[FSDPEngine, MegatronEngine]) -> dict[str, torch.Tensor]:
+def _collect_gradients(engine: FSDPEngine | MegatronEngine) -> dict[str, torch.Tensor]:
     """Collect gradients from engine (supports both FSDP and Megatron)."""
     grads = {}
     if isinstance(engine, FSDPEngine):
@@ -123,7 +121,7 @@ def _collect_gradients(engine: Union[FSDPEngine, MegatronEngine]) -> dict[str, t
     return grads
 
 
-def _collect_parameters(engine: Union[FSDPEngine, MegatronEngine]) -> dict[str, torch.Tensor]:
+def _collect_parameters(engine: FSDPEngine | MegatronEngine) -> dict[str, torch.Tensor]:
     """Collect parameters from engine (supports both FSDP and Megatron)."""
     params = {}
     if isinstance(engine, FSDPEngine):
@@ -157,7 +155,7 @@ def _create_engine(
     experiment_name: str = "test",
     max_tokens_per_mb: int = 8192,
     n_mbs: int | None = None,
-) -> Union[FSDPEngine, MegatronEngine]:
+) -> FSDPEngine | MegatronEngine:
     """Create and initialize an engine of the specified type."""
     os.environ.update(
         {
@@ -173,7 +171,6 @@ def _create_engine(
     if n_mbs is not None:
         mb_spec_kwargs["n_mbs"] = n_mbs
 
-    
     config = TrainEngineConfig(
         experiment_name=experiment_name,
         trial_name="test",
@@ -298,8 +295,12 @@ def test_tree_training_forward_backward(engine_type):
     # Collect baseline gradients and parameters
     baseline_grads = _collect_gradients(baseline_engine)
     baseline_params = _collect_parameters(baseline_engine)
-    logger.info(f"Collected {len(baseline_grads)} gradients from baseline {engine_type.upper()} engine")
-    logger.info(f"Collected {len(baseline_params)} parameters from baseline {engine_type.upper()} engine")
+    logger.info(
+        f"Collected {len(baseline_grads)} gradients from baseline {engine_type.upper()} engine"
+    )
+    logger.info(
+        f"Collected {len(baseline_params)} parameters from baseline {engine_type.upper()} engine"
+    )
     baseline_engine.destroy()
 
     # Create tree training engine
@@ -324,8 +325,12 @@ def test_tree_training_forward_backward(engine_type):
     # Collect tree training gradients and parameters
     tree_grads = _collect_gradients(tree_engine)
     tree_params = _collect_parameters(tree_engine)
-    logger.info(f"Collected {len(tree_grads)} gradients from tree training {engine_type.upper()} engine")
-    logger.info(f"Collected {len(tree_params)} parameters from tree training {engine_type.upper()} engine")
+    logger.info(
+        f"Collected {len(tree_grads)} gradients from tree training {engine_type.upper()} engine"
+    )
+    logger.info(
+        f"Collected {len(tree_params)} parameters from tree training {engine_type.upper()} engine"
+    )
     tree_engine.destroy()
 
     # ========== Compare gradients ==========
@@ -417,7 +422,10 @@ def test_tree_training_forward_backward(engine_type):
 
         if mean_rel_diff > 0.2:
             mismatched_params.append(
-                (name, f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}, max_rel_diff={max_rel_diff:.6e}, mean_rel_diff={mean_rel_diff:.6e}, large_diff_ratio={large_diff_ratio:.4f}")
+                (
+                    name,
+                    f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}, max_rel_diff={max_rel_diff:.6e}, mean_rel_diff={mean_rel_diff:.6e}, large_diff_ratio={large_diff_ratio:.4f}",
+                )
             )
             logger.info(
                 f"Gradient mismatch for {name}: "

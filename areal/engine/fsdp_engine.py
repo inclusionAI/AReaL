@@ -65,6 +65,13 @@ from areal.models.fsdp.ulysses import (
     ulysses_prepare_inputs,
 )
 from areal.models.transformers.ulyssess_patch import apply_monkey_patch
+from areal.models.tree_attn.functional import (
+    _gather_packed_tree_logprobs,
+    gather_packed_tree_logprobs_entropy,
+    merge_packed_tree_results,
+)
+from areal.models.tree_attn.module import BLOCK_SIZE, patch_fsdp_for_tree_training
+from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
 from areal.platforms import current_platform
 from areal.utils import (
     logging,
@@ -91,14 +98,6 @@ from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.fsdp.optimizer import AnyPrecisionAdamW
 from areal.utils.fsdp.parallel import ParallelHelper, parallelize_model
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
-from areal.models.tree_attn.tree import TrieNode
-from areal.models.tree_attn.functional import (
-    _gather_packed_tree_logprobs,
-    gather_packed_tree_logprobs_entropy,
-    merge_packed_tree_results,
-)
-from areal.models.tree_attn.module import BLOCK_SIZE, patch_fsdp_for_tree_training
-from areal.models.tree_attn.tree import build_packed_tree_batch
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.model import (
     disable_dropout_in_model,
@@ -1478,8 +1477,10 @@ class FSDPEngine(TrainEngine):
                     # Return zero loss that maintains gradient connection to logits
                     # This ensures backward() works correctly for FSDP synchronization
                     return logits.sum() * 0.0
-                
-                vocab_min_logits, vocab_max_logits =self._get_vocab_min_max_logits(logits)
+
+                vocab_min_logits, vocab_max_logits = self._get_vocab_min_max_logits(
+                    logits
+                )
                 logprobs, entropy = gather_packed_tree_logprobs_entropy(
                     logits,
                     ctx.trie_node,

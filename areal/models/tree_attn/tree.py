@@ -14,10 +14,10 @@ import torch
 import torch.distributed as dist
 
 from areal.api.cli_args import MicroBatchSpec
+from areal.models.tree_attn.module import BLOCK_SIZE, create_block_mask_from_dense
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
-from areal.models.tree_attn.module import BLOCK_SIZE, create_block_mask_from_dense
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +307,9 @@ def build_packed_tree_batch(
         input_template: torch.Tensor = data["input_ids"]
 
         # All-gather tree counts from all ranks
-        local_count = torch.tensor([num_trees], dtype=torch.int64, device=input_template.device)
+        local_count = torch.tensor(
+            [num_trees], dtype=torch.int64, device=input_template.device
+        )
         world_size = dist.get_world_size(dp_group)
         all_counts = [
             torch.zeros(1, dtype=torch.int64, device=input_template.device)
