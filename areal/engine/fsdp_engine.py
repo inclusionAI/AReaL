@@ -1193,7 +1193,7 @@ class FSDPEngine(TrainEngine):
             tp_size = self.parallel_helper.tp_size
             # Build tree inputs
             assert BLOCK_SIZE % (tp_size * sp_size) == 0, (
-                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by tensor parallel size ({tp_size})."
+                f"BLOCK_SIZE ({BLOCK_SIZE}) must be divisible by the product of tensor and sequence parallel sizes ({tp_size * sp_size})."
             )
             mb_list = build_packed_tree_batch(
                 input_,
