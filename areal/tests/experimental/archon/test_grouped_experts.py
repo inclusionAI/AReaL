@@ -13,13 +13,11 @@ from areal.experimental.models.archon.moe.grouped_experts import (
     _run_experts_for_loop,
 )
 
-
 # Skip if:
 # 1. CUDA is not available,
 # 2. Current CUDA device is not with compute capability == 9.0.
 pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available()
-    or torch.cuda.get_device_capability(0) != (9, 0),
+    not torch.cuda.is_available() or torch.cuda.get_device_capability(0) != (9, 0),
     reason="Grouped experts requires CUDA with compute capability 9.0",
 )
 

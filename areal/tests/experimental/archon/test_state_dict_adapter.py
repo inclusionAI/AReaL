@@ -402,8 +402,7 @@ class TestMoEWeightLoadingRoundtrip:
         return MockConfig()
 
     @pytest.mark.skipif(
-        not torch.cuda.is_available()
-        or torch.cuda.get_device_capability(0) != (9, 0),
+        not torch.cuda.is_available() or torch.cuda.get_device_capability(0) != (9, 0),
         reason="MoE forward requires CUDA with compute capability 9.0",
     )
     def test_moe_weight_roundtrip_forward_match(
