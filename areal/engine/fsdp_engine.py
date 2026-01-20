@@ -143,6 +143,17 @@ class FSDPTrainContext:
     ulysses_pad_size: int = 0
     trie_node: TrieNode | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict without recursive serialization of trie_node.
+
+        Note: We cannot use dataclasses.asdict() here because it recursively
+        converts all nested objects. The trie_node field contains a TrieNode
+        with recursive parent/child references, which causes
+        "RecursionError: maximum recursion depth exceeded" when asdict()
+        attempts to serialize the entire tree structure.
+        """
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
+
 
 class FSDPEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
@@ -502,7 +513,7 @@ class FSDPEngine(TrainEngine):
                 outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
 
-            ctx_dict = dataclasses.asdict(ctx)
+            ctx_dict = ctx.to_dict()
             loss = process_output_fn(logits, ctx_dict)
 
             if not forward_only and loss is not None:

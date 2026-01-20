@@ -7,8 +7,6 @@ import torch.distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
-    FSDPEngineConfig,
-    MegatronEngineConfig,
     MicroBatchSpec,
     OptimizerConfig,
     TrainEngineConfig,
@@ -19,6 +17,7 @@ from areal.engine.megatron_engine import MegatronEngine
 from areal.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils import logging
+from areal.models.tree_attn.module import restore_patch_fsdp_for_tree_training
 
 logger = logging.getLogger("TreeTraining Test")
 
@@ -28,7 +27,6 @@ MODEL_PATH = get_model_path(
 )
 
 
-@pytest.fixture(scope="module")
 def mock_tree_input(
     batch_size=8,
     tree_tokens=4096,
@@ -202,27 +200,32 @@ def _create_engine(
 # ===================== Forward Test =====================
 
 
-@pytest.mark.parametrize("engine_type", ["fsdp", "megatron"])
-def test_tree_training_forward(engine_type, mock_tree_input):
+@pytest.mark.parametrize("engine_type", ["megatron", "fsdp"])
+def test_tree_training_forward(engine_type):
     """Test tree training forward pass produces correct logprobs."""
     # Create baseline engine
+    inputs = mock_tree_input()
     baseline_engine = _create_engine(engine_type, port="7777")
     baseline_engine.eval()
     logprob_baseline = baseline_engine.forward_batch(
-        input_=mock_tree_input,
+        input_=inputs,
         aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
     )
     baseline_engine.destroy()
 
     # Create tree training engine
+    inputs = mock_tree_input()
     tree_engine = _create_engine(
         engine_type,
         enable_tree_training=True,
         port="7778",
     )
     tree_engine.eval()
-    logprob_tree = tree_engine.forward_batch(input_=mock_tree_input)
+    logprob_tree = tree_engine.forward_batch(input_=inputs)
     tree_engine.destroy()
+
+    if engine_type == "fsdp":
+        restore_patch_fsdp_for_tree_training()
 
     # Check if results match with detailed error reporting
     # The tolerance values are high due to precision problems introduced
@@ -272,21 +275,22 @@ def test_tree_training_forward(engine_type, mock_tree_input):
 # ===================== Forward-Backward Test =====================
 
 
-@pytest.mark.parametrize("engine_type", ["fsdp", "megatron"])
-def test_tree_training_forward_backward(engine_type, mock_tree_input):
+@pytest.mark.parametrize("engine_type", ["megatron", "fsdp"])
+def test_tree_training_forward_backward(engine_type):
     """Test tree training forward-backward pass produces correct gradients."""
 
-    def loss_fn(logprobs, entropy, input_data):
+    def loss_fn(logprobs, entropy, input_data, **kwargs):
         return logprobs.mean()
 
     def loss_weight_fn(input_data):
         return input_data["loss_mask"].count_nonzero()
 
+    inputs = mock_tree_input()
     # Create baseline engine
     baseline_engine = _create_engine(engine_type, port="7777")
     baseline_engine.train()
     _ = baseline_engine.train_batch(
-        mock_tree_input,
+        inputs,
         loss_fn=loss_fn,
         loss_weight_fn=loss_weight_fn,
     )
@@ -299,6 +303,7 @@ def test_tree_training_forward_backward(engine_type, mock_tree_input):
     baseline_engine.destroy()
 
     # Create tree training engine
+    inputs = mock_tree_input()
     tree_engine = _create_engine(
         engine_type,
         enable_tree_training=True,
@@ -308,10 +313,13 @@ def test_tree_training_forward_backward(engine_type, mock_tree_input):
     )
     tree_engine.train()
     _ = tree_engine.train_batch(
-        mock_tree_input,
+        inputs,
         loss_fn=loss_fn,
         loss_weight_fn=loss_weight_fn,
     )
+
+    if engine_type == "fsdp":
+        restore_patch_fsdp_for_tree_training()
 
     # Collect tree training gradients and parameters
     tree_grads = _collect_gradients(tree_engine)

@@ -261,14 +261,29 @@ def patch_bridge_for_tree_training(enable: bool = True):
         # Revert patch
         LLMBridge._get_transformer_layer_spec = original_layer_spec_getter
 
+
+ORIGINAL_FLASH_ATTENTION_FORWARD = None
+
 def patch_fsdp_for_tree_training(enable: bool = True):
     if not enable:
         return
     
     from transformers.integrations import flash_attention
 
+    global ORIGINAL_FLASH_ATTENTION_FORWARD
+    ORIGINAL_FLASH_ATTENTION_FORWARD = flash_attention._flash_attention_forward
     flash_attention._flash_attention_forward = _tree_attn_fwd_func
     logger.info(
         "Patched transformers.integrations.flash_attention._flash_attention_forward "
         "with tree implementation."
+    )
+
+# Only used in testing to restore original function
+def restore_patch_fsdp_for_tree_training():
+    from transformers.integrations import flash_attention
+
+    flash_attention._flash_attention_forward = ORIGINAL_FLASH_ATTENTION_FORWARD
+    logger.info(
+        "Restored transformers.integrations.flash_attention._flash_attention_forward "
+        "to original implementation."
     )
