@@ -67,7 +67,7 @@ def permute_tokens(
         bins=num_experts,
         min=0,
         max=num_experts,
-    ).to(torch.int64)
+    )
 
     return permuted_tokens, sorted_indices, num_tokens_per_expert
 

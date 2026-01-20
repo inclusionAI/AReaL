@@ -192,7 +192,7 @@ class TokenChoiceTopKRouter(nn.Module):
             bins=self.num_experts,
             min=0,
             max=self.num_experts,
-        ).to(torch.int64)
+        )
 
         return top_scores, selected_experts_indices, num_tokens_per_expert
 

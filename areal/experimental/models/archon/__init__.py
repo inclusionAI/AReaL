@@ -6,6 +6,8 @@ from areal.experimental.models.archon import (
 from areal.experimental.models.archon.base import BaseStateDictAdapter
 from areal.experimental.models.archon.expert_parallel import (
     ExpertParallel,
+    ExpertTensorParallel,
+    TensorParallel,
     apply_expert_parallel,
 )
 from areal.experimental.models.archon.model_spec import (
@@ -22,7 +24,9 @@ __all__ = [
     "ArchonParallelDims",
     "BaseStateDictAdapter",
     "ExpertParallel",
+    "ExpertTensorParallel",
     "ModelSpec",
+    "TensorParallel",
     "apply_expert_parallel",
     "get_model_spec",
     "get_supported_model_types",

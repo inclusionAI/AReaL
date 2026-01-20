@@ -22,7 +22,14 @@ from torch.distributed.tensor.parallel import (
 )
 
 from areal.experimental.models.archon import moe as moe_module
+from areal.experimental.models.archon.activation_checkpoint import apply_ac
 from areal.experimental.models.archon.compile import Compilable
+from areal.experimental.models.archon.expert_parallel import (
+    ExpertParallel,
+    ExpertTensorParallel,
+    ReordererSequenceParallel,
+    TensorParallel,
+)
 from areal.experimental.models.archon.moe import grouped_experts
 from areal.experimental.models.archon.utils import (
     validate_cp_constraints,
@@ -39,6 +46,33 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger("ArchonQwen3Parallelize")
+
+
+def _get_op_sac_save_list() -> set[torch._ops.OpOverload]:
+    # Import varlen_attention to register torch.ops.areal._varlen_attn
+    from areal.experimental.models.archon import varlen_attention as _  # noqa: F401
+
+    return {
+        torch.ops.aten.mm.default,
+        torch.ops.aten._scaled_dot_product_efficient_attention.default,
+        torch.ops.aten._scaled_dot_product_flash_attention.default,
+        torch.ops.aten._scaled_dot_product_cudnn_attention.default,
+        torch.ops.aten._scaled_dot_product_attention_math.default,
+        torch.ops.aten._scaled_dot_product_fused_attention_overrideable.default,
+        torch.ops._c10d_functional.reduce_scatter_tensor.default,
+        torch.ops._c10d_functional.all_to_all_single.default,
+        # for low precision training, it's useful to always save
+        # the result of max, since the absolute maximum is
+        # used to compute the scaling factor for quantization.
+        torch.ops.aten.max.default,
+        torch._higher_order_ops.flex_attention,
+        torch.ops.areal._varlen_attn.default,
+        # When torch.compile is used, inductor wraps compiled code in this HOP.
+        # Saving its output avoids re-compilation during backward recompute and
+        # ensures SAC correctly interacts with compiled regions.
+        # NOTE: Upgrading PyTorch will enable this in the future.
+        # torch._higher_order_ops.inductor_compiled_code,
+    }
 
 
 def parallelize_qwen3(
@@ -94,8 +128,15 @@ def parallelize_qwen3(
     # Apply MoE EP+TP (handles both MoE-specific TP and EP)
     # Only apply when tp > 1 or ep > 1
     ep_mesh = parallel_dims.get_mesh("ep") if parallel_dims.ep_enabled else None
+    ep_tp_mesh = parallel_dims.get_mesh("ep_tp") if parallel_dims.etp_enabled else None
     if tp_mesh is not None or ep_mesh is not None:
-        apply_moe_ep_tp(model, tp_mesh, ep_mesh)
+        apply_moe_ep_tp(
+            model,
+            tp_mesh,
+            ep_mesh,
+            etp=parallel_dims.etp,
+            ep_tp_mesh=ep_tp_mesh,
+        )
 
     # Apply CP (Context Parallelism / Ulysses SP)
     if parallel_dims.cp_enabled:
@@ -104,11 +145,12 @@ def parallelize_qwen3(
 
     # AC must be after TP/CP
     if ac_config is not None and ac_config.mode != "none":
-        from areal.experimental.models.archon.activation_checkpoint import (
-            apply_activation_checkpointing,
+        apply_ac(
+            model,
+            ac_config,
+            model_compile_enabled=enable_compile,
+            op_sac_save_list=_get_op_sac_save_list(),
         )
-
-        apply_activation_checkpointing(model, ac_config)
 
     # torch.compile must be after AC, before FSDP
     if enable_compile:
@@ -459,7 +501,7 @@ def _apply_compile(model: Compilable, ep_enabled: bool = False) -> None:
     # NOTE: This flag is needed for torch.compile to avoid graph breaking on dynamic shapes in token-choice MoE
     torch._dynamo.config.capture_scalar_outputs = True
     # Workaround for https://github.com/pytorch/pytorch/issues/166926
-    # NOTE: Upgrading pytorch may resolve this in the future.
+    # NOTE: Upgrading PyTorch will resolve this in the future.
     if hasattr(torch._C._dynamo.eval_frame, "_set_lru_cache"):
         torch._C._dynamo.eval_frame._set_lru_cache(False)
 
@@ -496,7 +538,7 @@ def _apply_compile(model: Compilable, ep_enabled: bool = False) -> None:
                     # SequenceParallel has async redistribute which breaks
                     # the graph by introducing async tensors in forward
                     # while the backward expects local tensors.
-                    # NOTE: Upgrading pytorch may resolve this in the future.
+                    # NOTE: Upgrading PyTorch may resolve this in the future.
                     continue
                 else:
                     setattr(
@@ -548,6 +590,8 @@ def apply_moe_ep_tp(
     model: nn.Module,
     tp_mesh: DeviceMesh | None,
     ep_mesh: DeviceMesh | None,
+    etp: int = 1,
+    ep_tp_mesh: DeviceMesh | None = None,
 ) -> None:
     """Apply MoE-specific parallelism (Expert Parallelism and MoE TP) to Qwen3 model.
 
@@ -556,10 +600,29 @@ def apply_moe_ep_tp(
     2. Router gate handling (when TP enabled)
     3. Expert parallelism via all-to-all dispatch/combine (when EP enabled)
 
+    Strategy Selection:
+        The expert parallelism strategy depends on EP and ETP configuration:
+
+        | EP  | TP  | etp | Strategy              | Expert Weight Sharding         |
+        |-----|-----|-----|-----------------------|--------------------------------|
+        | 1   | 1   | -   | None                  | Replicate                      |
+        | 1   | >1  | -   | TensorParallel        | [Shard(1/2)]                   |
+        | >1  | 1   | -   | ExpertParallel        | [Shard(0)]                     |
+        | >1  | >1  | 1   | ExpertParallel        | [Shard(0)] (TP borrowed by EP) |
+        | >1  | >1  | tp  | ExpertTensorParallel  | [Shard(0), Shard(1/2)]         |
+
+        When EP>1 and TP>1:
+        - etp=1: TP dimension is borrowed by EP for token dispatch. Experts use
+          only EP sharding [Shard(0)].
+        - etp=tp: TP dimension remains independent. Experts use 2D sharding
+          [Shard(0), Shard(1/2)] combining EP and TP.
+
     Args:
         model: The model to apply MoE parallelism to.
         tp_mesh: TP device mesh. If None, skip TP-related MoE handling.
         ep_mesh: EP device mesh. If None, skip expert parallelism.
+        etp: Expert Tensor Parallel size (must be 1 or equal to tp).
+        ep_tp_mesh: 2D mesh for ExpertTensorParallel (when etp=tp).
 
     Note:
         This function is a no-op for non-MoE models.
@@ -568,8 +631,6 @@ def apply_moe_ep_tp(
     Raises:
         ValueError: If num_experts is not divisible by ep_size.
     """
-    from areal.experimental.models.archon.expert_parallel import ExpertParallel
-
     # Early exit if nothing to do
     if tp_mesh is None and ep_mesh is None:
         return
@@ -578,7 +639,6 @@ def apply_moe_ep_tp(
     if ep_mesh is not None:
         validate_ep_constraints(model.model_args, ep_mesh.size())
 
-    moe_count = 0
     for transformer_block in model.layers.values():
         if not getattr(transformer_block, "moe_enabled", False):
             continue
@@ -586,8 +646,6 @@ def apply_moe_ep_tp(
         moe = transformer_block.moe
         if moe is None:
             continue
-
-        moe_count += 1
 
         # Apply TP-related MoE handling (input/output conversion, router gate)
         # This handles DTensor/Tensor conversion for sequence parallelism
@@ -602,31 +660,47 @@ def apply_moe_ep_tp(
                 ),
                 "moe.router.gate": ReplicateParallel(),
             }
+
+            # Apply ReordererSequenceParallel when etp=1 and EP is enabled
+            # This ensures each TP rank processes different tokens so the
+            # subsequent EP all-to-all doesn't send duplicate data
+            if ep_mesh is not None and etp == 1:
+                moe_tp_plan["moe.reorderer"] = ReordererSequenceParallel()
+
             parallelize_module(
                 module=transformer_block,
                 device_mesh=tp_mesh,
                 parallelize_plan=moe_tp_plan,
             )
 
-        # Apply Expert Parallelism to the experts module
-        # This registers hooks for automatic token dispatch/combine during forward
-        if ep_mesh is not None:
+        experts_mesh, experts_plan = None, None
+        if ep_mesh is None:
+            experts_mesh = tp_mesh
+            experts_plan = TensorParallel()
+        elif tp_mesh is None or etp == 1:
+            experts_mesh = ep_mesh
+            experts_plan = ExpertParallel()
+        else:
+            experts_mesh = ep_tp_mesh
+            experts_plan = ExpertTensorParallel()
+
+        if experts_mesh is not None:
             parallelize_module(
                 module=moe.experts,
-                device_mesh=ep_mesh,
-                parallelize_plan=ExpertParallel(),
+                device_mesh=experts_mesh,
+                parallelize_plan=experts_plan,
             )
 
-    # Log what was applied
-    if moe_count > 0:
-        applied = []
-        if tp_mesh is not None:
-            applied.append(f"MoE TP (tp_size={tp_mesh.size()})")
-        if ep_mesh is not None:
+    applied = []
+    if tp_mesh is not None:
+        applied.append(f"MoE TP (tp_size={tp_mesh.size()})")
+    if ep_mesh is not None:
+        if etp > 1:
+            applied.append(f"EP+ETP (ep_size={ep_mesh.size()}, etp={etp})")
+        else:
             applied.append(f"EP (ep_size={ep_mesh.size()})")
-        logger.info(f"Applied {', '.join(applied)} to {moe_count} MoE layers")
-    else:
-        logger.debug("No MoE layers found, apply_moe_ep_tp is a no-op")
+    if applied:
+        logger.info(f"Applied {', '.join(applied)} to MoE layers")
 
 
 __all__ = [

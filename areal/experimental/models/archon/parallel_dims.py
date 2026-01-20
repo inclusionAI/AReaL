@@ -20,7 +20,6 @@ class ArchonParallelDims:
 
     Archon Engine uses PyTorch-native distributed APIs (FSDP2, TP, CP, EP) inspired by torchtitan.
 
-    Note: etp (Expert Tensor Parallel) is always 1 - not supported yet.
     Note: dp_replicate is always 1 - no HSDP support yet.
 
     Attributes:
@@ -28,12 +27,31 @@ class ArchonParallelDims:
         tp: Tensor Parallel size.
         cp: Context Parallel size (implemented as Ulysses SP, not Ring Attention).
         ep: Expert Parallel size.
+        etp: Expert Tensor Parallel size (must be 1 or equal to tp).
         world_size: Total number of processes.
         device_type: Device type for mesh creation (e.g., "cuda", "npu").
 
     Mesh semantics:
         - total_gpu = dp_shard × cp × tp
         - fsdp_size = dp_shard × cp  (CP ranks participate in weight sharding)
+
+    Expert Parallelism Strategy Selection:
+        The strategy for MoE expert layers depends on EP and ETP settings:
+
+        | EP  | TP  | etp | Strategy              | Expert Weight Sharding       |
+        |-----|-----|-----|-----------------------|------------------------------|
+        | 1   | 1   | -   | None                  | Replicate                    |
+        | 1   | >1  | -   | TensorParallel        | [Shard(1/2)]                 |
+        | >1  | 1   | -   | ExpertParallel        | [Shard(0)]                   |
+        | >1  | >1  | 1   | ExpertParallel        | [Shard(0)] (TP borrowed by EP) |
+        | >1  | >1  | tp  | ExpertTensorParallel  | [Shard(0), Shard(1/2)]       |
+
+        When EP>1 and TP>1:
+        - etp=1: TP dimension is borrowed by EP for token dispatch. Experts use
+          only EP sharding [Shard(0)]. EP borrows from dp_shard × cp × tp.
+        - etp=tp: TP dimension remains independent. Experts use 2D sharding
+          [Shard(0), Shard(1/2)] combining EP and TP. EP borrows from
+          dp_shard × cp only.
 
     Available mesh dimensions (when EP disabled):
         - dp: dp_shard (for data loading)
@@ -48,24 +66,33 @@ class ArchonParallelDims:
         - dp_cp: dp_shard * cp (for loss all-reduce)
         - cp: Context Parallel
         - tp: Tensor Parallel
-        - ep: Expert Parallel (flattened from dp_shard_in_ep + cp [+ tp if etp=1])
+        - ep: Expert Parallel (flattened from dp_shard_in_ep * cp * etp)
+        - ep_tp: 2D mesh [ep, tp] for ExpertTensorParallel (only when etp=tp)
         - dp_shard_mod_ep: dp_shard_cp * tp / ep (for FSDP sharding of MoE experts)
 
-    Example (dp_shard=2, cp=2, tp=2, ep=1, 8 GPUs):
+    Example (dp_shard=2, cp=2, tp=2, ep=1, etp=1, 8 GPUs):
         - fsdp_size = dp_shard × cp = 2 × 2 = 4
         - Mesh dims: (dp_shard=2, cp=2, tp=2)
 
-    Example (dp_shard=2, cp=1, tp=2, ep=2, 4 GPUs):
+    Example (dp_shard=2, cp=1, tp=2, ep=2, etp=1, 4 GPUs):
         - ep borrows from dp_shard_in_ep * cp * tp (since etp=1)
         - dp_shard_mod_ep = dp_shard * cp * tp / ep = 2 * 1 * 2 / 2 = 2
         - dp_shard_in_ep = ep / (cp * tp) = 2 / (1 * 2) = 1
         - Mesh dims: (dp_shard_mod_ep=2, dp_shard_in_ep=1, cp=1, tp=2)
+
+    Example (dp_shard=2, cp=1, tp=2, ep=2, etp=2, 4 GPUs):
+        - ep borrows from dp_shard_in_ep * cp only (since etp=tp)
+        - dp_shard_mod_ep = dp_shard * cp / ep = 2 * 1 / 2 = 1
+        - dp_shard_in_ep = ep / cp = 2 / 1 = 2
+        - Mesh dims: (dp_shard_mod_ep=1, dp_shard_in_ep=2, cp=1, tp=2)
+        - ep_tp mesh: 2D mesh [ep=2, tp=2] for 2D expert weight sharding
     """
 
     dp_shard: int = -1  # FSDP shard dimension, -1 means auto
     tp: int = 1  # Tensor Parallel size
     cp: int = 1  # Context Parallel size (Ulysses SP)
-    ep: int = 1  # Expert Parallel size (ETP is always 1)
+    ep: int = 1  # Expert Parallel size
+    etp: int = 1  # Expert Tensor Parallel size (1 or tp)
     world_size: int = 1
     device_type: str = "cuda"
 
@@ -85,19 +112,38 @@ class ArchonParallelDims:
                 f"world_size={self.world_size}"
             )
 
-        # Validate EP constraints (ETP=1 only, so EP borrows from dp_shard * cp * tp)
+        # Validate ETP constraints
+        if self.etp not in (1, self.tp):
+            raise ValueError(
+                f"etp must be 1 or equal to tp, got etp={self.etp}, tp={self.tp}"
+            )
+
+        # Validate EP constraints based on ETP mode
         if self.ep > 1:
-            # EP borrows all cp and tp and some dp_shard degree
-            if self.ep % (self.cp * self.tp) != 0:
-                raise ValueError(
-                    f"ep must be divisible by cp * tp, "
-                    f"got ep={self.ep}, cp={self.cp}, tp={self.tp}"
-                )
-            if (self.dp_shard * self.cp * self.tp) % self.ep != 0:
-                raise ValueError(
-                    f"dp_shard * cp * tp must be divisible by ep, "
-                    f"got {self.dp_shard} * {self.cp} * {self.tp} = {self.dp_shard * self.cp * self.tp}, ep={self.ep}"
-                )
+            if self.etp == self.tp:
+                # ETP=TP mode: EP borrows from dp_shard × cp only (not tp)
+                if self.ep % self.cp != 0:
+                    raise ValueError(
+                        f"When etp=tp, ep must be divisible by cp, "
+                        f"got ep={self.ep}, cp={self.cp}"
+                    )
+                if (self.dp_shard * self.cp) % self.ep != 0:
+                    raise ValueError(
+                        f"When etp=tp, dp_shard * cp must be divisible by ep, "
+                        f"got {self.dp_shard} * {self.cp} = {self.dp_shard * self.cp}, ep={self.ep}"
+                    )
+            else:
+                # ETP=1 mode: EP borrows from dp_shard × cp × tp
+                if self.ep % (self.cp * self.tp) != 0:
+                    raise ValueError(
+                        f"When etp=1, ep must be divisible by cp * tp, "
+                        f"got ep={self.ep}, cp={self.cp}, tp={self.tp}"
+                    )
+                if (self.dp_shard * self.cp * self.tp) % self.ep != 0:
+                    raise ValueError(
+                        f"When etp=1, dp_shard * cp * tp must be divisible by ep, "
+                        f"got {self.dp_shard} * {self.cp} * {self.tp} = {self.dp_shard * self.cp * self.tp}, ep={self.ep}"
+                    )
 
     # =========================================================================
     # Mesh Creation
@@ -146,24 +192,29 @@ class ArchonParallelDims:
     def _build_mesh_with_ep(self) -> DeviceMesh:
         """Build mesh when EP is enabled.
 
-        With EP (etp=1), dp_shard and ep are derived submeshes:
-        - ep = dp_shard_in_ep * cp * tp
-        - dp_shard = dp_shard_mod_ep * dp_shard_in_ep
+        Handles both etp=1 and etp=tp cases:
+        - etp=1: EP borrows from dp_shard_in_ep * cp * tp
+        - etp=tp: EP borrows from dp_shard_in_ep * cp only (tp independent)
         """
-        # Since etp=1, ep borrows from dp_shard_in_ep * cp * tp
-        dp_shard_mod_ep = self.dp_shard * self.cp * self.tp // self.ep
-        dp_shard_in_ep = self.ep // (self.cp * self.tp)
+        # Calculate dimensions based on ETP mode
+        if self.etp == self.tp:
+            # ETP=TP: ep = dp_shard_in_ep * cp (NOT including tp)
+            dp_shard_mod_ep = self.dp_shard * self.cp // self.ep
+            dp_shard_in_ep = self.ep // self.cp
+        else:
+            # ETP=1: ep = dp_shard_in_ep * cp * tp
+            dp_shard_mod_ep = self.dp_shard * self.cp * self.tp // self.ep
+            dp_shard_in_ep = self.ep // (self.cp * self.tp)
 
-        # Always include all dimensions, even if size=1
-        # This ensures submeshes like mp (cp × tp) can always be created
         dims = [dp_shard_mod_ep, dp_shard_in_ep, self.cp, self.tp]
         names = ["dp_shard_mod_ep", "dp_shard_in_ep", "cp", "tp"]
 
-        logger.info(f"Building 4-D device mesh with {names}, {dims}")
+        logger.info(f"Building 4-D device mesh (etp={self.etp}) with {names}, {dims}")
         mesh = init_device_mesh(
             self.device_type, tuple(dims), mesh_dim_names=tuple(names)
         )
 
+        # Store base meshes
         self._meshes["dp_shard_mod_ep"] = mesh["dp_shard_mod_ep"]
         self._meshes["dp_shard_in_ep"] = mesh["dp_shard_in_ep"]
         self._meshes["cp"] = mesh["cp"]
@@ -184,13 +235,31 @@ class ArchonParallelDims:
             "dp_shard_mod_ep", "dp_shard_in_ep", "cp"
         ]._flatten(mesh_dim_name="dp_cp")
 
-        # ep mesh: for expert parallel
-        self._meshes["ep"] = mesh["dp_shard_in_ep", "cp", "tp"]._flatten(
-            mesh_dim_name="ep"
-        )
-
-        # cp_tp mesh: for context parallel × tensor parallel (data broadcast group)
+        # cp_tp mesh: for context parallel × tensor parallel
         self._meshes["cp_tp"] = mesh["cp", "tp"]._flatten(mesh_dim_name="cp_tp")
+
+        # ep mesh: flatten based on ETP mode
+        if self.etp == self.tp:
+            # ETP=TP: ep = dp_shard_in_ep * cp (NOT including tp)
+            # First flatten to create "ep" dimension, then create 2D ep_tp mesh
+            ep_mesh_dims = ["dp_shard_in_ep"]
+            if self.cp > 1:
+                ep_mesh_dims.append("cp")
+
+            if len(ep_mesh_dims) > 1:
+                mesh[tuple(ep_mesh_dims)]._flatten(mesh_dim_name="ep")
+            else:
+                # If only dp_shard_in_ep, just rename it
+                mesh["dp_shard_in_ep"]._flatten(mesh_dim_name="ep")
+            self._meshes["ep"] = mesh["ep"]
+
+            # ep_tp mesh: 2D mesh [ep, tp] for ExpertTensorParallel
+            self._meshes["ep_tp"] = mesh["ep", "tp"]
+        else:
+            # ETP=1: ep = dp_shard_in_ep * cp * tp
+            self._meshes["ep"] = mesh["dp_shard_in_ep", "cp", "tp"]._flatten(
+                mesh_dim_name="ep"
+            )
 
         self._world_mesh = mesh
         return mesh
@@ -235,6 +304,11 @@ class ArchonParallelDims:
     def ep_enabled(self) -> bool:
         """Whether expert parallelism is enabled."""
         return self.ep > 1
+
+    @property
+    def etp_enabled(self) -> bool:
+        """Whether expert tensor parallelism is enabled (etp > 1)."""
+        return self.etp > 1
 
     # =========================================================================
     # Utilities

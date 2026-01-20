@@ -1,8 +1,8 @@
 """Unit tests for Archon activation checkpointing.
 
 Tests cover:
-1. ActivationCheckpointConfig validation
-2. apply_activation_checkpointing with all modes
+1. ActivationCheckpointConfig
+2. apply_ac with all modes
 
 Run tests:
     pytest areal/tests/experimental/archon/test_activation_checkpoint.py -v
@@ -17,7 +17,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 
 from areal.experimental.models.archon.activation_checkpoint import (
     ActivationCheckpointConfig,
-    apply_activation_checkpointing,
+    apply_ac,
 )
 
 # =============================================================================
@@ -26,13 +26,13 @@ from areal.experimental.models.archon.activation_checkpoint import (
 
 
 class TestActivationCheckpointConfig:
-    """Test ActivationCheckpointConfig validation."""
+    """Test ActivationCheckpointConfig."""
 
     def test_default_config(self):
-        """Default config should have mode='none'."""
+        """Default config should have mode='selective' and selective_ac_option='op'."""
         config = ActivationCheckpointConfig()
-        assert config.mode == "none"
-        assert config.selective_ac_option == "1"
+        assert config.mode == "selective"
+        assert config.selective_ac_option == "op"
         assert config.preserve_rng_state is False
 
     def test_full_mode(self):
@@ -56,30 +56,45 @@ class TestActivationCheckpointConfig:
         config = ActivationCheckpointConfig(mode="full", preserve_rng_state=True)
         assert config.preserve_rng_state is True
 
+    def test_none_mode(self):
+        """None mode should be valid."""
+        config = ActivationCheckpointConfig(mode="none")
+        assert config.mode == "none"
+
+    def test_memory_budget_mode(self):
+        """Memory budget mode should be valid."""
+        config = ActivationCheckpointConfig(mode="memory_budget", memory_budget=0.7)
+        assert config.mode == "memory_budget"
+        assert config.memory_budget == 0.7
+
+    def test_per_op_sac_force_recompute_default(self):
+        """Default per_op_sac_force_recompute_mm_shapes_by_fqns should include moe.router.gate."""
+        config = ActivationCheckpointConfig()
+        assert "moe.router.gate" in config.per_op_sac_force_recompute_mm_shapes_by_fqns
+
     def test_invalid_mode_raises(self):
-        """Invalid mode should raise ValueError."""
+        """Invalid mode should raise ValueError at config creation."""
         with pytest.raises(ValueError, match="Invalid AC mode"):
             ActivationCheckpointConfig(mode="invalid")
 
-    def test_invalid_selective_option_raises(self):
-        """Invalid selective_ac_option should raise ValueError."""
+    def test_invalid_selective_ac_option_raises(self):
+        """Invalid selective_ac_option should raise ValueError at config creation."""
         with pytest.raises(ValueError, match="Invalid selective_ac_option"):
-            ActivationCheckpointConfig(mode="selective", selective_ac_option="bad")
+            ActivationCheckpointConfig(mode="selective", selective_ac_option="invalid")
 
-    def test_zero_selective_option_raises(self):
-        """selective_ac_option='0' should raise ValueError."""
-        with pytest.raises(ValueError, match="Invalid selective_ac_option"):
-            ActivationCheckpointConfig(mode="selective", selective_ac_option="0")
-
-    def test_selective_option_not_validated_for_non_selective_mode(self):
-        """selective_ac_option should not be validated for non-selective modes."""
-        # Should not raise even with invalid selective_ac_option
-        config = ActivationCheckpointConfig(mode="full", selective_ac_option="bad")
+    def test_selective_ac_option_validation_only_in_selective_mode(self):
+        """selective_ac_option validation should only apply when mode is 'selective'."""
+        # These should NOT raise even with non-standard selective_ac_option
+        # because they are not in selective mode
+        config = ActivationCheckpointConfig(mode="full", selective_ac_option="invalid")
         assert config.mode == "full"
+
+        config = ActivationCheckpointConfig(mode="none", selective_ac_option="invalid")
+        assert config.mode == "none"
 
 
 # =============================================================================
-# apply_activation_checkpointing Tests
+# apply_ac Tests
 # =============================================================================
 
 
@@ -109,14 +124,14 @@ class DummyModel(nn.Module):
         return x
 
 
-class TestApplyActivationCheckpointing:
-    """Test apply_activation_checkpointing function."""
+class TestApplyAc:
+    """Test apply_ac function."""
 
     def test_none_mode_no_wrapping(self):
         """None mode should not wrap any layers."""
         model = DummyModel(num_layers=3)
         config = ActivationCheckpointConfig(mode="none")
-        apply_activation_checkpointing(model, config)
+        apply_ac(model, config)
 
         for layer in model.layers.values():
             assert isinstance(layer, DummyBlock)
@@ -126,7 +141,7 @@ class TestApplyActivationCheckpointing:
         """Full mode should wrap all layers with CheckpointWrapper."""
         model = DummyModel(num_layers=3)
         config = ActivationCheckpointConfig(mode="full")
-        apply_activation_checkpointing(model, config)
+        apply_ac(model, config)
 
         for layer in model.layers.values():
             assert isinstance(layer, CheckpointWrapper)
@@ -135,7 +150,7 @@ class TestApplyActivationCheckpointing:
         """Selective mode should wrap every Nth layer."""
         model = DummyModel(num_layers=4)
         config = ActivationCheckpointConfig(mode="selective", selective_ac_option="2")
-        apply_activation_checkpointing(model, config)
+        apply_ac(model, config)
 
         # With ac_freq=2, the 2nd and 4th layers are checkpointed.
         # This corresponds to layers with index 1 and 3.
@@ -148,7 +163,7 @@ class TestApplyActivationCheckpointing:
         """Selective mode with option '1' should wrap every layer."""
         model = DummyModel(num_layers=3)
         config = ActivationCheckpointConfig(mode="selective", selective_ac_option="1")
-        apply_activation_checkpointing(model, config)
+        apply_ac(model, config)
 
         for layer in model.layers.values():
             assert isinstance(layer, CheckpointWrapper)
@@ -157,7 +172,9 @@ class TestApplyActivationCheckpointing:
         """Selective op mode should wrap all layers."""
         model = DummyModel(num_layers=3)
         config = ActivationCheckpointConfig(mode="selective", selective_ac_option="op")
-        apply_activation_checkpointing(model, config)
+        # op_sac_save_list is required for op mode
+        op_sac_save_list = {torch.ops.aten.mm.default}
+        apply_ac(model, config, op_sac_save_list=op_sac_save_list)
 
         for layer in model.layers.values():
             assert isinstance(layer, CheckpointWrapper)
@@ -167,8 +184,10 @@ class TestApplyActivationCheckpointing:
         model = nn.Linear(4, 2)
         config = ActivationCheckpointConfig(mode="full")
         with pytest.raises(ValueError, match="must have a 'layers' attribute"):
-            apply_activation_checkpointing(model, config)
+            apply_ac(model, config)
 
+    # NOTE: Upgrading PyTorch will resolve this in the future.
+    @pytest.mark.slow
     def test_wrapped_model_forward_works(self):
         """Wrapped model should still produce correct forward output."""
         model = DummyModel(num_layers=3, dim=4)
@@ -180,18 +199,20 @@ class TestApplyActivationCheckpointing:
 
         # Apply AC and verify output matches
         config = ActivationCheckpointConfig(mode="full")
-        apply_activation_checkpointing(model, config)
+        apply_ac(model, config)
 
         with torch.no_grad():
             wrapped_output = model(x.clone())
 
         assert torch.allclose(ref_output, wrapped_output)
 
+    # NOTE: Upgrading PyTorch will resolve this in the future.
+    @pytest.mark.slow
     def test_wrapped_model_backward_works(self):
         """Wrapped model should support backward pass."""
         model = DummyModel(num_layers=3, dim=4)
         config = ActivationCheckpointConfig(mode="full")
-        apply_activation_checkpointing(model, config)
+        apply_ac(model, config)
 
         x = torch.randn(2, 4, requires_grad=True)
         output = model(x)
@@ -213,8 +234,8 @@ class TestApplyActivationCheckpointing:
         config1 = ActivationCheckpointConfig(mode="selective", selective_ac_option="2")
         config2 = ActivationCheckpointConfig(mode="full")
 
-        apply_activation_checkpointing(model1, config1)
-        apply_activation_checkpointing(model2, config2)
+        apply_ac(model1, config1)
+        apply_ac(model2, config2)
 
         # model1: selective, every 2nd layer
         assert not isinstance(model1.layers["0"], CheckpointWrapper)

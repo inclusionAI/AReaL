@@ -5,6 +5,7 @@ This script consolidates all EP tests and supports different parallel configurat
 - EP+TP: ep=world_size, tp=world_size, cp=1 (2 GPU)
 - EP Only: ep=world_size, tp=1, cp=1 (2 GPU)
 - EP+CP: ep=2, tp=1, cp=2 (4 GPU)
+- ETP: ep=world_size, tp=world_size, etp=world_size (2 GPU) - Expert Tensor Parallel
 
 Run with:
     torchrun --nproc_per_node=2 areal/tests/experimental/archon/torchrun/run_ep_tests.py \
@@ -17,6 +18,9 @@ Supported test types:
     - ep_only_weight_sync: EP only weight sync (tp=1)
     - ep_cp_forward: EP+CP forward (4 GPU)
     - ep_cp_weight_sync: EP+CP weight sync (4 GPU)
+    - etp_forward: ETP forward numerical correctness (ep>1, etp=tp)
+    - etp_weight_sync: ETP weight sync (ep>1, etp=tp)
+    - tp_only_forward: TP-only forward for MoE experts (ep=1, tp>1)
     - state_dict_update: State dict correctness after optimizer step
 """
 
@@ -87,6 +91,51 @@ def get_parallel_dims_ep_cp(world_size: int) -> ArchonParallelDims:
         tp=1,
         cp=2,
         ep=world_size,  # ep=4 borrows from dp_shard * cp
+        world_size=world_size,
+        device_type="cuda",
+    )
+
+
+def get_parallel_dims_etp(world_size: int) -> ArchonParallelDims:
+    """Get parallel dims for ETP configuration.
+
+    ETP (Expert Tensor Parallel) uses 2D sharding for expert weights.
+    EP borrows from dp_shard × cp only (not tp).
+
+    Requires at least 4 GPUs. Extra GPUs go to dp_shard.
+    Config: tp=2, cp=1, ep=2, etp=2, dp_shard=world_size/4.
+    """
+    assert world_size >= 4 and world_size % 4 == 0, (
+        "ETP requires at least 4 GPUs and world_size must be divisible by 4. "
+        "Use tp_only_forward for 2 GPU TP-only MoE test."
+    )
+
+    # ep borrows from dp_shard * cp = dp_shard (since cp=1)
+    # dp_shard_mod_ep = dp_shard * cp / ep = dp_shard / 2
+    # dp_shard_in_ep = ep / cp = 2
+    dp_shard = world_size // 4
+    return ArchonParallelDims(
+        dp_shard=dp_shard * 2,  # dp_shard must satisfy: dp_shard * tp * cp = world_size
+        tp=2,
+        cp=1,
+        ep=2,
+        etp=2,
+        world_size=world_size,
+        device_type="cuda",
+    )
+
+
+def get_parallel_dims_tp_only(world_size: int) -> ArchonParallelDims:
+    """Get parallel dims for TP-only MoE configuration (ep=1, tp=ws).
+
+    This tests the TensorParallel class for MoE experts when EP is disabled.
+    """
+    return ArchonParallelDims(
+        dp_shard=1,
+        tp=world_size,
+        cp=1,
+        ep=1,
+        etp=1,
         world_size=world_size,
         device_type="cuda",
     )
@@ -619,6 +668,47 @@ def run_state_dict_update(output: str | None = None) -> bool:
     return test_state_dict_update(output)
 
 
+def run_etp_forward(output: str | None = None) -> bool:
+    """Run ETP forward test (requires 4 GPUs).
+
+    Tests ExpertTensorParallel with 2D weight sharding [Shard(0), Shard(1/2)].
+    """
+    print_rank0("\n=== ETP Forward Test ===")
+    world_size = dist.get_world_size()
+    parallel_dims = get_parallel_dims_etp(world_size)
+    success, ep_model = test_forward(parallel_dims, "etp", output)
+    if success:
+        success = test_output_consistency_across_ranks(parallel_dims, "etp", ep_model)
+    return success
+
+
+def run_etp_weight_sync(output: str | None = None) -> bool:
+    """Run ETP weight sync test (requires 4 GPUs).
+
+    Tests weight gather/roundtrip with ExpertTensorParallel.
+    """
+    print_rank0("\n=== ETP Weight Sync Test ===")
+    world_size = dist.get_world_size()
+    parallel_dims = get_parallel_dims_etp(world_size)
+    return test_weight_sync(parallel_dims, "etp", output)
+
+
+def run_tp_only_forward(output: str | None = None) -> bool:
+    """Run TP-only forward test for MoE experts (ep=1, tp>1).
+
+    Tests TensorParallel class for MoE experts when EP is disabled.
+    """
+    print_rank0("\n=== TP-Only MoE Forward Test ===")
+    world_size = dist.get_world_size()
+    parallel_dims = get_parallel_dims_tp_only(world_size)
+    success, ep_model = test_forward(parallel_dims, "tp_only", output)
+    if success:
+        success = test_output_consistency_across_ranks(
+            parallel_dims, "tp_only", ep_model
+        )
+    return success
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -630,6 +720,9 @@ TEST_REGISTRY = {
     "ep_only_weight_sync": run_ep_only_weight_sync,
     "ep_cp_forward": run_ep_cp_forward,
     "ep_cp_weight_sync": run_ep_cp_weight_sync,
+    "etp_forward": run_etp_forward,
+    "etp_weight_sync": run_etp_weight_sync,
+    "tp_only_forward": run_tp_only_forward,
     "state_dict_update": run_state_dict_update,
 }
 

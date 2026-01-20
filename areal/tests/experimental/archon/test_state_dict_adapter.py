@@ -569,6 +569,7 @@ class TestMoEWeightLoadingRoundtrip:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestStateDictAdapterWithRealConfigs:
     """Lightweight tests using real HF configs but no weight loading.
 

@@ -403,19 +403,40 @@ class ArchonEngineConfig:
         metadata={"help": "Enable torch.compile for TransformerBlocks."},
     )
 
-    # Activation Checkpointing (Gradient Checkpointing)
-    recompute_granularity: str = field(
-        default="full",
+    # Activation Checkpointing (enabled when gradient_checkpointing=True)
+    ac_mode: str = field(
+        default="selective",
         metadata={
-            "help": "Activation checkpointing granularity.",
-            "choices": ["none", "full", "selective"],
+            "help": "Activation checkpointing mode. "
+            "'memory_budget' requires enable_compile=True.",
+            "choices": ["none", "full", "selective", "memory_budget"],
         },
     )
-    recompute_num_layers: int = field(
-        default=1,
+    selective_ac_option: str = field(
+        default="op",
         metadata={
-            "help": "For selective recompute: checkpoint every N layers. "
-            "Set to 0 for op-level selective checkpointing."
+            "help": "Selective AC option: 'op' for op-level, "
+            "or integer string (e.g., '2') for every Nth layer."
+        },
+    )
+    ac_memory_budget: float = field(
+        default=0.5,
+        metadata={
+            "help": "Memory budget for 'memory_budget' AC mode. "
+            "0.0 = minimum memory (max recompute), 1.0 = default behavior (no recompute)."
+        },
+    )
+    ac_preserve_rng_state: bool = field(
+        default=False,
+        metadata={
+            "help": "Preserve RNG state during checkpointing for deterministic output. "
+            "Enabling this may slow down training."
+        },
+    )
+    ac_debug: bool = field(
+        default=False,
+        metadata={
+            "help": "(Testing only) Capture AC debug information. Will be slower."
         },
     )
 
