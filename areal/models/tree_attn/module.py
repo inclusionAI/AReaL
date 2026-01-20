@@ -14,7 +14,7 @@ from megatron.core.transformer.transformer_layer import (
     TransformerLayer,
     TransformerLayerSubmodules,
 )
-from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
 
 from areal.utils import logging
 
@@ -38,15 +38,53 @@ _flex_attention = torch.compile(
     dynamic=_FLEX_DYNAMIC,
     options=_TORCH_COMPILE_OPTIONS,
 )
-USE_BLOCK_MASK = not (
-    os.environ.get("AREAL_DISABLE_FLEX_ATTENTION_BLOCK_MASK", "0") == "1"
-)
 BLOCK_SIZE = int(os.environ.get("AREAL_FLEX_ATTENTION_BLOCK_SIZE", "128"))
-logger.info(
-    "Using block mask in flex attention: %s, block size: %d",
-    str(USE_BLOCK_MASK),
-    BLOCK_SIZE,
-)
+logger.info("Using block mask in flex attention, block size: %d", BLOCK_SIZE)
+
+
+def create_block_mask_from_dense(
+    attention_mask: torch.Tensor,
+    seq_len: int,
+    device: torch.device,
+) -> BlockMask:
+    """Create a flex attention block mask from a dense attention mask.
+
+    This function should be called early (during data preparation) to allow
+    the dense mask to be released and save memory.
+
+    Parameters
+    ----------
+    attention_mask : torch.Tensor
+        Dense attention mask of shape (seq_len, seq_len).
+    seq_len : int
+        Sequence length.
+    device : torch.device
+        Device to create the block mask on.
+
+    Returns
+    -------
+    BlockMask
+        The created block mask for use with flex_attention.
+    """
+    def arbitrary_mask(
+        batch: torch.Tensor,
+        head: torch.Tensor,
+        q_idx: torch.Tensor,
+        k_idx: torch.Tensor,
+    ):
+        return attention_mask[q_idx, k_idx]
+
+    block_mask = create_block_mask(
+        arbitrary_mask,
+        B=1,
+        H=1,
+        Q_LEN=seq_len,
+        KV_LEN=seq_len,
+        BLOCK_SIZE=BLOCK_SIZE,
+        device=device,
+        _compile=False,
+    )
+    return block_mask
 
 
 class PytorchFlexAttention(torch.nn.Module):
@@ -85,7 +123,7 @@ class PytorchFlexAttention(torch.nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        attention_mask: torch.Tensor,
+        attention_mask: BlockMask,
         attn_mask_type: AttnMaskType,
         attention_bias: torch.Tensor = None,
         packed_seq_params: PackedSeqParams = None,
@@ -93,7 +131,7 @@ class PytorchFlexAttention(torch.nn.Module):
         # query: [S, B, H, D] in which B should be 1 in current tree training implementation
         # key: [S, B, H, D]
         # value: [S, B, H, D]
-        # attention_mask: [1, 1, S, S]
+        # attention_mask: BlockMask (pre-created)
         # attention_mask_type: arbitrary
 
         if attention_bias is not None:
@@ -104,6 +142,11 @@ class PytorchFlexAttention(torch.nn.Module):
             raise NotImplementedError(
                 "PytorchFlexAttention does not support packed sequences yet."
             )
+        if not isinstance(attention_mask, BlockMask):
+            raise ValueError(
+                "PytorchFlexAttention requires a pre-created BlockMask. "
+                "Use create_block_mask_from_dense() during data preparation."
+            )
 
         # query, key, value shape: [S, B, H, D] -> [B, H, S, D]
         query = query.permute(1, 2, 0, 3)
@@ -111,43 +154,12 @@ class PytorchFlexAttention(torch.nn.Module):
         value = value.permute(1, 2, 0, 3)
         enable_gqa = query.shape[1] != key.shape[1]
 
-        q_len = attention_mask.shape[0]
-
-        def arbitrary_mask(
-            batch: torch.Tensor,
-            head: torch.Tensor,
-            q_idx: torch.Tensor,
-            k_idx: torch.Tensor,
-        ):
-            return attention_mask[q_idx, k_idx]
-
-        def arbitrary_score_mod(score, b, h, q_idx, k_idx):
-            mask_value = attention_mask[q_idx, k_idx]
-            score = score.masked_fill(~mask_value, float("-inf"))
-            return score
-
-        if USE_BLOCK_MASK:
-            block_mask = create_block_mask(
-                arbitrary_mask,
-                B=1,  # Broadcast across batch
-                H=1,  # Broadcast across heads
-                Q_LEN=q_len,
-                KV_LEN=q_len,
-                BLOCK_SIZE=BLOCK_SIZE,
-                device=query.device,
-                _compile=False,
-            )
-            score_mod = None
-        else:
-            block_mask = None
-            score_mod = arbitrary_score_mod
-
         output = _flex_attention(
             query,
             key,
             value,
-            block_mask=block_mask,
-            score_mod=score_mod,
+            block_mask=attention_mask,
+            score_mod=None,
             scale=self.softmax_scale,
             enable_gqa=enable_gqa,
         )
@@ -159,6 +171,44 @@ class PytorchFlexAttention(torch.nn.Module):
             .view(output.shape[2], output.shape[0], -1)
         )
         return output
+
+
+def _tree_attn_fwd_func(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+    softmax_scale: float | None = None,
+    *args,
+    **kwargs
+):
+    # Require pre-created block_mask
+    block_mask = kwargs.get("block_mask", None)
+    if block_mask is None or not isinstance(block_mask, BlockMask):
+        raise ValueError(
+            "_tree_attn_fwd_func requires a pre-created BlockMask in kwargs['block_mask']. "
+            "Use create_block_mask_from_dense() during data preparation."
+        )
+
+    # [B, S, H, D] -> [B, H, S, D]
+    query = query.permute(0, 2, 1, 3).contiguous()
+    key = key.permute(0, 2, 1, 3).contiguous()
+    value = value.permute(0, 2, 1, 3).contiguous()
+
+    enable_gqa = query.shape[1] != key.shape[1]
+
+    output = _flex_attention(
+        query,
+        key,
+        value,
+        block_mask=block_mask,
+        score_mod=None,
+        scale=softmax_scale,
+        enable_gqa=enable_gqa,
+    )
+    # [B, H, S, D] -> [B, S, H, D]
+    output = output.permute(0, 2, 1, 3).contiguous()
+    return output
 
 
 @contextmanager
@@ -210,3 +260,15 @@ def patch_bridge_for_tree_training(enable: bool = True):
     finally:
         # Revert patch
         LLMBridge._get_transformer_layer_spec = original_layer_spec_getter
+
+def patch_fsdp_for_tree_training(enable: bool = True):
+    if not enable:
+        return
+    
+    from transformers.integrations import flash_attention
+
+    flash_attention._flash_attention_forward = _tree_attn_fwd_func
+    logger.info(
+        "Patched transformers.integrations.flash_attention._flash_attention_forward "
+        "with tree implementation."
+    )

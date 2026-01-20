@@ -15,6 +15,7 @@ from areal.utils.functional.vocab_parallel import (
     gather_logprobs,
     gather_logprobs_entropy,
 )
+from areal.utils.perf_tracer import trace_perf
 
 if TYPE_CHECKING:
     from areal.models.tree_attn.tree import TrieNode
@@ -199,6 +200,7 @@ def _compute_transition_logprob_entropy(
     return lp.squeeze(0), ent.squeeze(0)
 
 
+@trace_perf("tree_attn._gather_packed_tree_logprobs")
 def _gather_packed_tree_logprobs(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -266,7 +268,7 @@ def _gather_packed_tree_logprobs(
     """
     results: dict[int, torch.Tensor] = {}
     device = logits.device
-    dtype = logits.dtype
+    dtype = torch.float # logprobs should always be float
     input_ids = input_ids.squeeze(0)
     # Cached implementation with chunking
     # Cache for internal node logprobs: (start_idx, end_idx) -> tensor
@@ -312,6 +314,7 @@ def _gather_packed_tree_logprobs(
     return results
 
 
+@trace_perf("tree_attn._gather_packed_tree_logprobs_entropy")
 def _gather_packed_tree_logprobs_entropy(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -351,7 +354,7 @@ def _gather_packed_tree_logprobs_entropy(
     logprobs_results: dict[int, torch.Tensor] = {}
     entropy_results: dict[int, torch.Tensor] = {}
     device = logits.device
-    dtype = logits.dtype
+    dtype = torch.float # logprobs should always be float
     input_ids = input_ids.squeeze(0)
     # Cached implementation with chunking
     # Cache for internal node results: (start_idx, end_idx) -> (logprobs, entropy)
@@ -406,6 +409,7 @@ def _gather_packed_tree_logprobs_entropy(
     return logprobs_results, entropy_results
 
 
+@trace_perf("tree_attn.gather_packed_tree_logprobs")
 def gather_packed_tree_logprobs(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -414,6 +418,11 @@ def gather_packed_tree_logprobs(
     chunk_size: int = 1024,
     tp_group: dist.ProcessGroup | None = None,
 ) -> torch.Tensor:
+    # Handle empty/dummy trie
+    if not trie.all_sequence_ids:
+        # logprobs/entropy should always be float
+        return torch.empty(0, device=logits.device, dtype=torch.float)
+
     logprob_results = _gather_packed_tree_logprobs(
         logits,
         trie,
@@ -427,6 +436,7 @@ def gather_packed_tree_logprobs(
     return logprob
 
 
+@trace_perf("tree_attn.gather_packed_tree_logprobs_entropy")
 def gather_packed_tree_logprobs_entropy(
     logits: torch.Tensor,
     trie: TrieNode,
@@ -435,6 +445,12 @@ def gather_packed_tree_logprobs_entropy(
     chunk_size: int = 1024,
     tp_group: dist.ProcessGroup | None = None,
 ):
+    # Handle empty/dummy trie
+    if not trie.all_sequence_ids:
+        # logprobs/entropy should always be float
+        empty = torch.empty(0, device=logits.device, dtype=torch.float)
+        return empty, empty
+
     logprob_results, entropy_results = _gather_packed_tree_logprobs_entropy(
         logits,
         trie,
@@ -449,6 +465,7 @@ def gather_packed_tree_logprobs_entropy(
     return logprob, entropy
 
 
+@trace_perf("tree_attn.merge_packed_tree_results")
 def merge_packed_tree_results(
     results_list: list[dict[int, torch.Tensor]],
     batch_size: int,

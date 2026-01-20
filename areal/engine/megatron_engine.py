@@ -155,7 +155,7 @@ class MegatronEngine(TrainEngine):
         self.seed: int = 0
         self.own_global_group: bool = False
         self.is_offload: bool = False
-        self.enable_tree_training: bool = self.mcore_config.enable_tree_training
+        self.enable_tree_training: bool = self.enable_tree_training
         # FP8 configuration
         self.fp8_config = self.mcore_config.fp8_config
         self.enable_fp8: bool = self.fp8_config is not None
