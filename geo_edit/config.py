@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, List, Optional, Union
 from google.genai import types
 from .constants import (
     MAX_TOOL_CALLS,
@@ -20,8 +20,45 @@ class AgentConfigs:
     force_tool_config: types.ToolConfig
     force_generate_config: types.GenerateContentConfig
 
+
+@dataclass(frozen=True, slots=True)
+class OpenAIAgentConfigs:
+    tools: List[Dict[str, Any]]
+    tool_choice: Union[str, Dict[str, Any]]
+    generate_config: Dict[str, Any]
+    direct_generate_config: Dict[str, Any]
+    force_tool_choice: Union[str, Dict[str, Any]]
+    force_generate_config: Dict[str, Any]
+
 def _build_generate_config(**kwargs: object) -> types.GenerateContentConfig:
     return types.GenerateContentConfig(**{k: v for k, v in kwargs.items() if v is not None})
+
+
+def _build_openai_generate_config(**kwargs: object) -> Dict[str, Any]:
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _build_openai_tool_specs(tool_declarations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    tool_specs = []
+    for tool in tool_declarations:
+        tool_specs.append(
+            {
+                "type": "function",
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": tool["parameters"],
+            }
+        )
+    return tool_specs
+
+
+def _resolve_openai_tool_choice(tool_mode: str) -> str:
+    mode = tool_mode.upper()
+    if mode in {"ANY", "REQUIRED"}:
+        return "required"
+    if mode in {"NONE", "OFF"}:
+        return "none"
+    return "auto"
 
 def build_agent_configs(
     *,
@@ -95,6 +132,50 @@ def build_agent_configs(
         force_generate_config=force_generate_config,
     )
 
+
+def build_openai_agent_configs(
+    *,
+    max_output_tokens: Optional[int] = None,
+    temperature: float = 1.0,
+    system_prompt: str = SYSTEM_PROMPT,
+    tool_mode: str = "AUTO",
+    reasoning_level: Optional[str] = None,
+) -> OpenAIAgentConfigs:
+    tools = _build_openai_tool_specs(TOOL_FUNCTIONS_DECLARE)
+    tool_choice = _resolve_openai_tool_choice(tool_mode)
+
+    generate_config = _build_openai_generate_config(
+        tools=tools,
+        tool_choice=tool_choice,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        instructions=system_prompt,
+        reasoning={"effort":reasoning_level}
+    )
+    direct_generate_config = _build_openai_generate_config(
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        instructions=system_prompt,
+        reasoning={"effort":reasoning_level},
+    )
+    force_generate_config = _build_openai_generate_config(
+        tools=tools,
+        tool_choice="none",
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        instructions=system_prompt,
+        reasoning={"effort":reasoning_level},
+    )
+
+    return OpenAIAgentConfigs(
+        tools=tools,
+        tool_choice=tool_choice,
+        generate_config=generate_config,
+        direct_generate_config=direct_generate_config,
+        force_tool_choice="none",
+        force_generate_config=force_generate_config,
+    )
+
 __all__ = [
     "API_KEY",
     "MAX_TOOL_CALLS",
@@ -102,5 +183,7 @@ __all__ = [
     "NOTOOL_INPUT_TEMPLATE",
     "SYSTEM_PROMPT",
     "AgentConfigs",
+    "OpenAIAgentConfigs",
     "build_agent_configs",
+    "build_openai_agent_configs",
 ]

@@ -12,11 +12,13 @@ from datasets import load_dataset
 
 from ..agents.api_agent import APIBasedAgent, AgentConfig
 from ..environment.action import TOOL_FUNCTIONS
-from ..environment.task.vision_qa_task import VisionQATask
+from ..environment.task.google_vision_qa_task import GoogleVisionQATask
+from ..environment.task.openai_vision_qa_task import OpenAIVisionQATask
 from ..config import (
     MATHVISION_INPUT_TEMPLATE,
     NOTOOL_INPUT_TEMPLATE,
     build_agent_configs,
+    build_openai_agent_configs,
 )
 from ..constants import SYSTEM_PROMPT, MAX_TOOL_CALLS
 from ..utils.logger import setup_logger
@@ -30,34 +32,48 @@ _WORKER_AGENT_CONFIGS = None
 _WORKER_INPUT_TEMPLATE = None
 _WORKER_OUTPUT_PATH = None
 _WORKER_MAX_TOOL_CALLS = None
+_WORKER_TASK_CLASS = None
+_WORKER_MODEL_TYPE = None
 
 
 def _init_worker(
     api_key: str,
     model_name_or_path: str,
+    model_type: str,
     output_path: str,
     input_template: str,
     max_tool_calls: int,
 ):
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_INPUT_TEMPLATE, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_INPUT_TEMPLATE, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE
 
     max_output_tokens = None
-    agent_configs = build_agent_configs(
-        max_output_tokens=max_output_tokens,
-        thinking_level="high",
-        include_thoughts=True,
-        temperature=1.0,
-        system_prompt=SYSTEM_PROMPT,
-        candidate_count=1,
-        tool_mode="AUTO",
-        disable_automatic_function_calling=True,
-    )
+    if model_type == "Google":
+        agent_configs = build_agent_configs(
+            max_output_tokens=max_output_tokens,
+            thinking_level="low",
+            include_thoughts=True,
+            temperature=1.0,
+            system_prompt=SYSTEM_PROMPT,
+            candidate_count=1,
+            tool_mode="AUTO",
+            disable_automatic_function_calling=True,
+        )
+        _WORKER_TASK_CLASS = GoogleVisionQATask
+    else:
+        agent_configs = build_openai_agent_configs(
+            max_output_tokens=max_output_tokens,
+            temperature=1.0,
+            system_prompt=SYSTEM_PROMPT,
+            tool_mode="AUTO",
+            reasoning_level="medium",
+        )
+        _WORKER_TASK_CLASS = OpenAIVisionQATask
 
     config = AgentConfig(
-        model_type="Google",
+        model_type=model_type,
         model_name=model_name_or_path,
         api_key=api_key,
-        generate_config=agent_configs.generate_config,
+        generate_config=agent_configs.direct_generate_config,
         n_retry=3,
     )
 
@@ -66,6 +82,7 @@ def _init_worker(
     _WORKER_INPUT_TEMPLATE = input_template
     _WORKER_OUTPUT_PATH = output_path
     _WORKER_MAX_TOOL_CALLS = max_tool_calls
+    _WORKER_MODEL_TYPE = model_type
 
 
 def _run_one_task(task_payload: dict):
@@ -92,7 +109,7 @@ def _run_one_task(task_payload: dict):
 
     text_prompt = _WORKER_INPUT_TEMPLATE.format(question=question, options=options)
 
-    task = VisionQATask(
+    task = _WORKER_TASK_CLASS(
         task_id=task_id,
         task_prompt=text_prompt,
         task_answer=answer,
@@ -108,16 +125,21 @@ def _run_one_task(task_payload: dict):
             action, extra_info = _WORKER_AGENT.act(task.contents)
             function_call_part_list = task.parse_action(step=i + 1, action=action, extra_info=extra_info)
 
-            if not function_call_part_list or not function_call_part_list[-1].function_call:
+            if not function_call_part_list:
                 break
 
             task.update_observation_from_action(function_call_part_list)
 
         if task.state and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS:
             force_prompt = "Max tool calls reached. Please provide the final answer without further tool calls."
-            task.contents.append(force_prompt)
+            if _WORKER_MODEL_TYPE == "Google":
+                task.contents.append(force_prompt)
+            else:
+                task.append_prompt(force_prompt)
+            original_generate_config = _WORKER_AGENT.config.generate_config
             _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_generate_config
             action, extra_info = _WORKER_AGENT.act(task.contents)
+            _WORKER_AGENT.config.generate_config = original_generate_config
             task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
 
         if task.state:
@@ -134,11 +156,12 @@ def _run_one_task(task_payload: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate content with tool calls using Google GenAI API (multiprocess).")
-    parser.add_argument("--api_key", type=str, required=True, help="API key for Google GenAI.")
+    parser = argparse.ArgumentParser(description="Generate content with tool calls using API models (multiprocess).")
+    parser.add_argument("--api_key", type=str, required=True, help="API key for the selected provider.")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
+    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI"], help="Model provider.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
     args = parser.parse_args()
@@ -156,8 +179,8 @@ def main():
         dataset = dataset.shuffle(seed=seed).select(range(sample_size))
         logger.info(f"Sampled {sample_size} examples from the dataset.")
 
-    input_template = MATHVISION_INPUT_TEMPLATE
-    # input_template = NOTOOL_INPUT_TEMPLATE
+    # input_template = MATHVISION_INPUT_TEMPLATE
+    input_template = NOTOOL_INPUT_TEMPLATE
 
     # 1) main process scan: collect done meta_info + pending items
     meta_info_list = []
@@ -185,7 +208,14 @@ def main():
     with ctx.Pool(
         processes=n_workers,
         initializer=_init_worker,
-        initargs=(args.api_key, args.model_name_or_path, output_path, input_template, MAX_TOOL_CALLS),
+        initargs=(
+            args.api_key,
+            args.model_name_or_path,
+            args.model_type,
+            output_path,
+            input_template,
+            MAX_TOOL_CALLS,
+        ),
     ) as pool:
 
         inflight = []  # list[(task_id, AsyncResult)]

@@ -1,14 +1,8 @@
-import io
 import logging
 import time
-from typing import Any, Dict, List, Tuple
-
-from google.genai import types
-from PIL import Image
+from typing import Any, Dict, Tuple
 
 from .base import AgentConfig, BaseAgent
-from ..constants import SYSTEM_PROMPT
-from ..environment.action import TOOL_FUNCTIONS, TOOL_FUNCTIONS_DECLARE
 
 from ..utils.logger import setup_logger
 
@@ -38,6 +32,12 @@ class APIBasedAgent(BaseAgent):
             self.model= self.config.model_name
             self._model_loaded = True
             logger.info(f"API-based model {self.config.model_name} loaded successfully.")
+        elif self.config.model_type == "OpenAI":
+            from openai import OpenAI
+            self.client = OpenAI(api_key=self.config.api_key)
+            self.model = self.config.model_name
+            self._model_loaded = True
+            logger.info(f"API-based model {self.config.model_name} loaded successfully.")
         else:
             raise NotImplementedError(f"Model type {self.config.model_type} not supported yet.")
     
@@ -49,7 +49,7 @@ class APIBasedAgent(BaseAgent):
         # API agent does not need to parse response as the response is directly returned.
         return raw_response
 
-    def _generate_response(self, model_input: List[Dict[str, Any]]) -> Tuple[str, Dict[str, Any],List[Dict[str, Any]]]:
+    def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, Any]]:
         """Generate response using the model
         
         Args:
@@ -60,23 +60,39 @@ class APIBasedAgent(BaseAgent):
             extra_info: Additional information
         """
         
-        gen_kwargs = self.config.generate_config
+        gen_kwargs = self.config.generate_config 
         extra_info = {}
         contents = model_input
-
-        response = self.client.models.generate_content(
+        if self.config.model_type == "Google":
+            response = self.client.models.generate_content(
                 model=self.model,
                 contents=contents,
                 config=gen_kwargs,
             )
-        extra_info["original_response"] = str(response)
-        extra_info["tokens_used"] = response.usage_metadata.total_token_count
+            extra_info["original_response"] = str(response)
+            if response.usage_metadata is not None:
+                extra_info["tokens_used"] = response.usage_metadata.total_token_count
+            content = response.candidates[0].content
+            return content, extra_info
 
-        content = response.candidates[0].content
+        if self.config.model_type == "OpenAI":
+            input_payload = contents["input"]
+            previous_response_id = contents["previous_response_id"]
+            response = self.client.responses.create(
+                model=self.model,
+                input=input_payload,
+                previous_response_id=previous_response_id,
+                **gen_kwargs,
+                
+            )
+            extra_info["original_response"] = str(response)
+            extra_info["response_id"] = response.id
+            extra_info["tokens_used"] = response.usage.total_tokens
+            return response, extra_info
 
-        return content, extra_info
+        raise NotImplementedError(f"Model type {self.config.model_type} not supported yet.")
 
-    def act(self, observation:List[Dict[str, Any]]) -> Tuple[types.Content, Dict[str, Any]]:
+    def act(self, observation: Any) -> Tuple[Any, Dict[str, Any]]:
         if self.client is None:
             self.load_model()
 
@@ -85,9 +101,15 @@ class APIBasedAgent(BaseAgent):
                 model_input=observation
                 
                 content, extra_info = self._generate_response(model_input)
-                if content.parts is None:
-                    logging.warning(f"Generated content parts is None: {content}")
-                    raise ValueError("Generated content is None.")
+                if self.config.model_type == "Google":
+                    if content.parts is None:
+                        logging.warning(f"Generated content parts is None: {content}")
+                        raise ValueError("Generated content is None.")
+                elif self.config.model_type == "OpenAI":
+                    if not content.output:
+                        logging.warning(f"Generated content output is empty: {content}")
+                        raise ValueError("Generated content is empty.")
+            
                 
                 extra_info.update({
                     "model_name": self.config.model_name,

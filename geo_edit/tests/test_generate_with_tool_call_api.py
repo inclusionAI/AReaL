@@ -5,19 +5,26 @@ import os
 import shutil
 from ..agents.api_agent import APIBasedAgent, AgentConfig
 from ..environment.action import TOOL_FUNCTIONS
-from ..environment.task.vision_qa_task import VisionQATask
-from ..config import NOTOOL_INPUT_TEMPLATE,MATHVISION_INPUT_TEMPLATE, build_agent_configs
+from ..environment.task.google_vision_qa_task import GoogleVisionQATask
+from ..environment.task.openai_vision_qa_task import OpenAIVisionQATask
+from ..config import (
+    NOTOOL_INPUT_TEMPLATE,
+    MATHVISION_INPUT_TEMPLATE,
+    build_agent_configs,
+    build_openai_agent_configs,
+)
 from ..constants import SYSTEM_PROMPT, MAX_TOOL_CALLS
 from ..utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 def main():
     # argparse 
-    parser = argparse.ArgumentParser(description="Generate content with tool calls using Google GenAI API.")
-    parser.add_argument("--api_key", type=str, required=True, help="API key for Google GenAI.")
+    parser = argparse.ArgumentParser(description="Generate content with tool calls using API models.")
+    parser.add_argument("--api_key", type=str, required=True, help="API key for the selected provider.")
     parser.add_argument("--dataset_path", type=str, required=False, help="Unused for the test script.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-flash-preview", help="Model name or path.")
+    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI"], help="Model provider.")
     parser.add_argument("--max_concurrent_requests", type=int, default=32, help="Maximum number of concurrent requests.")
     args = parser.parse_args()
     
@@ -26,20 +33,28 @@ def main():
     os.makedirs(output_path, exist_ok=True)
     max_output_tokens= None
 
-    agent_configs = build_agent_configs(
-        max_output_tokens=max_output_tokens,
-        thinking_level="low",
-        include_thoughts=True,
-        temperature=1.0,
-        system_prompt=SYSTEM_PROMPT,
-        candidate_count=1,
-        tool_mode="ANY",
-        disable_automatic_function_calling=True,
-    )
+    if args.model_type == "Google":
+        agent_configs = build_agent_configs(
+            max_output_tokens=max_output_tokens,
+            thinking_level="low",
+            include_thoughts=True,
+            temperature=1.0,
+            system_prompt=SYSTEM_PROMPT,
+            candidate_count=1,
+            tool_mode="ANY",
+            disable_automatic_function_calling=True,
+        )
+    else:
+        agent_configs = build_openai_agent_configs(
+            max_output_tokens=max_output_tokens,
+            temperature=1.0,
+            system_prompt=SYSTEM_PROMPT,
+            tool_mode="ANY",
+        )
     
 
     config = AgentConfig(
-        model_type="Google",
+        model_type=args.model_type,
         model_name=args.model_name_or_path,
         api_key=api_key,
         generate_config=agent_configs.generate_config,
@@ -68,7 +83,10 @@ def main():
 
         text_prompt= INPUT_TEMPLATE.format(question=question, options=options)
 
-        task= VisionQATask(
+        task_cls = (
+            GoogleVisionQATask if args.model_type == "Google" else OpenAIVisionQATask
+        )
+        task= task_cls(
             task_id=test_id,
             task_prompt=text_prompt,
             task_answer=answer,
@@ -88,7 +106,7 @@ def main():
                 logging.error(f"Error during agent action for example id: {test_id} at step {i+1}: {e}")
                 break
 
-            if not function_call_part_list or not function_call_part_list[-1].function_call:
+            if not function_call_part_list:
                 logging.info("Final response generated without further tool calls.")
                 break
 
@@ -96,9 +114,14 @@ def main():
         else:
             logging.info("Max tool calls reached; forcing final answer without tool calls.")
             FORCE_ANSWER_PROMPT = "Max tool calls reached. Please provide the final answer without further tool calls."
-            task.contents.append(FORCE_ANSWER_PROMPT)
+            if args.model_type == "Google":
+                task.contents.append(FORCE_ANSWER_PROMPT)
+            else:
+                task.append_prompt(FORCE_ANSWER_PROMPT)
+            original_generate_config = api_agent.config.generate_config
             api_agent.config.generate_config = agent_configs.force_generate_config
             action, extra_info = api_agent.act(task.contents)
+            api_agent.config.generate_config = original_generate_config
 
             _ = task.parse_action(step=max_tool_calls + 1, action=action, extra_info=extra_info)
 
