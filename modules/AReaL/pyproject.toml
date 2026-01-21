@@ -1,0 +1,244 @@
+[build-system]
+requires = [ "setuptools", "build>=1.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "areal"
+description = "AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+dynamic = ["version"]
+authors = [
+    {name = "AReaL Team"},
+]
+maintainers = [
+    {name = "AReaL Team"},
+]
+keywords = [
+    "distributed-systems",
+    "reinforcement-learning",
+    "large-language-models",
+    "llm-training",
+]
+classifiers = [
+    #   3 - Alpha
+    #   4 - Beta
+    #   5 - Production/Stable
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.2",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
+]
+
+dependencies = [
+    # Core ML/AI libraries
+    "torch==2.8.0",
+    "torchaudio",
+    "torchvision",
+    "torchdata",
+    "huggingface_hub",
+    "datasets",
+    "transformers==4.57.1",
+    "megatron-core==0.13.1",
+    "mbridge==0.13.0",
+    "sglang==0.5.5.post1",
+    "vllm==0.11.0",
+    "peft",
+    "qwen_agent",
+    "openai-agents",
+
+    # Visualization
+    "pandas",
+    "matplotlib",
+    "seaborn",
+
+    # Utilities and data processing
+    "setproctitle",
+    "nltk",
+    "sentencepiece",
+    "einops",
+    "orjson",
+    "tqdm",
+    "rich",
+    "pydantic",
+    "PyYAML",
+    "omegaconf==2.4.0.dev2",
+    "hydra-core==1.4.0.dev1",
+    "packaging",
+    "lark",
+    "tabulate",
+    "pybase64",
+    "msgspec",
+    "latex2sympy2",
+    "dotenv",
+    "json5",
+    "psutil",
+    "nvidia-ml-py",
+    "ninja",
+    "numba",
+    "blosc",
+    "pybind11>=2.10.0",
+    "networkx==3.3",
+    "aiofiles",
+    "aiohttp>=3.11.10",
+    "httpx>=0.28.1",
+    "pyzmq",
+    "paramiko",
+    "func_timeout",
+    "regex",
+    "python_dateutil",
+    "word2number",
+    "pebble",
+    "timeout-decorator",
+    "prettytable",
+    "h5py",
+
+    # Monitoring and logging
+    "wandb",
+    "tensorboardx",
+    "colorama",
+    "colorlog",
+    "swanboard==0.1.9b1",
+    "swanlab[dashboard]==0.6.12",
+
+    # Distributed computing
+    "ray[default]",
+    "redis",
+
+    # Web frameworks
+    "fastapi>=0.115.12",
+    "uvicorn>=0.34.2",
+    "uvloop>=0.21.0",
+    "flask",
+
+    # Build and packaging tools
+    "build>=1.2.1",
+    "wheel>=0.43.0",
+    "cookiecutter>2.1.1",
+    "distro-info>=1.0",
+    "python-debian>=0.1.49",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "flash-attn==2.8.3",
+]
+
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ipython",
+    "autoflake==2.3.1",
+    "ruff==0.14.1",
+    "clang-format==19.1.7",
+    "sh",
+    "mdformat==0.7.17",
+    "mdformat-gfm",
+    "mdformat-tables",
+    "mdformat-frontmatter",
+    "plotly",
+]
+
+docs = [
+    "sphinx",
+    "sphinx-nefertiti",
+    "jupyter-book",
+]
+
+all = [
+    "areal[cuda]",
+    "areal[dev]",
+    "areal[docs]",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/inclusionAI/AReaL"
+"Repository" = "https://github.com/inclusionAI/AReaL"
+"Documentation" = "https://inclusionai.github.io/AReaL/intro.html"
+"Bug Tracker" = "https://github.com/inclusionAI/AReaL/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "areal.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["areal*"]
+exclude = ["tests*", "realhf*", "docs*", "examples*", "evaluation*", "benchmark*"]
+
+[tool.uv]
+exclude-dependencies = ["flash-attn"]
+override-dependencies=[
+    "outlines-core==0.1.26",
+]
+
+[tool.uv.sources]
+latex2sympy2 = { path = "./evaluation/latex2sympy" }
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch==2.8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::UserWarning:torch.*",
+    "ignore::UserWarning:transformers.*",
+]
+markers = [
+    "slow: mark test as slow, expected to cost more than 30 seconds and will not run in CI by default.",
+    "ci: mark test as must-run in CI (only marked for slow tests).",
+    "gpu: mark test that uses a single GPU",
+    "multi_gpu: mark test that uses more than one GPU",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # E501 Line too long
+]
+
+[tool.ruff.lint.isort.sections]
+"areal" = ["areal"]
+
+[tool.ruff.lint.isort]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "areal",
+    "local-folder",
+]
+from-first = false
+
+# The following tools are remained as legacy.
+# We will use `ruff` instead in future development
+[tool.black]
+line-length = 88
+
+[tool.autoflake]
+in-place = true
+recursive = true
+remove-all-unused-imports = true
+remove-unused-variables = true
