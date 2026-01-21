@@ -191,6 +191,8 @@ def main() -> None:
         for meta_path in iter_meta_info_files(args.result_path):
             record_id = os.path.basename(os.path.dirname(meta_path))
             for record in load_records(meta_path):
+                from time import sleep
+                sleep(1)  
                 futures.append(executor.submit(evaluate_record, record, cfg, record_id))
 
         for future in as_completed(futures):

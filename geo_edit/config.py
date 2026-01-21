@@ -17,8 +17,8 @@ class AgentConfigs:
     tool_config: types.ToolConfig
     generate_config: types.GenerateContentConfig
     direct_generate_config: types.GenerateContentConfig
-    force_tool_config: types.ToolConfig
     force_generate_config: types.GenerateContentConfig
+    force_tool_call_config: Optional[types.GenerateContentConfig] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,8 +27,8 @@ class OpenAIAgentConfigs:
     tool_choice: Union[str, Dict[str, Any]]
     generate_config: Dict[str, Any]
     direct_generate_config: Dict[str, Any]
-    force_tool_choice: Union[str, Dict[str, Any]]
     force_generate_config: Dict[str, Any]
+    force_tool_call_config: Dict[str, Any]
 
 def _build_generate_config(**kwargs: object) -> types.GenerateContentConfig:
     return types.GenerateContentConfig(**{k: v for k, v in kwargs.items() if v is not None})
@@ -63,8 +63,8 @@ def _resolve_openai_tool_choice(tool_mode: str) -> str:
 def build_agent_configs(
     *,
     max_output_tokens: Optional[int] = None,
-    thinking_level: str = "high",
-    include_thoughts: bool = True,
+    thinking_level: Optional[str] = "high",
+    include_thoughts: Optional[bool] = True,
     temperature: float = 1.0,
     system_prompt: str = SYSTEM_PROMPT,
     candidate_count: int = 1,
@@ -83,9 +83,12 @@ def build_agent_configs(
         tool_config = types.ToolConfig(
             function_calling_config=types.FunctionCallingConfig(mode=tool_mode)
         )
-    thinking_config = types.ThinkingConfig(
-        thinkingLevel=thinking_level, include_thoughts=include_thoughts
-    )
+    thinking_config = None
+    if thinking_level is not None:
+        thinking_config = types.ThinkingConfig(
+            thinkingLevel=thinking_level,
+            include_thoughts=True if include_thoughts is None else include_thoughts,
+        )
     automatic_function_calling = (
         types.AutomaticFunctionCallingConfig(disable=True)
         if disable_automatic_function_calling
@@ -102,6 +105,19 @@ def build_agent_configs(
         candidate_count=candidate_count,
         automatic_function_calling=automatic_function_calling,
     )
+    force_tool_call_config = _build_generate_config(
+        tools=[tools],
+        thinking_config=thinking_config,
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(mode="ANY")
+        ),
+        temperature=temperature,
+        system_instruction=[system_prompt],
+        max_output_tokens=max_output_tokens,
+        candidate_count=candidate_count,
+        automatic_function_calling=automatic_function_calling,
+    )
+        
     direct_generate_config = _build_generate_config(
         thinking_config=thinking_config,
         temperature=temperature,
@@ -128,7 +144,7 @@ def build_agent_configs(
         tool_config=tool_config,
         generate_config=generate_config,
         direct_generate_config=direct_generate_config,
-        force_tool_config=force_generate_tool_config,
+        force_tool_call_config=force_tool_call_config,
         force_generate_config=force_generate_config,
     )
 
@@ -143,6 +159,15 @@ def build_openai_agent_configs(
 ) -> OpenAIAgentConfigs:
     tools = _build_openai_tool_specs(TOOL_FUNCTIONS_DECLARE)
     tool_choice = _resolve_openai_tool_choice(tool_mode)
+    
+    force_tool_call_config=_build_openai_generate_config(
+        tools=tools,
+        tool_choice="required",
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        instructions=system_prompt,
+        reasoning={"effort":reasoning_level}
+    )
 
     generate_config = _build_openai_generate_config(
         tools=tools,
@@ -172,8 +197,8 @@ def build_openai_agent_configs(
         tool_choice=tool_choice,
         generate_config=generate_config,
         direct_generate_config=direct_generate_config,
-        force_tool_choice="none",
         force_generate_config=force_generate_config,
+        force_tool_call_config=force_tool_call_config,
     )
 
 __all__ = [

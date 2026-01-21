@@ -119,7 +119,7 @@ def image_label_function(image_list, image_index: int, text: str| list, position
     coords = position.strip("()").split(",")
     x, y = int(int(coords[0]) * width / 1000), int(int(coords[1]) * height / 1000)
     # Using a default font
-    font = ImageFont.truetype("arial.ttf", 15)
+    font = ImageFont.truetype("arial.ttf", 30)
     draw.text((x, y), text, fill="red", font=font)
     
     return image_to_label

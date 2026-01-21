@@ -15,16 +15,14 @@ from ..environment.action import TOOL_FUNCTIONS
 from ..environment.task.google_vision_qa_task import GoogleVisionQATask
 from ..environment.task.openai_vision_qa_task import OpenAIVisionQATask
 from ..config import (
-    MATHVISION_INPUT_TEMPLATE,
-    NOTOOL_INPUT_TEMPLATE,
     build_agent_configs,
     build_openai_agent_configs,
 )
-from ..constants import SYSTEM_PROMPT, MAX_TOOL_CALLS
+from ..constants import SYSTEM_PROMPT, MAX_TOOL_CALLS, SUDOKU_TOOL_CALL_INPUT_TEMPLATE, MATHVISION_INPUT_TEMPLATE, NOTOOL_INPUT_TEMPLATE, SUDOKU_TEXT_INPUT_TEMPLATE
 from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)
-# ----------------------------
+# ---------------------------
 # Worker globals (one per process)
 # ----------------------------
 _WORKER_AGENT = None
@@ -73,7 +71,7 @@ def _init_worker(
         model_type=model_type,
         model_name=model_name_or_path,
         api_key=api_key,
-        generate_config=agent_configs.direct_generate_config,
+        generate_config=agent_configs.generate_config,
         n_retry=3,
     )
 
@@ -100,6 +98,10 @@ def _run_one_task(task_payload: dict):
     options = task_payload["options"]
     answer = task_payload["answer"]
     image_path = task_payload["image_path"]
+    rows = task_payload["rows"]
+    cols = task_payload["cols"]
+    initial_board = task_payload["initial_board"]
+    visual_elements = task_payload["visual_elements"]
 
     meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
     if os.path.exists(meta_path):
@@ -107,7 +109,7 @@ def _run_one_task(task_payload: dict):
             meta_info = json.loads(f.readline().strip())
         return True, meta_info
 
-    text_prompt = _WORKER_INPUT_TEMPLATE.format(question=question, options=options)
+    text_prompt = _WORKER_INPUT_TEMPLATE.format(rules=question, answer=answer, rows=rows, cols=cols, total_cells=rows*cols, initial_board=initial_board, visual_elements=visual_elements)
 
     task = _WORKER_TASK_CLASS(
         task_id=task_id,
@@ -116,6 +118,7 @@ def _run_one_task(task_payload: dict):
         task_image_path=image_path,
         tool_functions=TOOL_FUNCTIONS,
         save_dir=task_save_dir,
+        text_only=False,
     )
 
     _WORKER_AGENT.reset()
@@ -129,6 +132,9 @@ def _run_one_task(task_payload: dict):
                 break
 
             task.update_observation_from_action(function_call_part_list)
+            
+            if i>=4:
+                _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.generate_config
 
         if task.state and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS:
             force_prompt = "Max tool calls reached. Please provide the final answer without further tool calls."
@@ -171,7 +177,7 @@ def main():
     os.makedirs(output_path, exist_ok=True)
 
     dataset = load_dataset("parquet", data_files=args.dataset_path)["train"]
-    dataset = dataset.filter(lambda x: x["image_preview"] is not None)
+    # dataset = dataset.filter(lambda x: x["image_preview"] is not None)
     logger.info(f"Dataset size after filtering: {len(dataset)}")
 
     if args.sample_rate < 1.0:
@@ -180,14 +186,14 @@ def main():
         logger.info(f"Sampled {sample_size} examples from the dataset.")
 
     # input_template = MATHVISION_INPUT_TEMPLATE
-    input_template = NOTOOL_INPUT_TEMPLATE
+    input_template =  SUDOKU_TOOL_CALL_INPUT_TEMPLATE
 
     # 1) main process scan: collect done meta_info + pending items
     meta_info_list = []
     pending_items = []
 
     for item in dataset:
-        task_id = item["id"]
+        task_id = item["puzzle_id"]
         task_save_dir = os.path.join(output_path, task_id)
         meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
 
@@ -229,7 +235,7 @@ def main():
                 item = pending_items[submit_idx]
                 submit_idx += 1
 
-                task_id = item["id"]
+                task_id = item["puzzle_id"]
                 task_save_dir = os.path.join(output_path, task_id)
                 meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
 
@@ -242,20 +248,24 @@ def main():
 
                 os.makedirs(task_save_dir, exist_ok=True)
 
-                image_preview = item["image_preview"]
-                if isinstance(image_preview, Image.Image):
+                image = item["board_image"]
+                if isinstance(image, Image.Image):
                     image_path = os.path.join(task_save_dir, "input_image.png")
-                    image_preview.save(image_path)
+                    image.save(image_path)
                 else:
-                    image_path = image_preview
+                    image_path = image
 
                 payload = {
                     "id": task_id,
                     "task_save_dir": task_save_dir,
-                    "question": item["question"],
-                    "options": item.get("options", ""),
-                    "answer": item["answer"],
+                    "question": item["rules"],
+                    "answer": item["solution"],
                     "image_path": image_path,
+                    "options": item.get("options", ""),
+                    "rows": item["rows"],
+                    "cols": item["cols"],
+                    "initial_board": item["initial_board"],
+                    "visual_elements": str(item["visual_elements"]) if "visual_elements" in item else "",
                 }
 
                 ar = pool.apply_async(_run_one_task, (payload,))

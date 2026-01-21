@@ -32,7 +32,12 @@ class GoogleVisionQATask(VisionQATask):
             tool_functions=tool_functions,
             **kwargs,
         )
-        self.contents = [self.task_prompt, "Observation 0:", self.image_list[0]]
+        # text only option
+        if kwargs.get("text_only", False):
+            logger.info("Initializing GoogleVisionQATask in text only mode.")
+            self.contents = [self.task_prompt]
+        else:
+            self.contents = [self.task_prompt, "Observation 0:", self.image_list[0]]
 
     def _stringify_observation_item(self, item: Any) -> Any:
         from google.genai import types
