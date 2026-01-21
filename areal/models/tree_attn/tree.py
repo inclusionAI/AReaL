@@ -228,7 +228,6 @@ def build_packed_tree_batch(
     data: dict[str, Any],
     mb_spec: MicroBatchSpec,
     pad_to_maximum: bool = True,
-    pad_to_multiple_of: int = 1,
     dp_group: dist.ProcessGroup | None = None,
 ) -> MicroBatchList:
     """Build a MicroBatchList from input data using greedy trie packing.
@@ -247,11 +246,6 @@ def build_packed_tree_batch(
         training and will trigger warnings if set to non-default values.
     pad_to_maximum : bool, default=True
         If True, pad all trees to max_tokens_per_mb.
-        If False, padding is determined by pad_to_multiple_of.
-    pad_to_multiple_of : int, default=1
-        When pad_to_maximum=False, pad to the nearest multiple of this value.
-        If <= 1, no padding is applied. No padding raises error if
-        USE_BLOCK_MASK=True.
     dp_group : dist.ProcessGroup | None, default=None
         Data parallel process group. If provided, synchronizes the number of
         trees across all ranks by appending dummy trees to ranks with fewer
@@ -281,8 +275,7 @@ def build_packed_tree_batch(
         )
 
     # Validate padding constraints for block masks
-    no_padding = not pad_to_maximum and pad_to_multiple_of <= 1
-    if no_padding:
+    if not pad_to_maximum:
         raise ValueError(
             "No padding is not supported for tree training. "
             "Block masks require padded sequences for efficient computation. "
@@ -292,10 +285,6 @@ def build_packed_tree_batch(
         raise ValueError(
             f"max_tokens_per_tree must be a multiple of BLOCK_SIZE ({BLOCK_SIZE}) "
             f"when pad_to_maximum=True"
-        )
-    if not pad_to_maximum and pad_to_multiple_of % BLOCK_SIZE != 0:
-        raise ValueError(
-            f"pad_to_multiple_of must be a multiple of BLOCK_SIZE ({BLOCK_SIZE})"
         )
 
     # Build tries using greedy packing

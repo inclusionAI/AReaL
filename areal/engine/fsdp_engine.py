@@ -1199,7 +1199,6 @@ class FSDPEngine(TrainEngine):
                 input_,
                 mb_spec=self.config.mb_spec,
                 pad_to_maximum=self.config.pad_to_maximum,
-                pad_to_multiple_of=BLOCK_SIZE,
                 dp_group=self.data_parallel_group,
             )
             self.logger.info(
