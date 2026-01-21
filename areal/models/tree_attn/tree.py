@@ -247,7 +247,8 @@ def build_packed_tree_batch(
     pad_to_maximum : bool, default=True
         If True, pad all trees to max_tokens_per_mb.
     dp_group : dist.ProcessGroup | None, default=None
-        Data parallel process group. If provided, synchronizes the number of
+        Data parallel process group. Default (None) is the world group.
+        If torch.distributed is initialized, synchronizes the number of
         trees across all ranks by appending dummy trees to ranks with fewer
         trees.
 
@@ -291,7 +292,7 @@ def build_packed_tree_batch(
     tries, num_tokens_list = _greedy_build_tries(data, max_tokens_per_tree)
 
     # Synchronize number of trees across dp_group if provided
-    if dp_group is not None:
+    if dist.is_initialized():
         num_trees = len(tries)
         input_template: torch.Tensor = data["input_ids"]
 
@@ -350,9 +351,7 @@ def build_packed_tree_batch(
 
     for trie, num_tokens in zip(tries, num_tokens_list):
         # Compute padded size based on padding options
-        padded_size = _compute_padded_size(
-            num_tokens, max_tokens_per_tree, pad_to_maximum, pad_to_multiple_of
-        )
+        padded_size = max_tokens_per_tree if pad_to_maximum else num_tokens
 
         # Pack input_ids
         with trace_scope("tree_attn.pack_input_ids"):
@@ -421,25 +420,6 @@ def build_packed_tree_batch(
         _max_seqlen=max(padded_to_lengths),
     )
     return batch
-
-
-def _compute_padded_size(
-    num_tokens: int,
-    max_tokens_per_tree: int,
-    pad_to_maximum: bool,
-    pad_to_multiple_of: int,
-) -> int:
-    """Compute the padded size for a tree based on padding options."""
-    if pad_to_maximum:
-        return max_tokens_per_tree
-    elif pad_to_multiple_of > 1:
-        # Round up to nearest multiple
-        return (
-            (num_tokens + pad_to_multiple_of - 1) // pad_to_multiple_of
-        ) * pad_to_multiple_of
-    else:
-        # No padding
-        return num_tokens
 
 
 @trace_perf("tree_attn._greedy_build_tries")
