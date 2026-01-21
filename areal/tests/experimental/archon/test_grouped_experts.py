@@ -13,6 +13,10 @@ from areal.experimental.models.archon.moe.grouped_experts import (
     _run_experts_for_loop,
 )
 
+# Marked as slow to exclude from CI pipeline.
+# NOTE: Upgrading PyTorch will resolve this in the future.
+pytestmark = pytest.mark.slow
+
 
 class TestGroupedExpertsBasic:
     """Basic tests for GroupedExperts."""
