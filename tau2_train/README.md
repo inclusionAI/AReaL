@@ -1,6 +1,4 @@
 
-怎么跑起来：
-    
 1. launch a sglang server as user simulator
 2. specify user_base_url and user_model
 
