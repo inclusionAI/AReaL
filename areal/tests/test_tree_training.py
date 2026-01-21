@@ -178,6 +178,7 @@ def _create_engine(
         mb_spec=MicroBatchSpec(**mb_spec_kwargs),
         optimizer=OptimizerConfig(),
         enable_tree_training=enable_tree_training,
+        pad_to_maximum=True,
     )
 
     if engine_type == "fsdp":
