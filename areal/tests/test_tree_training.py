@@ -311,7 +311,6 @@ def test_tree_training_forward_backward(engine_type):
         enable_tree_training=True,
         port="7778",
         experiment_name="test_tree",
-        max_tokens_per_mb=16384,
     )
     tree_engine.train()
     _ = tree_engine.train_batch(
