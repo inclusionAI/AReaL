@@ -291,7 +291,7 @@ def build_packed_tree_batch(
     # Build tries using greedy packing
     tries, num_tokens_list = _greedy_build_tries(data, max_tokens_per_tree)
 
-    # Synchronize number of trees across dp_group if provided
+    # Synchronize number of trees across dp_group.
     if dist.is_initialized():
         num_trees = len(tries)
         input_template: torch.Tensor = data["input_ids"]
