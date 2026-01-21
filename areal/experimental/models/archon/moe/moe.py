@@ -214,22 +214,21 @@ class MoE(nn.Module):
 
         return out.view(bs, slen, dim)
 
-    def init_weights(self, init_std: float, buffer_device: torch.device | None = None):
+    def init_weights(self, init_std: float, buffer_device: torch.device):
         """Initialize weights.
 
         Args:
             init_std: Standard deviation for output projections.
             buffer_device: Device for buffers.
         """
-        self.router.init_weights(init_std=0.02)
-        self.experts.init_weights(init_std=init_std)
+        self.experts.init_weights(init_std)
+        self.router.init_weights(init_std)
 
         if self.shared_experts is not None:
-            self.shared_experts.init_weights(init_std=init_std)
+            self.shared_experts.init_weights(init_std)
 
         # Reset buffers
-        device = buffer_device or self.tokens_per_expert.device
-        with torch.device(device):
+        with torch.device(buffer_device):
             self.tokens_per_expert = torch.zeros(self.num_experts, dtype=torch.float32)
             if self.load_balance_coeff is not None:
                 self.expert_bias = torch.zeros(self.num_experts, dtype=torch.float32)

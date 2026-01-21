@@ -41,7 +41,7 @@ class ParallelizeFn(Protocol):
         reduce_dtype: torch.dtype = torch.float32,
         loss_parallel: bool = True,
         cpu_offload: bool = False,
-        reshard_after_forward: bool = True,
+        reshard_after_forward_policy: str = "default",
         ac_config: ActivationCheckpointConfig | None = None,
         enable_compile: bool = True,
     ) -> nn.Module: ...

@@ -88,9 +88,11 @@ class ArchonParallelDims:
         - ep_tp mesh: 2D mesh [ep=2, tp=2] for 2D expert weight sharding
     """
 
+    dp_replicate: int = 1  # HSDP replicate dimension (not supported yet)
     dp_shard: int = -1  # FSDP shard dimension, -1 means auto
-    tp: int = 1  # Tensor Parallel size
     cp: int = 1  # Context Parallel size (Ulysses SP)
+    tp: int = 1  # Tensor Parallel size
+    pp: int = 1  # Pipeline Parallel size
     ep: int = 1  # Expert Parallel size
     etp: int = 1  # Expert Tensor Parallel size (1 or tp)
     world_size: int = 1
@@ -276,19 +278,34 @@ class ArchonParallelDims:
     # =========================================================================
 
     @property
-    def fsdp_enabled(self) -> bool:
-        """Whether FSDP is enabled (dp_shard > 1 or cp > 1)."""
-        return self.dp_shard > 1 or self.cp > 1
+    def dp_replicate_enabled(self) -> bool:
+        """Whether HSDP replication is enabled (dp_replicate > 1)."""
+        return self.dp_replicate > 1
 
     @property
-    def dp_enabled(self) -> bool:
-        """Whether data parallelism is enabled (dp_shard > 1)."""
+    def dp_shard_enabled(self) -> bool:
+        """Whether FSDP sharding is enabled (dp_shard > 1)."""
         return self.dp_shard > 1
 
     @property
+    def dp_enabled(self) -> bool:
+        """Whether any data parallelism is enabled (dp_replicate > 1 or dp_shard > 1)."""
+        return self.dp_replicate_enabled or self.dp_shard_enabled
+
+    @property
     def dp_cp_enabled(self) -> bool:
-        """Whether data or context parallelism is enabled."""
+        """Whether data or context parallelism is enabled (for loss all-reduce)."""
         return self.dp_enabled or self.cp_enabled
+
+    @property
+    def fsdp_enabled(self) -> bool:
+        """Whether FSDP is enabled (dp_shard > 1 or cp > 1)."""
+        return self.dp_shard_enabled or self.cp_enabled
+
+    @property
+    def cp_enabled(self) -> bool:
+        """Whether context parallelism is enabled."""
+        return self.cp > 1
 
     @property
     def tp_enabled(self) -> bool:
@@ -296,9 +313,9 @@ class ArchonParallelDims:
         return self.tp > 1
 
     @property
-    def cp_enabled(self) -> bool:
-        """Whether context parallelism is enabled."""
-        return self.cp > 1
+    def pp_enabled(self) -> bool:
+        """Whether pipeline parallelism is enabled."""
+        return self.pp > 1
 
     @property
     def ep_enabled(self) -> bool:
