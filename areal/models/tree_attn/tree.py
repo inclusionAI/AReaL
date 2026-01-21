@@ -280,12 +280,12 @@ def build_packed_tree_batch(
         raise ValueError(
             "No padding is not supported for tree training. "
             "Block masks require padded sequences for efficient computation. "
-            "Set pad_to_maximum=True or pad_to_multiple_of > 1."
+            "Please set pad_to_maximum=True."
         )
     if pad_to_maximum and max_tokens_per_tree % BLOCK_SIZE != 0:
         raise ValueError(
             f"max_tokens_per_tree must be a multiple of BLOCK_SIZE ({BLOCK_SIZE}) "
-            f"when pad_to_maximum=True"
+            f"when pad_to_maximum=True."
         )
 
     # Build tries using greedy packing
