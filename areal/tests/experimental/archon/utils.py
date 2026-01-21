@@ -40,8 +40,8 @@ DENSE_MODEL_PATHS = {
 # MoE models (slow to instantiate due to large number of experts)
 MOE_MODEL_PATHS = {
     "qwen3_moe": get_model_path(
-        "/storage/openpsi/models/Qwen__Qwen3-30B-A3B-Instruct-2507/",
-        "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "/storage/openpsi/models/Qwen__Qwen3-30B-A3B/",
+        "Qwen/Qwen3-30B-A3B",
     ),
 }
 

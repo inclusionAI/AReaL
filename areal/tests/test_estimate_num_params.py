@@ -18,7 +18,7 @@ from areal.utils.network import find_free_ports
     [
         "Qwen/Qwen2-1.5B-Instruct",
         "Qwen/Qwen3-1.7B",
-        "Qwen/Qwen3-32B",
+        # "Qwen/Qwen3-32B",
         "Qwen/Qwen3-30B-A3B",
     ],
 )

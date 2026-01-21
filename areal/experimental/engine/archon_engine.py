@@ -178,11 +178,14 @@ class ArchonEngine(TrainEngine):
         dp_size = parallel_strategy.data_parallel_size
         cp_size = parallel_strategy.context_parallel_size
         ep_size = parallel_strategy.expert_parallel_size
+        etp_size = parallel_strategy.expert_tensor_parallel_size
+
         self.parallel_dims = ArchonParallelDims(
             dp_shard=dp_size,
             tp=tp_size,
             cp=cp_size,
             ep=ep_size,
+            etp=etp_size,
             world_size=self.world_size,
             device_type=current_platform.device_type,
         )
@@ -205,7 +208,8 @@ class ArchonEngine(TrainEngine):
         self.logger.info(
             f"Initialized Archon engine with parallel dims: "
             f"dp_shard={self.parallel_dims.dp_shard}, tp={self.parallel_dims.tp}, "
-            f"cp={self.parallel_dims.cp} (Ulysses SP), ep={self.parallel_dims.ep}"
+            f"cp={self.parallel_dims.cp} (Ulysses SP), ep={self.parallel_dims.ep}, "
+            f"etp={etp_size}"
         )
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
@@ -906,25 +910,24 @@ class ArchonEngine(TrainEngine):
             return None
 
         archon_config = self.config.archon
-        granularity = archon_config.recompute_granularity
+        mode = archon_config.ac_mode
 
-        if granularity == "none":
+        if mode == "none":
             return None
 
-        if granularity == "selective" and archon_config.recompute_num_layers == 0:
-            selective_option = "op"
-        else:
-            selective_option = str(archon_config.recompute_num_layers)
-
         ac_config = ActivationCheckpointConfig(
-            mode=granularity,
-            selective_ac_option=selective_option,
-            preserve_rng_state=False,
+            mode=mode,
+            selective_ac_option=archon_config.selective_ac_option,
+            memory_budget=archon_config.ac_memory_budget,
+            preserve_rng_state=archon_config.ac_preserve_rng_state,
+            debug=archon_config.ac_debug,
         )
 
         self.logger.info(
-            f"Activation checkpointing enabled: mode={granularity}, "
-            f"selective_option={selective_option}"
+            f"Activation checkpointing: mode={ac_config.mode}, "
+            f"selective_option={ac_config.selective_ac_option}, "
+            f"memory_budget={ac_config.memory_budget}, "
+            f"preserve_rng={ac_config.preserve_rng_state}, debug={ac_config.debug}"
         )
 
         return ac_config

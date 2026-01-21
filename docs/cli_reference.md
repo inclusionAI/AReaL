@@ -781,13 +781,16 @@ Configuration for Weights & Biases experiment tracking.
 
 Configuration for Archon Engine training backend.
 
-| Parameter               | Type    | Default    | Description                                                                                        |
-| ----------------------- | ------- | ---------- | -------------------------------------------------------------------------------------------------- |
-| `attn_type`             | string  | `"varlen"` | Attention backend type. **Choices:** `varlen`, `sdpa`                                              |
-| `offload_params`        | boolean | `False`    | Whether to offload FSDP parameters to CPU.                                                         |
-| `enable_compile`        | boolean | `True`     | Enable torch.compile for TransformerBlocks.                                                        |
-| `recompute_granularity` | string  | `"full"`   | Activation checkpointing granularity. **Choices:** `none`, `full`, `selective`                     |
-| `recompute_num_layers`  | integer | `1`        | For selective recompute: checkpoint every N layers. Set to 0 for op-level selective checkpointing. |
+| Parameter               | Type    | Default       | Description                                                                                                                            |
+| ----------------------- | ------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `attn_type`             | string  | `"varlen"`    | Attention backend type. **Choices:** `varlen`, `sdpa`                                                                                  |
+| `offload_params`        | boolean | `False`       | Whether to offload FSDP parameters to CPU.                                                                                             |
+| `enable_compile`        | boolean | `True`        | Enable torch.compile for TransformerBlocks.                                                                                            |
+| `ac_mode`               | string  | `"selective"` | Activation checkpointing mode. 'memory_budget' requires enable_compile=True. **Choices:** `none`, `full`, `selective`, `memory_budget` |
+| `selective_ac_option`   | string  | `"op"`        | Selective AC option: 'op' for op-level, or integer string (e.g., '2') for every Nth layer.                                             |
+| `ac_memory_budget`      | float   | `0.5`         | Memory budget for 'memory_budget' AC mode. 0.0 = minimum memory (max recompute), 1.0 = default behavior (no recompute).                |
+| `ac_preserve_rng_state` | boolean | `False`       | Preserve RNG state during checkpointing for deterministic output. Enabling this may slow down training.                                |
+| `ac_debug`              | boolean | `False`       | (Testing only) Capture AC debug information. Will be slower.                                                                           |
 
 (section-distributed-data-parallel)=
 

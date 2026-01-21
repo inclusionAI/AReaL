@@ -95,7 +95,7 @@ def _run_experts_grouped_mm(
     # Cast to bfloat16 for grouped_mm.
     # Note: torch._grouped_mm currently only supports bfloat16 on CUDA.
     # bf16bf16_grouped_mm is optimized CUTLASS kernel.
-    # NOTE: Upgrading pytorch may resolve this in the future.
+    # NOTE: Upgrading PyTorch may resolve this in the future.
     x_bf16 = x.bfloat16()
     w1_bf16 = w1.bfloat16().transpose(-2, -1)
     w2_bf16 = w2.bfloat16().transpose(-2, -1)

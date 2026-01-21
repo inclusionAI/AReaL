@@ -17,6 +17,8 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
+from areal.experimental.models.archon.activation_checkpoint import apply_ac
+from areal.experimental.models.archon.compile import apply_compile
 from areal.experimental.models.archon.utils import (
     validate_cp_constraints,
     validate_tp_constraints,
@@ -30,6 +32,32 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger("ArchonQwen2Parallelize")
+
+
+def _get_op_sac_save_list() -> set[torch._ops.OpOverload]:
+    # Import varlen_attention to register torch.ops.areal._varlen_attn
+    from areal.experimental.models.archon import varlen_attention as _  # noqa: F401
+
+    return {
+        torch.ops.aten.mm.default,
+        torch.ops.aten._scaled_dot_product_efficient_attention.default,
+        torch.ops.aten._scaled_dot_product_flash_attention.default,
+        torch.ops.aten._scaled_dot_product_cudnn_attention.default,
+        torch.ops.aten._scaled_dot_product_attention_math.default,
+        torch.ops.aten._scaled_dot_product_fused_attention_overrideable.default,
+        torch.ops._c10d_functional.reduce_scatter_tensor.default,
+        # for low precision training, it's useful to always save
+        # the result of max, since the absolute maximum is
+        # used to compute the scaling factor for quantization.
+        torch.ops.aten.max.default,
+        torch._higher_order_ops.flex_attention,
+        torch.ops.areal._varlen_attn.default,
+        # When torch.compile is used, inductor wraps compiled code in this HOP.
+        # Saving its output avoids re-compilation during backward recompute and
+        # ensures SAC correctly interacts with compiled regions.
+        # NOTE: Upgrading PyTorch will enable this in the future.
+        # torch._higher_order_ops.inductor_compiled_code,
+    }
 
 
 def parallelize_qwen2(
@@ -85,16 +113,15 @@ def parallelize_qwen2(
 
     # AC must be after TP/CP
     if ac_config is not None and ac_config.mode != "none":
-        from areal.experimental.models.archon.activation_checkpoint import (
-            apply_activation_checkpointing,
+        apply_ac(
+            model,
+            ac_config,
+            model_compile_enabled=enable_compile,
+            op_sac_save_list=_get_op_sac_save_list(),
         )
-
-        apply_activation_checkpointing(model, ac_config)
 
     # torch.compile must be after AC, before FSDP
     if enable_compile:
-        from areal.experimental.models.archon.compile import apply_compile
-
         apply_compile(model)
 
     # Apply FSDP
