@@ -341,7 +341,7 @@ class TransformerBlock(nn.Module):
             norm.reset_parameters()
         self.attention.init_weights(self.weight_init_std)
         if self.moe_enabled:
-            self.moe.init_weights(self.weight_init_std)
+            self.moe.init_weights(self.weight_init_std, buffer_device)
         else:
             self.feed_forward.init_weights(self.weight_init_std)
 

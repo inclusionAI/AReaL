@@ -82,7 +82,7 @@ def parallelize_qwen3(
     reduce_dtype: torch.dtype = torch.float32,
     loss_parallel: bool = True,
     cpu_offload: bool = False,
-    reshard_after_forward: bool = True,
+    reshard_after_forward_policy: str = "default",
     ac_config: ActivationCheckpointConfig | None = None,
     enable_compile: bool = True,
 ) -> nn.Module:
@@ -106,7 +106,10 @@ def parallelize_qwen3(
         reduce_dtype: Data type for gradient reduction.
         loss_parallel: Whether to keep output sharded for loss parallelism.
         cpu_offload: Whether to enable CPU offloading for FSDP.
-        reshard_after_forward: Whether to reshard after forward pass.
+        reshard_after_forward_policy: Policy for resharding after forward pass.
+            - "default": applies default resharding behavior (disabled for PP)
+            - "always": enable reshard_after_forward for all forward passes
+            - "never": disable reshard_after_forward for all forward passes
         ac_config: Activation checkpointing configuration. If None, AC is not applied.
         enable_compile: Whether to apply torch.compile to TransformerBlocks.
 
@@ -169,8 +172,9 @@ def parallelize_qwen3(
             dp_mesh,
             param_dtype=param_dtype,
             reduce_dtype=reduce_dtype,
+            pp_enabled=parallel_dims.pp_enabled,
             cpu_offload=cpu_offload,
-            reshard_after_forward=reshard_after_forward,
+            reshard_after_forward_policy=reshard_after_forward_policy,
             ep_degree=parallel_dims.ep,
             dp_mod_ep_mesh=dp_mod_ep_mesh,
             gradient_divide_factor=parallel_dims.fsdp_gradient_divide_factor,
@@ -288,8 +292,9 @@ def apply_fsdp(
     dp_mesh: DeviceMesh,
     param_dtype: torch.dtype = torch.bfloat16,
     reduce_dtype: torch.dtype = torch.float32,
+    pp_enabled: bool = False,
     cpu_offload: bool = False,
-    reshard_after_forward: bool = True,
+    reshard_after_forward_policy: str = "default",
     ep_degree: int = 1,
     dp_mod_ep_mesh: DeviceMesh | None = None,
     gradient_divide_factor: int | None = None,
@@ -308,8 +313,12 @@ def apply_fsdp(
         dp_mesh: Device mesh for data parallelism (dp_shard_cp).
         param_dtype: Data type for model parameters.
         reduce_dtype: Data type for gradient reduction.
+        pp_enabled: Whether pipeline parallelism is enabled.
         cpu_offload: Whether to enable CPU offloading.
-        reshard_after_forward: Whether to reshard parameters after forward.
+        reshard_after_forward_policy: Policy for resharding after forward pass.
+            - "default": applies default resharding behavior (disabled for PP)
+            - "always": enable reshard_after_forward for all forward passes
+            - "never": disable reshard_after_forward for all forward passes
         ep_degree: Expert parallelism degree.
         dp_mod_ep_mesh: Device mesh for MoE experts FSDP sharding (dp_shard_mod_ep).
             Only used when ep_degree > 1.
@@ -321,6 +330,20 @@ def apply_fsdp(
 
     if cpu_offload:
         fsdp_config["offload_policy"] = CPUOffloadPolicy()
+
+    match reshard_after_forward_policy:
+        case "always":
+            reshard_after_forward = True
+        case "never":
+            reshard_after_forward = False
+        case "default":
+            # For PP, by default do not reshard after forward to avoid per-microbatch
+            # all-gathers, which can be expensive and non-overlapped
+            reshard_after_forward = not pp_enabled
+        case _:
+            raise ValueError(
+                f"Invalid reshard_after_forward_policy: {reshard_after_forward_policy}."
+            )
 
     if model.tok_embeddings is not None:
         fully_shard(
@@ -340,14 +363,23 @@ def apply_fsdp(
             fsdp_ep_config = fsdp_config.copy()
             fsdp_ep_config["mesh"] = dp_mod_ep_mesh
 
+            # When dp_mod_ep * ep > num_experts, FSDP default dim-0 sharding
+            # causes inefficiency, so we choose to do FSDP sharding on dim-1.
+            _experts_shard_placement_fn = None
+            if (
+                dp_mod_ep_mesh.size() * ep_degree
+                > transformer_block.moe.experts.num_experts
+            ):
+                _experts_shard_placement_fn = lambda param: Shard(1)  # noqa: E731
+
             # FSDP wrap the MoE experts with dp_mod_ep_mesh
             fully_shard(
                 transformer_block.moe.experts,
                 **fsdp_ep_config,
                 reshard_after_forward=reshard_after_forward,
+                shard_placement_fn=_experts_shard_placement_fn,
             )
 
-            # Set gradient divide factor for consistent gradient scaling
             # Although the FSDP sharding of experts is done on a mesh of a different
             # size than other parameters, the gradient division factor should be
             # consistent with data parallelism.
@@ -362,7 +394,8 @@ def apply_fsdp(
             reshard_after_forward=reshard_after_forward,
         )
 
-    # Don't reshard final layers - would be prefetched anyway
+    # As an optimization, do not reshard_after_forward the last layers by default
+    # since FSDP would prefetch them immediately after the forward pass
     final_layers = [model.norm] if model.norm is not None else []
     if model.output is not None:
         final_layers.append(model.output)
@@ -373,7 +406,7 @@ def apply_fsdp(
         fully_shard(
             final_layers,
             **fsdp_config,
-            reshard_after_forward=False,
+            reshard_after_forward=reshard_after_forward_policy == "always",
         )
 
     fully_shard(model, **fsdp_config)

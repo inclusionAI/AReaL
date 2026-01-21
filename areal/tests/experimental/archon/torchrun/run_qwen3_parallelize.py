@@ -113,7 +113,7 @@ def create_and_parallelize_model(
         reduce_dtype=torch.float32,
         loss_parallel=True,
         cpu_offload=False,
-        reshard_after_forward=True,
+        reshard_after_forward_policy="default",
         ac_config=None,
         enable_compile=enable_compile,
     )

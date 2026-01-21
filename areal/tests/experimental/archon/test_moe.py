@@ -40,7 +40,7 @@ class TestMoEBasic:
         moe_args = MoEArgs(num_experts=4, top_k=2, use_grouped_mm=False)
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(batch_size, seq_len, dim, device="cuda")
         out = moe(x)
@@ -56,7 +56,7 @@ class TestMoEBasic:
         moe_args = MoEArgs(num_experts=4, top_k=1, use_grouped_mm=False)
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(batch_size, seq_len, dim, device="cuda")
         out = moe(x)
@@ -77,7 +77,7 @@ class TestMoEConfigurations:
         moe_args = MoEArgs(num_experts=4, top_k=1, use_grouped_mm=False)
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(2, 8, dim, device="cuda")
         out = moe(x)
@@ -91,7 +91,7 @@ class TestMoEConfigurations:
         moe_args = MoEArgs(num_experts=8, top_k=2, use_grouped_mm=False)
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(2, 8, dim, device="cuda")
         out = moe(x)
@@ -105,7 +105,7 @@ class TestMoEConfigurations:
         moe_args = MoEArgs(num_experts=64, top_k=8, use_grouped_mm=False)
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(2, 8, dim, device="cuda")
         out = moe(x)
@@ -125,7 +125,7 @@ class TestMoESharedExperts:
         )
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         assert moe.shared_experts is not None
 
@@ -143,7 +143,7 @@ class TestMoESharedExperts:
         )
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         assert moe.shared_experts is None
 
@@ -168,7 +168,7 @@ class TestMoEScoreApplication:
         )
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(2, 8, dim, device="cuda")
         out = moe(x)
@@ -187,7 +187,7 @@ class TestMoEScoreApplication:
         )
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(2, 8, dim, device="cuda")
         out = moe(x)
@@ -207,7 +207,7 @@ class TestMoELoadBalancing:
         )
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         # Initially zero
         assert torch.all(moe.tokens_per_expert == 0)
@@ -253,7 +253,7 @@ class TestMoEGradients:
         moe_args = MoEArgs(num_experts=4, top_k=2, use_grouped_mm=False)
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(2, 8, dim, device="cuda", requires_grad=True)
         out = moe(x)
@@ -280,7 +280,7 @@ class TestMoEGradients:
         )
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         # Use enough tokens so each expert gets some
         x = torch.randn(1, num_experts * 4, dim, device="cuda", requires_grad=True)
@@ -311,7 +311,7 @@ class TestMoEIntegration:
         )
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(1, 16, dim, device="cuda")
         out = moe(x)
@@ -327,7 +327,7 @@ class TestMoEIntegration:
         )
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(2, 8, dim, device="cuda")
 
@@ -347,7 +347,7 @@ class TestMoEIntegration:
         moe_args = MoEArgs(num_experts=4, top_k=2, use_grouped_mm=False)
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(1, 16, dim, device="cuda")
         out = moe(x)
@@ -361,7 +361,7 @@ class TestMoEIntegration:
         moe_args = MoEArgs(num_experts=4, top_k=2, use_grouped_mm=False)
 
         moe = MoE(moe_args, dim, hidden_dim).cuda()
-        moe.init_weights(init_std=0.02)
+        moe.init_weights(init_std=0.02, buffer_device=torch.device("cuda"))
 
         x = torch.randn(1, 1, dim, device="cuda")
         out = moe(x)

@@ -251,7 +251,7 @@ class ArchonEngine(TrainEngine):
             reduce_dtype=torch.float32,
             loss_parallel=True,
             cpu_offload=self.config.archon.offload_params,
-            reshard_after_forward=True,
+            reshard_after_forward_policy="default",
             ac_config=ac_config,
             enable_compile=enable_compile,
         )

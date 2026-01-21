@@ -160,7 +160,7 @@ def create_ep_model(
         reduce_dtype=torch.float32,
         loss_parallel=False,
         cpu_offload=False,
-        reshard_after_forward=True,
+        reshard_after_forward_policy="default",
         ac_config=None,
         enable_compile=False,
     )
@@ -406,7 +406,7 @@ def test_weight_sync(
         reduce_dtype=torch.float32,
         loss_parallel=False,
         cpu_offload=False,
-        reshard_after_forward=True,
+        reshard_after_forward_policy="default",
         ac_config=None,
         enable_compile=False,
     )
