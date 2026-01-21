@@ -27,8 +27,8 @@ MODEL_PATH = get_model_path(
 
 def mock_tree_input(
     batch_size=4,
-    tree_tokens=1024,
-    total_tokens=2048,
+    tree_tokens=128,
+    total_tokens=256,
     device=current_platform.device_type,
 ):
     if batch_size <= 0:
@@ -153,7 +153,7 @@ def _create_engine(
     enable_tree_training: bool = False,
     port: str = "7777",
     experiment_name: str = "test",
-    max_tokens_per_mb: int = 2048,
+    max_tokens_per_mb: int = 256,
     n_mbs: int | None = None,
 ) -> FSDPEngine | MegatronEngine:
     """Create and initialize an engine of the specified type."""
