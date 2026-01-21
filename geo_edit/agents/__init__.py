@@ -4,6 +4,7 @@
 
 from .base import BaseAgent, AgentConfig
 from .api_agent import APIBasedAgent
+from .vllm_agent import VLLMBasedAgent
 
 from .utils import (
     load_image_safely,
@@ -21,6 +22,7 @@ __all__ = [
     
     # Concrete implementations
     "APIBasedAgent",
+    "VLLMBasedAgent",
     
     # Utility functions
     'load_image_safely',

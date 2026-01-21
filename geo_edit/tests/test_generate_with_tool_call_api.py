@@ -4,14 +4,17 @@ import logging
 import os
 import shutil
 from ..agents.api_agent import APIBasedAgent, AgentConfig
+from ..agents.vllm_agent import VLLMBasedAgent
 from ..environment.action import TOOL_FUNCTIONS
 from ..environment.task.google_vision_qa_task import GoogleVisionQATask
 from ..environment.task.openai_vision_qa_task import OpenAIVisionQATask
+from ..environment.task.vllm_vision_qa_task import VLLMVisionQATask
 from ..config import (
     NOTOOL_INPUT_TEMPLATE,
     MATHVISION_INPUT_TEMPLATE,
     build_agent_configs,
     build_openai_agent_configs,
+    build_vllm_agent_configs,
 )
 from ..constants import SYSTEM_PROMPT, MAX_TOOL_CALLS
 from ..utils.logger import setup_logger
@@ -20,15 +23,19 @@ logger = setup_logger(__name__)
 def main():
     # argparse 
     parser = argparse.ArgumentParser(description="Generate content with tool calls using API models.")
-    parser.add_argument("--api_key", type=str, required=True, help="API key for the selected provider.")
+    parser.add_argument("--api_key", type=str, default=None, help="API key for the selected provider.")
     parser.add_argument("--dataset_path", type=str, required=False, help="Unused for the test script.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-flash-preview", help="Model name or path.")
-    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI"], help="Model provider.")
+    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM"], help="Model provider.")
+    parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM OpenAI-compatible server.")
+    parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=32, help="Maximum number of concurrent requests.")
     args = parser.parse_args()
     
     api_key= args.api_key
+    if args.model_type in {"Google", "OpenAI"} and not api_key:
+        raise ValueError("API key must be provided for Google/OpenAI models.")
     output_path= args.output_dir
     os.makedirs(output_path, exist_ok=True)
     max_output_tokens= None
@@ -44,11 +51,17 @@ def main():
             tool_mode="ANY",
             disable_automatic_function_calling=True,
         )
-    else:
+    elif args.model_type == "OpenAI":
         agent_configs = build_openai_agent_configs(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
             system_prompt=SYSTEM_PROMPT,
+            tool_mode="ANY",
+        )
+    else:
+        agent_configs = build_vllm_agent_configs(
+            max_output_tokens=max_output_tokens,
+            temperature=1.0,
             tool_mode="ANY",
         )
     
@@ -57,10 +70,13 @@ def main():
         model_type=args.model_type,
         model_name=args.model_name_or_path,
         api_key=api_key,
+        api_base=args.api_base,
+        port=args.port,
         generate_config=agent_configs.generate_config,
         n_retry=3,
     )
-    api_agent=APIBasedAgent(config)
+    agent_cls = VLLMBasedAgent if args.model_type == "vLLM" else APIBasedAgent
+    api_agent=agent_cls(config)
 
     meta_info_list= []
 
@@ -83,9 +99,15 @@ def main():
 
         text_prompt= INPUT_TEMPLATE.format(question=question, options=options)
 
-        task_cls = (
-            GoogleVisionQATask if args.model_type == "Google" else OpenAIVisionQATask
-        )
+        if args.model_type == "Google":
+            task_cls = GoogleVisionQATask
+        elif args.model_type == "OpenAI":
+            task_cls = OpenAIVisionQATask
+        else:
+            task_cls = VLLMVisionQATask
+        task_kwargs = {}
+        if args.model_type == "vLLM":
+            task_kwargs["system_prompt"] = SYSTEM_PROMPT
         task= task_cls(
             task_id=test_id,
             task_prompt=text_prompt,
@@ -94,6 +116,7 @@ def main():
             tool_functions=TOOL_FUNCTIONS,
             save_dir=task_save_dir,
             options=options,
+            **task_kwargs,
         )
         max_tool_calls = MAX_TOOL_CALLS
         for i in range(max_tool_calls):

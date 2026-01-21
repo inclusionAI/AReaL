@@ -11,12 +11,15 @@ from PIL import Image
 from datasets import load_dataset
 
 from ..agents.api_agent import APIBasedAgent, AgentConfig
+from ..agents.vllm_agent import VLLMBasedAgent
 from ..environment.action import TOOL_FUNCTIONS
 from ..environment.task.google_vision_qa_task import GoogleVisionQATask
 from ..environment.task.openai_vision_qa_task import OpenAIVisionQATask
+from ..environment.task.vllm_vision_qa_task import VLLMVisionQATask
 from ..config import (
     build_agent_configs,
     build_openai_agent_configs,
+    build_vllm_agent_configs,
 )
 from ..constants import SYSTEM_PROMPT, MAX_TOOL_CALLS, SUDOKU_TOOL_CALL_INPUT_TEMPLATE, MATHVISION_INPUT_TEMPLATE, NOTOOL_INPUT_TEMPLATE, SUDOKU_TEXT_INPUT_TEMPLATE
 from ..utils.logger import setup_logger
@@ -38,6 +41,8 @@ def _init_worker(
     api_key: str,
     model_name_or_path: str,
     model_type: str,
+    api_base: str,
+    port: int,
     output_path: str,
     input_template: str,
     max_tool_calls: int,
@@ -45,6 +50,9 @@ def _init_worker(
     global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_INPUT_TEMPLATE, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE
 
     max_output_tokens = None
+    if model_type in {"Google", "OpenAI"} and not api_key:
+        raise ValueError("API key must be provided for Google/OpenAI models.")
+
     if model_type == "Google":
         agent_configs = build_agent_configs(
             max_output_tokens=max_output_tokens,
@@ -57,7 +65,7 @@ def _init_worker(
             disable_automatic_function_calling=True,
         )
         _WORKER_TASK_CLASS = GoogleVisionQATask
-    else:
+    elif model_type == "OpenAI":
         agent_configs = build_openai_agent_configs(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
@@ -66,17 +74,27 @@ def _init_worker(
             reasoning_level="medium",
         )
         _WORKER_TASK_CLASS = OpenAIVisionQATask
+    else:
+        agent_configs = build_vllm_agent_configs(
+            max_output_tokens=max_output_tokens,
+            temperature=1.0,
+            tool_mode="AUTO",
+        )
+        _WORKER_TASK_CLASS = VLLMVisionQATask
 
     config = AgentConfig(
         model_type=model_type,
         model_name=model_name_or_path,
         api_key=api_key,
+        api_base=api_base,
+        port=port,
         generate_config=agent_configs.generate_config,
         n_retry=3,
     )
 
     _WORKER_AGENT_CONFIGS = agent_configs
-    _WORKER_AGENT = APIBasedAgent(config)
+    agent_cls = VLLMBasedAgent if model_type == "vLLM" else APIBasedAgent
+    _WORKER_AGENT = agent_cls(config)
     _WORKER_INPUT_TEMPLATE = input_template
     _WORKER_OUTPUT_PATH = output_path
     _WORKER_MAX_TOOL_CALLS = max_tool_calls
@@ -111,6 +129,9 @@ def _run_one_task(task_payload: dict):
 
     text_prompt = _WORKER_INPUT_TEMPLATE.format(rules=question, answer=answer, rows=rows, cols=cols, total_cells=rows*cols, initial_board=initial_board, visual_elements=visual_elements)
 
+    task_kwargs = {"text_only": False}
+    if _WORKER_MODEL_TYPE == "vLLM":
+        task_kwargs["system_prompt"] = SYSTEM_PROMPT
     task = _WORKER_TASK_CLASS(
         task_id=task_id,
         task_prompt=text_prompt,
@@ -118,7 +139,7 @@ def _run_one_task(task_payload: dict):
         task_image_path=image_path,
         tool_functions=TOOL_FUNCTIONS,
         save_dir=task_save_dir,
-        text_only=False,
+        **task_kwargs,
     )
 
     _WORKER_AGENT.reset()
@@ -163,14 +184,18 @@ def _run_one_task(task_payload: dict):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate content with tool calls using API models (multiprocess).")
-    parser.add_argument("--api_key", type=str, required=True, help="API key for the selected provider.")
+    parser.add_argument("--api_key", type=str, default=None, help="API key for the selected provider.")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
-    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI"], help="Model provider.")
+    parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM"], help="Model provider.")
+    parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM OpenAI-compatible server.")
+    parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
     args = parser.parse_args()
+    if args.model_type in {"Google", "OpenAI"} and not args.api_key:
+        raise ValueError("API key must be provided for Google/OpenAI models.")
 
     seed = 42
     output_path = args.output_dir
@@ -218,6 +243,8 @@ def main():
             args.api_key,
             args.model_name_or_path,
             args.model_type,
+            args.api_base,
+            args.port,
             output_path,
             input_template,
             MAX_TOOL_CALLS,
