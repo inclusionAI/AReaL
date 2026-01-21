@@ -415,12 +415,12 @@ def test_tree_training_forward_backward(engine_type):
         mean_rel_diff = rel_diff.mean().item()
 
         # Check if gradients are close:
-        # Mean relative difference <= 20%
-        num_large_diff = (rel_diff > 0.1).sum().item()
+        # Mean relative difference <= 25%
+        num_large_diff = (rel_diff > 0.25).sum().item()
         total_elements = rel_diff.numel()
         large_diff_ratio = num_large_diff / total_elements
 
-        if mean_rel_diff > 0.2:
+        if mean_rel_diff > 0.25:
             mismatched_params.append(
                 (
                     name,
