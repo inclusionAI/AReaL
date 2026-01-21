@@ -155,7 +155,7 @@ class MegatronEngine(TrainEngine):
         self.seed: int = 0
         self.own_global_group: bool = False
         self.is_offload: bool = False
-        self.enable_tree_training: bool = self.mcore_config.enable_tree_training
+        self.enable_tree_training: bool = self.config.enable_tree_training
         # FP8 configuration
         self.fp8_config = self.mcore_config.fp8_config
         self.enable_fp8: bool = self.fp8_config is not None
@@ -1344,7 +1344,6 @@ class MegatronEngine(TrainEngine):
                 input_,
                 mb_spec=self.config.mb_spec,
                 pad_to_maximum=self.config.pad_to_maximum,
-                pad_to_multiple_of=BLOCK_SIZE,
             )
             recommended_min_n_mbs = 2 * pp_size if pp_size > 1 else 1
             self.logger.info(

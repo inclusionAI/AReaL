@@ -639,12 +639,6 @@ class MegatronEngineConfig:
     # FP8 Training Configuration
     fp8_config: FP8EngineConfig | None = None
 
-    # Tree training
-    enable_tree_training: bool = field(
-        default=False,
-        metadata={"help": "Enable tree training with flex attention module."},
-    )
-
 
 class SchedulingStrategyType(str, Enum):
     separation = "separation"
@@ -818,6 +812,16 @@ class TrainEngineConfig:
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
+
+    # Tree training
+    enable_tree_training: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable tree training with flex attention module. Not supported for Archon engine yet."
+        },
+    )
+
+    # Scheduling
     scheduling_spec: tuple[SchedulingSpec, ...] = field(
         default_factory=lambda: (
             SchedulingSpec(cmd="python -m areal.scheduler.rpc.rpc_server"),

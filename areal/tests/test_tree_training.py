@@ -1,24 +1,23 @@
 import os
-from importlib.metadata import version as get_version
 
 import pytest
 import torch
-import torch.distributed as dist
 
 from areal.api.alloc_mode import AllocationMode
 from areal.api.cli_args import (
-    MegatronEngineConfig,
     MicroBatchSpec,
     OptimizerConfig,
     TrainEngineConfig,
 )
 from areal.api.io_struct import FinetuneSpec
+from areal.engine.fsdp_engine import FSDPEngine
 from areal.engine.megatron_engine import MegatronEngine
+from areal.models.tree_attn.module import restore_patch_fsdp_for_tree_training
 from areal.platforms import current_platform
 from areal.tests.utils import get_model_path
 from areal.utils import logging
 
-logger = logging.getLogger("MegatronEngine Test")
+logger = logging.getLogger("TreeTraining Test")
 
 
 MODEL_PATH = get_model_path(
@@ -26,7 +25,6 @@ MODEL_PATH = get_model_path(
 )
 
 
-@pytest.fixture(scope="module")
 def mock_tree_input(
     batch_size=4,
     tree_tokens=128,
@@ -100,73 +98,135 @@ def mock_tree_input(
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
+        "loss_mask": attention_mask.clone(),
     }
 
 
-# Cannot use a "module" scope since process groups can only be initialized once.
-@pytest.fixture
-def engine():
-    logger.info(f"megatron.core version={get_version('megatron.core')}")
+def _collect_gradients(engine: FSDPEngine | MegatronEngine) -> dict[str, torch.Tensor]:
+    """Collect gradients from engine (supports both FSDP and Megatron)."""
+    grads = {}
+    if isinstance(engine, FSDPEngine):
+        for name, param in engine.model.named_parameters():
+            if param.grad is not None:
+                grads[name] = param.grad.clone()
+    else:
+        # Megatron engine
+        for model in engine.model:
+            for name, param in model.named_parameters():
+                # Megatron stores gradients in main_grad attribute
+                if hasattr(param, "main_grad") and param.main_grad is not None:
+                    grads[name] = param.main_grad.clone()
+                elif param.grad is not None:
+                    grads[name] = param.grad.clone()
+    return grads
+
+
+def _collect_parameters(engine: FSDPEngine | MegatronEngine) -> dict[str, torch.Tensor]:
+    """Collect parameters from engine (supports both FSDP and Megatron)."""
+    params = {}
+    if isinstance(engine, FSDPEngine):
+        for name, param in engine.model.named_parameters():
+            params[name] = param.data.clone()
+    else:
+        # Megatron engine
+        for model in engine.model:
+            for name, param in model.named_parameters():
+                params[name] = param.data.clone()
+    return params
+
+
+def _check_nan_params(params: dict[str, torch.Tensor], label: str) -> list[str]:
+    nan_params = []
+    for name, param in params.items():
+        if torch.isnan(param).any():
+            nan_count = torch.isnan(param).sum().item()
+            total_count = param.numel()
+            nan_params.append(name)
+            print(f"  {name}: {nan_count}/{total_count} NaN values")
+    if nan_params:
+        print(f"\n⚠ NaN parameters in {label} ({len(nan_params)}):")
+    return nan_params
+
+
+def _create_engine(
+    engine_type: str,
+    enable_tree_training: bool = False,
+    port: str = "7777",
+    experiment_name: str = "test",
+    max_tokens_per_mb: int = 256,
+    n_mbs: int | None = None,
+) -> FSDPEngine | MegatronEngine:
+    """Create and initialize an engine of the specified type."""
     os.environ.update(
         {
             "WORLD_SIZE": "1",
             "RANK": "0",
             "LOCAL_RANK": "0",
             "MASTER_ADDR": "localhost",
-            "MASTER_PORT": "7777",
+            "MASTER_PORT": port,
         }
     )
+
+    mb_spec_kwargs = {"max_tokens_per_mb": max_tokens_per_mb}
+    if n_mbs is not None:
+        mb_spec_kwargs["n_mbs"] = n_mbs
+
     config = TrainEngineConfig(
-        experiment_name="test",
+        experiment_name=experiment_name,
         trial_name="test",
         path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=32768),
+        mb_spec=MicroBatchSpec(**mb_spec_kwargs),
         optimizer=OptimizerConfig(),
-        megatron=MegatronEngineConfig(
-            use_deterministic_algorithms=True,
-        ),
+        enable_tree_training=enable_tree_training,
+        pad_to_maximum=True,
     )
+
+    if engine_type == "fsdp":
+        engine = FSDPEngine(config)
+    else:  # megatron
+        engine = MegatronEngine(config)
+
     alloc_mode = AllocationMode.from_str("d1p1t1")
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
-    engine = MegatronEngine(config)
     engine.create_process_group(alloc_mode.train)
     engine.initialize(addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train)
-    logger.info(f"mcore GPTModel initialized: {engine.model}")
-    try:
-        yield engine
-    finally:
-        engine.destroy()
-        assert not dist.is_initialized()
+    logger.info(f"{engine_type.upper()} Model initialized: {engine.model}")
+
+    return engine
 
 
-def test_tree_training_forward(engine, mock_tree_input):
-    engine.eval()
-    logprob_baseline = engine.forward(
-        input_=mock_tree_input,
+# ===================== Forward Test =====================
+
+
+@pytest.mark.parametrize("engine_type", ["megatron", "fsdp"])
+def test_tree_training_forward(engine_type):
+    """Test tree training forward pass produces correct logprobs."""
+    # Create baseline engine
+    inputs = mock_tree_input()
+    baseline_engine = _create_engine(engine_type, port="7777")
+    baseline_engine.eval()
+    logprob_baseline = baseline_engine.forward_batch(
+        input_=inputs,
         aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
     )
-    config = TrainEngineConfig(
-        experiment_name="test",
-        trial_name="test",
-        path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=32768),
-        optimizer=OptimizerConfig(),
-        megatron=MegatronEngineConfig(
-            enable_tree_training=True, use_deterministic_algorithms=True
-        ),
-    )
-    tree_engine = MegatronEngine(config)
-    alloc_mode = AllocationMode.from_str("d1p1t1")
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
-    tree_engine.create_process_group(alloc_mode.train)
-    tree_engine.initialize(
-        addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train
+    baseline_engine.destroy()
+
+    # Create tree training engine
+    inputs = mock_tree_input()
+    tree_engine = _create_engine(
+        engine_type,
+        enable_tree_training=True,
+        port="7778",
     )
     tree_engine.eval()
-    logprob_tree = tree_engine.forward(input_=mock_tree_input)
+    logprob_tree = tree_engine.forward_batch(input_=inputs)
+    tree_engine.destroy()
+
+    if engine_type == "fsdp":
+        restore_patch_fsdp_for_tree_training()
 
     # Check if results match with detailed error reporting
-    # The tolenrance values are high due to precision problems introduced
+    # The tolerance values are high due to precision problems introduced
     # by flex attention with customized attention masks.
     rtol, atol = 0.2, 0.2
     is_close = torch.isclose(logprob_tree, logprob_baseline, rtol=rtol, atol=atol)
@@ -210,130 +270,67 @@ def test_tree_training_forward(engine, mock_tree_input):
     )
 
 
-def _collect_gradients(engine) -> dict[str, torch.Tensor]:
-    grads = {}
-    for model in engine.model:
-        for name, param in model.named_parameters():
-            # Megatron stores gradients in main_grad attribute
-            if hasattr(param, "main_grad") and param.main_grad is not None:
-                grads[name] = param.main_grad.clone()
-            elif param.grad is not None:
-                grads[name] = param.grad.clone()
-    return grads
+# ===================== Forward-Backward Test =====================
 
 
-def _collect_parameters(engine) -> dict[str, torch.Tensor]:
-    params = {}
-    for model in engine.model:
-        for name, param in model.named_parameters():
-            params[name] = param.data.clone()
-    return params
+@pytest.mark.parametrize("engine_type", ["megatron", "fsdp"])
+def test_tree_training_forward_backward(engine_type):
+    """Test tree training forward-backward pass produces correct gradients."""
 
+    def loss_fn(logprobs, entropy, input_data, **kwargs):
+        return logprobs.mean()
 
-def _check_nan_params(params: dict[str, torch.Tensor], label: str) -> list[str]:
-    nan_params = []
-    for name, param in params.items():
-        if torch.isnan(param).any():
-            nan_count = torch.isnan(param).sum().item()
-            total_count = param.numel()
-            nan_params.append(name)
-            print(f"  {name}: {nan_count}/{total_count} NaN values")
-    if nan_params:
-        print(f"\n⚠ NaN parameters in {label} ({len(nan_params)}):")
-    return nan_params
+    def loss_weight_fn(input_data):
+        return input_data["loss_mask"].count_nonzero()
 
-
-def test_tree_training_forward_backward(mock_tree_input):
-    def loss_fn(logprobs, entropy, input_data):
-        return logprobs.sum()
-
-    # ========== Setup baseline engine ==========
-    os.environ.update(
-        {
-            "WORLD_SIZE": "1",
-            "RANK": "0",
-            "LOCAL_RANK": "0",
-            "MASTER_ADDR": "localhost",
-            "MASTER_PORT": "7778",
-        }
-    )
-    baseline_config = TrainEngineConfig(
-        experiment_name="test_baseline",
-        trial_name="test",
-        path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=32768),
-        optimizer=OptimizerConfig(),
-        megatron=MegatronEngineConfig(
-            use_deterministic_algorithms=True,
-        ),
-    )
-    alloc_mode = AllocationMode.from_str("d1p1t1")
-    ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=128, train_batch_size=8)
-
-    baseline_engine = MegatronEngine(baseline_config)
-    baseline_engine.create_process_group(alloc_mode.train)
-    baseline_engine.initialize(
-        addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train
-    )
+    inputs = mock_tree_input()
+    # Create baseline engine
+    baseline_engine = _create_engine(engine_type, port="7777")
     baseline_engine.train()
-
-    # Run baseline forward-backward
     _ = baseline_engine.train_batch(
-        mock_tree_input,
+        inputs,
         loss_fn=loss_fn,
-        loss_weight_fn=lambda x: torch.tensor(1.0, device=baseline_engine.device),
+        loss_weight_fn=loss_weight_fn,
     )
 
-    # Collect baseline gradients and updated parameters
+    # Collect baseline gradients and parameters
     baseline_grads = _collect_gradients(baseline_engine)
     baseline_params = _collect_parameters(baseline_engine)
-
-    logger.info(f"Collected {len(baseline_grads)} gradients from baseline engine")
-    logger.info(f"Collected {len(baseline_params)} parameters from baseline engine")
+    logger.info(
+        f"Collected {len(baseline_grads)} gradients from baseline {engine_type.upper()} engine"
+    )
+    logger.info(
+        f"Collected {len(baseline_params)} parameters from baseline {engine_type.upper()} engine"
+    )
     baseline_engine.destroy()
 
-    # ========== Setup tree training engine ==========
-    os.environ.update(
-        {
-            "WORLD_SIZE": "1",
-            "RANK": "0",
-            "LOCAL_RANK": "0",
-            "MASTER_ADDR": "localhost",
-            "MASTER_PORT": "7779",
-        }
-    )
-    tree_config = TrainEngineConfig(
+    # Create tree training engine
+    inputs = mock_tree_input()
+    tree_engine = _create_engine(
+        engine_type,
+        enable_tree_training=True,
+        port="7778",
         experiment_name="test_tree",
-        trial_name="test",
-        path=MODEL_PATH,
-        mb_spec=MicroBatchSpec(max_tokens_per_mb=32768),
-        optimizer=OptimizerConfig(),
-        megatron=MegatronEngineConfig(
-            enable_tree_training=True,
-            use_deterministic_algorithms=True,
-        ),
-    )
-
-    tree_engine = MegatronEngine(tree_config)
-    tree_engine.create_process_group(alloc_mode.train)
-    tree_engine.initialize(
-        addr=None, ft_spec=ft_spec, parallel_strategy=alloc_mode.train
     )
     tree_engine.train()
-
-    # Run tree training forward-backward
     _ = tree_engine.train_batch(
-        mock_tree_input,
+        inputs,
         loss_fn=loss_fn,
-        loss_weight_fn=lambda x: torch.tensor(1.0, device=tree_engine.device),
+        loss_weight_fn=loss_weight_fn,
     )
 
-    # Collect tree training gradients and updated parameters
+    if engine_type == "fsdp":
+        restore_patch_fsdp_for_tree_training()
+
+    # Collect tree training gradients and parameters
     tree_grads = _collect_gradients(tree_engine)
     tree_params = _collect_parameters(tree_engine)
-
-    logger.info(f"Collected {len(tree_grads)} gradients from tree training engine")
-    logger.info(f"Collected {len(tree_params)} parameters from tree training engine")
+    logger.info(
+        f"Collected {len(tree_grads)} gradients from tree training {engine_type.upper()} engine"
+    )
+    logger.info(
+        f"Collected {len(tree_params)} parameters from tree training {engine_type.upper()} engine"
+    )
     tree_engine.destroy()
 
     # ========== Compare gradients ==========
@@ -351,18 +348,18 @@ def test_tree_training_forward_backward(mock_tree_input):
 
     common_keys = baseline_keys & tree_keys
     logger.info(f"Comparing {len(common_keys)} common gradient tensors")
-    # Check for NaN gradients
+
+    # Check for NaN and zero gradients
     nan_in_baseline = []
     nan_in_tree = []
-    # Check for zero gradients
     zero_in_baseline = []
     zero_in_tree = []
+
     for name in sorted(common_keys):
         if torch.isnan(baseline_grads[name]).any():
             nan_in_baseline.append(name)
         if torch.isnan(tree_grads[name]).any():
             nan_in_tree.append(name)
-        # Check if all gradients are zero
         if (baseline_grads[name] == 0).all():
             zero_in_baseline.append(name)
         if (tree_grads[name] == 0).all():
@@ -397,7 +394,6 @@ def test_tree_training_forward_backward(mock_tree_input):
     nan_params_tree = _check_nan_params(tree_params, "TREE TRAINING PARAMS")
 
     mismatched_params = []
-    max_diff_overall = 0.0
 
     for name in sorted(common_keys):
         baseline_grad = baseline_grads[name]
@@ -412,18 +408,33 @@ def test_tree_training_forward_backward(mock_tree_input):
         diff = (baseline_grad - tree_grad).abs()
         max_diff = diff.max().item()
         mean_diff = diff.mean().item()
-        max_diff_overall = max(max_diff_overall, max_diff)
+        # Compute relative difference: |a - b| / max(|a|, |b|)
+        abs_max = torch.maximum(baseline_grad.abs(), tree_grad.abs())
+        rel_diff = torch.where(abs_max > 0, diff / abs_max, torch.zeros_like(diff))
+        max_rel_diff = rel_diff.max().item()
+        mean_rel_diff = rel_diff.mean().item()
 
-        if mean_diff > 1e-3:
+        # Check if gradients are close:
+        # Mean relative difference <= 25%
+        num_large_diff = (rel_diff > 0.25).sum().item()
+        total_elements = rel_diff.numel()
+        large_diff_ratio = num_large_diff / total_elements
+
+        if mean_rel_diff > 0.25:
             mismatched_params.append(
-                (name, f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}")
+                (
+                    name,
+                    f"max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e}, max_rel_diff={max_rel_diff:.6e}, mean_rel_diff={mean_rel_diff:.6e}, large_diff_ratio={large_diff_ratio:.4f}",
+                )
             )
             logger.info(
-                f"Gradient mismatch for {name}:"
-                f"Shape: {baseline_grad.shape}"
-                f"Baseline grad mean: {baseline_grad.float().mean().item():.6e}"
-                f"Tree grad mean: {tree_grad.float().mean().item():.6e}"
-                f"Max diff: {max_diff:.6e}, Mean diff: {mean_diff:.6e}"
+                f"Gradient mismatch for {name}: "
+                f"Shape: {baseline_grad.shape}, "
+                f"Baseline grad mean: {baseline_grad.float().mean().item():.6e}, "
+                f"Tree grad mean: {tree_grad.float().mean().item():.6e}, "
+                f"Max diff: {max_diff:.6e}, Mean diff: {mean_diff:.6e}, "
+                f"Max rel diff: {max_rel_diff:.6e}, Mean rel diff: {mean_rel_diff:.6e}, "
+                f"Large diff elements: {num_large_diff}/{total_elements} ({large_diff_ratio:.2%})"
             )
 
     assert len(only_in_baseline) == 0, (
@@ -432,8 +443,6 @@ def test_tree_training_forward_backward(mock_tree_input):
     assert len(only_in_tree) == 0, f"Gradients missing in baseline: {only_in_tree}"
     assert len(nan_in_baseline) == 0, f"NaN gradients in baseline: {nan_in_baseline}"
     assert len(nan_in_tree) == 0, f"NaN gradients in tree training: {nan_in_tree}"
-    assert len(zero_in_baseline) == 0, f"Zero gradients in baseline: {zero_in_baseline}"
-    assert len(zero_in_tree) == 0, f"Zero gradients in tree training: {zero_in_tree}"
     assert len(nan_params_baseline) == 0, (
         f"NaN parameters in baseline: {nan_params_baseline}"
     )

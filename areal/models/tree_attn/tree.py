@@ -11,9 +11,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import torch
+import torch.distributed as dist
 
 from areal.api.cli_args import MicroBatchSpec
-from areal.models.tree_attn.module import BLOCK_SIZE, USE_BLOCK_MASK
+from areal.models.tree_attn.module import BLOCK_SIZE, create_block_mask_from_dense
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
@@ -227,7 +228,7 @@ def build_packed_tree_batch(
     data: dict[str, Any],
     mb_spec: MicroBatchSpec,
     pad_to_maximum: bool = True,
-    pad_to_multiple_of: int = 1,
+    dp_group: dist.ProcessGroup | None = None,
 ) -> MicroBatchList:
     """Build a MicroBatchList from input data using greedy trie packing.
 
@@ -245,11 +246,11 @@ def build_packed_tree_batch(
         training and will trigger warnings if set to non-default values.
     pad_to_maximum : bool, default=True
         If True, pad all trees to max_tokens_per_mb.
-        If False, padding is determined by pad_to_multiple_of.
-    pad_to_multiple_of : int, default=1
-        When pad_to_maximum=False, pad to the nearest multiple of this value.
-        If <= 1, no padding is applied. No padding raises error if
-        USE_BLOCK_MASK=True.
+    dp_group : dist.ProcessGroup | None, default=None
+        Data parallel process group. Default (None) is the world group.
+        If torch.distributed is initialized, synchronizes the number of
+        trees across all ranks by appending dummy trees to ranks with fewer
+        trees.
 
     Returns
     -------
@@ -274,28 +275,50 @@ def build_packed_tree_batch(
             "MicroBatchSpec.max_tokens_per_mb must be a positive value for tree training."
         )
 
-    # Validate padding constraints when using block masks
-    if USE_BLOCK_MASK:
-        no_padding = not pad_to_maximum and pad_to_multiple_of <= 1
-        if no_padding:
-            raise ValueError(
-                "No padding is not supported when USE_BLOCK_MASK=True. "
-                "Block masks require padded sequences for efficient computation. "
-                "Set pad_to_maximum=True or pad_to_multiple_of > 1."
-            )
-        if pad_to_maximum and max_tokens_per_tree % BLOCK_SIZE != 0:
-            raise ValueError(
-                f"max_tokens_per_tree must be a multiple of BLOCK_SIZE ({BLOCK_SIZE}) "
-                f"when pad_to_maximum=True and USE_BLOCK_MASK=True"
-            )
-        if not pad_to_maximum and pad_to_multiple_of % BLOCK_SIZE != 0:
-            raise ValueError(
-                f"pad_to_multiple_of must be a multiple of BLOCK_SIZE ({BLOCK_SIZE}) "
-                f"when USE_BLOCK_MASK=True"
-            )
+    # Validate padding constraints for block masks
+    if not pad_to_maximum:
+        raise ValueError(
+            "No padding is not supported for tree training. "
+            "Block masks require padded sequences for efficient computation. "
+            "Please set pad_to_maximum=True."
+        )
+    if pad_to_maximum and max_tokens_per_tree % BLOCK_SIZE != 0:
+        raise ValueError(
+            f"max_tokens_per_tree must be a multiple of BLOCK_SIZE ({BLOCK_SIZE}) "
+            f"when pad_to_maximum=True."
+        )
 
     # Build tries using greedy packing
     tries, num_tokens_list = _greedy_build_tries(data, max_tokens_per_tree)
+
+    # Synchronize number of trees across dp_group.
+    if dist.is_initialized():
+        num_trees = len(tries)
+        input_template: torch.Tensor = data["input_ids"]
+
+        # All-gather tree counts from all ranks
+        local_count = torch.tensor(
+            [num_trees], dtype=torch.int64, device=input_template.device
+        )
+        world_size = dist.get_world_size(dp_group)
+        all_counts = [
+            torch.zeros(1, dtype=torch.int64, device=input_template.device)
+            for _ in range(world_size)
+        ]
+        dist.all_gather(all_counts, local_count, group=dp_group)
+
+        # Find the maximum tree count across all ranks
+        max_num_trees = max(c.item() for c in all_counts)
+
+        # If this rank has fewer trees, append dummy trees
+        if num_trees < max_num_trees:
+            num_dummy_trees = max_num_trees - num_trees
+            for _ in range(num_dummy_trees):
+                # Create an empty dummy trie
+                dummy_tree_id = len(tries)
+                dummy_trie = TrieNode(tree_id=dummy_tree_id)
+                tries.append(dummy_trie)
+                num_tokens_list.append(0)
 
     # Prepare templates and metadata
     input_template: torch.Tensor = data["input_ids"]
@@ -328,9 +351,7 @@ def build_packed_tree_batch(
 
     for trie, num_tokens in zip(tries, num_tokens_list):
         # Compute padded size based on padding options
-        padded_size = _compute_padded_size(
-            num_tokens, max_tokens_per_tree, pad_to_maximum, pad_to_multiple_of
-        )
+        padded_size = max_tokens_per_tree if pad_to_maximum else num_tokens
 
         # Pack input_ids
         with trace_scope("tree_attn.pack_input_ids"):
@@ -340,7 +361,7 @@ def build_packed_tree_batch(
                 padded_size,
             )
 
-        # Build attention mask
+        # Build dense attention mask (temporary, for position_ids computation)
         with trace_scope("tree_attn.build_attention_mask"):
             attention_mask = _build_attention_mask(
                 trie,
@@ -348,12 +369,21 @@ def build_packed_tree_batch(
                 mask_template.device,
             )
 
-        # Amend position_ids
+        # Create block mask from dense mask
+        with trace_scope("tree_attn.create_block_mask"):
+            block_mask = create_block_mask_from_dense(
+                attention_mask, padded_size, mask_template.device
+            )
+
+        # Compute position_ids (needs dense attention_mask)
         with trace_scope("tree_attn.get_position_ids"):
             position_ids = get_packed_tree_position_ids(
                 input_ids,
                 attention_mask,
             )
+
+        # Release dense attention mask memory after position_ids are computed
+        del attention_mask
 
         # Pack extra data
         with trace_scope("tree_attn.pack_extra_data"):
@@ -365,10 +395,10 @@ def build_packed_tree_batch(
                 non_packable_keys,
             )
 
-        # Build micro-batch dict
+        # Build micro-batch dict with block_mask
         mb = {
             "input_ids": input_ids,
-            "attention_mask": attention_mask,
+            "block_mask": block_mask,
             "position_ids": position_ids,
             "trie_node": trie,
             **extra_data,
@@ -390,25 +420,6 @@ def build_packed_tree_batch(
         _max_seqlen=max(padded_to_lengths),
     )
     return batch
-
-
-def _compute_padded_size(
-    num_tokens: int,
-    max_tokens_per_tree: int,
-    pad_to_maximum: bool,
-    pad_to_multiple_of: int,
-) -> int:
-    """Compute the padded size for a tree based on padding options."""
-    if pad_to_maximum:
-        return max_tokens_per_tree
-    elif pad_to_multiple_of > 1:
-        # Round up to nearest multiple
-        return (
-            (num_tokens + pad_to_multiple_of - 1) // pad_to_multiple_of
-        ) * pad_to_multiple_of
-    else:
-        # No padding
-        return num_tokens
 
 
 @trace_perf("tree_attn._greedy_build_tries")
@@ -598,4 +609,4 @@ def get_packed_tree_position_ids(
         ancestor_counts = attention_mask.bool().sum(dim=-1, dtype=torch.long)
         position_ids = torch.clamp_min(ancestor_counts - 1, 0)
 
-    return position_ids
+    return position_ids.unsqueeze(0)

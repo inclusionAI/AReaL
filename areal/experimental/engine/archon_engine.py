@@ -145,6 +145,8 @@ class ArchonEngine(TrainEngine):
         self._world_mesh: DeviceMesh
         self.state_dict_adapter: BaseStateDictAdapter | None = None
 
+        self.enable_tree_training = config.enable_tree_training
+
         self.world_size: int
         self.rank: int
 
@@ -237,6 +239,9 @@ class ArchonEngine(TrainEngine):
                 "dynamic shape issues with Inductor. Original pad_to_maximum=False."
             )
             self.config.pad_to_maximum = True
+
+        if self.enable_tree_training:
+            self.logger.warning("Tree training is not supported for Archon engine yet.")
 
         tik = time.perf_counter()
         self.spec.parallelize_fn(

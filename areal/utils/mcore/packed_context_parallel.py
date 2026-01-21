@@ -127,13 +127,14 @@ def packed_context_parallel_forward(
     input_ids = input_["input_ids"]
     position_ids = input_["position_ids"]
     cu_seqlens = input_.get("cu_seqlens", None)
-    attention_mask = input_.get("attention_mask", None)
+    block_mask = input_.get("block_mask", None)
     packed_seq_params = None
 
     if cu_seqlens is not None:
-        assert attention_mask is None, (
-            "Attention mask should be None when using packed sequences."
-        )
+        if block_mask is not None:
+            raise ValueError(
+                "Attention mask should be None when using packed sequences."
+            )
         input_ids, packed_seq_params = preprocess_packed_seqs_context_parallel(
             input_ids, cu_seqlens
         )
@@ -142,7 +143,7 @@ def packed_context_parallel_forward(
     try:
         output = model(
             input_ids=input_ids,
-            attention_mask=attention_mask,
+            attention_mask=block_mask,
             position_ids=position_ids,
             packed_seq_params=packed_seq_params,
         )
