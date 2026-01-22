@@ -101,7 +101,7 @@ class ModelResponse:
     @property
     def output_tokens_without_stop(self) -> list[int]:
         if self.tokenizer is None:
-            raise ValueError("tokenizer is None, cannot check end_with_eos")
+            raise ValueError("tokenizer is None, cannot get output_tokens_without_stop")
         if self.stop_reason not in ["length", "abort"] and self.output_tokens:
             if not self.end_with_eos:
                 raise ValueError(
