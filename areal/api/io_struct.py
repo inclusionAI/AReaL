@@ -101,6 +101,7 @@ class ModelResponse:
         if idx < 0:
             return False  # all tokens are pad tokens
         if idx < len(self.output_tokens) - 1 and self.output_tokens[idx] != eos_id:
+            print(f"DEBUG: {self.output_tokens}")
             raise ValueError(
                 "output_tokens has trailing pad tokens but does not end with eos token before pads"
             )
