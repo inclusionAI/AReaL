@@ -117,6 +117,10 @@ class ModelResponse:
                     pad_or_eos_len += 1
                 else:
                     break
+            if pad_or_eos_len == len(self.output_tokens):
+                raise ValueError(
+                    "All output_tokens are EOS or PAD tokens; cannot strip stop tokens without removing entire output."
+                )
             return self.output_tokens[:-pad_or_eos_len]
         return self.output_tokens
 
