@@ -34,7 +34,7 @@ rollout:
   openai:
     mode: inline
     tool_call_parser: qwen25
-    reasoning_parser: qwen25
+    reasoning_parser: qwen3
     export_style: individual
     turn_discount: 1.0
 

@@ -1,16 +1,15 @@
+from math_verify import parse, verify
+
 import anthropic
 
 from areal.api.reward_api import AsyncRewardWrapper
 from areal.api.workflow_api import AgentWorkflow
-from areal.reward import get_math_verify_worker
 
 
-def gsm8k_reward_fn(result, answer):
-    try:
-        worker = get_math_verify_worker()
-        return worker.verify(str(result), str(answer))
-    except Exception:
-        return 0.0
+def math_reward_fn(completions: str, answer: str) -> float:
+    ans = parse(completions)
+    gold = parse(answer)
+    return float(verify(ans, gold))
 
 
 class MathAgent(AgentWorkflow):
@@ -19,8 +18,6 @@ class MathAgent(AgentWorkflow):
     def __init__(self, **kwargs):
         # Store kwargs for client.messages.create call
         self.kwargs = kwargs
-        # Cache AsyncRewardWrapper to avoid creating new ProcessPoolExecutor per call
-        self.reward_fn = AsyncRewardWrapper(gsm8k_reward_fn)
 
     async def run(self, data: dict, **extra_kwargs) -> float:
         """Run the agent on a single problem.
@@ -59,24 +56,23 @@ class MathAgent(AgentWorkflow):
                 )
 
         # Call the Anthropic Messages API (via proxy)
-        try:
-            response = await client.messages.create(
-                model="default",
-                messages=anthropic_messages,
-                system=system_prompt if system_prompt else anthropic.NOT_GIVEN,
-                **self.kwargs,
-            )
-        except Exception:
-            return 0.0
+        response = await client.messages.create(
+            model="default",
+            messages=anthropic_messages,
+            system=system_prompt if system_prompt else anthropic.NOT_GIVEN,
+            **self.kwargs,
+        )
 
         # Extract response text
-        completion_text = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                completion_text += block.text
+        completion_text = "".join(
+            block.text
+            for block in response.content
+            if isinstance(block, anthropic.types.TextBlock)
+        )
 
         # Calculate reward
-        return await self.reward_fn(
+        reward_fn = AsyncRewardWrapper(math_reward_fn)
+        return await reward_fn(
             result=completion_text,
             answer=data["answer"],
         )

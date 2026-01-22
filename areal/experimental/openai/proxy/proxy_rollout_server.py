@@ -446,10 +446,20 @@ async def anthropic_messages(raw_request: Request, session_id: str) -> Message:
         if openai_request is None:
             raise ValueError("Failed to translate request")
         openai_request = dict(openai_request)
-    except Exception as e:
-        logger.error(f"Failed to convert Anthropic request to OpenAI format: {e}")
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(
+            f"Failed to convert Anthropic request to OpenAI format due to invalid input: {e}"
+        )
         raise HTTPException(
             status_code=400, detail=f"Invalid Anthropic request format: {e}"
+        )
+    except Exception as e:
+        logger.error(
+            f"Unexpected error converting Anthropic request to OpenAI format: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error during request conversion."
         )
 
     # Call OpenAI-compatible endpoint
