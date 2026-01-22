@@ -95,7 +95,7 @@ class ModelResponse:
 
         # remove trailing pad tokens
         idx = len(self.output_tokens) - 1
-        if pad_id is not None:
+        if pad_id is not None and pad_id != eos_id:
             while idx >= 0 and self.output_tokens[idx] == pad_id:
                 idx -= 1
         if idx < 0:
