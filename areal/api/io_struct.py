@@ -85,34 +85,24 @@ class ModelResponse:
         return len(self.output_tokens)
 
     @property
-    def end_with_eos(self) -> bool:
+    def end_with_stop(self) -> bool:
         if self.tokenizer is None:
-            raise ValueError("tokenizer is None, cannot check end_with_eos")
+            raise ValueError("tokenizer is None, cannot check end_with_stop")
         eos_id = self.tokenizer.eos_token_id
         pad_id = self.tokenizer.pad_token_id
         if len(self.output_tokens) == 0:
             return False
-
-        # remove trailing pad tokens
-        idx = len(self.output_tokens) - 1
-        if pad_id is not None and pad_id != eos_id:
-            while idx >= 0 and self.output_tokens[idx] == pad_id:
-                idx -= 1
-        if idx < 0:
-            return False  # all tokens are pad tokens
-        if idx < len(self.output_tokens) - 1 and self.output_tokens[idx] != eos_id:
-            print(f"DEBUG: {self.output_tokens}")
-            raise ValueError(
-                "output_tokens has trailing pad tokens but does not end with eos token before pads"
-            )
-        return self.output_tokens[idx] == eos_id
+        last_token = self.output_tokens[-1]
+        return (eos_id is not None and last_token == eos_id) or (
+            pad_id is not None and last_token == pad_id
+        )
 
     @property
     def output_tokens_without_stop(self) -> list[int]:
         if self.tokenizer is None:
             raise ValueError("tokenizer is None, cannot get output_tokens_without_stop")
         if self.stop_reason not in ["length", "abort"] and self.output_tokens:
-            if not self.end_with_eos:
+            if not self.end_with_stop:
                 raise ValueError(
                     f"output_tokens does not end with eos or pad token, it ends with {self.output_tokens[-1]}, but stop_reason is {self.stop_reason}"
                 )
