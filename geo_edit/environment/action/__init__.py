@@ -19,9 +19,9 @@ TOOL_FUNCTIONS_DECLARE = [
 ]
 TOOL_FUNCTIONS={
     # "image_edition":image_edition_function,
-    "image_crop":image_crop_function,
+    # "image_crop":image_crop_function,
     "image_label":image_label_function,
     "draw_line":draw_line_function,
-    "bounding_box":bounding_box_function,
+    # "bounding_box":bounding_box_function,
 }
 
