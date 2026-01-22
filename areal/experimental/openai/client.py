@@ -156,7 +156,7 @@ def concat_prompt_token_ids_with_parent(
         # TODO: (yulangz) how to handle here when stop is set?
         parent_tokens = (
             parent.model_response.input_tokens
-            + parent.model_response.output_tokens  # with stop tokens
+            + parent.model_response.output_tokens_without_stop  # without stop tokens
         )
         all_message_list += parent.messages if parent.messages is not None else []
         all_message_list += (
@@ -167,14 +167,10 @@ def concat_prompt_token_ids_with_parent(
         # We will add an extra EOS token to align with the chat template. During training, this added EOS will be treated
         # as part of the child message's prompt rather than the parent message's output, and therefore will be masked out
         # by the loss_mask.
+        # If the parent terminated with an EOS token, it will be removed by parent.model_response.output_tokens_without_stop, and
+        # we add it here.
         # TODO: should we mask this extra eos token in loss_mask during training?
-        if parent.model_response.stop_reason in ["length", "abort"]:
-            parent_tokens += [eos_token_id]
-        else:
-            if len(parent_tokens) > 0 and parent_tokens[-1] != eos_token_id:
-                raise RuntimeError(
-                    f"Parent tokens do not end with eos_token_id when stop_reason is {parent.model_response.stop_reason}, parent_tokens[-1] is {parent_tokens[-1]}."
-                )
+        parent_tokens += [eos_token_id]
 
     all_message_list += message_list
 
