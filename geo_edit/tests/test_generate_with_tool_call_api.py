@@ -16,7 +16,7 @@ from ..config import (
     build_openai_agent_configs,
     build_vllm_agent_configs,
 )
-from ..constants import SYSTEM_PROMPT, MAX_TOOL_CALLS
+from ..constants import MAX_TOOL_CALLS, get_system_prompt
 from ..utils.logger import setup_logger
 logger = setup_logger(__name__)
 
@@ -40,13 +40,14 @@ def main():
     os.makedirs(output_path, exist_ok=True)
     max_output_tokens= None
 
+    system_prompt = get_system_prompt(args.model_type)
     if args.model_type == "Google":
         agent_configs = build_agent_configs(
             max_output_tokens=max_output_tokens,
             thinking_level="low",
             include_thoughts=True,
             temperature=1.0,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             candidate_count=1,
             tool_mode="ANY",
             disable_automatic_function_calling=True,
@@ -55,13 +56,14 @@ def main():
         agent_configs = build_openai_agent_configs(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             tool_mode="ANY",
         )
     else:
         agent_configs = build_vllm_agent_configs(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
+            system_prompt=system_prompt,
             tool_mode="ANY",
         )
     
@@ -107,7 +109,7 @@ def main():
             task_cls = VLLMVisionQATask
         task_kwargs = {}
         if args.model_type == "vLLM":
-            task_kwargs["system_prompt"] = SYSTEM_PROMPT
+            task_kwargs["system_prompt"] = system_prompt
         task= task_cls(
             task_id=test_id,
             task_prompt=text_prompt,

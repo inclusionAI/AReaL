@@ -20,7 +20,7 @@ class OpenAIVisionQATask(VisionQATask):
         task_id: str,
         task_prompt: str,
         task_answer: str,
-        task_image_path: str,
+        task_image_path: str | None,
         save_dir: Path | str,
         tool_functions: Optional[Dict[str, Any]] = None,
         **kwargs,
@@ -44,14 +44,18 @@ class OpenAIVisionQATask(VisionQATask):
         self._append_initial_observation()
 
     def _append_initial_observation(self) -> None:
-        image = self.image_list[0]
-        image_url = image_to_data_url(image)
-        self.image_url_map[image_url] = self.task_image_path
-        content = [
-            {"type": "input_text", "text": self.task_prompt},
-            {"type": "input_text", "text": "Observation 0:"},
-            {"type": "input_image", "image_url": image_url},
-        ]
+        content = [{"type": "input_text", "text": self.task_prompt}]
+        if self.image_list:
+            image = self.image_list[0]
+            image_url = image_to_data_url(image)
+            if self.task_image_path:
+                self.image_url_map[image_url] = self.task_image_path
+            content.extend(
+                [
+                    {"type": "input_text", "text": "Observation 0:"},
+                    {"type": "input_image", "image_url": image_url},
+                ]
+            )
         self.input_items.append({"role": "user", "content": content})
 
     def _append_tool_message(

@@ -1,6 +1,7 @@
 API_KEY = ""
 
-SYSTEM_PROMPT = '''
+
+API_CALL_SYSTEM_PROMPT = '''
 You are an advanced AI agent capable of complex
 reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
@@ -12,6 +13,31 @@ to the following protocol for every interaction:
 you must analyze the user's request and determine
 the necessary steps. Output your internal monologue
 and logic inside <think> and </think> tags.
+6. Reasoning After Action: Once you receive the
+output from a tool, you must analyze the results to
+determine if further actions are needed or if the task
+is complete. Output this analysis inside <think> and
+</think> tags;
+7. Final Output: When you have formulated your
+conclusion, you must wrap your final answer in
+<answer> and </answer> tags.
+'''
+
+VLLM_SYSTEM_PROMPT = '''
+You are an advanced AI agent capable of complex
+reasoning and tool usage. You must strictly adhere
+to the following protocol for every interaction:
+1. ALWAYS call the appropriate tool first;
+2. NEVER provide answers without tool results;
+3. Call appropriate tools based on the task;
+4. If you call multiple tools in one action, only the final result will be returned;
+5. Reasoning Before Action: before selecting a tool,
+you must analyze the user's request and determine
+the necessary steps. Output your internal monologue
+and logic inside <think> and </think> tags.
+6. Action: After your reasoning, decide on the tool to
+call and the input parameters. Output this action as valid JSON:
+<action>{"name":"ToolName","arguments":{"parameter1":"value1","parameter2":"value2"}}</action>
 6. Reasoning After Action: Once you receive the
 output from a tool, you must analyze the results to
 determine if further actions are needed or if the task
@@ -107,6 +133,12 @@ For example, the format should look like
 1234567...
 </ANSWER>
 '''
+
+def get_system_prompt(model_type: str) -> str:
+    """Select system prompt based on model type."""
+    if model_type.strip().lower() == "vllm":
+        return VLLM_SYSTEM_PROMPT
+    return API_CALL_SYSTEM_PROMPT
 
 
 SUDOKU_TEXT_INPUT_TEMPLATE='''

@@ -8,7 +8,6 @@ from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-
 class VLLMBasedAgent(BaseAgent):
     """Agent that interacts with a local vLLM OpenAI-compatible server."""
 
@@ -18,24 +17,16 @@ class VLLMBasedAgent(BaseAgent):
         self._model_loaded = False
 
     def _resolve_base_url(self) -> str:
-        if self.config.api_base:
-            base_url = self.config.api_base.rstrip("/")
-        elif self.config.port is not None:
-            base_url = f"http://localhost:{self.config.port}"
-        else:
-            base_url = "http://localhost:8000"
-
-        if not base_url.endswith("/v1"):
-            base_url = f"{base_url}/v1"
-        return base_url
+        if not self.config.api_base:
+            raise ValueError("api_base is required for VLLM client configuration.")
+        return self.config.api_base.rstrip("/")
 
     def load_model(self):
         if self._model_loaded:
             return
 
         base_url = self._resolve_base_url()
-        api_key = self.config.api_key or "EMPTY"
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(base_url=base_url.rstrip("/") + "/v1", api_key="none")
         self.model = self.config.model_name
         self._model_loaded = True
         logger.info("Loaded vLLM model %s at %s", self.model, base_url)
@@ -48,6 +39,8 @@ class VLLMBasedAgent(BaseAgent):
 
     def _generate_response(self, model_input: Any) -> Tuple[Any, Dict[str, Any]]:
         gen_kwargs = dict(self.config.generate_config or {})
+        gen_kwargs.pop("tools", None)
+        gen_kwargs.pop("tool_choice", None)
         if isinstance(model_input, dict):
             messages = model_input.get("messages", [])
         else:
@@ -61,7 +54,15 @@ class VLLMBasedAgent(BaseAgent):
 
         extra_info = {"original_response": str(response)}
         if response.usage is not None:
-            extra_info["tokens_used"] = response.usage.total_tokens
+            usage = response.usage
+            if isinstance(usage, dict):
+                tokens_used = usage.get("completion_tokens") or usage.get("total_tokens")
+            else:
+                tokens_used = getattr(
+                    usage, "completion_tokens", None
+                ) or getattr(usage, "total_tokens", None)
+            if tokens_used is not None:
+                extra_info["tokens_used"] = tokens_used
         return response, extra_info
 
     def act(self, observation: Any) -> Tuple[Any, Dict[str, Any]]:

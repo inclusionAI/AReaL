@@ -1,17 +1,8 @@
-import json
 from types import SimpleNamespace
 
 from PIL import Image
 
 from ..environment.task.vllm_vision_qa_task import VLLMVisionQATask
-
-
-def _make_tool_call(name: str, arguments: dict, call_id: str = "call_1"):
-    return SimpleNamespace(
-        id=call_id,
-        type="function",
-        function=SimpleNamespace(name=name, arguments=json.dumps(arguments)),
-    )
 
 
 def _make_response(message, tokens_used: int = 5):
@@ -36,13 +27,13 @@ def test_vllm_task_parses_tool_calls(tmp_path):
         system_prompt="sys",
     )
 
-    tool_call = _make_tool_call(
-        "image_label",
-        {"image_index": 0, "text": "x", "position": "(1,2)"},
+    content = (
+        "<think>Need to label.</think>"
+        "<action>{\"name\":\"image_label\",\"arguments\":{\"image_index\":0,\"text\":\"x\",\"position\":\"(1,2)\"}}</action>"
     )
     message = SimpleNamespace(
-        content="tool call",
-        tool_calls=[tool_call],
+        content=content,
+        tool_calls=None,
         role="assistant",
     )
     response = _make_response(message)
@@ -56,5 +47,9 @@ def test_vllm_task_parses_tool_calls(tmp_path):
     assert len(tool_calls) == 1
     assert tool_calls[0].name == "image_label"
     assert tool_calls[0].args["image_index"] == 0
+    assert tool_calls[0].args["text"] == "x"
+    assert tool_calls[0].call_id == "call_1_1"
     assert task.messages[-1]["role"] == "assistant"
     assert task.conversation_history[0]["function_call"][0][0] == "image_label"
+    assert task.conversation_history[0]["thinking_process"] == "Need to label."
+    assert "<action>" not in task.conversation_history[0]["output_text"]

@@ -31,7 +31,7 @@ class VisionQATask(AbstractVLMTask):
         task_id: str,
         task_prompt: str,
         task_answer: str,
-        task_image_path: str,
+        task_image_path: str | None,
         save_dir: Path | str,
         tool_functions: Optional[Dict[str, Any]] = None,
         **kwargs,
@@ -45,8 +45,11 @@ class VisionQATask(AbstractVLMTask):
         self.options = kwargs["options"] if "options" in kwargs else None
 
         self.image_path_map: Dict[int, str] = {}
-        self.image_list = [Image.open(self.task_image_path).convert("RGB")]
-        self.image_path_map[id(self.image_list[0])] = self.task_image_path
+        self.image_list: List[Image.Image] = []
+        if self.task_image_path:
+            image = Image.open(self.task_image_path).convert("RGB")
+            self.image_list.append(image)
+            self.image_path_map[id(image)] = self.task_image_path
 
         self.conversation_history: List[Dict[str, Any]] = []
 
@@ -126,6 +129,11 @@ class VisionQATask(AbstractVLMTask):
     def update_observation_from_action(self, tool_calls: List[ToolCall]) -> None:
         if not tool_calls:
             logger.warning("No function calls to process.")
+            return
+        if not self.image_list:
+            for call in tool_calls:
+                self._append_tool_error(call, "No image available for tool call.")
+            self.append_prompt(TOOL_EXECUTION_FAILURE_PROMPT)
             return
         self._prepare_tool_update()
         is_legal, illegal_reason, expected_name, expected_index = (

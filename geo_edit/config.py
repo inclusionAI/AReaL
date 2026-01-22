@@ -6,7 +6,6 @@ from .constants import (
     MAX_TOOL_CALLS,
     MATHVISION_INPUT_TEMPLATE,
     NOTOOL_INPUT_TEMPLATE,
-    SYSTEM_PROMPT,
 )
 
 from .environment.action import TOOL_FUNCTIONS_DECLARE, TOOL_FUNCTIONS
@@ -38,7 +37,7 @@ class VLLMAgentConfigs:
     generate_config: Dict[str, Any]
     direct_generate_config: Dict[str, Any]
     force_generate_config: Dict[str, Any]
-    force_tool_call_config: Dict[str, Any]
+    system_prompt: Optional[str] = None
 
 def _build_generate_config(**kwargs: object) -> types.GenerateContentConfig:
     return types.GenerateContentConfig(**{k: v for k, v in kwargs.items() if v is not None})
@@ -101,7 +100,7 @@ def build_agent_configs(
     thinking_level: Optional[str] = "high",
     include_thoughts: Optional[bool] = True,
     temperature: float = 1.0,
-    system_prompt: str = SYSTEM_PROMPT,
+    system_prompt: Optional[str] = None,
     candidate_count: int = 1,
     tool_mode: str = "AUTO",
     disable_automatic_function_calling: bool = True,
@@ -135,7 +134,7 @@ def build_agent_configs(
         thinking_config=thinking_config,
         tool_config=tool_config,
         temperature=temperature,
-        system_instruction=[system_prompt],
+        system_instruction=[system_prompt] if system_prompt is not None else None,
         max_output_tokens=max_output_tokens,
         candidate_count=candidate_count,
         automatic_function_calling=automatic_function_calling,
@@ -147,7 +146,7 @@ def build_agent_configs(
             function_calling_config=types.FunctionCallingConfig(mode="ANY")
         ),
         temperature=temperature,
-        system_instruction=[system_prompt],
+        system_instruction=[system_prompt] if system_prompt is not None else None,
         max_output_tokens=max_output_tokens,
         candidate_count=candidate_count,
         automatic_function_calling=automatic_function_calling,
@@ -169,7 +168,7 @@ def build_agent_configs(
         thinking_config=thinking_config,
         tool_config=force_generate_tool_config,
         temperature=temperature,
-        system_instruction=[system_prompt],
+        system_instruction=[system_prompt] if system_prompt is not None else None,
         max_output_tokens=max_output_tokens,
         candidate_count=candidate_count,
     )
@@ -188,7 +187,7 @@ def build_openai_agent_configs(
     *,
     max_output_tokens: Optional[int] = None,
     temperature: float = 1.0,
-    system_prompt: str = SYSTEM_PROMPT,
+    system_prompt: Optional[str] = None,
     tool_mode: str = "AUTO",
     reasoning_level: Optional[str] = None,
 ) -> OpenAIAgentConfigs:
@@ -200,7 +199,7 @@ def build_openai_agent_configs(
         tool_choice="required",
         temperature=temperature,
         max_output_tokens=max_output_tokens,
-        instructions=system_prompt,
+        instructions=[system_prompt] if system_prompt is not None else None,
         reasoning={"effort":reasoning_level}
     )
 
@@ -209,13 +208,13 @@ def build_openai_agent_configs(
         tool_choice=tool_choice,
         temperature=temperature,
         max_output_tokens=max_output_tokens,
-        instructions=system_prompt,
+        instructions=[system_prompt] if system_prompt is not None else None,
         reasoning={"effort":reasoning_level}
     )
     direct_generate_config = _build_openai_generate_config(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
-        instructions=system_prompt,
+        instructions=[system_prompt] if system_prompt is not None else None,
         reasoning={"effort":reasoning_level},
     )
     force_generate_config = _build_openai_generate_config(
@@ -223,7 +222,7 @@ def build_openai_agent_configs(
         tool_choice="none",
         temperature=temperature,
         max_output_tokens=max_output_tokens,
-        instructions=system_prompt,
+        instructions=[system_prompt] if system_prompt is not None else None,
         reasoning={"effort":reasoning_level},
     )
 
@@ -242,6 +241,7 @@ def build_vllm_agent_configs(
     max_output_tokens: Optional[int] = None,
     temperature: float = 1.0,
     tool_mode: str = "AUTO",
+    system_prompt: Optional[str] = None,
 ) -> VLLMAgentConfigs:
     tools = _build_chat_tool_specs(TOOL_FUNCTIONS_DECLARE)
     tool_choice = _resolve_vllm_tool_choice(tool_mode)
@@ -251,6 +251,7 @@ def build_vllm_agent_configs(
         tool_choice=tool_choice,
         temperature=temperature,
         max_tokens=max_output_tokens,
+        instructions=[system_prompt] if system_prompt is not None else None,
     )
     direct_generate_config = _build_openai_generate_config(
         temperature=temperature,
@@ -262,20 +263,13 @@ def build_vllm_agent_configs(
         temperature=temperature,
         max_tokens=max_output_tokens,
     )
-    force_tool_call_config = _build_openai_generate_config(
-        tools=tools,
-        tool_choice="auto",
-        temperature=temperature,
-        max_tokens=max_output_tokens,
-    )
-
     return VLLMAgentConfigs(
         tools=tools,
         tool_choice=tool_choice,
         generate_config=generate_config,
         direct_generate_config=direct_generate_config,
         force_generate_config=force_generate_config,
-        force_tool_call_config=force_tool_call_config,
+        system_prompt=system_prompt,
     )
 
 __all__ = [

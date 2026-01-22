@@ -18,7 +18,7 @@ class GoogleVisionQATask(VisionQATask):
         task_id: str,
         task_prompt: str,
         task_answer: str,
-        task_image_path: str,
+        task_image_path: str | None,
         save_dir: Path | str,
         tool_functions: Optional[Dict[str, Any]] = None,
         **kwargs,
@@ -33,7 +33,8 @@ class GoogleVisionQATask(VisionQATask):
             **kwargs,
         )
         # text only option
-        if kwargs.get("text_only", False):
+        text_only = kwargs.get("text_only", False) or not self.image_list
+        if text_only:
             logger.info("Initializing GoogleVisionQATask in text only mode.")
             self.contents = [self.task_prompt]
         else:

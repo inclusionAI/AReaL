@@ -21,7 +21,8 @@ from ..config import (
     build_openai_agent_configs,
     build_vllm_agent_configs,
 )
-from ..constants import SYSTEM_PROMPT, MAX_TOOL_CALLS, SUDOKU_TOOL_CALL_INPUT_TEMPLATE, MATHVISION_INPUT_TEMPLATE, NOTOOL_INPUT_TEMPLATE, SUDOKU_TEXT_INPUT_TEMPLATE
+from ..constants import MAX_TOOL_CALLS, get_system_prompt
+from ..datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -30,11 +31,12 @@ logger = setup_logger(__name__)
 # ----------------------------
 _WORKER_AGENT = None
 _WORKER_AGENT_CONFIGS = None
-_WORKER_INPUT_TEMPLATE = None
 _WORKER_OUTPUT_PATH = None
 _WORKER_MAX_TOOL_CALLS = None
 _WORKER_TASK_CLASS = None
 _WORKER_MODEL_TYPE = None
+_WORKER_SYSTEM_PROMPT = None
+_WORKER_USE_TOOLS = True
 
 
 def _init_worker(
@@ -44,24 +46,26 @@ def _init_worker(
     api_base: str,
     port: int,
     output_path: str,
-    input_template: str,
     max_tool_calls: int,
+    use_tools: bool,
 ):
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_INPUT_TEMPLATE, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_USE_TOOLS
 
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
 
+    system_prompt = get_system_prompt(model_type) if use_tools else ""
+    tool_mode = "AUTO" if use_tools else "NONE"
     if model_type == "Google":
         agent_configs = build_agent_configs(
             max_output_tokens=max_output_tokens,
             thinking_level="low",
             include_thoughts=True,
             temperature=1.0,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             candidate_count=1,
-            tool_mode="AUTO",
+            tool_mode=tool_mode,
             disable_automatic_function_calling=True,
         )
         _WORKER_TASK_CLASS = GoogleVisionQATask
@@ -69,8 +73,8 @@ def _init_worker(
         agent_configs = build_openai_agent_configs(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            system_prompt=SYSTEM_PROMPT,
-            tool_mode="AUTO",
+            system_prompt=system_prompt,
+            tool_mode=tool_mode,
             reasoning_level="medium",
         )
         _WORKER_TASK_CLASS = OpenAIVisionQATask
@@ -78,7 +82,8 @@ def _init_worker(
         agent_configs = build_vllm_agent_configs(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            tool_mode="AUTO",
+            system_prompt=system_prompt,
+            tool_mode=tool_mode,
         )
         _WORKER_TASK_CLASS = VLLMVisionQATask
 
@@ -95,10 +100,11 @@ def _init_worker(
     _WORKER_AGENT_CONFIGS = agent_configs
     agent_cls = VLLMBasedAgent if model_type == "vLLM" else APIBasedAgent
     _WORKER_AGENT = agent_cls(config)
-    _WORKER_INPUT_TEMPLATE = input_template
     _WORKER_OUTPUT_PATH = output_path
     _WORKER_MAX_TOOL_CALLS = max_tool_calls
     _WORKER_MODEL_TYPE = model_type
+    _WORKER_SYSTEM_PROMPT = system_prompt
+    _WORKER_USE_TOOLS = use_tools
 
 
 def _run_one_task(task_payload: dict):
@@ -108,18 +114,14 @@ def _run_one_task(task_payload: dict):
     Returns:
       (ok: bool, meta_info: dict|None)
     """
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_INPUT_TEMPLATE
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE, _WORKER_USE_TOOLS
 
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
-    question = task_payload["question"]
-    options = task_payload["options"]
     answer = task_payload["answer"]
     image_path = task_payload["image_path"]
-    rows = task_payload["rows"]
-    cols = task_payload["cols"]
-    initial_board = task_payload["initial_board"]
-    visual_elements = task_payload["visual_elements"]
+    text_prompt = task_payload["prompt"]
+    text_only = task_payload.get("text_only", False)
 
     meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
     if os.path.exists(meta_path):
@@ -127,17 +129,17 @@ def _run_one_task(task_payload: dict):
             meta_info = json.loads(f.readline().strip())
         return True, meta_info
 
-    text_prompt = _WORKER_INPUT_TEMPLATE.format(rules=question, answer=answer, rows=rows, cols=cols, total_cells=rows*cols, initial_board=initial_board, visual_elements=visual_elements)
-
-    task_kwargs = {"text_only": False}
+    task_kwargs = {}
+    if text_only:
+        task_kwargs["text_only"] = True
     if _WORKER_MODEL_TYPE == "vLLM":
-        task_kwargs["system_prompt"] = SYSTEM_PROMPT
+        task_kwargs["system_prompt"] = _WORKER_SYSTEM_PROMPT
     task = _WORKER_TASK_CLASS(
         task_id=task_id,
         task_prompt=text_prompt,
         task_answer=answer,
         task_image_path=image_path,
-        tool_functions=TOOL_FUNCTIONS,
+        tool_functions=TOOL_FUNCTIONS if _WORKER_USE_TOOLS else {},
         save_dir=task_save_dir,
         **task_kwargs,
     )
@@ -154,15 +156,9 @@ def _run_one_task(task_payload: dict):
 
             task.update_observation_from_action(function_call_part_list)
             
-            if i>=4:
-                _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.generate_config
-
         if task.state and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS:
             force_prompt = "Max tool calls reached. Please provide the final answer without further tool calls."
-            if _WORKER_MODEL_TYPE == "Google":
-                task.contents.append(force_prompt)
-            else:
-                task.append_prompt(force_prompt)
+            task.append_prompt(force_prompt)
             original_generate_config = _WORKER_AGENT.config.generate_config
             _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_generate_config
             action, extra_info = _WORKER_AGENT.act(task.contents)
@@ -186,9 +182,11 @@ def main():
     parser = argparse.ArgumentParser(description="Generate content with tool calls using API models (multiprocess).")
     parser.add_argument("--api_key", type=str, default=None, help="API key for the selected provider.")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset file.")
+    parser.add_argument("--dataset_name", type=str, required=True, choices=sorted(DATASET_SPECS.keys()), help="Dataset adapter name.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
     parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM"], help="Model provider.")
+    parser.add_argument("--use_tools", action=argparse.BooleanOptionalAction, default=True, help="Enable tool calling for the agent.")
     parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM OpenAI-compatible server.")
     parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
@@ -202,7 +200,6 @@ def main():
     os.makedirs(output_path, exist_ok=True)
 
     dataset = load_dataset("parquet", data_files=args.dataset_path)["train"]
-    # dataset = dataset.filter(lambda x: x["image_preview"] is not None)
     logger.info(f"Dataset size after filtering: {len(dataset)}")
 
     if args.sample_rate < 1.0:
@@ -210,15 +207,19 @@ def main():
         dataset = dataset.shuffle(seed=seed).select(range(sample_size))
         logger.info(f"Sampled {sample_size} examples from the dataset.")
 
-    # input_template = MATHVISION_INPUT_TEMPLATE
-    input_template =  SUDOKU_TOOL_CALL_INPUT_TEMPLATE
+    dataset_spec = get_dataset_spec(args.dataset_name)
+    if not args.use_tools and dataset_spec.notool_prompt_template is None:
+        logger.warning(
+            "Dataset %s has no no-tool template; using tool template.",
+            dataset_spec.name,
+        )
 
     # 1) main process scan: collect done meta_info + pending items
     meta_info_list = []
     pending_items = []
 
     for item in dataset:
-        task_id = item["puzzle_id"]
+        task_id = str(item[dataset_spec.id_key])
         task_save_dir = os.path.join(output_path, task_id)
         meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
 
@@ -246,8 +247,8 @@ def main():
             args.api_base,
             args.port,
             output_path,
-            input_template,
             MAX_TOOL_CALLS,
+            args.use_tools,
         ),
     ) as pool:
 
@@ -262,7 +263,7 @@ def main():
                 item = pending_items[submit_idx]
                 submit_idx += 1
 
-                task_id = item["puzzle_id"]
+                task_id = str(item[dataset_spec.id_key])
                 task_save_dir = os.path.join(output_path, task_id)
                 meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
 
@@ -275,24 +276,25 @@ def main():
 
                 os.makedirs(task_save_dir, exist_ok=True)
 
-                image = item["board_image"]
-                if isinstance(image, Image.Image):
-                    image_path = os.path.join(task_save_dir, "input_image.png")
-                    image.save(image_path)
-                else:
-                    image_path = image
+                image_path = None
+                text_only = dataset_spec.image_key is None
+                if dataset_spec.image_key:
+                    image = item.get(dataset_spec.image_key)
+                    if isinstance(image, Image.Image):
+                        image_path = os.path.join(task_save_dir, "input_image.png")
+                        image.save(image_path)
+                    else:
+                        image_path = image
+                    if image is None:
+                        text_only = True
 
                 payload = {
                     "id": task_id,
                     "task_save_dir": task_save_dir,
-                    "question": item["rules"],
-                    "answer": item["solution"],
+                    "prompt": dataset_spec.build_prompt(item, args.use_tools),
+                    "answer": item[dataset_spec.answer_key],
                     "image_path": image_path,
-                    "options": item.get("options", ""),
-                    "rows": item["rows"],
-                    "cols": item["cols"],
-                    "initial_board": item["initial_board"],
-                    "visual_elements": str(item["visual_elements"]) if "visual_elements" in item else "",
+                    "text_only": text_only,
                 }
 
                 ar = pool.apply_async(_run_one_task, (payload,))

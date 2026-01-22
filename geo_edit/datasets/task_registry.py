@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Mapping, Optional
+
+from ..constants import SUDOKU_TEXT_INPUT_TEMPLATE, SUDOKU_TOOL_CALL_INPUT_TEMPLATE
+
+FieldSource = str | Callable[[Mapping[str, Any]], Any]
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetSpec:
+    name: str
+    id_key: str
+    answer_key: str
+    prompt_template: str
+    template_fields: Dict[str, FieldSource]
+    notool_prompt_template: Optional[str] = None
+    image_key: Optional[str] = None
+
+    def build_prompt(self, item: Mapping[str, Any], use_tools: bool) -> str:
+        values: Dict[str, Any] = {}
+        for template_key, source in self.template_fields.items():
+            if callable(source):
+                values[template_key] = source(item)
+            else:
+                values[template_key] = item[source]
+        template = self.prompt_template
+        if not use_tools and self.notool_prompt_template:
+            template = self.notool_prompt_template
+        return template.format(**values)
+
+def _sudoku_total_cells(item: Mapping[str, Any]) -> int:
+    return int(item["rows"]) * int(item["cols"])
+
+DATASET_SPECS: Dict[str, DatasetSpec] = {
+    "sudoku": DatasetSpec(
+        name="sudoku",
+        id_key="puzzle_id",
+        answer_key="solution",
+        image_key="board_image",
+        prompt_template=SUDOKU_TOOL_CALL_INPUT_TEMPLATE,
+        notool_prompt_template=SUDOKU_TEXT_INPUT_TEMPLATE,
+        template_fields={
+            "rules": "rules",
+            "rows": "rows",
+            "cols": "cols",
+            "total_cells": _sudoku_total_cells,
+            "initial_board": "initial_board",
+            "visual_elements": "visual_elements",
+        },
+    ),
+}
+
+
+def get_dataset_spec(name: str) -> DatasetSpec:
+    try:
+        return DATASET_SPECS[name]
+    except KeyError as exc:
+        raise KeyError(f"Unknown dataset name: {name}") from exc
