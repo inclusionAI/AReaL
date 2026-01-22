@@ -265,6 +265,8 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
         messages=base, max_completion_tokens=2048
     )
 
+    print(f"c_root: {c_root}")
+
     # Branch A1: root -> a -> a1
     msgs_a = base + [
         c_root.choices[0].message,
@@ -273,6 +275,9 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
     c_a = await openai_client.chat.completions.create(
         messages=msgs_a, max_completion_tokens=2048
     )
+
+    print(f"c_a: {c_a}")
+
     msgs_a1 = msgs_a + [
         c_a.choices[0].message,
         {"role": "user", "content": "Follow-up A1"},
@@ -280,6 +285,8 @@ async def test_multi_round_conversation_concat_style_export(openai_client):
     c_a1 = await openai_client.chat.completions.create(
         messages=msgs_a1, max_completion_tokens=2048
     )
+
+    print(f"c_a1: {c_a1}")
 
     # Branch A2: root -> a -> a2
     msgs_a2 = msgs_a + [
