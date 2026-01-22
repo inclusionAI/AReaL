@@ -167,7 +167,7 @@ def concat_prompt_token_ids_with_parent(
         # We will add an extra EOS token to align with the chat template. During training, this added EOS will be treated
         # as part of the child message's prompt rather than the parent message's output, and therefore will be masked out
         # by the loss_mask.
-        # If parent terminated with EOS token, it will be removed by parent.model_response.output_tokens_without_stop, and
+        # If the parent terminated with an EOS token, it will be removed by parent.model_response.output_tokens_without_stop, and
         # we add it here.
         # TODO: should we mask this extra eos token in loss_mask during training?
         parent_tokens += [eos_token_id]
