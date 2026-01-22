@@ -100,6 +100,10 @@ class ModelResponse:
                 idx -= 1
         if idx < 0:
             return False  # all tokens are pad tokens
+        if idx < len(self.output_tokens) - 1 and self.output_tokens[idx] != eos_id:
+            raise ValueError(
+                "output_tokens has trailing pad tokens but does not end with eos token before pads"
+            )
         return self.output_tokens[idx] == eos_id
 
     @property
@@ -109,7 +113,7 @@ class ModelResponse:
         if self.stop_reason not in ["length", "abort"] and self.output_tokens:
             if not self.end_with_eos:
                 raise ValueError(
-                    f"output_tokens does not end with eos or pad token, but stop_reason is {self.stop_reason}"
+                    f"output_tokens does not end with eos or pad token, it ends with {self.output_tokens[-1]}, but stop_reason is {self.stop_reason}"
                 )
             pad_or_eos_len = 0
             eos_id = self.tokenizer.eos_token_id
