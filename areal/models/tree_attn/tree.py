@@ -14,7 +14,8 @@ import torch
 import torch.distributed as dist
 
 from areal.api.cli_args import MicroBatchSpec
-from areal.models.tree_attn.module import BLOCK_SIZE, create_block_mask_from_dense
+from areal.models.tree_attn.constants import BLOCK_SIZE
+from areal.models.tree_attn.module_fsdp import create_block_mask_from_dense
 from areal.utils import logging, stats_tracker
 from areal.utils.data import MicroBatchList
 from areal.utils.perf_tracer import trace_perf, trace_scope
