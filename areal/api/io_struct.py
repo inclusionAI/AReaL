@@ -109,10 +109,10 @@ class ModelResponse:
             pad_or_eos_len = 0
             eos_id = self.tokenizer.eos_token_id
             pad_id = self.tokenizer.pad_token_id
+            stop_tokens = {eos_id, pad_id}
+            stop_tokens.discard(None)
             for tok in reversed(self.output_tokens):
-                if (eos_id is not None and tok == eos_id) or (
-                    pad_id is not None and tok == pad_id
-                ):
+                if tok in stop_tokens:
                     pad_or_eos_len += 1
                 else:
                     break
