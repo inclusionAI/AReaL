@@ -23,7 +23,9 @@ def math_reward_fn(completions: str, answer: str) -> float:
 
 class MathAgent(AgentWorkflow):
     def __init__(self, **kwargs):
-        self.kwargs = kwargs
+        self.kwargs = kwargs.copy()
+        self.kwargs.pop("max_tokens", None).copy()
+        self.kwargs.pop("max_tokens", None)
 
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
@@ -42,7 +44,8 @@ class MathAgent(AgentWorkflow):
 class MultiTurnMathAgent(AgentWorkflow):
     def __init__(self, max_turns: int = 8, **kwargs):
         self.max_turns = max_turns
-        self.kwargs = kwargs
+        self.kwargs = kwargs.copy()
+        self.kwargs.pop("max_tokens", None)
 
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
@@ -116,7 +119,8 @@ def sqrt(a: float) -> float:
 
 class MathToolAgent(AgentWorkflow):
     def __init__(self, **kwargs):
-        self.kwargs = kwargs
+        self.kwargs = kwargs.copy()
+        self.kwargs.pop("max_tokens", None)
 
     async def run(self, data: dict, **extra_kwargs):
         http_client = extra_kwargs.get("http_client", None)
