@@ -49,7 +49,7 @@ def main(args):
     )
 
     workflow_kwargs = dict(
-        reward_fn="examples.vlm_npu.geometry3k_grpo.geometry3k_reward_fn",
+        reward_fn=geometry3k_reward_fn,
         gconfig=config.gconfig,
         tokenizer=config.tokenizer_path,
         processor=config.tokenizer_path,
