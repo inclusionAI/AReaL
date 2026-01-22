@@ -3,4 +3,4 @@ export USE_OPTIMIZED_MODEL=0
 # the optimized model may not be suitable. In this case, set this value to 0 to disable the optimized model.
 
 python -m areal.launcher.local \
-    examples/vlm_npu/geometry3k_grpo.py --config examples/vlm_npu/geometry3k_grpo.yaml 
+    examples/vlm_npu/qwen2_5_vl_3b_geometry3k_grpo.py --config examples/vlm_npu/qwen2_5_vl_3b_geometry3k_grpo.yaml 
