@@ -92,11 +92,15 @@ class ModelResponse:
         pad_id = self.tokenizer.pad_token_id
         if len(self.output_tokens) == 0:
             return False
-        if eos_id is not None and self.output_tokens[-1] == eos_id:
-            return True
-        if pad_id is not None and self.output_tokens[-1] == pad_id:
-            return True
-        return False
+
+        # remove trailing pad tokens
+        idx = len(self.output_tokens) - 1
+        if pad_id is not None:
+            while idx >= 0 and self.output_tokens[idx] == pad_id:
+                idx -= 1
+        if idx < 0:
+            return False  # all tokens are pad tokens
+        return self.output_tokens[idx] == eos_id
 
     @property
     def output_tokens_without_stop(self) -> list[int]:
