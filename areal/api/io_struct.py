@@ -108,10 +108,12 @@ class ModelResponse:
                     f"output_tokens does not end with eos or pad token, but stop_reason is {self.stop_reason}"
                 )
             pad_or_eos_len = 0
+            eos_id = self.tokenizer.eos_token_id
+            pad_id = self.tokenizer.pad_token_id
             for tok in reversed(self.output_tokens):
-                eos_id = self.tokenizer.eos_token_id
-                pad_id = self.tokenizer.pad_token_id
-                if tok == eos_id or tok == pad_id:
+                if (eos_id is not None and tok == eos_id) or (
+                    pad_id is not None and tok == pad_id
+                ):
                     pad_or_eos_len += 1
                 else:
                     break
