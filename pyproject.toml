@@ -51,6 +51,8 @@ dependencies = [
     "peft",
     "qwen_agent",
     "openai-agents",
+    "litellm",
+    "anthropic",
 
     # Visualization
     "pandas",

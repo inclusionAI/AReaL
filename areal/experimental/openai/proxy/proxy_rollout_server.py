@@ -8,8 +8,13 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import uvicorn
+from anthropic.types.message import Message
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from litellm.llms.anthropic.experimental_pass_through.adapters.transformation import (
+    AnthropicAdapter,
+)
+from litellm.types.utils import ModelResponse as LitellmModelResponse
 from pydantic import BaseModel
 
 from openai.types.chat import ChatCompletion
@@ -27,6 +32,7 @@ from areal.utils.logging import getLogger
 from areal.utils.network import find_free_ports, gethostip
 
 from .server import (
+    ANTHROPIC_MESSAGES_PATHNAME,
     CHAT_COMPLETIONS_PATHNAME,
     RESPONSES_PATHNAME,
     RL_END_SESSION_PATHNAME,
@@ -75,6 +81,8 @@ _name_resolve_type: str = "nfs"
 _nfs_record_root: str = "/tmp/areal/name_resolve"
 _etcd3_addr: str = "localhost:2379"
 
+# Adapter to convert Anthropic request to OpenAI format
+_adapter = AnthropicAdapter()
 
 # =============================================================================
 # Request Validation
@@ -406,6 +414,81 @@ async def responses(request: ResponseCreateParams, session_id: str) -> Response:
         request=request,
         session_id=session_id,
     )
+
+
+@app.post(
+    "/{session_id}/" + ANTHROPIC_MESSAGES_PATHNAME,
+    dependencies=[Depends(validate_json_request)],
+)
+async def anthropic_messages(raw_request: Request, session_id: str) -> Message:
+    """Anthropic Messages API compatible endpoint.
+
+    Converts Anthropic format requests to OpenAI format, processes through
+    the OpenAI-compatible endpoint, then converts the response back to
+    Anthropic format.
+
+    Uses LiteLLM's AnthropicAdapter for format conversion.
+    """
+
+    if _openai_client is None:
+        raise HTTPException(
+            status_code=500,
+            detail='Proxy server not initialized. Send requests to /create_engine then /call "initialize" first.',
+        )
+
+    # Parse Anthropic request
+    anthropic_request = await raw_request.json()
+
+    try:
+        openai_request = _adapter.translate_completion_input_params(
+            anthropic_request.copy()
+        )
+        if openai_request is None:
+            raise ValueError("Failed to translate request")
+        openai_request = dict(openai_request)
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(
+            f"Failed to convert Anthropic request to OpenAI format due to invalid input: {e}"
+        )
+        raise HTTPException(
+            status_code=400, detail=f"Invalid Anthropic request format: {e}"
+        )
+    except Exception as e:
+        logger.error(
+            f"Unexpected error converting Anthropic request to OpenAI format: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error during request conversion."
+        )
+
+    # Call OpenAI-compatible endpoint
+    openai_response = await _call_client_create(
+        create_fn=_openai_client.chat.completions.create,
+        request=openai_request,
+        session_id=session_id,
+    )
+
+    # Convert OpenAI response to Anthropic format using LiteLLM's adapter
+    try:
+        # Convert ChatCompletion to LitellmModelResponse
+        openai_response_dict = openai_response.model_dump()
+        model_response = LitellmModelResponse(**openai_response_dict)
+        anthropic_response = _adapter.translate_completion_output_params(model_response)
+        if anthropic_response is None:
+            raise ValueError("Failed to translate response")
+
+        # LiteLLM returns Pydantic BaseModel objects in content list,
+        # Convert them to dict.
+        if "content" in anthropic_response and anthropic_response["content"]:
+            anthropic_response["content"] = [
+                block.model_dump() if hasattr(block, "model_dump") else block
+                for block in anthropic_response["content"]
+            ]
+        return Message(**anthropic_response)
+    except Exception as e:
+        logger.error(f"Failed to convert OpenAI response to Anthropic format: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to convert response: {e}")
 
 
 # =============================================================================

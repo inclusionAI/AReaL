@@ -23,9 +23,12 @@ def main(args):
     )
 
     workflow_kwargs = dict(
-        max_completion_tokens=config.gconfig.max_new_tokens,
         temperature=config.gconfig.temperature,
         top_p=config.gconfig.top_p,
+        # For anthtropic
+        max_tokens=config.gconfig.max_tokens,
+        # For openai
+        max_completion_tokens=config.gconfig.max_new_tokens,
     )
     eval_workflow_kwargs = workflow_kwargs.copy()
     eval_workflow_kwargs["temperature"] = 0.6
@@ -36,8 +39,8 @@ def main(args):
         valid_dataset=valid_dataset,
     ) as trainer:
         trainer.train(
-            workflow="areal.workflow.openai.math_agent.MathAgent",
-            eval_workflow="areal.workflow.openai.math_agent.MathAgent",
+            workflow="areal.workflow.anthropic.math_agent.MathAgent",
+            eval_workflow="areal.workflow.anthropic.math_agent.MathAgent",
             workflow_kwargs=workflow_kwargs,
             eval_workflow_kwargs=eval_workflow_kwargs,
         )
