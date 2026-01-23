@@ -1,16 +1,12 @@
-import os
-import glob
-import json
-import pandas as pd
-from PIL import Image
-# ====== 你需要改的路径参数 ======
+from datasets import Dataset, Features, Value, Sequence, Image as HFImage
+import os, glob, json
+
 json_dir = r"C:\Users\Antoine\code\CartoMapQA\Dataset\CartoMapQA\MapNavigation\_routes"
 image_root = r"C:\Users\Antoine\code\CartoMapQA\Dataset\CartoMapQA\MapNavigation\_maps"
 image_ext = ".png"
 out_parquet = r"C:\Users\Antoine\data\CartoMapQA\MapNavigation_dataset.parquet"
-# =================================
 
-rows = []
+examples = []
 json_files = sorted(glob.glob(os.path.join(json_dir, "*.json")))
 
 for i, fp in enumerate(json_files):
@@ -18,20 +14,27 @@ for i, fp in enumerate(json_files):
         obj = json.load(f)
 
     base = os.path.splitext(os.path.basename(fp))[0]
-    image_name = f"_map{base}{image_ext}"
-    image_path = os.path.join(image_root, image_name)
-
-    # 读图片为 PIL Image 对象
-    image = Image.open(image_path).convert("RGB")
+    image_path = os.path.join(image_root, f"{base}{image_ext}")
+    with open(image_path, "rb") as imf:
+        b = imf.read()
 
     obj["id"] = i
-    obj["image"] = image          # 关键：图片打包进 parquet
-    obj["source_file"] = os.path.basename(fp)
+    obj["image"] = {"bytes": b, "path": None}
+    examples.append(obj)
 
-    rows.append(obj)
+features = Features({
+    "origin": Sequence(Value("float64")),
+    "destination": Sequence(Value("float64")),
+    "facing": Value("string"),
+    "travel_mode": Value("string"),
+    "route_directions": Value("string"),
+    "route_node_id": Sequence(Value("int64")),
+    "area": Value("string"),
+    "zoom_level": Value("int64"),
+    "id": Value("int64"),
+    "image": HFImage(),
+})
 
-df = pd.DataFrame(rows)
-df.to_parquet(out_parquet, index=False, engine="pyarrow")
-
-print(f"Saved parquet: {out_parquet}")
-print(f"Num rows: {len(df)}")
+ds = Dataset.from_list(examples, features=features)
+ds.to_parquet(out_parquet)
+print("Saved parquet:", out_parquet)

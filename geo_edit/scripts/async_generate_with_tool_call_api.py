@@ -37,7 +37,7 @@ _WORKER_TASK_CLASS = None
 _WORKER_MODEL_TYPE = None
 _WORKER_SYSTEM_PROMPT = None
 _WORKER_USE_TOOLS = True
-
+_WORKER_TOOL_MODE = None
 
 def _init_worker(
     api_key: str,
@@ -47,16 +47,15 @@ def _init_worker(
     port: int,
     output_path: str,
     max_tool_calls: int,
-    use_tools: bool,
+    use_tools: str,
 ):
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_USE_TOOLS
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_USE_TOOLS, _WORKER_TOOL_MODE
 
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
+    system_prompt = get_system_prompt(model_type) if use_tools != "direct" else ""
 
-    system_prompt = get_system_prompt(model_type) if use_tools else ""
-    tool_mode = "AUTO" if use_tools else "NONE"
     if model_type == "Google":
         agent_configs = build_agent_configs(
             max_output_tokens=max_output_tokens,
@@ -65,7 +64,7 @@ def _init_worker(
             temperature=1.0,
             system_prompt=system_prompt,
             candidate_count=1,
-            tool_mode=tool_mode,
+            tool_mode=use_tools,
             disable_automatic_function_calling=True,
         )
         _WORKER_TASK_CLASS = GoogleVisionQATask
@@ -74,7 +73,7 @@ def _init_worker(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
             system_prompt=system_prompt,
-            tool_mode=tool_mode,
+            tool_mode=use_tools,
             reasoning_level="low",
         )
         _WORKER_TASK_CLASS = OpenAIVisionQATask
@@ -83,7 +82,7 @@ def _init_worker(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
             system_prompt=system_prompt,
-            tool_mode=tool_mode,
+            tool_mode=use_tools,
         )
         _WORKER_TASK_CLASS = VLLMVisionQATask
 
@@ -93,7 +92,7 @@ def _init_worker(
         api_key=api_key,
         api_base=api_base,
         port=port,
-        generate_config=agent_configs.generate_config if use_tools else agent_configs.direct_generate_config,
+        generate_config=agent_configs.direct_generate_config if tool_mode == "NONE" else agent_configs.generate_config,
         n_retry=3,
     )
 
@@ -104,7 +103,8 @@ def _init_worker(
     _WORKER_MAX_TOOL_CALLS = max_tool_calls
     _WORKER_MODEL_TYPE = model_type
     _WORKER_SYSTEM_PROMPT = system_prompt
-    _WORKER_USE_TOOLS = use_tools
+    _WORKER_USE_TOOLS = enable_tools
+    _WORKER_TOOL_MODE = normalized_tool_mode
 
 
 def _run_one_task(task_payload: dict):
@@ -114,7 +114,7 @@ def _run_one_task(task_payload: dict):
     Returns:
       (ok: bool, meta_info: dict|None)
     """
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE, _WORKER_USE_TOOLS
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE, _WORKER_USE_TOOLS, _WORKER_TOOL_MODE
 
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
@@ -158,13 +158,24 @@ def _run_one_task(task_payload: dict):
             task.update_observation_from_action(function_call_part_list)
             
         if task.state and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS:
-            force_prompt = "Max tool calls reached. Please provide the final answer without further tool calls."
-            task.append_prompt(force_prompt)
-            original_generate_config = _WORKER_AGENT.config.generate_config
-            _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_generate_config
-            action, extra_info = _WORKER_AGENT.act(task.contents)
-            _WORKER_AGENT.config.generate_config = original_generate_config
-            task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
+            if _WORKER_TOOL_MODE == "FINAL_FORCE":
+                force_prompt = "Max tool calls reached. Please continue with a tool call."
+                task.append_prompt(force_prompt)
+                original_generate_config = _WORKER_AGENT.config.generate_config
+                force_tool_call_config = _WORKER_AGENT_CONFIGS.force_tool_call_config
+                if force_tool_call_config is not None:
+                    _WORKER_AGENT.config.generate_config = force_tool_call_config
+                action, extra_info = _WORKER_AGENT.act(task.contents)
+                _WORKER_AGENT.config.generate_config = original_generate_config
+                task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
+            else:
+                force_prompt = "Max tool calls reached. Please provide the final answer without further tool calls."
+                task.append_prompt(force_prompt)
+                original_generate_config = _WORKER_AGENT.config.generate_config
+                _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_generate_config
+                action, extra_info = _WORKER_AGENT.act(task.contents)
+                _WORKER_AGENT.config.generate_config = original_generate_config
+                task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
 
         if task.state:
             meta_info = task.save_trajectory()
@@ -187,7 +198,7 @@ def main():
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
     parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM"], help="Model provider.")
-    parser.add_argument("--no_use_tools", action="store_true", help="Disable tool usage; answer directly.")
+    parser.add_argument("--use_tools", type=str, default="auto", choices=["direct", "auto", "force"])
     parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM OpenAI-compatible server.")
     parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
@@ -196,7 +207,7 @@ def main():
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
 
-    seed = 42
+    seed = 42   
     output_path = args.output_dir
     os.makedirs(output_path, exist_ok=True)
 
@@ -209,8 +220,9 @@ def main():
         logger.info(f"Sampled {sample_size} examples from the dataset.")
 
     dataset_spec = get_dataset_spec(args.dataset_name)
-    if args.no_use_tools and dataset_spec.notool_prompt_template is None:
-        logger.warning("Dataset %s has no no-tool template; using tool template.",dataset_spec.name)
+    tool_mode = args.use_tools
+    if tool_mode == "direct" and dataset_spec.notool_prompt_template is None:
+        logger.warning("Dataset %s has no no-tool template; using tool template.", dataset_spec.name)
 
     # 1 main process scan: collect done meta_info + pending items
     meta_info_list = []
@@ -246,7 +258,7 @@ def main():
             args.port,
             output_path,
             MAX_TOOL_CALLS,
-            not args.no_use_tools,
+            tool_mode,
         ),
     ) as pool:
 
@@ -289,7 +301,7 @@ def main():
                 payload = {
                     "id": task_id,
                     "task_save_dir": task_save_dir,
-                    "prompt": dataset_spec.build_prompt(item, not args.no_use_tools),
+                    "prompt": dataset_spec.build_prompt(item, tool_mode != "direct"),
                     "answer": item[dataset_spec.answer_key],
                     "image_path": image_path,
                     "text_only": text_only,

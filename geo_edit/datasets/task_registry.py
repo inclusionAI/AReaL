@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from ..constants import SUDOKU_TEXT_INPUT_TEMPLATE, SUDOKU_TOOL_CALL_INPUT_TEMPLATE
+from ..constants import SUDOKU_TEXT_INPUT_TEMPLATE, SUDOKU_TOOL_CALL_INPUT_TEMPLATE, CARTOMAPQA_INPUT_TEMPLATE, CARTOMAPQA_SRN_INPUT_TEMPLATE
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
 
@@ -60,8 +60,16 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             "visual_elements": "visual_elements",
         },
     ),
+    "cartomapqa_srn": DatasetSpec(
+        name="cartomapqa_srn",
+        id_key="id",
+        answer_key="route_directions",
+        image_key="image",
+        prompt_template=CARTOMAPQA_INPUT_TEMPLATE+ CARTOMAPQA_SRN_INPUT_TEMPLATE,
+        notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+ CARTOMAPQA_SRN_INPUT_TEMPLATE,
+        template_fields={},
+    ),
 }
-
 
 def get_dataset_spec(name: str) -> DatasetSpec:
     try:

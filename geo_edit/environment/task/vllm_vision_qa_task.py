@@ -48,10 +48,8 @@ class VLLMVisionQATask(VisionQATask):
             tool_functions=tool_functions,
             **kwargs,
         )
-        base_prompt = system_prompt if system_prompt is not None else VLLM_SYSTEM_PROMPT
+        base_prompt = system_prompt 
         tool_info = self._build_tool_prompt()
-        if base_prompt:
-            base_prompt = base_prompt.strip()
         if tool_info:
             if base_prompt:
                 self.system_prompt = f"{base_prompt}\n\n{tool_info}"

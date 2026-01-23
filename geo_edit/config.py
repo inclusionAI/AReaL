@@ -11,23 +11,18 @@ from .constants import (
 from .environment.action import TOOL_FUNCTIONS_DECLARE, TOOL_FUNCTIONS
 
 @dataclass(frozen=True, slots=True)
-class AgentConfigs:
+class GoogleAgentConfigs:
     tools: types.Tool
     tool_config: types.ToolConfig
     generate_config: types.GenerateContentConfig
-    direct_generate_config: types.GenerateContentConfig
-    force_generate_config: types.GenerateContentConfig
-    force_tool_call_config: Optional[types.GenerateContentConfig] = None
-
+    force_final_generate_config: types.GenerateContentConfig
 
 @dataclass(frozen=True, slots=True)
 class OpenAIAgentConfigs:
     tools: List[Dict[str, Any]]
     tool_choice: Union[str, Dict[str, Any]]
     generate_config: Dict[str, Any]
-    direct_generate_config: Dict[str, Any]
-    force_generate_config: Dict[str, Any]
-    force_tool_call_config: Dict[str, Any]
+    force_final_generate_config: Dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,8 +30,7 @@ class VLLMAgentConfigs:
     tools: List[Dict[str, Any]]
     tool_choice: Union[str, Dict[str, Any]]
     generate_config: Dict[str, Any]
-    direct_generate_config: Dict[str, Any]
-    force_generate_config: Dict[str, Any]
+    force_final_generate_config: Dict[str, Any]
     system_prompt: Optional[str] = None
 
 def _build_generate_config(**kwargs: object) -> types.GenerateContentConfig:
@@ -79,19 +73,12 @@ def _build_chat_tool_specs(
     return tool_specs
 
 
-def _resolve_openai_tool_choice(tool_mode: str) -> str:
-    mode = tool_mode.upper()
-    if mode in {"ANY", "REQUIRED"}:
-        return "required"
-    if mode in {"NONE", "OFF"}:
-        return "none"
-    return "auto"
-
-
 def _resolve_vllm_tool_choice(tool_mode: str) -> str:
     mode = tool_mode.upper()
-    if mode in {"NONE", "OFF"}:
+    if mode in {"NONE", "OFF", "DIRECT"}:
         return "none"
+    if mode in {"ANY", "REQUIRED", "FORCE", "FINAL_FORCE"}:
+        return "required"
     return "auto"
 
 def build_agent_configs(
@@ -102,10 +89,19 @@ def build_agent_configs(
     temperature: float = 1.0,
     system_prompt: Optional[str] = None,
     candidate_count: int = 1,
-    tool_mode: str = "AUTO",
-    disable_automatic_function_calling: bool = True,
-) -> AgentConfigs:
+    tool_mode:  Optional[str]  = None,
+) -> GoogleAgentConfigs:
     tools = types.Tool(function_declarations=TOOL_FUNCTIONS_DECLARE)
+
+    if tool_mode=="direct":
+        tool_mode="NONE"
+    elif tool_mode=="force" :
+        tool_mode="ANY"
+    elif tool_mode=="auto":
+        tool_mode="AUTO"
+    else:
+        raise ValueError(f"Invalid tool_mode: {tool_mode}")
+    
     if tool_mode=="ANY":
         tool_config= types.ToolConfig(
             function_calling_config=types.FunctionCallingConfig(
@@ -123,12 +119,7 @@ def build_agent_configs(
             thinkingLevel=thinking_level,
             include_thoughts=True if include_thoughts is None else include_thoughts,
         )
-    automatic_function_calling = (
-        types.AutomaticFunctionCallingConfig(disable=True)
-        if disable_automatic_function_calling
-        else None
-    )
-
+        
     generate_config = _build_generate_config(
         tools=[tools],
         thinking_config=thinking_config,
@@ -137,7 +128,7 @@ def build_agent_configs(
         system_instruction=[system_prompt] if system_prompt is not None else None,
         max_output_tokens=max_output_tokens,
         candidate_count=candidate_count,
-        automatic_function_calling=automatic_function_calling,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
     force_tool_call_config = _build_generate_config(
         tools=[tools],
@@ -149,7 +140,7 @@ def build_agent_configs(
         system_instruction=[system_prompt] if system_prompt is not None else None,
         max_output_tokens=max_output_tokens,
         candidate_count=candidate_count,
-        automatic_function_calling=automatic_function_calling,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
         
     direct_generate_config = _build_generate_config(
@@ -157,7 +148,7 @@ def build_agent_configs(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
         candidate_count=candidate_count,
-        automatic_function_calling=automatic_function_calling,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
     force_generate_tool_config = types.ToolConfig(
@@ -188,11 +179,18 @@ def build_openai_agent_configs(
     max_output_tokens: Optional[int] = None,
     temperature: float = 1.0,
     system_prompt: Optional[str] = None,
-    tool_mode: str = "AUTO",
+    tool_mode: Optional[str] = None,
     reasoning_level: Optional[str] = None,
 ) -> OpenAIAgentConfigs:
     tools = _build_openai_tool_specs(TOOL_FUNCTIONS_DECLARE)
-    tool_choice = _resolve_openai_tool_choice(tool_mode)
+    if tool_mode =="direct":
+        tool_mode="none"
+    elif tool_mode =="force":
+        tool_mode="required"
+    elif tool_mode =="auto":
+        tool_mode="auto"
+    else:
+        raise ValueError(f"Invalid tool_mode: {tool_mode}")
     
     force_tool_call_config=_build_openai_generate_config(
         tools=tools,
@@ -246,6 +244,14 @@ def build_vllm_agent_configs(
     tools = _build_chat_tool_specs(TOOL_FUNCTIONS_DECLARE)
     tool_choice = _resolve_vllm_tool_choice(tool_mode)
 
+    force_tool_call_config = _build_openai_generate_config(
+        tools=tools,
+        tool_choice="required",
+        temperature=temperature,
+        max_tokens=max_output_tokens,
+        instructions=system_prompt if system_prompt is not None else None,
+    )
+    
     generate_config = _build_openai_generate_config(
         tools=tools,
         tool_choice=tool_choice,
@@ -269,6 +275,7 @@ def build_vllm_agent_configs(
         generate_config=generate_config,
         direct_generate_config=direct_generate_config,
         force_generate_config=force_generate_config,
+        force_tool_call_config=force_tool_call_config,
         system_prompt=system_prompt,
     )
 
