@@ -10,7 +10,6 @@ from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
 
 
 def write_result(out: str, succ: bool) -> None:
-    """Write test result to file for pytest verification."""
     with open(out, "w") as f:
         f.write("Passed" if succ else "Failed")
 
@@ -28,7 +27,6 @@ def create_moe_model_args(
     max_seq_len: int = 8192,
     top_k: int = 2,
 ) -> Qwen3ModelArgs:
-    """Create model args for a small MoE model."""
     return Qwen3ModelArgs(
         dim=dim,
         hidden_dim=hidden_dim,
@@ -51,7 +49,7 @@ def create_moe_model_args(
 
 
 def gather_full_state_dict(model: torch.nn.Module) -> dict[str, torch.Tensor]:
-    """Gather all parameters including DTensors to full tensors."""
+    """Gather all parameters (including DTensors) to full tensors."""
     full_state = {}
     for name, param in model.named_parameters():
         if isinstance(param, DTensor):
@@ -75,14 +73,7 @@ def create_test_input(
     device: torch.device | str = "cuda",
     seed: int = 123,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
-    """Create test input tensors.
-
-    Returns:
-        tokens: (1, total_len) input token ids
-        positions: (1, total_len) position ids
-        cu_seqlens: (num_seqs + 1,) cumulative sequence lengths
-        seq_len_per_seq: sequence length per sequence
-    """
+    """Return (tokens, positions, cu_seqlens, seq_len_per_seq)."""
     torch.manual_seed(seed)
     total_len = num_seqs * seq_len_per_seq
 
@@ -102,7 +93,7 @@ def create_golden_model(
     device: torch.device | str,
     seed: int = 42,
 ) -> Qwen3Model:
-    """Create non-parallelized golden model for comparison."""
+    """Create non-parallelized model for comparison."""
     torch.manual_seed(seed)
     model = Qwen3Model(model_args)
     model.init_weights(device)
@@ -117,24 +108,10 @@ def verify_outputs_match(
     atol: float = 1e-4,
     max_diff_threshold: float = 1e-2,
 ) -> tuple[bool, float, float]:
-    """Compare two outputs and return (success, max_diff, mean_diff).
-
-    Args:
-        output1: First output tensor
-        output2: Second output tensor
-        rtol: Relative tolerance for allclose
-        atol: Absolute tolerance for allclose
-        max_diff_threshold: Maximum difference threshold for pass/fail
-
-    Returns:
-        success: Whether outputs match within tolerances
-        max_diff: Maximum absolute difference
-        mean_diff: Mean absolute difference
-    """
+    """Return (success, max_diff, mean_diff)."""
     max_diff = (output1 - output2).abs().max().item()
     mean_diff = (output1 - output2).abs().mean().item()
 
-    # Use both allclose and max_diff threshold
     allclose = torch.allclose(output1, output2, rtol=rtol, atol=atol)
     within_threshold = max_diff <= max_diff_threshold
 
@@ -142,7 +119,6 @@ def verify_outputs_match(
 
 
 def print_rank0(msg: str) -> None:
-    """Print message only on rank 0."""
     if dist.get_rank() == 0:
         print(msg)
 
@@ -157,7 +133,6 @@ def create_dense_model_args(
     vocab_size: int = 1000,
     max_seq_len: int = 8192,
 ) -> Qwen3ModelArgs:
-    """Create model args for a small dense (non-MoE) model."""
     return Qwen3ModelArgs(
         dim=dim,
         hidden_dim=hidden_dim,
@@ -173,27 +148,16 @@ def create_dense_model_args(
 
 
 def validate_gradients(model: Qwen3Model) -> tuple[bool, list[str]]:
-    """Verify gradients flow through all key components.
-
-    Args:
-        model: The model to check gradients for.
-
-    Returns:
-        Tuple of (success, error_messages)
-    """
+    """Return (success, error_messages)."""
     errors = []
 
-    # Check embedding gradients
     if model.tok_embeddings.weight.grad is None:
         errors.append("tok_embeddings has no gradient")
 
-    # Check each layer
     for layer_id, layer in model.layers.items():
-        # Attention
         if layer.attention.wq.weight.grad is None:
             errors.append(f"Layer {layer_id} attention.wq has no gradient")
 
-        # MoE or FFN
         if layer.moe is not None:
             if layer.moe.router.gate.weight.grad is None:
                 errors.append(f"Layer {layer_id} MoE router has no gradient")
@@ -203,7 +167,6 @@ def validate_gradients(model: Qwen3Model) -> tuple[bool, list[str]]:
             if layer.feed_forward.w1.weight.grad is None:
                 errors.append(f"Layer {layer_id} FFN has no gradient")
 
-    # Check output layer
     if model.output is not None and model.output.weight.grad is None:
         errors.append("output projection has no gradient")
 
@@ -211,14 +174,7 @@ def validate_gradients(model: Qwen3Model) -> tuple[bool, list[str]]:
 
 
 def validate_no_nan(output: torch.Tensor) -> bool:
-    """Check for NaN/Inf in output.
-
-    Args:
-        output: Output tensor to check.
-
-    Returns:
-        True if output is valid (no NaN/Inf), False otherwise.
-    """
+    """Return True if output has no NaN/Inf."""
     if torch.isnan(output).any():
         return False
     if torch.isinf(output).any():

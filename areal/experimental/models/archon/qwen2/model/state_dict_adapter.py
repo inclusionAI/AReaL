@@ -6,7 +6,6 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import torch
-from torch.distributed.tensor import DTensor
 
 from areal.experimental.models.archon.base import BaseStateDictAdapter
 
@@ -17,8 +16,10 @@ if TYPE_CHECKING:
 class Qwen2StateDictAdapter(BaseStateDictAdapter):
     """State dict adapter for Qwen2 models."""
 
-    def __init__(self, model_config: PretrainedConfig):
-        super().__init__(model_config)
+    def __init__(
+        self, model_config: PretrainedConfig, hf_assets_path: str | None = None
+    ):
+        super().__init__(model_config, hf_assets_path)
 
         # HuggingFace -> Archon key mapping
         self.from_hf_map = {
@@ -59,8 +60,6 @@ class Qwen2StateDictAdapter(BaseStateDictAdapter):
             # Regular key mapping
             hf_key = self._convert_key_to_hf(key)
             if hf_key is not None:
-                if isinstance(value, DTensor):
-                    value = value.full_tensor()
                 hf_state_dict[hf_key] = value
 
         return hf_state_dict
@@ -97,8 +96,6 @@ class Qwen2StateDictAdapter(BaseStateDictAdapter):
 
         hf_key = self._convert_key_to_hf(name)
         if hf_key is not None:
-            if isinstance(tensor, DTensor):
-                tensor = tensor.full_tensor()
             return [(hf_key, tensor)]
         return []
 

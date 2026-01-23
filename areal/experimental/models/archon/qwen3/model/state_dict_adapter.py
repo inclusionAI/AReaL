@@ -9,6 +9,10 @@ import torch
 from torch.distributed.tensor import DTensor
 
 from areal.experimental.models.archon.base import BaseStateDictAdapter
+from areal.experimental.models.archon.moe_weight_converter import (
+    MoEConversionState,
+    MoEWeightConverter,
+)
 
 if TYPE_CHECKING:
     from transformers import PretrainedConfig
@@ -20,11 +24,14 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
     Handles:
     - Key name mapping between HF and Archon conventions
     - MoE expert weights: HF uses list of 2D weights, Archon uses 3D weights
+    - DTensor-aware distributed checkpoint support for MoE (EP, EP+TP, EP+ETP)
     - No weight permutation needed (unlike Llama3)
     """
 
-    def __init__(self, model_config: PretrainedConfig):
-        super().__init__(model_config)
+    def __init__(
+        self, model_config: PretrainedConfig, hf_assets_path: str | None = None
+    ):
+        super().__init__(model_config, hf_assets_path)
 
         # HuggingFace -> Archon key mapping
         # Use {} as placeholder for layer numbers and expert ids
@@ -70,12 +77,36 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
         num_experts = getattr(model_config, "num_experts", None)
         if num_experts is None:
             num_experts = getattr(model_config, "num_local_experts", None)
-        self.moe_enabled = num_experts is not None and num_experts > 1
+        if num_experts is None:
+            moe_args = getattr(model_config, "moe_args", None)
+            if moe_args is not None:
+                num_experts = getattr(moe_args, "num_experts", None)
+        moe_enabled_flag = getattr(model_config, "moe_enabled", None)
+        self.moe_enabled = (num_experts is not None and num_experts > 1) or (
+            moe_enabled_flag is True
+        )
         if self.moe_enabled:
+            if num_experts is None:
+                raise ValueError(
+                    "moe_enabled is True but num_experts could not be determined from "
+                    "model_config. Expected one of: num_experts, num_local_experts, or "
+                    "moe_args.num_experts"
+                )
             self.num_experts = num_experts
 
         # Weight tying configuration
         self.enable_weight_tying = getattr(model_config, "tie_word_embeddings", False)
+
+        # HF abstract key templates for MoE expert weights
+        self._hf_expert_abstract_keys = {
+            "layers.{}.moe.experts.w1": "model.layers.{}.mlp.experts.{}.gate_proj.weight",
+            "layers.{}.moe.experts.w2": "model.layers.{}.mlp.experts.{}.down_proj.weight",
+            "layers.{}.moe.experts.w3": "model.layers.{}.mlp.experts.{}.up_proj.weight",
+        }
+
+        # Composition: create MoE weight converter for DTensor-aware conversion
+        self._moe_converter = MoEWeightConverter() if self.moe_enabled else None
+        self._moe_state = MoEConversionState() if self.moe_enabled else None
 
     def to_hf(self, state_dict: dict[str, Any]) -> dict[str, Any]:
         """Convert Archon state dict to HuggingFace format.
@@ -83,18 +114,22 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
         Main transformations:
         1. Key renaming: Archon names -> HF names
         2. MoE: 3D weights (num_experts, out, in) -> list of 2D weights
-        3. Weight tying: skip output.weight if enabled (shared with embeddings)
+        3. Weight tying: skip output.weight if enabled (HF reconstructs from embeddings)
         """
         hf_state_dict = {}
 
         for key, value in state_dict.items():
             # Skip output.weight when weight tying is enabled
+            # HF will reconstruct lm_head.weight from embed_tokens.weight on load
             if self.enable_weight_tying and key == "output.weight":
                 continue
 
             if "moe.experts.w" in key:
                 # Split 3D expert weight into list of 2D weights
-                hf_pairs = self._split_moe_experts(key, value)
+                if isinstance(value, DTensor):
+                    hf_pairs = self._split_moe_experts_distributed(key, value)
+                else:
+                    hf_pairs = self._split_moe_experts(key, value)
                 hf_state_dict.update(hf_pairs)
             else:
                 # Regular key mapping
@@ -122,12 +157,45 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
             hf_state_dict["lm_head.weight"] = hf_state_dict["model.embed_tokens.weight"]
 
         state_dict = {}
+        # For DTensor path: {layer_id: {abstract_key: {expert_id: DTensor}}}
+        expert_weights_by_layer: dict[str, dict[str, dict[int, Any]]] = {}
+        # For offline path: {archon_key: (3D tensor, count)}
         expert_buffer: dict[str, tuple[torch.Tensor, int]] = {}
 
         for key, value in hf_state_dict.items():
-            if ".mlp.experts." in key:
-                # Collect expert weights, merge later
-                self._collect_expert_weight(key, value, expert_buffer, state_dict)
+            if ".mlp.experts." in key and self.moe_enabled:
+                parsed = self._parse_expert_key(key)
+                if parsed is None:
+                    continue
+                layer_id, expert_id, archon_abstract_key = parsed
+
+                if isinstance(value, DTensor):
+                    # DTensor path: collect and concatenate with distributed awareness
+                    if layer_id not in expert_weights_by_layer:
+                        expert_weights_by_layer[layer_id] = {}
+                    if archon_abstract_key not in expert_weights_by_layer[layer_id]:
+                        expert_weights_by_layer[layer_id][archon_abstract_key] = {}
+
+                    expert_weights_by_layer[layer_id][archon_abstract_key][
+                        expert_id
+                    ] = value
+
+                    assert (
+                        self._moe_converter is not None and self._moe_state is not None
+                    ), "MoE converter not initialized for MoE model"
+                    result = self._moe_converter.concatenate_expert_weights_dtensor(
+                        expert_weights_by_layer,
+                        archon_abstract_key,
+                        layer_id,
+                        value.device_mesh,
+                        self._moe_state,
+                    )
+                    if result is not None:
+                        archon_key = archon_abstract_key.format(layer_id)
+                        state_dict[archon_key] = result
+                else:
+                    # Offline path: use pre-allocated buffer
+                    self._collect_expert_weight(key, value, expert_buffer, state_dict)
             else:
                 # Regular key mapping
                 archon_key = self._convert_key_from_hf(key)
@@ -200,6 +268,49 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
 
         return None
 
+    def _parse_expert_key(self, hf_key: str) -> tuple[str, int, str] | None:
+        """Parse HF expert key into (layer_id, expert_id, archon_abstract_key)."""
+        match = re.match(
+            r"model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight",
+            hf_key,
+        )
+        if not match:
+            return None
+
+        layer_id = match.group(1)
+        expert_id = int(match.group(2))
+        proj_type = match.group(3)
+
+        proj_map = {
+            "gate_proj": "layers.{}.moe.experts.w1",
+            "up_proj": "layers.{}.moe.experts.w3",
+            "down_proj": "layers.{}.moe.experts.w2",
+        }
+        archon_abstract_key = proj_map[proj_type]
+
+        return layer_id, expert_id, archon_abstract_key
+
+    def _split_moe_experts_distributed(
+        self, archon_key: str, weight_3d: DTensor
+    ) -> dict[str, DTensor]:
+        """Split 3D DTensor expert weight into 2D DTensors for distributed checkpoint."""
+        match = re.search(r"layers\.(\d+)\.", archon_key)
+        if not match:
+            return {}
+        layer_id = match.group(1)
+
+        archon_abstract_key = re.sub(r"layers\.\d+\.", "layers.{}.", archon_key)
+        hf_abstract_key = self._hf_expert_abstract_keys.get(archon_abstract_key)
+        if hf_abstract_key is None:
+            return {}
+
+        assert self._moe_converter is not None and self._moe_state is not None, (
+            "MoE converter not initialized for MoE model"
+        )
+        return self._moe_converter.split_expert_weights_dtensor(
+            hf_abstract_key, archon_abstract_key, layer_id, weight_3d, self._moe_state
+        )
+
     def _split_moe_experts(
         self, archon_key: str, weight_3d: torch.Tensor
     ) -> dict[str, torch.Tensor]:
@@ -263,20 +374,12 @@ class Qwen3StateDictAdapter(BaseStateDictAdapter):
             state_dict: Output state dict to write merged 3D weights
         """
         # Parse key: extract layer_num, expert_num, and proj type
-        match = re.match(
-            r"model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight",
-            hf_key,
-        )
-        if not match:
+        parsed = self._parse_expert_key(hf_key)
+        if parsed is None:
             return
 
-        layer_num = match.group(1)
-        expert_num = int(match.group(2))
-        proj_type = match.group(3)
-
-        # Map proj type to Archon weight name
-        proj_map = {"gate_proj": "w1", "up_proj": "w3", "down_proj": "w2"}
-        archon_key = f"layers.{layer_num}.moe.experts.{proj_map[proj_type]}"
+        layer_num, expert_num, archon_abstract_key = parsed
+        archon_key = archon_abstract_key.format(layer_num)
 
         # Pre-allocate 3D tensor on first expert, then fill in-place
         if archon_key not in buffer:

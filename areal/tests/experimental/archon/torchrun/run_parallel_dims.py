@@ -20,7 +20,10 @@ import argparse
 import torch.distributed as dist
 
 from areal.experimental.models.archon import ArchonParallelDims
-from areal.tests.experimental.archon.torchrun.utils import print_rank0, write_result
+from areal.tests.experimental.archon.torchrun.dist_utils import (
+    print_rank0,
+    write_result,
+)
 
 
 def test_ep_mesh_when_etp_disabled(output: str | None = None) -> bool:

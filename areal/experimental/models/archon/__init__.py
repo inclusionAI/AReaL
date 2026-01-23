@@ -16,6 +16,10 @@ from areal.experimental.models.archon.model_spec import (
     get_supported_model_types,
     is_supported_model,
 )
+from areal.experimental.models.archon.moe_weight_converter import (
+    MoEConversionState,
+    MoEWeightConverter,
+)
 from areal.experimental.models.archon.parallel_dims import (
     ArchonParallelDims,
 )
@@ -25,6 +29,8 @@ __all__ = [
     "BaseStateDictAdapter",
     "ExpertParallel",
     "ExpertTensorParallel",
+    "MoEConversionState",
+    "MoEWeightConverter",
     "ModelSpec",
     "TensorParallel",
     "apply_expert_parallel",

@@ -35,7 +35,7 @@ import torch.distributed as dist
 from areal.experimental.models.archon import ArchonParallelDims
 from areal.experimental.models.archon.qwen3.infra.parallelize import parallelize_qwen3
 from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
-from areal.tests.experimental.archon.torchrun.utils import (
+from areal.tests.experimental.archon.torchrun.dist_utils import (
     create_dense_model_args,
     create_moe_model_args,
     create_test_input,

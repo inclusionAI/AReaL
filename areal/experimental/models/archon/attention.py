@@ -59,7 +59,7 @@ def create_block_causal_mask_2d(
     causal = positions.unsqueeze(0) <= positions.unsqueeze(1)
 
     mask = torch.full((seq_len, seq_len), float("-inf"), device=device, dtype=dtype)
-    mask.masked_fill_(same_seq & causal, 0.0)
+    mask = mask.masked_fill(same_seq & causal, 0.0)
     return mask
 
 

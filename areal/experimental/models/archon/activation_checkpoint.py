@@ -26,10 +26,7 @@ _layer_sac_count = 0
 
 @dataclass
 class ActivationCheckpointConfig:
-    """Activation checkpointing configuration.
-
-    Aligned with torchtitan.config.job_config.ActivationCheckpoint for compatibility.
-    """
+    """Activation checkpointing configuration."""
 
     mode: str = "selective"
     """Type of activation checkpointing to use: 'selective', 'full', 'memory_budget', 'none'"""
@@ -249,8 +246,6 @@ def apply_ac(
     base_folder: str = "",
 ) -> None:
     """Apply activation checkpointing to the model.
-
-    Aligned with torchtitan.distributed.activation_checkpoint.apply_ac
 
     Args:
         model: The model to apply activation checkpointing to.

@@ -93,7 +93,7 @@ def make_engine(model_type: str, mb_spec: MicroBatchSpec):
 
     engine = ArchonEngine(config)
 
-    # Create parallel strategy (Phase 1: only dp_size)
+    # Create parallel strategy
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     parallel_strategy = ParallelStrategy(data_parallel_size=world_size)
 

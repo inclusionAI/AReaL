@@ -353,8 +353,6 @@ class TestDebugForceLoadBalance:
 class TestRouterGradients:
     """Tests for gradient flow through router."""
 
-    # NOTE: Upgrading PyTorch will resolve this in the future.
-    @pytest.mark.slow
     def test_gradient_flow(self):
         """Test that gradients flow through router."""
         dim = 64

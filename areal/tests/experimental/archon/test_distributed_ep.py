@@ -165,3 +165,56 @@ def test_archon_ep_state_dict_update_2gpu(tmp_path_factory):
         pytest.skip("This test requires 2 GPUs")
     output = tmp_path_factory.mktemp("test_output") / "state_dict_update.out"
     _run_ep_test_with_torchrun(2, "state_dict_update", str(output))
+
+
+# =============================================================================
+# DTensor Checkpoint Roundtrip Tests
+# =============================================================================
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+def test_archon_ep_tp_dtensor_checkpoint_2gpu(tmp_path_factory):
+    """Test DTensor checkpoint roundtrip for EP+TP (ep=2, tp=2) on 2 GPUs.
+
+    Tests MoEWeightConverter methods:
+    - split_expert_weights_dtensor(): 3D DTensor -> 2D DTensors
+    - concatenate_expert_weights_dtensor(): 2D DTensors -> 3D DTensor
+
+    Verify: to_hf() -> from_hf() roundtrip preserves DTensor weights.
+    """
+    if current_platform.device_count() < 2:
+        pytest.skip("This test requires 2 GPUs")
+    output = tmp_path_factory.mktemp("test_output") / "ep_tp_dtensor_checkpoint.out"
+    _run_ep_test_with_torchrun(2, "ep_tp_dtensor_checkpoint", str(output))
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+def test_archon_ep_only_dtensor_checkpoint_2gpu(tmp_path_factory):
+    """Test DTensor checkpoint roundtrip for EP only (ep=2, tp=1) on 2 GPUs.
+
+    Tests MoEWeightConverter methods with EP-only configuration.
+
+    Verify: to_hf() -> from_hf() roundtrip preserves DTensor weights.
+    """
+    if current_platform.device_count() < 2:
+        pytest.skip("This test requires 2 GPUs")
+    output = tmp_path_factory.mktemp("test_output") / "ep_only_dtensor_checkpoint.out"
+    _run_ep_test_with_torchrun(2, "ep_only_dtensor_checkpoint", str(output))
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+def test_archon_etp_dtensor_checkpoint_4gpu(tmp_path_factory):
+    """Test DTensor checkpoint roundtrip for ETP (ep=2, tp=2, etp=2) on 4 GPUs.
+
+    Tests MoEWeightConverter methods with ETP configuration
+    (StridedShard + Shard placement).
+
+    Verify: to_hf() -> from_hf() roundtrip preserves DTensor weights.
+    """
+    if current_platform.device_count() < 4:
+        pytest.skip("This test requires 4 GPUs")
+    output = tmp_path_factory.mktemp("test_output") / "etp_dtensor_checkpoint.out"
+    _run_ep_test_with_torchrun(4, "etp_dtensor_checkpoint", str(output))
