@@ -80,7 +80,7 @@ EVAL_QUERY_PROMPT = (
     "based on the context provided by the question related to the image. Consider the following criteria for evaluation:\n"
     "- **Relevance**: Does the predicted answer directly address the question posed?\n"
     "- **Accuracy**:\n"
-    "(1) If the ground truth answer is open-ended, consider whether the prediction accurately reflects the information "
+    "(1) If the ground truth answer is open-ended, consider whether the prediction reflects the information "
     "given in the ground truth without introducing factual inaccuracies.\n"
     "(2) If the ground truth answer is a definitive answer, strictly compare the model's prediction to the actual answer. "
     "Pay attention to unit conversions such as length and angle, etc. As long as the results are consistent, the model's "

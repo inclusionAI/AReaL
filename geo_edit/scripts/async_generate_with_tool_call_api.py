@@ -17,7 +17,7 @@ from ..environment.task.google_vision_qa_task import GoogleVisionQATask
 from ..environment.task.openai_vision_qa_task import OpenAIVisionQATask
 from ..environment.task.vllm_vision_qa_task import VLLMVisionQATask
 from ..config import (
-    build_agent_configs,
+    build_google_agent_configs,
     build_openai_agent_configs,
     build_vllm_agent_configs,
 )
@@ -36,8 +36,6 @@ _WORKER_MAX_TOOL_CALLS = None
 _WORKER_TASK_CLASS = None
 _WORKER_MODEL_TYPE = None
 _WORKER_SYSTEM_PROMPT = None
-_WORKER_USE_TOOLS = True
-_WORKER_TOOL_MODE = None
 
 def _init_worker(
     api_key: str,
@@ -49,23 +47,21 @@ def _init_worker(
     max_tool_calls: int,
     use_tools: str,
 ):
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT, _WORKER_USE_TOOLS, _WORKER_TOOL_MODE
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_OUTPUT_PATH, _WORKER_MAX_TOOL_CALLS, _WORKER_TASK_CLASS, _WORKER_MODEL_TYPE, _WORKER_SYSTEM_PROMPT
 
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
-    system_prompt = get_system_prompt(model_type) if use_tools != "direct" else ""
+    system_prompt = get_system_prompt(model_type) if use_tools != "direct" else None
 
     if model_type == "Google":
-        agent_configs = build_agent_configs(
+        agent_configs = build_google_agent_configs(
             max_output_tokens=max_output_tokens,
             thinking_level="low",
             include_thoughts=True,
             temperature=1.0,
             system_prompt=system_prompt,
-            candidate_count=1,
             tool_mode=use_tools,
-            disable_automatic_function_calling=True,
         )
         _WORKER_TASK_CLASS = GoogleVisionQATask
     elif model_type == "OpenAI":
@@ -92,7 +88,7 @@ def _init_worker(
         api_key=api_key,
         api_base=api_base,
         port=port,
-        generate_config=agent_configs.direct_generate_config if tool_mode == "NONE" else agent_configs.generate_config,
+        generate_config=agent_configs.generate_config,
         n_retry=3,
     )
 
@@ -103,8 +99,6 @@ def _init_worker(
     _WORKER_MAX_TOOL_CALLS = max_tool_calls
     _WORKER_MODEL_TYPE = model_type
     _WORKER_SYSTEM_PROMPT = system_prompt
-    _WORKER_USE_TOOLS = enable_tools
-    _WORKER_TOOL_MODE = normalized_tool_mode
 
 
 def _run_one_task(task_payload: dict):
@@ -114,7 +108,7 @@ def _run_one_task(task_payload: dict):
     Returns:
       (ok: bool, meta_info: dict|None)
     """
-    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE, _WORKER_USE_TOOLS, _WORKER_TOOL_MODE
+    global _WORKER_AGENT, _WORKER_AGENT_CONFIGS, _WORKER_MAX_TOOL_CALLS, _WORKER_SYSTEM_PROMPT, _WORKER_MODEL_TYPE
 
     task_id = task_payload["id"]
     task_save_dir = task_payload["task_save_dir"]
@@ -140,7 +134,7 @@ def _run_one_task(task_payload: dict):
         task_prompt=text_prompt,
         task_answer=answer,
         task_image_path=image_path,
-        tool_functions=TOOL_FUNCTIONS if _WORKER_USE_TOOLS else {},
+        tool_functions=TOOL_FUNCTIONS,
         save_dir=task_save_dir,
         **task_kwargs,
     )
@@ -158,21 +152,10 @@ def _run_one_task(task_payload: dict):
             task.update_observation_from_action(function_call_part_list)
             
         if task.state and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS:
-            if _WORKER_TOOL_MODE == "FINAL_FORCE":
                 force_prompt = "Max tool calls reached. Please continue with a tool call."
                 task.append_prompt(force_prompt)
                 original_generate_config = _WORKER_AGENT.config.generate_config
-                force_tool_call_config = _WORKER_AGENT_CONFIGS.force_tool_call_config
-                if force_tool_call_config is not None:
-                    _WORKER_AGENT.config.generate_config = force_tool_call_config
-                action, extra_info = _WORKER_AGENT.act(task.contents)
-                _WORKER_AGENT.config.generate_config = original_generate_config
-                task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)
-            else:
-                force_prompt = "Max tool calls reached. Please provide the final answer without further tool calls."
-                task.append_prompt(force_prompt)
-                original_generate_config = _WORKER_AGENT.config.generate_config
-                _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_generate_config
+                _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_final_generate_config
                 action, extra_info = _WORKER_AGENT.act(task.contents)
                 _WORKER_AGENT.config.generate_config = original_generate_config
                 task.parse_action(step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info)

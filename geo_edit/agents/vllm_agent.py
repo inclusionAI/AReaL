@@ -16,20 +16,14 @@ class VLLMBasedAgent(BaseAgent):
         self.client = None
         self._model_loaded = False
 
-    def _resolve_base_url(self) -> str:
-        if not self.config.api_base:
-            raise ValueError("api_base is required for VLLM client configuration.")
-        return self.config.api_base.rstrip("/")
-
     def load_model(self):
         if self._model_loaded:
             return
-
-        base_url = self._resolve_base_url()
-        self.client = OpenAI(base_url=base_url.rstrip("/") + "/v1", api_key="none")
+        
+        self.client = OpenAI(base_url=self.config.api_base.rstrip("/") + "/v1", api_key="none")
         self.model = self.config.model_name
         self._model_loaded = True
-        logger.info("Loaded vLLM model %s at %s", self.model, base_url)
+        logger.info("Loaded vLLM model %s at %s", self.model, self.config.api_base)
 
     def _prepare_input(self, observation: Dict[str, Any]) -> Any:
         return observation

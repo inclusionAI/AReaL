@@ -9,6 +9,7 @@ from PIL import Image
 from .vision_qa_task import ToolCall, VisionQATask
 from ...utils.vision_task_utils import image_to_data_url
 from ...utils.logger import setup_logger
+
 logger = setup_logger(__name__)
 
 
@@ -36,33 +37,37 @@ class OpenAIVisionQATask(VisionQATask):
         )
 
         self.image_url_map: Dict[str, str] = {}
-        self.input_items: List[Dict[str, Any]] = []
-        self.contents: Dict[str, Any] = {
-            "input": self.input_items,
-            "previous_response_id": None,
-        }
-        self._append_initial_observation()
-
-    def _append_initial_observation(self) -> None:
-        content = [{"type": "input_text", "text": self.task_prompt}]
-        if self.image_list:
+        input_items: List[Dict[str, Any]] = []
+        text_only = kwargs.get("text_only", False) or not self.image_list
+        if text_only or not self.image_list:
+            logger.info("Initializing OpenAIVisionQATask in text only mode.")
+            input_items.append(
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": self.task_prompt}],
+                }
+            )
+        else:
             image = self.image_list[0]
             image_url = image_to_data_url(image)
-            if self.task_image_path:
-                self.image_url_map[image_url] = self.task_image_path
-            content.extend(
-                [
-                    {"type": "input_text", "text": "Observation 0:"},
-                    {"type": "input_image", "image_url": image_url},
-                ]
+            self.image_url_map[image_url] = self.task_image_path
+            input_items.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": self.task_prompt},
+                        {"type": "input_text", "text": "Observation 0:"},
+                        {"type": "input_image", "image_url": image_url},
+                    ],
+                }
             )
-        self.input_items.append({"role": "user", "content": content})
+        self.contents = {"input": input_items, "previous_response_id": None}
 
     def _append_tool_message(
         self, tool_call_id: Optional[str], payload: Dict[str, Any]
     ) -> None:
         text = json.dumps(payload, ensure_ascii=True)
-        self.input_items.append(
+        self.contents["input"].append(
             {
                 "type": "function_call_output",
                 "call_id": tool_call_id,
@@ -71,7 +76,7 @@ class OpenAIVisionQATask(VisionQATask):
         )
 
     def append_prompt(self, text: str) -> None:
-        self.input_items.append(
+        self.contents["input"].append(
             {"role": "user", "content": [{"type": "input_text", "text": text}]}
         )
 
@@ -145,7 +150,8 @@ class OpenAIVisionQATask(VisionQATask):
                 "Output text found in action.output_text field instead of parts."
             )
         contents_for_save = [
-            self._stringify_observation_item(item) for item in self.input_items
+            self._stringify_observation_item(item)
+            for item in self.contents["input"]
         ]
         function_call_list = (
             [(call.name, call.args) for call in tool_calls] if tool_calls else None
@@ -170,13 +176,7 @@ class OpenAIVisionQATask(VisionQATask):
         )
 
         self.contents["previous_response_id"] = action.id
-
-        self.input_items.clear()
-
         return list(tool_calls)
-
-    def _prepare_tool_update(self) -> None:
-        self.input_items.clear()
 
     def _append_tool_error(self, tool_call: ToolCall, error_msg: str) -> None:
         self._append_tool_message(tool_call.call_id, {"error": error_msg})
@@ -199,4 +199,4 @@ class OpenAIVisionQATask(VisionQATask):
             {"type": "input_text", "text": f"Observation {image_index}:"},
             {"type": "input_image", "image_url": image_url},
         ]
-        self.input_items.append({"role": "user", "content": content})
+        self.contents["input"].append({"role": "user", "content": content})

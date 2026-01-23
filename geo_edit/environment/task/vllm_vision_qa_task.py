@@ -14,7 +14,6 @@ from ..action.image_edition_tool import (
     image_crop_function_declaration,
     image_label_function_declaration,
 )
-from ...constants import VLLM_SYSTEM_PROMPT
 from ...utils.vision_task_utils import image_to_data_url
 from ...utils.logger import setup_logger
 
@@ -51,12 +50,10 @@ class VLLMVisionQATask(VisionQATask):
         base_prompt = system_prompt 
         tool_info = self._build_tool_prompt()
         if tool_info:
-            if base_prompt:
-                self.system_prompt = f"{base_prompt}\n\n{tool_info}"
-            else:
-                self.system_prompt = tool_info
+            self.system_prompt = f"{base_prompt}\n\n{tool_info}"
         else:
             self.system_prompt = base_prompt
+            
         self.image_url_map: Dict[str, str] = {}
         self.messages: List[Dict[str, Any]] = []
         if self.system_prompt:
@@ -83,7 +80,7 @@ class VLLMVisionQATask(VisionQATask):
 
     def _build_tool_prompt(self) -> str:
         if not self.tool_functions:
-            return ""
+            return None
         declaration_pool = [
             image_crop_function_declaration,
             image_label_function_declaration,

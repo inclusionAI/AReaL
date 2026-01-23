@@ -1,10 +1,10 @@
 from datasets import Dataset, Features, Value, Sequence, Image as HFImage
 import os, glob, json
 
-json_dir = r"C:\Users\Antoine\code\CartoMapQA\Dataset\CartoMapQA\MapNavigation\_routes"
-image_root = r"C:\Users\Antoine\code\CartoMapQA\Dataset\CartoMapQA\MapNavigation\_maps"
+json_dir = r"..\CartoMapQA\Dataset\CartoMapQA\MapNavigation\_routes"
+image_root = r"..\CartoMapQA\Dataset\CartoMapQA\MapNavigation\_maps"
 image_ext = ".png"
-out_parquet = r"C:\Users\Antoine\data\CartoMapQA\MapNavigation_dataset.parquet"
+out_parquet = r"..\CartoMapQA\MapNavigation_dataset.parquet"
 
 examples = []
 json_files = sorted(glob.glob(os.path.join(json_dir, "*.json")))

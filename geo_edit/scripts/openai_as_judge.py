@@ -150,8 +150,9 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
     return {
         "id": record_id,
         "question": question,
-        "answer": ground_truth,
         "output_text": output_text,
+        "ground_truth": ground_truth,
+        "prediction": get_final_prediction(predict_str_list, cfg.extract_answer_tags),
         "result": result,
     }
 
