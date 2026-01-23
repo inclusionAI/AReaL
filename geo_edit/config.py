@@ -199,7 +199,7 @@ def build_openai_agent_configs(
         tool_choice="required",
         temperature=temperature,
         max_output_tokens=max_output_tokens,
-        instructions=[system_prompt] if system_prompt is not None else None,
+        instructions=system_prompt if system_prompt is not None else None,
         reasoning={"effort":reasoning_level}
     )
 
@@ -208,13 +208,13 @@ def build_openai_agent_configs(
         tool_choice=tool_choice,
         temperature=temperature,
         max_output_tokens=max_output_tokens,
-        instructions=[system_prompt] if system_prompt is not None else None,
+        instructions=system_prompt if system_prompt is not None else None,
         reasoning={"effort":reasoning_level}
     )
     direct_generate_config = _build_openai_generate_config(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
-        instructions=[system_prompt] if system_prompt is not None else None,
+        instructions=system_prompt if system_prompt is not None else None,
         reasoning={"effort":reasoning_level},
     )
     force_generate_config = _build_openai_generate_config(
@@ -222,7 +222,7 @@ def build_openai_agent_configs(
         tool_choice="none",
         temperature=temperature,
         max_output_tokens=max_output_tokens,
-        instructions=[system_prompt] if system_prompt is not None else None,
+        instructions=system_prompt if system_prompt is not None else None,
         reasoning={"effort":reasoning_level},
     )
 
@@ -251,7 +251,7 @@ def build_vllm_agent_configs(
         tool_choice=tool_choice,
         temperature=temperature,
         max_tokens=max_output_tokens,
-        instructions=[system_prompt] if system_prompt is not None else None,
+        instructions=system_prompt if system_prompt is not None else None,
     )
     direct_generate_config = _build_openai_generate_config(
         temperature=temperature,

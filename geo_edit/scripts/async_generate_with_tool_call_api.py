@@ -75,7 +75,7 @@ def _init_worker(
             temperature=1.0,
             system_prompt=system_prompt,
             tool_mode=tool_mode,
-            reasoning_level="medium",
+            reasoning_level="low",
         )
         _WORKER_TASK_CLASS = OpenAIVisionQATask
     else:
@@ -93,7 +93,7 @@ def _init_worker(
         api_key=api_key,
         api_base=api_base,
         port=port,
-        generate_config=agent_configs.generate_config,
+        generate_config=agent_configs.generate_config if use_tools else agent_configs.direct_generate_config,
         n_retry=3,
     )
 
@@ -131,6 +131,7 @@ def _run_one_task(task_payload: dict):
 
     task_kwargs = {}
     if text_only:
+        logger.info(f"[{task_id}] running text-only task.")
         task_kwargs["text_only"] = True
     if _WORKER_MODEL_TYPE == "vLLM":
         task_kwargs["system_prompt"] = _WORKER_SYSTEM_PROMPT
@@ -186,7 +187,7 @@ def main():
     parser.add_argument("--output_dir", type=str, required=True, help="Path to save the output JSONL file.")
     parser.add_argument("--model_name_or_path", type=str, default="gemini-3-pro-preview", help="Model name or path.")
     parser.add_argument("--model_type", type=str, default="Google", choices=["Google", "OpenAI", "vLLM"], help="Model provider.")
-    parser.add_argument("--use_tools", action=argparse.BooleanOptionalAction, default=True, help="Enable tool calling for the agent.")
+    parser.add_argument("--no_use_tools", action="store_true", help="Disable tool usage; answer directly.")
     parser.add_argument("--api_base", type=str, default=None, help="Base URL for vLLM OpenAI-compatible server.")
     parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
@@ -208,13 +209,10 @@ def main():
         logger.info(f"Sampled {sample_size} examples from the dataset.")
 
     dataset_spec = get_dataset_spec(args.dataset_name)
-    if not args.use_tools and dataset_spec.notool_prompt_template is None:
-        logger.warning(
-            "Dataset %s has no no-tool template; using tool template.",
-            dataset_spec.name,
-        )
+    if args.no_use_tools and dataset_spec.notool_prompt_template is None:
+        logger.warning("Dataset %s has no no-tool template; using tool template.",dataset_spec.name)
 
-    # 1) main process scan: collect done meta_info + pending items
+    # 1 main process scan: collect done meta_info + pending items
     meta_info_list = []
     pending_items = []
 
@@ -233,7 +231,7 @@ def main():
     logger.info(f"Already done: {len(meta_info_list)}")
     logger.info(f"Pending: {len(pending_items)}")
 
-    # 2) multiprocessing pool, create folder+save image ONLY when submitting task
+    # 2multiprocessing pool, create folder+save image ONLY when submitting task
     ctx = mp.get_context("spawn")
     n_workers = max(1, int(args.max_concurrent_requests))
 
@@ -248,7 +246,7 @@ def main():
             args.port,
             output_path,
             MAX_TOOL_CALLS,
-            args.use_tools,
+            not args.no_use_tools,
         ),
     ) as pool:
 
@@ -291,7 +289,7 @@ def main():
                 payload = {
                     "id": task_id,
                     "task_save_dir": task_save_dir,
-                    "prompt": dataset_spec.build_prompt(item, args.use_tools),
+                    "prompt": dataset_spec.build_prompt(item, not args.no_use_tools),
                     "answer": item[dataset_spec.answer_key],
                     "image_path": image_path,
                     "text_only": text_only,
