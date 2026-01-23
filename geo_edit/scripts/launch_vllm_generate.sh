@@ -1,35 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
+model_path="${MODEL_PATH}"
+data_json="${DATA_JSON}"
+output_dir="${OUTPUT_DIR}"
+prompt_template=qwen3
+box_remap=scale
 
-# Simple vLLM server launcher for tool-calling with Qwen3-VL-32B-Thinking.
-# Override any setting by exporting the variable before running the script.
+echo "model: $model_path"
 
-MODEL="${MODEL:-Qwen3-VL-32B-Thinking}"   # HF model ID or local path
-HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8000}"
-TP_SIZE="${TP_SIZE:-8}"                  # 8*A100
-TOOL_CALL_PARSER="${TOOL_CALL_PARSER:-hermes}"
-CHAT_TEMPLATE="${CHAT_TEMPLATE:-}"       # leave empty to use model default
-EXTRA_ARGS="${EXTRA_ARGS:-}"
+mkdir -p ./log
+nohup python -m vllm.entrypoints.openai.api_server \
+  --model "$model_path" \
+  --host 0.0.0.0 \
+  --trust-remote-code \
+  --port 8000 \
+  --data-parallel-size 8 \
+  --tensor-parallel-size 1 \
+  --dtype auto \
+  --gpu-memory-utilization 0.9 \
+  > ./log/vllm_api.log 2>&1 &
 
-cmd=(
-  vllm serve "${MODEL}"
-  --host "${HOST}"
-  --port "${PORT}"
-  --tensor-parallel-size "${TP_SIZE}"
-  --enable-auto-tool-choice
-  --tool-call-parser "${TOOL_CALL_PARSER}"
-  --trust-remote-code
-)
 
-if [[ -n "${CHAT_TEMPLATE}" ]]; then
-  cmd+=(--chat-template "${CHAT_TEMPLATE}")
-fi
-
-echo "Starting vLLM server:"
-printf ' %q' "${cmd[@]}"
-echo
-
-# EXTRA_ARGS allows custom flags, e.g. --max-model-len 32768
-# shellcheck disable=SC2086
-exec "${cmd[@]}" ${EXTRA_ARGS}
+echo "waiting endpoint..."
+until curl -sf http://127.0.0.1:8000/v1/models > /dev/null; do
+  tail -n 10  ./log/vllm_api.log
+  sleep 2
+done
+echo "endpoint ready"

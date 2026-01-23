@@ -171,10 +171,21 @@ def main() -> None:
         required=True,
         help="Path to write eval_result.jsonl and summary.txt.",
     )
+    parser.add_argument(
+        "--additional_prompt",
+        type=str,
+        default="",
+        help="Additional prompt to append to the evaluation prompt.",
+    )
     args = parser.parse_args()
 
     os.environ["OPENAI_API_KEY"] = args.api_key
     os.makedirs(args.output_path, exist_ok=True)
+    
+    additional_prompt = args.additional_prompt.strip()
+    if additional_prompt:
+        global EVAL_QUERY_PROMPT
+        EVAL_QUERY_PROMPT += "\n" + additional_prompt + "\n"
 
     cfg = EvalConfig()
     eval_output_path = os.path.join(args.output_path, "eval_result.jsonl")
