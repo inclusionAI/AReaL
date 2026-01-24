@@ -1,4 +1,4 @@
-RUNNING_SCRIPT=tau2_train/sft_workflow_megatron_no_eval.py
+RUNNING_SCRIPT=tau2_train/tau2_sft_workflow.py
 train_dataset_path=
 valid_dataset_path=
 config_file=tau2_train/tau2_sft_config.yaml
