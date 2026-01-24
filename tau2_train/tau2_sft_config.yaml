@@ -1,0 +1,99 @@
+experiment_name: xss-tau2-megatron
+trial_name: trial0
+allocation_mode: megatron:(attn:d1p8t4c2|ffn:d1p8e8)
+max_context_length: 32768
+reward_type: db
+n_trajs: 4
+
+cluster:
+  cluster_name: na132
+  fileroot: 
+  n_nodes: 5
+  n_gpus_per_node: 8
+  name_resolve:
+    type: nfs
+    nfs_record_root: 
+seed: 1
+total_train_epochs: 10
+tokenizer_path: ${model.path}
+
+model:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: Qwen/Qwen3-1.7B
+  init_from_scratch: false
+  gradient_checkpointing: false
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 25000
+  optimizer:
+    type: adam
+    lr: 1e-5
+    weight_decay: 0.05
+    beta1: 0.9
+    beta2: 0.95
+    eps: 1e-5
+    lr_scheduler_type: cosine
+    gradient_clipping: 1.0
+
+# datasets
+train_dataset:
+  batch_size: 64
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: 
+  max_length: 25000
+
+valid_dataset:
+  batch_size: 16
+  shuffle: false
+  pin_memory: true
+  num_workers: 4
+  path: 
+  type: sft
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: auto
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: online
+
+launcher:
+  inference_server_cpus_per_gpu: 4
+  inference_server_mem_per_gpu: 81920
+  trainer_cpus_per_gpu: 4
+  trainer_mem_per_gpu: 81920
+  trainer_env_vars: NCCL_DEBUG=WARN,NCCL_TIMEOUT=1800
+  slurm:
+    mount: 
+    trainer_image: 
+    inference_server_image: 
+    additional_bash_cmds: ["which torchrun", "nvidia-smi", "pip install openai==1.99.6 addict deepdiff docstring_parser loguru tensordict toml", "which python3", "which torchrun"]
