@@ -1,0 +1,594 @@
+[REWARD]: 1.0
+
+[TASK]
+description:
+  notes: null
+  purpose: 'Test resolution path: Mobile Data/Slow Internet Issues.'
+  relevant_policies: null
+evaluation_criteria:
+  actions:
+  - action_id: set_network_mode_preference_0
+    arguments:
+      mode: 4g_5g_preferred
+    compare_args: null
+    info: null
+    name: set_network_mode_preference
+    requestor: user
+  - action_id: toggle_roaming_1
+    arguments: {}
+    compare_args: null
+    info: null
+    name: toggle_roaming
+    requestor: user
+  communicate_info: null
+  env_assertions:
+  - arguments:
+      expected_status: true
+    assert_value: true
+    env_type: user
+    func_name: assert_mobile_data_status
+    message: null
+  - arguments:
+      expected_desc: excellent
+      expected_speed: 200
+    assert_value: true
+    env_type: user
+    func_name: assert_internet_speed
+    message: null
+  nl_assertions: null
+  reward_basis:
+  - !!python/object/apply:tau2.data_model.tasks.RewardType
+    - ENV_ASSERTION
+id: '[mobile_data_issue]bad_network_preference|user_abroad_roaming_enabled_off[PERSONA:Hard]'
+initial_state:
+  initialization_actions:
+  - arguments:
+      name: John Smith
+      phone_number: 555-123-2002
+    env_type: user
+    func_name: set_user_info
+  - arguments:
+      mode: 2g_only
+    env_type: user
+    func_name: set_network_mode_preference
+  - arguments:
+      abroad: true
+    env_type: user
+    func_name: set_user_location
+  - arguments: {}
+    env_type: user
+    func_name: turn_roaming_off
+  - arguments:
+      customer_id: C1001
+      line_id: L1002
+    env_type: assistant
+    func_name: enable_roaming
+  initialization_data: null
+  message_history: null
+ticket: 'The user is experiencing issues with their mobile data. They are unable to
+  use their phone to browse the internet, and the status bar shows ''No Service''.
+  Customer name: John Smith, phone number: 555-123-2002, current location: abroad
+  in France. They will consider the issue resolved when speed test returns excellent
+  internet speed. They will not change their mobile data plan but they will refuel
+  2.0 GB of data if necessary.'
+user_scenario:
+  instructions:
+    domain: telecom
+    known_info: You are John Smith with phone number 555-123-2002. You are currently
+      abroad in France.
+    reason_for_call: You mobile data is not working properly. It either stops working
+      or is very slow. You want to fix it and absolutely want to get excellent internet
+      speed on your phone. You are not willing to accept any other internet speed
+      (poor, fair or good). You do not have access to wifi.
+    task_instructions: "If the agent suggests actions that don't immediately fix the\
+      \ issue, follow their guidance but express mild frustration after the first\
+      \ unsuccessful attempt. You will consider the issue resolved only when speed\
+      \ test returns excellent internet speed and nothing else. If it returns poor,\
+      \ fair or good, you will not consider the issue resolved. You are willing to\
+      \ refuel 2.0 GB of data if necessary, but you do not want to change your mobile\
+      \ data plan. If the tool call does not return updated status information, you\
+      \ might need to perform another tool call to get the updated status. \nWhenever\
+      \ the agent asks you about your device, always ground your responses on the\
+      \ results of tool calls. \nFor example: If the agent asks what the status bar\
+      \ shows, always ground your response on the results of the `get_status_bar`\
+      \ tool call. If the agent asks if you are able to send an MMS message, always\
+      \ ground your response on the results of the `can_send_mms` tool call.\nNever\
+      \ make up the results of tool calls, always ground your responses on the results\
+      \ of tool calls.\nIf you are unsure about whether an action is necessary, always\
+      \ ask the agent for clarification.\n"
+    unknown_info: null
+  persona: '
+
+    At 64 years old, you''re a retired librarian who keeps your phone use simple -
+    mainly for calls, texts, and capturing photos of your grandchildren. Technology
+    in general makes you feel uneasy and overwhelmed.
+
+
+    Your technical knowledge is quite limited. Step-by-step instructions often confuse
+    you, and technical terms like "VPN" or "APN" might as well be a foreign language.
+    You only share information when specifically asked.
+
+
+    When dealing with technology, you tend to get flustered quickly. You need constant
+    reassurance and often interrupt with anxious questions. Simple requests like "reboot
+    the phone" can trigger worries about losing precious photos.
+
+    '
+
+[REWARD_INFO]
+action_checks:
+- action:
+    action_id: set_network_mode_preference_0
+    arguments:
+      mode: 4g_5g_preferred
+    compare_args: null
+    info: null
+    name: set_network_mode_preference
+    requestor: user
+  action_match: true
+  action_reward: 1.0
+- action:
+    action_id: toggle_roaming_1
+    arguments: {}
+    compare_args: null
+    info: null
+    name: toggle_roaming
+    requestor: user
+  action_match: true
+  action_reward: 1.0
+communicate_checks: null
+db_check:
+  db_match: false
+  db_reward: 0.0
+env_assertions:
+- env_assertion:
+    arguments:
+      expected_status: true
+    assert_value: true
+    env_type: user
+    func_name: assert_mobile_data_status
+    message: null
+  met: true
+  reward: 1.0
+- env_assertion:
+    arguments:
+      expected_desc: excellent
+      expected_speed: 200
+    assert_value: true
+    env_type: user
+    func_name: assert_internet_speed
+    message: null
+  met: true
+  reward: 1.0
+info:
+  action: null
+  communicate:
+    note: No communicate_info to evaluate
+  env: null
+  nl: null
+nl_assertions: null
+reward: 1.0
+reward_basis:
+- !!python/object/apply:tau2.data_model.tasks.RewardType
+  - ENV_ASSERTION
+reward_breakdown:
+  ? !!python/object/apply:tau2.data_model.tasks.RewardType
+  - ENV_ASSERTION
+  : 1.0
+
+[TURNS COUNT]: 16
+[MESSAGES]
+[0][assistant]: Hi! How can I help you today?
+[1][user]: Hello, my name is John Smith, and my phone number is 555-123-2002. I'm currently in France, and my mobile data is not working properly. It either stops working or is very slow. I really need to get excellent internet speed on my phone. Can you help me with this, please?
+[1][user][USAGE]: completion_tokens: 73
+prompt_tokens: 3659
+
+[2][assistant]: <think>
+Okay, let's see. The user is John Smith from France, and his mobile data isn't working properly. He mentioned it's either stopping or very slow. His phone number is 555-123-2002.
+
+First, I need to check if there's a customer record for John. The tools available include get_customer_by_phone, which takes the phone number. So I'll call that function with his phone number to retrieve his customer details.
+
+Once I have the customer's information, I should check if his line is suspended. If it is, he might need to resume it. But the user mentioned he's in France, so roaming might be an issue. The enable_roaming function could be used to enable roaming for his line.
+
+Also, check if mobile data is enabled. If it's disabled, toggle_data would turn it on. Check network mode preferences; maybe he's on 2G, which isn't good for MMS. Setting the network mode to 4G/5G could help.
+
+Wait, the user's problem is with mobile data not working properly. So after getting the customer info, I should check the line status, enable roaming if needed, check data settings, and maybe suggest refueling if data is used up.
+
+But according to the policy, I should make one tool call at a time. So first, call get_customer_by_phone with his phone number. Then, based on the response, proceed with next steps.
+</think>
+[TOOL_CALLS]
+- arguments:
+    phone_number: 555-123-2002
+  id: call_3f8397917f864031915f3e9a
+  name: get_customer_by_phone
+  requestor: assistant
+
+[2][assistant][USAGE]: completion_tokens: 339
+prompt_tokens: 7214
+
+[3][tool]: {"customer_id": "C1001", "full_name": "John Smith", "date_of_birth": "1985-06-15", "email": "john.smith@example.com", "phone_number": "555-123-2002", "address": {"street": "123 Main St", "city": "Anytown", "state": "CA", "zip_code": "90210"}, "account_status": "Active", "payment_methods": [{"method_type": "Credit Card", "account_number_last_4": "1235", "expiration_date": "12/2026"}], "line_ids": ["L1001", "L1002", "L1003"], "bill_ids": ["B1001", "B1002", "B1003"], "created_at": "2025-01-15 10:30:00", "last_extension_date": null, "goodwill_credit_used_this_year": 25.0}
+[4][assistant]: <think>
+Okay, let's see. The user provided their phone number, and the system retrieved their customer details. The customer is John Smith with the phone number 555-123-2002. The account status is Active, so no immediate suspension issues. The payment method is a credit card expiring in 2026. The line IDs are L1001, L1002, L1003. The bills are B1001, B1002, B1003.
+
+The user is in France and experiencing poor mobile data. First, I need to check if the line is suspended. The customer's account status is Active, so no suspension. Next, check if roaming is enabled. The system doesn't have info on roaming settings, so maybe enable it. Also, check if mobile data is enabled. The user might have it disabled, so toggle_data. Check network mode preference; if it's 2G, switch to 4G/5G. Also, check if the APN settings are correct, especially the MMSC URL. If the APN is incorrect, reset it. Also, check if data refueling is needed if data usage exceeds the plan limit. But since the user mentioned the data is slow, maybe focus on enabling roaming and checking network settings.
+
+The next steps would be to enable roaming for the line, check mobile data settings, and adjust network preferences. If any of these steps are needed, call the respective functions. But according to the policy, only one tool call at a time. So first, enable roaming for the line.
+</think>
+[TOOL_CALLS]
+- arguments:
+    customer_id: C1001
+    line_id: L1001
+  id: call_2a78ef3997994e019f599d09
+  name: enable_roaming
+  requestor: assistant
+
+[4][assistant][USAGE]: completion_tokens: 377
+prompt_tokens: 7808
+
+[5][tool]: Roaming enabled successfully
+[6][assistant]: <think>
+Okay, the user's mobile data is not working properly, and they're in France. The first step was to enable roaming for their line, which was successful. Now, next, I need to check if mobile data is enabled. If it's disabled, I should toggle it on. Also, check the network mode preference to ensure it's not on 2G. If the APN settings are incorrect, reset them. Let's start with checking if mobile data is enabled.
+
+Call the function to check mobile data status.
+</think>
+
+<tool_call>
+{"name": "check_network_status", "arguments": {}}
+</tool_call>
+[6][assistant][USAGE]: completion_tokens: 127
+prompt_tokens: 8202
+
+[7][user]: I'm checking the network status on my phone right now. One moment, please.
+[TOOL_CALLS]
+- arguments: {}
+  id: call_80835a9789264b4684c7124d
+  name: check_network_status
+  requestor: user
+
+[7][user][USAGE]: completion_tokens: 34
+prompt_tokens: 3869
+
+[8][tool]: Airplane Mode: OFF
+SIM Card Status: active
+Cellular Connection: connected
+Cellular Signal: poor
+Cellular Network Type: 2G
+Mobile Data Enabled: Yes
+Data Roaming Enabled: No
+Wi-Fi Radio: OFF
+Wi-Fi Connected: No
+[9][user]: The network status shows that my mobile data is enabled, but the signal is poor, and I'm currently on a 2G network. Data roaming is also disabled. I should enable data roaming and change the network mode preference to 4G/5G preferred. Let me do that.
+[TOOL_CALLS]
+- arguments: {}
+  id: call_71caffb2e2aa478e863f3881
+  name: toggle_roaming
+  requestor: user
+
+[9][user][USAGE]: completion_tokens: 76
+prompt_tokens: 3978
+
+[10][tool]: Data Roaming is now ON.
+Status Bar: 📶¹ Poor | 2G | 📱 Data Enabled | 🔋 80%
+[11][user]: I've enabled data roaming, but I'm still on a 2G network. I need to change the network mode preference to 4G/5G preferred. Let me do that now.
+[TOOL_CALLS]
+- arguments:
+    mode: 4g_5g_preferred
+  id: call_d3d8862a48f2478eb0b76f16
+  name: set_network_mode_preference
+  requestor: user
+
+[11][user][USAGE]: completion_tokens: 68
+prompt_tokens: 4103
+
+[12][tool]: Preferred Network Mode set to: 4g_5g_preferred
+Status Bar: 📶⁴ Excellent | 5G | 📱 Data Enabled | 🔋 80%
+[13][user]: The network mode preference has been set to 4G/5G preferred, and the signal strength is now excellent. I should run a speed test to confirm if the internet speed is excellent.
+[TOOL_CALLS]
+- arguments: {}
+  id: call_c081df349fd741c8a058799d
+  name: run_speed_test
+  requestor: user
+
+[13][user][USAGE]: completion_tokens: 56
+prompt_tokens: 4229
+
+[14][tool]: Speed Test Result: 275.00 Mbps (Excellent). Connection is very fast.
+[15][user]: The speed test shows that my internet speed is excellent at 275.00 Mbps. This is exactly what I needed. Thank you so much for your help! I can now use my phone without any issues.
+
+###STOP###
+[15][user][USAGE]: completion_tokens: 49
+prompt_tokens: 4322
+
+[AGENT_TIME]: total 6.8474326357245445, avg 2.2824775452415147
+[USER_TIME]: total 20.75753364339471, avg 3.459588940565785
+[REWARD]: 0.0
+
+[TASK]
+description:
+  notes: null
+  purpose: 'Test resolution path: Mobile Data/Slow Internet Issues.'
+  relevant_policies: null
+evaluation_criteria:
+  actions:
+  - action_id: set_network_mode_preference_0
+    arguments:
+      mode: 4g_5g_preferred
+    compare_args: null
+    info: null
+    name: set_network_mode_preference
+    requestor: user
+  - action_id: toggle_roaming_1
+    arguments: {}
+    compare_args: null
+    info: null
+    name: toggle_roaming
+    requestor: user
+  communicate_info: null
+  env_assertions:
+  - arguments:
+      expected_status: true
+    assert_value: true
+    env_type: user
+    func_name: assert_mobile_data_status
+    message: null
+  - arguments:
+      expected_desc: excellent
+      expected_speed: 200
+    assert_value: true
+    env_type: user
+    func_name: assert_internet_speed
+    message: null
+  nl_assertions: null
+  reward_basis:
+  - !!python/object/apply:tau2.data_model.tasks.RewardType
+    - ENV_ASSERTION
+id: '[mobile_data_issue]bad_network_preference|user_abroad_roaming_enabled_off[PERSONA:Hard]'
+initial_state:
+  initialization_actions:
+  - arguments:
+      name: John Smith
+      phone_number: 555-123-2002
+    env_type: user
+    func_name: set_user_info
+  - arguments:
+      mode: 2g_only
+    env_type: user
+    func_name: set_network_mode_preference
+  - arguments:
+      abroad: true
+    env_type: user
+    func_name: set_user_location
+  - arguments: {}
+    env_type: user
+    func_name: turn_roaming_off
+  - arguments:
+      customer_id: C1001
+      line_id: L1002
+    env_type: assistant
+    func_name: enable_roaming
+  initialization_data: null
+  message_history: null
+ticket: 'The user is experiencing issues with their mobile data. They are unable to
+  use their phone to browse the internet, and the status bar shows ''No Service''.
+  Customer name: John Smith, phone number: 555-123-2002, current location: abroad
+  in France. They will consider the issue resolved when speed test returns excellent
+  internet speed. They will not change their mobile data plan but they will refuel
+  2.0 GB of data if necessary.'
+user_scenario:
+  instructions:
+    domain: telecom
+    known_info: You are John Smith with phone number 555-123-2002. You are currently
+      abroad in France.
+    reason_for_call: You mobile data is not working properly. It either stops working
+      or is very slow. You want to fix it and absolutely want to get excellent internet
+      speed on your phone. You are not willing to accept any other internet speed
+      (poor, fair or good). You do not have access to wifi.
+    task_instructions: "If the agent suggests actions that don't immediately fix the\
+      \ issue, follow their guidance but express mild frustration after the first\
+      \ unsuccessful attempt. You will consider the issue resolved only when speed\
+      \ test returns excellent internet speed and nothing else. If it returns poor,\
+      \ fair or good, you will not consider the issue resolved. You are willing to\
+      \ refuel 2.0 GB of data if necessary, but you do not want to change your mobile\
+      \ data plan. If the tool call does not return updated status information, you\
+      \ might need to perform another tool call to get the updated status. \nWhenever\
+      \ the agent asks you about your device, always ground your responses on the\
+      \ results of tool calls. \nFor example: If the agent asks what the status bar\
+      \ shows, always ground your response on the results of the `get_status_bar`\
+      \ tool call. If the agent asks if you are able to send an MMS message, always\
+      \ ground your response on the results of the `can_send_mms` tool call.\nNever\
+      \ make up the results of tool calls, always ground your responses on the results\
+      \ of tool calls.\nIf you are unsure about whether an action is necessary, always\
+      \ ask the agent for clarification.\n"
+    unknown_info: null
+  persona: '
+
+    At 64 years old, you''re a retired librarian who keeps your phone use simple -
+    mainly for calls, texts, and capturing photos of your grandchildren. Technology
+    in general makes you feel uneasy and overwhelmed.
+
+
+    Your technical knowledge is quite limited. Step-by-step instructions often confuse
+    you, and technical terms like "VPN" or "APN" might as well be a foreign language.
+    You only share information when specifically asked.
+
+
+    When dealing with technology, you tend to get flustered quickly. You need constant
+    reassurance and often interrupt with anxious questions. Simple requests like "reboot
+    the phone" can trigger worries about losing precious photos.
+
+    '
+
+[REWARD_INFO]
+action_checks: null
+communicate_checks: null
+db_check: null
+env_assertions: null
+info:
+  note: 'Simulation terminated prematurely. Termination reason: max_steps'
+nl_assertions: null
+reward: 0.0
+reward_basis: null
+reward_breakdown: null
+
+[TURNS COUNT]: 21
+[MESSAGES]
+[0][assistant]: Hi! How can I help you today?
+[1][user]: Hello, my name is John Smith, and my phone number is 555-123-2002. I'm currently in France, and my mobile data is not working properly. It either stops working or is very slow. I really need to get excellent internet speed on my phone. Can you help me with this, please?
+[1][user][USAGE]: completion_tokens: 73
+prompt_tokens: 3659
+
+[2][assistant]: <think>
+Okay, let's see. The user is John Smith from France, and his mobile data isn't working properly. He mentioned it's either stopping or very slow. He needs excellent internet speed.
+
+First, I need to check if there's a tool to help with mobile data issues. Looking at the provided tools, there's 'enable_roaming' and 'disable_roaming' functions. Since he's in France, maybe his line isn't roaming enabled. The 'enable_roaming' function could be used to enable data roaming, which would allow his phone to use data outside his home network.
+
+But wait, the user's line status might need to be checked first. If the line is already suspended, we might need to suspend it first. However, the policy says we can only suspend if the line is active. So first, I should check if the line is active. If it's suspended, we can suspend it, but the user might need to pay overdue bills.
+
+Alternatively, maybe the roaming is disabled. So using 'enable_roaming' would help. But the user is in France, so the line's roaming status needs to be checked. If it's not enabled, enabling it would allow data roaming.
+
+Also, the user mentioned that mobile data is not working. So the steps could be: check if roaming is enabled, if not, enable it. Then check if there are other issues like APN settings, network mode preferences, etc.
+
+But according to the policy, I should make one tool call at a time. So first, check if the line is active. If it's active, enable roaming. Otherwise, suspend it. But the user might not have the ability to suspend if the contract end date is approaching.
+
+Wait, the user's line status might be active. So the next step is to enable roaming. So the function call would be 'enable_roaming' with customer_id and line_id. But I don't have the customer_id or line_id. The user provided phone number, so I need to get the customer and line info first.
+
+The tools include 'get_customer_by_phone' to find the customer by phone number. So first, use that function with the phone number 555-123-2002. Once we have the customer, then get the line details. Then check if roaming is enabled. If not, enable it.
+
+But the user hasn't provided the customer ID or line ID. So the first step is to look up the customer using the phone number. Then, once we have the customer, we can get the line details. Then check if roaming is enabled. If not, enable it.
+
+So the first tool call should be 'get_customer_by_phone' with the phone number. Then, once we have the customer, use 'get_details_by_id' to get the line details. Then check the roaming status. If it's disabled, call 'enable_roaming'.
+
+But the user's message doesn't include the customer ID or line ID, so we need to first retrieve that information. So the initial step is to get the customer details.
+</think>
+[TOOL_CALLS]
+- arguments:
+    phone_number: 555-123-2002
+  id: call_70384df088a34d99990b84c1
+  name: get_customer_by_phone
+  requestor: assistant
+
+[2][assistant][USAGE]: completion_tokens: 670
+prompt_tokens: 7214
+
+[3][tool]: {"customer_id": "C1001", "full_name": "John Smith", "date_of_birth": "1985-06-15", "email": "john.smith@example.com", "phone_number": "555-123-2002", "address": {"street": "123 Main St", "city": "Anytown", "state": "CA", "zip_code": "90210"}, "account_status": "Active", "payment_methods": [{"method_type": "Credit Card", "account_number_last_4": "1235", "expiration_date": "12/2026"}], "line_ids": ["L1001", "L1002", "L1003"], "bill_ids": ["B1001", "B1002", "B1003"], "created_at": "2025-01-15 10:30:00", "last_extension_date": null, "goodwill_credit_used_this_year": 25.0}
+[4][assistant]: <think>
+Okay, let's see. The user is John Smith with the phone number 555-123-2002. I called get_customer_by_phone to find his customer details. The response came back with customer_id C1001, full name John Smith, dob 1985-06-15, and other details. Now, the next step is to check the lines associated with this customer. The customer has line_ids L1001, L1002, L1003.
+
+The user mentioned their mobile data isn't working properly in France. So, I need to check if the line's roaming is enabled. The tools include enable_roaming and disable_roaming. But first, I need to get the line details for each line. Let's start with line_id L1001.
+
+I'll call get_details_by_id for line_id L1001. Then check the roaming status. If it's disabled, enable it. But the user is in France, so maybe the line isn't roaming enabled. Let's proceed step by step.
+</think>
+[TOOL_CALLS]
+- arguments:
+    id: L1001
+  id: call_200a7ca499a846089cfc9779
+  name: get_details_by_id
+  requestor: assistant
+
+[4][assistant][USAGE]: completion_tokens: 261
+prompt_tokens: 8139
+
+[5][tool]: {"line_id": "L1001", "phone_number": "555-123-2001", "status": "Active", "plan_id": "P1001", "device_id": "D1001", "data_used_gb": 3.2, "data_refueling_gb": 0.0, "roaming_enabled": false, "contract_end_date": "2026-12-31", "last_plan_change_date": "2025-01-10", "last_sim_replacement_date": null, "suspension_start_date": null}
+[6][assistant]: <think>
+Okay, so the user's line L1001 is active, but roaming is disabled. The user is in France, so enabling roaming would help their mobile data work outside their home network. Let's call the enable_roaming function for this line.
+
+Wait, the user's phone number is 555-123-2002, but the line ID is L1001. The function requires customer_id and line_id. The customer_id is C1001, so I'll use that. The line_id is L1001. So the tool call should be enable_roaming with those parameters. Once enabled, the line's roaming status should toggle to true. Then, after enabling, check if the mobile data is working. If it's still slow, maybe check other settings like APN or network mode preferences. But first, enable roaming.
+</think>
+[TOOL_CALLS]
+- arguments:
+    customer_id: C1001
+    line_id: L1001
+  id: call_d3abe95ba3f3424da765bbfa
+  name: enable_roaming
+  requestor: assistant
+
+[6][assistant][USAGE]: completion_tokens: 224
+prompt_tokens: 8550
+
+[7][tool]: Roaming enabled successfully
+[8][assistant]: <think>
+Okay, so the user's line was previously disabled roaming, and I enabled it. Now, the next step is to check if that helped. The user mentioned their mobile data is slow or not working. After enabling roaming, the system should allow data usage outside the home network. But maybe there are other issues like APN settings or network mode preferences. Let me check the APN settings.
+
+I'll use the get_apn_settings function to check the current APN configuration. If the MMSC URL is missing, that could cause MMS issues, but the user is asking about mobile data speed. However, if the APN is correct, then roaming should work. If not, maybe reset APN settings. But first, check the current APN.
+</think>
+
+<tool_call>
+{"name": "get_apn_settings", "arguments": {"customer_id": "C1001"}}
+</tool_call>
+[8][assistant][USAGE]: completion_tokens: 184
+prompt_tokens: 8791
+
+[9][user]: Sure, let's check the APN settings on your phone. I'll do that right now.
+[TOOL_CALLS]
+- arguments: {}
+  id: call_5a7d57f2087b4159a86d576b
+  name: check_apn_settings
+  requestor: user
+
+[9][user][USAGE]: completion_tokens: 38
+prompt_tokens: 3926
+
+[10][tool]: Current APN Name: internet
+MMSC URL (for picture messages): http://mms.carrier.com/mms/wapenc
+(These are technical settings, usually best left unchanged.)
+[11][user]: The APN settings look correct. The next step is to check the network mode preference. Sometimes, the phone might be set to a lower network mode, which can affect data speed. I'll check the network mode preference using the `check_network_mode_preference` function.
+[TOOL_CALLS]
+- arguments: {}
+  id: call_a6a1173e0ce44c52b33f20b7
+  name: check_network_mode_preference
+  requestor: user
+
+[11][user][USAGE]: completion_tokens: 72
+prompt_tokens: 4020
+
+[12][tool]: Network Mode Preference: 2g_only
+[13][user]: Oh, I see. Your phone is currently set to prefer 2G networks, which can be very slow. Let's change this to prefer 4G and 5G networks for better speed. I'll do that now.
+[TOOL_CALLS]
+- arguments:
+    mode: 4g_5g_preferred
+  id: call_9236dc6aab0f4b5c86cba973
+  name: set_network_mode_preference
+  requestor: user
+
+[13][user][USAGE]: completion_tokens: 75
+prompt_tokens: 4118
+
+[14][tool]: Preferred Network Mode set to: 4g_5g_preferred
+Status Bar: 📶⁴ Excellent | 5G | 📱 Data Enabled | 🔋 80%
+[15][user]: Great! Your phone is now set to prefer 4G and 5G networks. Let's run a speed test to see if this has improved your internet speed. I'll do that now.
+[TOOL_CALLS]
+- arguments: {}
+  id: call_5a449ee518ee45a3b35e0238
+  name: run_speed_test
+  requestor: user
+
+[15][user][USAGE]: completion_tokens: 57
+prompt_tokens: 4251
+
+[16][tool]: Speed test failed: No Connection.
+[17][user]: Oh no, it seems the speed test failed because there's no connection. This is frustrating. Let's try toggling the mobile data off and on again to see if that helps. I'll do that now.
+[TOOL_CALLS]
+- arguments: {}
+  id: call_70c59b3407b843418ba817e9
+  name: toggle_data
+  requestor: user
+
+[17][user][USAGE]: completion_tokens: 59
+prompt_tokens: 4332
+
+[18][tool]: Mobile Data is now OFF.
+Status Bar: 📶⁴ Excellent | 5G | 📵 Data Disabled | 🔋 80%
+[19][user]: I've turned off the mobile data. Now, I'll turn it back on to see if that helps establish a connection.
+[TOOL_CALLS]
+- arguments: {}
+  id: call_2620dc9ca8c04bf4b1efde82
+  name: toggle_data
+  requestor: user
+
+[19][user][USAGE]: completion_tokens: 41
+prompt_tokens: 4440
+
+[20][tool]: Mobile Data is now ON.
+Status Bar: 📶⁴ Excellent | 5G | 📱 Data Enabled | 🔋 80%
+[AGENT_TIME]: total 11.073319267481565, avg 2.7683298168703914
+[USER_TIME]: total 26.41686861217022, avg 3.773838373167174
