@@ -24,9 +24,9 @@ logger = logging.getLogger("VisionRLVRWorkflow")
 class VisionRLVRWorkflow(RLVRWorkflow):
     def __init__(
         self,
-        reward_fn: Callable[..., Any],
+        reward_fn: Callable[..., Any] | str,
         gconfig: GenerationHyperparameters,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerFast | str,
         processor: AutoProcessor | str,
         enable_thinking: bool,
     ):
@@ -101,6 +101,14 @@ class VisionRLVRWorkflow(RLVRWorkflow):
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, torch.Tensor]:
+        # NOTE: load reward function dynamically if given as string
+        if isinstance(self.reward_fn, str):
+            from areal.utils.dynamic_import import import_from_string
+            from areal.api.reward_api import AsyncRewardWrapper
+            
+            self.reward_fn = import_from_string(self.reward_fn)
+            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
+        
         processor_callable = cast(Callable[..., dict[str, Any]], self.processor)
         processed_input = processor_callable(
             images=data["images"],
