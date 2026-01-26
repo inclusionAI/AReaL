@@ -78,7 +78,7 @@ from areal.utils.data import (
     unsqueeze_mb_list,
 )
 from areal.utils.distributed import init_custom_process_group, patch_dist_group_timeout
-from areal.utils.fsdp import get_cosine_schedule_with_warmup
+from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -244,6 +244,14 @@ class ArchonEngine(TrainEngine):
         if self.enable_tree_training:
             self.logger.warning("Tree training is not supported for Archon engine yet.")
 
+        # Save state dict from rank 0 before parallelization (for load_device="cpu")
+        # For load_device="cpu": all ranks have weights on CPU
+        if self.config.load_device == "cpu":
+            if dist.get_rank() == 0:
+                full_state = self.model.state_dict()
+            else:
+                full_state = {}
+
         tik = time.perf_counter()
         self.spec.parallelize_fn(
             model=self.model,
@@ -264,6 +272,20 @@ class ArchonEngine(TrainEngine):
         self.logger.info(
             f"Applied parallelism in {time.perf_counter() - tik:.2f} seconds"
         )
+
+        # Broadcast weights from rank 0 to all ranks (for load_device="cpu")
+        if self.config.load_device == "cpu":
+            tik = time.perf_counter()
+            cpu_offload = self.config.archon.offload_params
+            fsdp2_load_full_state_dict(
+                self.model,
+                full_state,
+                cpu_offload,
+                tie_word_embeddings=self.model_config.tie_word_embeddings,
+            )
+            self.logger.info(
+                f"Loaded model state dict with load_device='cpu' in {time.perf_counter() - tik:.2f} seconds"
+            )
 
         self._create_optimizer(ft_spec)
 
@@ -816,11 +838,23 @@ class ArchonEngine(TrainEngine):
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
+        # Determine loading device based on load_device config
+        if self.config.load_device == "cpu":
+            loading_device = "cpu"
+        else:
+            loading_device = current_platform.device_type
+
+        self.get_device_stats().log("before model creation/loading")
+
         tik = time.perf_counter()
-        with torch.device(current_platform.device_type):
+        with torch.device(loading_device):
             model = self._create_llm_model()
 
-        self.logger.info(f"Model creation time: {time.perf_counter() - tik:.2f}s")
+        self.get_device_stats().log("after model creation/loading")
+
+        self.logger.info(
+            f"Model creation and loading time: {time.perf_counter() - tik:.2f}s"
+        )
         self.model = model
 
     def _build_ac_config(self) -> ActivationCheckpointConfig | None:

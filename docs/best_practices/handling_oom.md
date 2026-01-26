@@ -135,6 +135,27 @@ When encountering an OOM error, you can switch to a more memory-efficient optimi
 setting `actor.optimizer.type: <name>` in your YAML configuration file (e.g.,
 `actor.optimizer.type: sgd`).
 
+### 4. Use CPU Loading for Model Initialization
+
+If you're hitting OOM during model initialization (before training even starts), try
+loading model weights on CPU first:
+
+```yaml
+actor:
+  load_device: cpu  # Load weights to CPU, then transfer to GPU after FSDP sharding
+```
+
+This is especially useful for very large models where loading the full model weights
+directly onto each GPU would exceed memory. When `load_device: cpu` is set:
+
+1. All ranks load weights to CPU memory
+1. FSDP parallelization is applied
+1. Weights are broadcast from rank 0 and transferred to GPU
+
+This approach trades some initialization time for significantly lower peak GPU memory
+during model loading. Only works with FSDP and Archon engines (Megatron already handles
+this efficiently).
+
 ## Resolving Weight Update OOM Errors
 
 Weight updates can eat up a lot of memory, especially when using NCCL synchronization

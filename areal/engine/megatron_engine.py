@@ -205,6 +205,13 @@ class MegatronEngine(TrainEngine):
         self.process_group_initialized = True
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
+        if self.config.load_device == "cpu":
+            self.logger.warning(
+                "load_device='cpu' is not implemented for MegatronEngine. "
+                "Megatron's weight loader already uses efficient CPU-to-GPU transfer. "
+                "Ignoring load_device setting."
+            )
+
         try:
             self.seed = get_seed()
         except ValueError:

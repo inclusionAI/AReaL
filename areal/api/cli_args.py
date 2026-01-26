@@ -791,6 +791,17 @@ class TrainEngineConfig:
         default="xccl",
         metadata={"help": "Weight update backend type.", "choices": ["disk", "xccl"]},
     )
+    load_device: str | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "Device to load model weights during initialization. "
+                "None uses the current device (GPU). 'cpu' loads weights to CPU, "
+                "then broadcasts from rank 0 to all ranks after FSDP sharding. "
+                "Use 'cpu' to prevent OOM for large models. Only effective with FSDP or Archon engine."
+            )
+        },
+    )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
     archon: ArchonEngineConfig = field(default_factory=ArchonEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)

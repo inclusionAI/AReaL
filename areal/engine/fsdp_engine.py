@@ -281,8 +281,10 @@ class FSDPEngine(TrainEngine):
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         tik = time.perf_counter()
-        # Prepare lora weights synchronization
-        if self.config.use_lora:
+        # Prepare weights synchronization for load_device="cpu" or LoRA
+        # For load_device="cpu": rank 0 has weights on CPU, others have meta placeholders
+        # For LoRA: need to sync randomly initialized LoRA weights
+        if self.config.load_device == "cpu" or self.config.use_lora:
             if dist.get_rank() == 0:
                 full_state = self.model.state_dict()
             else:
@@ -297,17 +299,23 @@ class FSDPEngine(TrainEngine):
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
-        # Synchronize initialized lora weights
-        if self.config.use_lora:
+        self.logger.info(
+            f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
+        )
+        # Broadcast weights from rank 0 to all ranks
+        # For load_device="cpu": broadcasts pretrained/random weights from CPU
+        # For LoRA: synchronizes randomly initialized LoRA weights
+        if self.config.load_device == "cpu" or self.config.use_lora:
+            tik = time.perf_counter()
             fsdp2_load_full_state_dict(
                 self.model,
                 full_state,
                 self.cpu_offload,
                 tie_word_embeddings=self.model_config.tie_word_embeddings,
             )
-        self.logger.info(
-            f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
-        )
+            self.logger.info(
+                f"Broadcasting model weights for load_device='cpu'/LoRA took {time.perf_counter() - tik:.2f} seconds"
+            )
 
         self._create_optimizer(ft_spec)
         self._initialized = True
@@ -703,7 +711,7 @@ class FSDPEngine(TrainEngine):
         }
         model_kwargs.update(common_kwargs)
 
-        if self.config.init_from_scratch:
+        if self.config.init_from_scratch or self.config.load_device == "cpu":
             # initialize model from config
             # NOTE: VLM cannot directly load state dict using this random initialized model
             model = model_class.from_config(
@@ -724,6 +732,14 @@ class FSDPEngine(TrainEngine):
 
         dtype = getattr(torch, self.config.dtype)
 
+        # Determine loading device based on load_device config
+        if self.config.load_device == "cpu":
+            loading_device = "cpu"
+        else:
+            loading_device = current_platform.device_type
+
+        self.get_device_stats().log("before model creation/loading")
+
         if self.is_vision_model:
             if dtype == torch.float16:
                 raise ValueError(
@@ -738,8 +754,7 @@ class FSDPEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            device = current_platform.device_type
-            with torch.device(device):
+            with torch.device(loading_device):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -752,17 +767,19 @@ class FSDPEngine(TrainEngine):
             self.tokenizer = load_hf_tokenizer(self.config.path)
             self.processor = None
             tik = time.perf_counter()
-            with torch.device(current_platform.device_type):
+            with torch.device(loading_device):
                 model = self._create_llm_actor_or_critic()
                 if self.config.disable_dropout:
                     disable_dropout_in_model(model)
+
+        self.get_device_stats().log("after model creation/loading")
 
         if self.config.gradient_checkpointing:
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
         self.logger.info(
-            f"Model creation and loading time: {time.perf_counter() - tik}"
+            f"Model creation and loading time: {time.perf_counter() - tik:.2f}s"
         )
         self.model = model
 
