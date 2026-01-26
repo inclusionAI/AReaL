@@ -4,7 +4,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from .constants import EVAL_QUERY_PROMPT, EVAL_SYSTEM_PROMPT
+from geo_edit.constants import EVAL_QUERY_PROMPT, EVAL_SYSTEM_PROMPT
 
 
 _ANSWER_PATTERN = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)

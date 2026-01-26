@@ -2,11 +2,11 @@
 #!/usr/bin/env python3
 """VLM Agents module"""
 
-from .base import BaseAgent, AgentConfig
-from .api_agent import APIBasedAgent
-from .vllm_agent import VLLMBasedAgent
+from geo_edit.agents.base import BaseAgent, AgentConfig
+from geo_edit.agents.api_agent import APIBasedAgent
+from geo_edit.agents.vllm_agent import VLLMBasedAgent
 
-from .utils import (
+from geo_edit.agents.utils import (
     load_image_safely,
     parse_vlm_response,
     extract_choice_letter,

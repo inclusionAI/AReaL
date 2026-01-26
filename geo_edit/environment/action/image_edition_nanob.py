@@ -2,7 +2,7 @@ from google import genai
 from google.genai import types
 from PIL import Image
 import io
-from ...constants import API_KEY
+from geo_edit.constants import API_KEY
 
 system_prompt='''
 You are an image editing AI model. Your task is to edit images based on the user's instructions. You will receive an image along with specific editing instructions, and you need to apply those edits to the image accurately.

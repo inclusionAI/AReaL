@@ -3,8 +3,8 @@ from typing import Any, Dict, Tuple
 
 from openai import OpenAI
 
-from .base import AgentConfig, BaseAgent
-from ..utils.logger import setup_logger
+from geo_edit.agents.base import AgentConfig, BaseAgent
+from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

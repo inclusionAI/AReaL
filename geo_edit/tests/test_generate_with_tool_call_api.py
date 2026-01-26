@@ -3,21 +3,21 @@ import json
 import logging
 import os
 import shutil
-from ..agents.api_agent import APIBasedAgent, AgentConfig
-from ..agents.vllm_agent import VLLMBasedAgent
-from ..environment.action import TOOL_FUNCTIONS
-from ..environment.task.google_vision_qa_task import GoogleVisionQATask
-from ..environment.task.openai_vision_qa_task import OpenAIVisionQATask
-from ..environment.task.vllm_vision_qa_task import VLLMVisionQATask
-from ..config import (
+from geo_edit.agents.api_agent import APIBasedAgent, AgentConfig
+from geo_edit.agents.vllm_agent import VLLMBasedAgent
+from geo_edit.environment.action import TOOL_FUNCTIONS
+from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
+from geo_edit.environment.task.openai_vision_qa_task import OpenAIVisionQATask
+from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
+from geo_edit.config import (
     NOTOOL_INPUT_TEMPLATE,
     MATHVISION_INPUT_TEMPLATE,
     build_agent_configs,
     build_openai_agent_configs,
     build_vllm_agent_configs,
 )
-from ..constants import MAX_TOOL_CALLS, get_system_prompt
-from ..utils.logger import setup_logger
+from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
+from geo_edit.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 def main():

@@ -9,9 +9,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
 
-from .base import AbstractVLMTask
-from ...constants import TOOL_EXECUTION_FAILURE_PROMPT, TOOL_EXECUTION_SUCCESS_PROMPT
-from ...utils.logger import setup_logger
+from geo_edit.environment.task.base import AbstractVLMTask
+from geo_edit.constants import TOOL_EXECUTION_FAILURE_PROMPT, TOOL_EXECUTION_SUCCESS_PROMPT
+from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
