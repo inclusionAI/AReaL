@@ -794,12 +794,7 @@ class TrainEngineConfig:
     load_device: str | None = field(
         default=None,
         metadata={
-            "help": (
-                "Device to load model weights during initialization. "
-                "None uses the current device (GPU). 'cpu' loads weights to CPU, "
-                "then broadcasts from rank 0 to all ranks after FSDP sharding. "
-                "Use 'cpu' to prevent OOM for large models. Only effective with FSDP or Archon engine."
-            )
+            "help": "Enable CPU device initialization for large models. Only effective when using FSDP or Archon engine."
         },
     )
     fsdp: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
