@@ -12,13 +12,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
-import torch.distributed.checkpoint as dcp
-from safetensors.torch import save_file
 from torch import nn
-from torch.distributed.checkpoint.state_dict import (
-    StateDictOptions,
-    get_model_state_dict,
-)
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -48,6 +42,14 @@ from areal.engine.core.train_engine import (
     compute_total_loss_weight,
     reorder_and_pad_outputs,
 )
+from areal.experimental.engine.archon_checkpoint import (
+    load_from_dcp,
+    load_model_from_hf,
+    load_optimizer_state,
+    save_model_to_hf,
+    save_optimizer_state,
+    save_to_dcp,
+)
 from areal.experimental.models.archon import (
     ArchonParallelDims,
     BaseStateDictAdapter,
@@ -76,8 +78,7 @@ from areal.utils.data import (
     unsqueeze_mb_list,
 )
 from areal.utils.distributed import init_custom_process_group, patch_dist_group_timeout
-from areal.utils.fsdp import fsdp2_load_full_state_dict, get_cosine_schedule_with_warmup
-from areal.utils.fsdp.checkpoint import DCPState
+from areal.utils.fsdp import get_cosine_schedule_with_warmup
 from areal.utils.fsdp.grad import fsdp2_clip_grad_norm
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -562,26 +563,26 @@ class ArchonEngine(TrainEngine):
     def save(self, meta: SaveLoadMeta):
         """Save model in HuggingFace or DCP format."""
         if meta.weight_format == "hf":
-            self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
+            save_model_to_hf(self, meta.path, meta.tokenizer, meta.processor)
         elif meta.weight_format == "dcp":
-            self._save_to_dcp(meta.path, meta.with_optim)
+            save_to_dcp(self, meta.path, meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}.")
 
         if meta.with_optim and meta.weight_format == "hf":
-            self._save_optimizer_state(meta.path)
+            save_optimizer_state(self, meta.path)
 
     def load(self, meta: SaveLoadMeta):
         """Load model from HuggingFace or DCP format."""
         if meta.weight_format == "hf":
-            self._load_model_from_hf(meta.path)
+            load_model_from_hf(self, meta.path)
         elif meta.weight_format == "dcp":
-            self._load_from_dcp(meta.path, meta.with_optim)
+            load_from_dcp(self, meta.path, meta.with_optim)
         else:
             raise ValueError(f"Unknown weight format {meta.weight_format}.")
 
         if meta.with_optim and meta.weight_format == "hf":
-            self._load_optimizer_state(meta.path)
+            load_optimizer_state(self, meta.path)
 
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver."""
@@ -642,7 +643,9 @@ class ArchonEngine(TrainEngine):
             )
 
     def _create_state_dict_adapter(self) -> BaseStateDictAdapter | None:
-        return self.spec.state_dict_adapter_class(self.model_config)
+        return self.spec.state_dict_adapter_class(
+            self.model_config, hf_assets_path=self.config.path
+        )
 
     def _get_model_name_parameters(self) -> Iterator[tuple[str, nn.Parameter]]:
         return self.model.named_parameters()
@@ -790,7 +793,7 @@ class ArchonEngine(TrainEngine):
             fut = self.rollout_engine.update_weights_from_disk(meta)
 
         assert meta.path is not None
-        self._save_model_to_hf(meta.path, self.tokenizer, None)
+        save_model_to_hf(self, meta.path, self.tokenizer, None)
 
         if dist.get_rank() == 0:
             update_name = names.update_weights_from_disk(
@@ -805,95 +808,6 @@ class ArchonEngine(TrainEngine):
             fut.result()
 
         current_platform.synchronize()
-        dist.barrier(group=self.cpu_group)
-
-    def _save_model_to_hf(
-        self,
-        path: str,
-        tokenizer: PreTrainedTokenizerFast | None,
-        processor=None,
-    ):
-        """Save model in HuggingFace format."""
-        if self.model is None:
-            raise RuntimeError("Model not initialized")
-        os.makedirs(path, exist_ok=True)
-
-        options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-        state_dict = get_model_state_dict(self.model, options=options)
-        if self.state_dict_adapter is not None:
-            state_dict = self.state_dict_adapter.to_hf(state_dict)
-
-        if dist.get_rank() == 0:
-            os.makedirs(path, exist_ok=True)
-            model_path = os.path.join(path, "model.safetensors")
-            try:
-                save_file(state_dict, model_path)
-            except ImportError:
-                model_path = os.path.join(path, "pytorch_model.bin")
-                torch.save(state_dict, model_path)
-
-            self.model_config.save_pretrained(path)
-            if tokenizer is not None:
-                tokenizer.save_pretrained(path)
-            if processor is not None:
-                processor.save_pretrained(path)
-        dist.barrier(group=self.cpu_group)
-
-    def _load_model_from_hf(self, path: str):
-        """Load model from HuggingFace format."""
-        if dist.get_rank() == 0:
-            full_state = get_state_dict_from_repo_id_or_path(path)
-            if self.state_dict_adapter is not None:
-                full_state = self.state_dict_adapter.from_hf(full_state)
-        else:
-            full_state = {}
-
-        cpu_offload = self.config.archon.offload_params
-        fsdp2_load_full_state_dict(
-            self.model,
-            full_state,
-            cpu_offload,
-            tie_word_embeddings=self.model_config.tie_word_embeddings,
-        )
-
-    def _save_to_dcp(self, path: str, with_optim: bool):
-        if self.model is None:
-            raise RuntimeError("Model not initialized")
-
-        os.makedirs(path, exist_ok=True)
-
-        dcp_state = DCPState(self.model, self.optimizer if with_optim else None)
-        state_dict = {"dcp": dcp_state}
-        dcp.save(state_dict, checkpoint_id=path)
-
-    def _load_from_dcp(self, path: str, with_optim: bool):
-        if self.model is None:
-            raise RuntimeError("Model not initialized")
-
-        dcp_state = DCPState(self.model, self.optimizer if with_optim else None)
-        state_dict = {"dcp": dcp_state}
-        dcp.load(state_dict=state_dict, checkpoint_id=path)
-
-    def _save_optimizer_state(self, path: str):
-        assert self.optimizer is not None
-        assert dist.is_initialized()
-        rank = dist.get_rank()
-        shard_path = os.path.join(
-            path, f"optim_world_size_{self.world_size}_rank_{rank}.pt"
-        )
-        state_dict = self.optimizer.state_dict()
-        torch.save(state_dict, shard_path)
-        dist.barrier(group=self.cpu_group)
-
-    def _load_optimizer_state(self, path: str):
-        assert self.optimizer is not None
-        assert dist.is_initialized()
-        rank = dist.get_rank()
-        shard_path = os.path.join(
-            path, f"optim_world_size_{self.world_size}_rank_{rank}.pt"
-        )
-        optimizer_state_dict = torch.load(shard_path, weights_only=False)
-        self.optimizer.load_state_dict(optimizer_state_dict)
         dist.barrier(group=self.cpu_group)
 
     def _create_device_model(self):

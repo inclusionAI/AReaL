@@ -32,11 +32,14 @@ import torch.distributed as dist
 from areal.experimental.models.archon import ArchonParallelDims
 from areal.experimental.models.archon.qwen3.infra.parallelize import parallelize_qwen3
 from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
+from areal.experimental.models.archon.qwen3.model.state_dict_adapter import (
+    Qwen3StateDictAdapter,
+)
 from areal.experimental.models.archon.ulysses import (
     ulysses_gather_output,
     ulysses_slice_inputs,
 )
-from areal.tests.experimental.archon.torchrun.utils import (
+from areal.tests.experimental.archon.torchrun.dist_utils import (
     create_golden_model,
     create_moe_model_args,
     create_test_input,
@@ -52,7 +55,7 @@ from areal.tests.experimental.archon.torchrun.utils import (
 
 
 def get_parallel_dims_ep_tp(world_size: int) -> ArchonParallelDims:
-    """Get parallel dims for EP+TP configuration (ep=ws, tp=ws)."""
+    """EP+TP config: ep=ws, tp=ws."""
     return ArchonParallelDims(
         dp_shard=1,
         tp=world_size,
@@ -64,11 +67,7 @@ def get_parallel_dims_ep_tp(world_size: int) -> ArchonParallelDims:
 
 
 def get_parallel_dims_ep_only(world_size: int) -> ArchonParallelDims:
-    """Get parallel dims for EP only configuration (ep=ws, tp=1).
-
-    Note: dp_shard * tp * cp must equal world_size.
-    For EP only with 2 GPUs: dp_shard=2, tp=1, cp=1, ep=2
-    """
+    """EP only config: ep=ws, tp=1. dp_shard * tp * cp must equal world_size."""
     return ArchonParallelDims(
         dp_shard=world_size,
         tp=1,
@@ -80,42 +79,27 @@ def get_parallel_dims_ep_only(world_size: int) -> ArchonParallelDims:
 
 
 def get_parallel_dims_ep_cp(world_size: int) -> ArchonParallelDims:
-    """Get parallel dims for EP+CP configuration (ep=2, cp=2, 4 GPU).
-
-    Note: dp_shard * tp * cp must equal world_size.
-    For EP+CP with 4 GPUs: dp_shard=2, tp=1, cp=2, ep=4
-    """
+    """EP+CP config: ep=4, cp=2, requires 4 GPUs."""
     assert world_size == 4, "EP+CP requires 4 GPUs"
     return ArchonParallelDims(
         dp_shard=2,
         tp=1,
         cp=2,
-        ep=world_size,  # ep=4 borrows from dp_shard * cp
+        ep=world_size,
         world_size=world_size,
         device_type="cuda",
     )
 
 
 def get_parallel_dims_etp(world_size: int) -> ArchonParallelDims:
-    """Get parallel dims for ETP configuration.
-
-    ETP (Expert Tensor Parallel) uses 2D sharding for expert weights.
-    EP borrows from dp_shard × cp only (not tp).
-
-    Requires at least 4 GPUs. Extra GPUs go to dp_shard.
-    Config: tp=2, cp=1, ep=2, etp=2, dp_shard=world_size/4.
-    """
+    """ETP config: tp=2, ep=2, etp=2, requires 4+ GPUs."""
     assert world_size >= 4 and world_size % 4 == 0, (
         "ETP requires at least 4 GPUs and world_size must be divisible by 4. "
         "Use tp_only_forward for 2 GPU TP-only MoE test."
     )
-
-    # ep borrows from dp_shard * cp = dp_shard (since cp=1)
-    # dp_shard_mod_ep = dp_shard * cp / ep = dp_shard / 2
-    # dp_shard_in_ep = ep / cp = 2
     dp_shard = world_size // 4
     return ArchonParallelDims(
-        dp_shard=dp_shard * 2,  # dp_shard must satisfy: dp_shard * tp * cp = world_size
+        dp_shard=dp_shard * 2,
         tp=2,
         cp=1,
         ep=2,
@@ -126,10 +110,7 @@ def get_parallel_dims_etp(world_size: int) -> ArchonParallelDims:
 
 
 def get_parallel_dims_tp_only(world_size: int) -> ArchonParallelDims:
-    """Get parallel dims for TP-only MoE configuration (ep=1, tp=ws).
-
-    This tests the TensorParallel class for MoE experts when EP is disabled.
-    """
+    """TP-only MoE config: ep=1, tp=ws."""
     return ArchonParallelDims(
         dp_shard=1,
         tp=world_size,
@@ -147,7 +128,7 @@ def create_ep_model(
     device: torch.device,
     seed: int = 42,
 ) -> Qwen3Model:
-    """Create and parallelize a model with EP."""
+    """Create and parallelize model with given parallel dims."""
     torch.manual_seed(seed)
     model = Qwen3Model(model_args)
     model.init_weights(device)
@@ -179,33 +160,18 @@ def test_forward(
     output: str | None = None,
     ep_model: Qwen3Model | None = None,
 ) -> tuple[bool, Qwen3Model]:
-    """Test forward numerical correctness for given parallel config.
-
-    Verify: EP model output vs non-EP golden model output.
-
-    Args:
-        parallel_dims: Pre-created ArchonParallelDims instance (reused across tests).
-        config_name: Name of the test configuration for logging.
-        output: Optional output file path for test result.
-        ep_model: Optional pre-created EP model to reuse. If None, creates a new one.
-
-    Returns:
-        Tuple of (success, ep_model) where ep_model can be reused in subsequent tests.
-    """
+    """Test forward correctness: EP model vs non-EP golden model. Returns (success, ep_model)."""
     rank = dist.get_rank()
     device = torch.device(f"cuda:{rank}")
 
     num_experts = 4
     model_args = create_moe_model_args(num_experts=num_experts)
 
-    # Create golden model (non-parallelized)
     golden_model = create_golden_model(model_args, device, seed=42)
 
-    # Create EP model if not provided (reusing parallel_dims instance)
     if ep_model is None:
         ep_model = create_ep_model(model_args, parallel_dims, device, seed=42)
 
-    # Create test input (full sequence)
     tokens, positions, cu_seqlens, seq_len_per_seq = create_test_input(
         num_seqs=4,
         seq_len_per_seq=8,
@@ -214,22 +180,16 @@ def test_forward(
         seed=123,
     )
 
-    # Get CP info for input slicing and output gathering
     cp_group = parallel_dims.get_group("cp")
     cp_size = parallel_dims.cp
     cp_rank = parallel_dims.get_mesh("cp").get_local_rank() if cp_size > 1 else 0
 
-    # Prepare inputs for EP model (slice if CP enabled)
     if cp_size > 1:
-        # Slice inputs for this CP rank
         inputs_dict = {"input_ids": tokens, "position_ids": positions}
-        # Create a dummy labels tensor for ulysses_slice_inputs
         labels = torch.zeros_like(tokens)
         sliced_inputs, _ = ulysses_slice_inputs(inputs_dict, labels, cp_rank, cp_size)
         tokens_ep = sliced_inputs["input_ids"]
         positions_ep = sliced_inputs["position_ids"]
-        # cu_seqlens should NOT be sliced - Ulysses gathers full sequence in attention
-        # so cu_seqlens refers to the full sequence positions
         cu_seqlens_ep = cu_seqlens
         seq_len_per_seq_ep = seq_len_per_seq
     else:
@@ -238,17 +198,13 @@ def test_forward(
         cu_seqlens_ep = cu_seqlens
         seq_len_per_seq_ep = seq_len_per_seq
 
-    # Forward pass
     with torch.no_grad():
         output_golden = golden_model(tokens, positions, cu_seqlens, seq_len_per_seq)
         output_ep = ep_model(tokens_ep, positions_ep, cu_seqlens_ep, seq_len_per_seq_ep)
 
-    # Gather EP output if CP enabled
-    # Model output has shape [1, seq_len/cp_size, dim], so use seq_dim=1
     if cp_size > 1:
         output_ep = ulysses_gather_output(output_ep, cp_group, seq_dim=1)
 
-    # Verify outputs match
     success, max_diff, mean_diff = verify_outputs_match(output_golden, output_ep)
 
     print_rank0(f"  {config_name} forward:")
@@ -273,16 +229,7 @@ def test_output_consistency_across_ranks(
     config_name: str,
     ep_model: Qwen3Model | None = None,
 ) -> bool:
-    """Test that all ranks produce the same gathered output for the same input.
-
-    For CP-enabled models, each CP rank processes different sequence slices,
-    so we compare the gathered (full) outputs across ranks.
-
-    Args:
-        parallel_dims: Pre-created ArchonParallelDims instance (reused across tests).
-        config_name: Name of the test configuration for logging.
-        ep_model: Optional pre-created EP model to reuse. If None, creates a new one.
-    """
+    """Test that all ranks produce the same gathered output."""
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     device = torch.device(f"cuda:{rank}")
@@ -290,12 +237,10 @@ def test_output_consistency_across_ranks(
     num_experts = 4
     model_args = create_moe_model_args(num_experts=num_experts)
 
-    # Reuse EP model if provided, otherwise create a new one
     if ep_model is None:
         ep_model = create_ep_model(model_args, parallel_dims, device, seed=42)
     model = ep_model
 
-    # Create test input (full sequence)
     tokens, positions, cu_seqlens, seq_len_per_seq = create_test_input(
         num_seqs=4,
         seq_len_per_seq=8,
@@ -304,19 +249,16 @@ def test_output_consistency_across_ranks(
         seed=123,
     )
 
-    # Get CP info for input slicing and output gathering
     cp_group = parallel_dims.get_group("cp")
     cp_size = parallel_dims.cp
     cp_rank = parallel_dims.get_mesh("cp").get_local_rank() if cp_size > 1 else 0
 
-    # Prepare inputs for model (slice if CP enabled)
     if cp_size > 1:
         inputs_dict = {"input_ids": tokens, "position_ids": positions}
         labels = torch.zeros_like(tokens)
         sliced_inputs, _ = ulysses_slice_inputs(inputs_dict, labels, cp_rank, cp_size)
         tokens_model = sliced_inputs["input_ids"]
         positions_model = sliced_inputs["position_ids"]
-        # cu_seqlens should NOT be sliced - Ulysses gathers full sequence in attention
         cu_seqlens_model = cu_seqlens
         seq_len_per_seq_model = seq_len_per_seq
     else:
@@ -325,25 +267,19 @@ def test_output_consistency_across_ranks(
         cu_seqlens_model = cu_seqlens
         seq_len_per_seq_model = seq_len_per_seq
 
-    # Synchronize all ranks before forward pass to ensure model state is consistent
     dist.barrier()
 
-    # Forward pass
     with torch.no_grad():
         output = model(
             tokens_model, positions_model, cu_seqlens_model, seq_len_per_seq_model
         )
 
-    # Gather output if CP enabled
-    # Model output has shape [1, seq_len/cp_size, dim], so use seq_dim=1
     if cp_size > 1:
         output = ulysses_gather_output(output, cp_group, seq_dim=1)
 
-    # Gather outputs from all ranks
     output_list = [torch.zeros_like(output) for _ in range(world_size)]
     dist.all_gather(output_list, output)
 
-    # All outputs should be identical (after gathering CP outputs)
     success = True
     for i in range(1, world_size):
         if not torch.allclose(output_list[0], output_list[i], rtol=1e-5, atol=1e-5):
@@ -372,18 +308,7 @@ def test_weight_sync(
     config_name: str,
     output: str | None = None,
 ) -> bool:
-    """Test weight gather, roundtrip, and cross-rank consistency.
-
-    Verify:
-    1. Gathered weights match original (before parallelization)
-    2. Gathered weights are consistent across all ranks
-    3. Loaded weights produce same output as original model
-
-    Args:
-        parallel_dims: Pre-created ArchonParallelDims instance (reused across tests).
-        config_name: Name of the test configuration for logging.
-        output: Optional output file path for test result.
-    """
+    """Test weight gather, roundtrip, and cross-rank consistency."""
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     device = torch.device(f"cuda:{rank}")
@@ -391,14 +316,12 @@ def test_weight_sync(
     num_experts = 4
     model_args = create_moe_model_args(num_experts=num_experts)
 
-    # Create model and save original weights before parallelization
     torch.manual_seed(42)
     model = Qwen3Model(model_args)
     model.init_weights(device)
     model = model.to(device)
     original_state = {k: v.clone() for k, v in model.state_dict().items()}
 
-    # Apply parallelization (reusing parallel_dims instance)
     parallelize_qwen3(
         model=model,
         parallel_dims=parallel_dims,
@@ -411,12 +334,10 @@ def test_weight_sync(
         enable_compile=False,
     )
 
-    # Gather sharded weights
     gathered_state = gather_full_state_dict(model)
 
     success = True
 
-    # Test 1: Verify expert weights match original
     print_rank0(f"  {config_name} weight sync:")
     for name in original_state:
         if "experts" in name and name in gathered_state:
@@ -435,7 +356,6 @@ def test_weight_sync(
                 print_rank0(f"    Weight mismatch for {name}: max_diff={max_diff}")
                 success = False
 
-    # Test 2: Verify cross-rank consistency
     expert_weight_names = [
         name for name in gathered_state.keys() if "experts.w1" in name
     ]
@@ -453,13 +373,11 @@ def test_weight_sync(
                 )
                 success = False
 
-    # Test 3: Verify roundtrip (load gathered weights to new model)
     torch.manual_seed(42)
     model_new = Qwen3Model(model_args)
     model_new.init_weights(device)
     model_new = model_new.to(device)
 
-    # Load gathered state
     loadable_state = {}
     model_new_state = model_new.state_dict()
     for name, tensor in gathered_state.items():
@@ -467,7 +385,6 @@ def test_weight_sync(
             loadable_state[name] = tensor
     model_new.load_state_dict(loadable_state, strict=False)
 
-    # Compare forward outputs
     tokens, positions, cu_seqlens, seq_len_per_seq = create_test_input(
         num_seqs=4,
         seq_len_per_seq=8,
@@ -476,7 +393,6 @@ def test_weight_sync(
         seed=456,
     )
 
-    # Create reference model
     golden_model = create_golden_model(model_args, device, seed=42)
 
     with torch.no_grad():
@@ -507,15 +423,7 @@ def test_weight_sync(
 
 
 def test_state_dict_update(output: str | None = None) -> bool:
-    """Test state dict correctness after optimizer step.
-
-    Verify:
-    1. Create EP model + optimizer
-    2. Forward + backward + optimizer.step()
-    3. Gather EP weights to full state_dict
-    4. Create non-EP model, load gathered state_dict
-    5. Two models with same input should produce same output
-    """
+    """Test state dict correctness after optimizer step."""
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     device = torch.device(f"cuda:{rank}")
@@ -523,14 +431,11 @@ def test_state_dict_update(output: str | None = None) -> bool:
     num_experts = 4
     model_args = create_moe_model_args(num_experts=num_experts)
 
-    # Create EP model
     parallel_dims = get_parallel_dims_ep_tp(world_size)
     model = create_ep_model(model_args, parallel_dims, device, seed=42)
 
-    # Create optimizer
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
 
-    # Training step
     tokens, positions, cu_seqlens, seq_len_per_seq = create_test_input(
         num_seqs=4,
         seq_len_per_seq=8,
@@ -544,13 +449,9 @@ def test_state_dict_update(output: str | None = None) -> bool:
     loss.backward()
     optimizer.step()
 
-    # Gather updated weights
     gathered_state = gather_full_state_dict(model)
 
-    # Create new non-EP model and load gathered weights
-    torch.manual_seed(
-        99
-    )  # Different seed to ensure weights are loaded, not initialized
+    torch.manual_seed(99)
     model_new = Qwen3Model(model_args)
     model_new.init_weights(device)
     model_new = model_new.to(device)
@@ -562,7 +463,6 @@ def test_state_dict_update(output: str | None = None) -> bool:
             loadable_state[name] = tensor
     model_new.load_state_dict(loadable_state, strict=False)
 
-    # Forward with new input
     tokens2, positions2, cu_seqlens2, seq_len_per_seq2 = create_test_input(
         num_seqs=4,
         seq_len_per_seq=8,
@@ -572,12 +472,9 @@ def test_state_dict_update(output: str | None = None) -> bool:
     )
 
     with torch.no_grad():
-        # EP model forward
         output_ep = model(tokens2, positions2, cu_seqlens2, seq_len_per_seq2)
-        # Non-EP model forward
         output_new = model_new(tokens2, positions2, cu_seqlens2, seq_len_per_seq2)
 
-    # Verify outputs match
     success, max_diff, mean_diff = verify_outputs_match(
         output_ep, output_new, rtol=1e-4, atol=1e-4
     )
@@ -710,6 +607,145 @@ def run_tp_only_forward(output: str | None = None) -> bool:
 
 
 # =============================================================================
+# DTensor Checkpoint Roundtrip Tests
+# =============================================================================
+
+
+def test_dtensor_checkpoint_roundtrip(
+    parallel_dims: ArchonParallelDims,
+    config_name: str,
+    output: str | None = None,
+) -> bool:
+    """Test DTensor checkpoint roundtrip: to_hf() -> from_hf() preserves weights."""
+    from torch.distributed.tensor import DTensor
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    device = torch.device(f"cuda:{rank}")
+
+    num_experts = 4
+    model_args = create_moe_model_args(num_experts=num_experts)
+
+    model = create_ep_model(model_args, parallel_dims, device, seed=42)
+
+    original_dtensor_state = {}
+    for name, param in model.named_parameters():
+        original_dtensor_state[name] = param
+
+    adapter = Qwen3StateDictAdapter(model_args)
+
+    success = True
+    print_rank0(f"  {config_name} DTensor checkpoint roundtrip:")
+
+    hf_state_dict = adapter.to_hf(original_dtensor_state)
+
+    moe_2d_count = 0
+    for key, value in hf_state_dict.items():
+        if ".mlp.experts." in key:
+            moe_2d_count += 1
+            if value.dim() != 2:
+                print_rank0(f"    ERROR: {key} should be 2D, got {value.dim()}D")
+                success = False
+
+    print_rank0(f"    to_hf produced {moe_2d_count} 2D expert weights")
+
+    reconstructed_state = adapter.from_hf(hf_state_dict)
+
+    for name in original_dtensor_state:
+        if "moe.experts.w" in name:
+            original = original_dtensor_state[name]
+            if name not in reconstructed_state:
+                print_rank0(f"    ERROR: {name} missing in reconstructed state")
+                success = False
+                continue
+
+            reconstructed = reconstructed_state[name]
+
+            if isinstance(original, DTensor):
+                original_local = original._local_tensor
+            else:
+                original_local = original
+
+            if isinstance(reconstructed, DTensor):
+                reconstructed_local = reconstructed._local_tensor
+            else:
+                reconstructed_local = reconstructed
+
+            if original_local.shape != reconstructed_local.shape:
+                print_rank0(
+                    f"    ERROR: Shape mismatch for {name}: "
+                    f"{original_local.shape} vs {reconstructed_local.shape}"
+                )
+                success = False
+                continue
+
+            if not torch.allclose(
+                original_local, reconstructed_local, rtol=1e-5, atol=1e-5
+            ):
+                max_diff = (original_local - reconstructed_local).abs().max().item()
+                print_rank0(
+                    f"    ERROR: Value mismatch for {name}: max_diff={max_diff}"
+                )
+                success = False
+
+    expert_keys = [k for k in reconstructed_state.keys() if "moe.experts.w1" in k]
+    for key in expert_keys[:1]:
+        value = reconstructed_state[key]
+        if isinstance(value, DTensor):
+            full_tensor = value.full_tensor()
+        else:
+            full_tensor = value
+
+        tensor_list = [torch.zeros_like(full_tensor) for _ in range(world_size)]
+        dist.all_gather(tensor_list, full_tensor)
+
+        for i in range(1, world_size):
+            if not torch.allclose(tensor_list[0], tensor_list[i], rtol=1e-5, atol=1e-5):
+                max_diff = (tensor_list[0] - tensor_list[i]).abs().max().item()
+                print_rank0(
+                    f"    ERROR: Cross-rank mismatch for {key} "
+                    f"(rank 0 vs {i}): max_diff={max_diff}"
+                )
+                success = False
+
+    if success:
+        print_rank0(f"  {config_name}_dtensor_checkpoint: PASSED")
+    else:
+        print_rank0(f"  {config_name}_dtensor_checkpoint: FAILED")
+
+    dist.barrier()
+
+    if rank == 0 and output:
+        write_result(output, success)
+
+    return success
+
+
+def run_ep_tp_dtensor_checkpoint(output: str | None = None) -> bool:
+    """Run EP+TP DTensor checkpoint roundtrip test."""
+    print_rank0("\n=== EP+TP DTensor Checkpoint Roundtrip Test ===")
+    world_size = dist.get_world_size()
+    parallel_dims = get_parallel_dims_ep_tp(world_size)
+    return test_dtensor_checkpoint_roundtrip(parallel_dims, "ep_tp", output)
+
+
+def run_ep_only_dtensor_checkpoint(output: str | None = None) -> bool:
+    """Run EP only DTensor checkpoint roundtrip test."""
+    print_rank0("\n=== EP Only DTensor Checkpoint Roundtrip Test ===")
+    world_size = dist.get_world_size()
+    parallel_dims = get_parallel_dims_ep_only(world_size)
+    return test_dtensor_checkpoint_roundtrip(parallel_dims, "ep_only", output)
+
+
+def run_etp_dtensor_checkpoint(output: str | None = None) -> bool:
+    """Run ETP DTensor checkpoint roundtrip test (requires 4 GPUs)."""
+    print_rank0("\n=== ETP DTensor Checkpoint Roundtrip Test ===")
+    world_size = dist.get_world_size()
+    parallel_dims = get_parallel_dims_etp(world_size)
+    return test_dtensor_checkpoint_roundtrip(parallel_dims, "etp", output)
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -724,6 +760,10 @@ TEST_REGISTRY = {
     "etp_weight_sync": run_etp_weight_sync,
     "tp_only_forward": run_tp_only_forward,
     "state_dict_update": run_state_dict_update,
+    # DTensor checkpoint roundtrip tests
+    "ep_tp_dtensor_checkpoint": run_ep_tp_dtensor_checkpoint,
+    "ep_only_dtensor_checkpoint": run_ep_only_dtensor_checkpoint,
+    "etp_dtensor_checkpoint": run_etp_dtensor_checkpoint,
 }
 
 

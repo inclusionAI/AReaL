@@ -186,8 +186,6 @@ class TestApplyAc:
         with pytest.raises(ValueError, match="must have a 'layers' attribute"):
             apply_ac(model, config)
 
-    # NOTE: Upgrading PyTorch will resolve this in the future.
-    @pytest.mark.slow
     def test_wrapped_model_forward_works(self):
         """Wrapped model should still produce correct forward output."""
         model = DummyModel(num_layers=3, dim=4)
@@ -206,8 +204,6 @@ class TestApplyAc:
 
         assert torch.allclose(ref_output, wrapped_output)
 
-    # NOTE: Upgrading PyTorch will resolve this in the future.
-    @pytest.mark.slow
     def test_wrapped_model_backward_works(self):
         """Wrapped model should support backward pass."""
         model = DummyModel(num_layers=3, dim=4)

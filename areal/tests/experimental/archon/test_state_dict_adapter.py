@@ -219,6 +219,41 @@ class TestQwen3StateDictAdapterDense:
         assert result[0][0] == "model.layers.0.self_attn.q_proj.weight"
         assert torch.equal(result[0][1], tensor)
 
+    def test_qwen3_dense_no_moe_converter(self, adapter):
+        """Test that dense Qwen3 adapter does not initialize MoE converter."""
+        assert adapter.moe_enabled is False
+        assert adapter._moe_converter is None
+        assert adapter._moe_state is None
+
+    def test_qwen3_adapter_inherits_base_methods(self, adapter):
+        """Test that Qwen3StateDictAdapter inherits from BaseStateDictAdapter."""
+        from areal.experimental.models.archon.base import BaseStateDictAdapter
+
+        assert isinstance(adapter, BaseStateDictAdapter)
+        assert hasattr(adapter, "get_hf_storage_reader")
+        assert hasattr(adapter, "fqn_to_index_mapping")
+
+    def test_qwen3_dense_with_weight_tying(self):
+        """Test Qwen3StateDictAdapter handles weight tying correctly for dense model."""
+
+        class MockQwen3DenseConfigTied:
+            model_type = "qwen3"
+            tie_word_embeddings = True
+            moe_enabled = False
+
+        adapter = Qwen3StateDictAdapter(MockQwen3DenseConfigTied())
+
+        archon_state = {
+            "tok_embeddings.weight": torch.randn(1000, 64),
+            "output.weight": torch.randn(1000, 64),  # Should be skipped
+        }
+
+        hf_state = adapter.to_hf(archon_state)
+
+        # output.weight should be skipped when weight tying is enabled
+        assert "lm_head.weight" not in hf_state
+        assert "model.embed_tokens.weight" in hf_state
+
 
 class TestQwen3StateDictAdapterMoE:
     """Tests for Qwen3StateDictAdapter with MoE models."""
@@ -401,9 +436,6 @@ class TestMoEWeightLoadingRoundtrip:
 
         return MockConfig()
 
-    # Marked as slow to exclude from CI pipeline.
-    # NOTE: Upgrading PyTorch will resolve this in the future.
-    @pytest.mark.slow
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="MoE forward requires CUDA"
     )
@@ -749,3 +781,358 @@ class TestStateDictAdapterWithRealConfigs:
                 assert hf_key_back == hf_key, (
                     f"[{model_type}] Roundtrip failed for layer {layer_idx}"
                 )
+
+
+# =============================================================================
+# Tests for HF Assets Path and Multi-File Checkpoint Support
+# =============================================================================
+
+
+class TestHFAssetsPathSupport:
+    """Tests for hf_assets_path parameter and multi-file checkpoint support."""
+
+    @pytest.fixture
+    def mock_safetensors_index(self, tmp_path):
+        """Create a mock model.safetensors.index.json file."""
+        index_data = {
+            "metadata": {"total_size": 12345678},
+            "weight_map": {
+                "model.embed_tokens.weight": "model-00001-of-00019.safetensors",
+                "model.layers.0.self_attn.q_proj.weight": "model-00001-of-00019.safetensors",
+                "model.layers.0.self_attn.k_proj.weight": "model-00001-of-00019.safetensors",
+                "model.layers.0.self_attn.v_proj.weight": "model-00002-of-00019.safetensors",
+                "model.layers.0.self_attn.o_proj.weight": "model-00002-of-00019.safetensors",
+                "model.layers.0.mlp.gate_proj.weight": "model-00003-of-00019.safetensors",
+                "model.layers.0.mlp.up_proj.weight": "model-00003-of-00019.safetensors",
+                "model.layers.0.mlp.down_proj.weight": "model-00004-of-00019.safetensors",
+                "model.layers.10.self_attn.q_proj.weight": "model-00010-of-00019.safetensors",
+                "model.norm.weight": "model-00019-of-00019.safetensors",
+                "lm_head.weight": "model-00019-of-00019.safetensors",
+            },
+        }
+        index_path = tmp_path / "model.safetensors.index.json"
+        import json
+
+        with open(index_path, "w") as f:
+            json.dump(index_data, f)
+        return tmp_path
+
+    def test_init_without_hf_assets_path(self):
+        """Test that adapter initializes correctly without hf_assets_path."""
+        adapter = Qwen3StateDictAdapter(MockQwen3Config())
+
+        assert adapter.hf_assets_path is None
+        assert adapter.fqn_to_index_mapping is None
+
+    def test_init_with_hf_assets_path(self, mock_safetensors_index):
+        """Test that adapter initializes correctly with hf_assets_path."""
+        adapter = Qwen3StateDictAdapter(
+            MockQwen3Config(), hf_assets_path=str(mock_safetensors_index)
+        )
+
+        assert adapter.hf_assets_path == str(mock_safetensors_index)
+        assert adapter.fqn_to_index_mapping is not None
+
+    def test_load_safetensors_index_mapping(self, mock_safetensors_index):
+        """Test that fqn_to_index_mapping is correctly populated."""
+        adapter = Qwen3StateDictAdapter(
+            MockQwen3Config(), hf_assets_path=str(mock_safetensors_index)
+        )
+
+        mapping = adapter.fqn_to_index_mapping
+        assert mapping is not None
+
+        # Verify index extraction from filenames
+        assert mapping["model.embed_tokens.weight"] == 1
+        assert mapping["model.layers.0.self_attn.q_proj.weight"] == 1
+        assert mapping["model.layers.0.self_attn.v_proj.weight"] == 2
+        assert mapping["model.layers.0.mlp.gate_proj.weight"] == 3
+        assert mapping["model.layers.0.mlp.down_proj.weight"] == 4
+        assert mapping["model.layers.10.self_attn.q_proj.weight"] == 10
+        assert mapping["model.norm.weight"] == 19
+        assert mapping["lm_head.weight"] == 19
+
+    def test_load_safetensors_index_missing_file(self, tmp_path):
+        """Test that missing index file results in None mapping."""
+        adapter = Qwen3StateDictAdapter(MockQwen3Config(), hf_assets_path=str(tmp_path))
+        # When index file is missing, fqn_to_index_mapping should be None
+        assert adapter.fqn_to_index_mapping is None
+
+    def test_get_hf_storage_reader(self, tmp_path):
+        """Test that get_hf_storage_reader returns correct type."""
+        from torch.distributed.checkpoint import HuggingFaceStorageReader
+
+        adapter = Qwen3StateDictAdapter(MockQwen3Config())
+        reader = adapter.get_hf_storage_reader(str(tmp_path))
+
+        assert isinstance(reader, HuggingFaceStorageReader)
+
+    def test_backward_compatibility_no_hf_assets_path(self):
+        """Test that existing code without hf_assets_path still works."""
+        # This should work exactly as before
+        adapter = Qwen3StateDictAdapter(MockQwen3Config())
+
+        # All existing functionality should work
+        hf_key = "model.embed_tokens.weight"
+        archon_key = adapter._convert_key_from_hf(hf_key)
+        assert archon_key == "tok_embeddings.weight"
+
+        hf_key_back = adapter._convert_key_to_hf(archon_key)
+        assert hf_key_back == hf_key
+
+    def test_qwen2_adapter_with_hf_assets_path(self, mock_safetensors_index):
+        """Test that Qwen2StateDictAdapter also supports hf_assets_path."""
+        from areal.experimental.models.archon.qwen2.model.state_dict_adapter import (
+            Qwen2StateDictAdapter,
+        )
+
+        adapter = Qwen2StateDictAdapter(
+            MockQwen3Config(), hf_assets_path=str(mock_safetensors_index)
+        )
+
+        assert adapter.hf_assets_path == str(mock_safetensors_index)
+        assert adapter.fqn_to_index_mapping is not None
+        assert adapter.fqn_to_index_mapping["model.embed_tokens.weight"] == 1
+
+
+# =============================================================================
+# Tests for MoEWeightConverter Helper Methods
+# =============================================================================
+
+
+class TestMoEWeightConverter:
+    """Tests for MoEWeightConverter methods."""
+
+    @pytest.fixture
+    def moe_converter(self):
+        from areal.experimental.models.archon.moe_weight_converter import (
+            MoEWeightConverter,
+        )
+
+        return MoEWeightConverter
+
+    def test_calculate_strided_shard_shard_indices_basic(self, moe_converter):
+        """Test calculate_strided_shard_indices with basic inputs."""
+        # 8 experts split as [StridedShard(2), Shard(2)]
+        # Layout:
+        #   StridedShard rank 0, Shard rank 0 -> experts 0,1 (block 0, position 0)
+        #   StridedShard rank 1, Shard rank 0 -> experts 2,3 (block 1, position 0)
+        #   StridedShard rank 0, Shard rank 1 -> experts 4,5 (block 0, position 1)
+        #   StridedShard rank 1, Shard rank 1 -> experts 6,7 (block 1, position 1)
+
+        # GPU (0,0): experts 0,1
+        start, end = moe_converter.calculate_strided_shard_indices(
+            strided_shard_dim_degree=2,
+            strided_shard_dim_rank=0,
+            shard_dim_degree=2,
+            shard_dim_rank=0,
+            dim_size_to_split=8,
+        )
+        assert start == 0
+        assert end == 2
+
+        # GPU (1,0): experts 2,3
+        start, end = moe_converter.calculate_strided_shard_indices(
+            strided_shard_dim_degree=2,
+            strided_shard_dim_rank=1,
+            shard_dim_degree=2,
+            shard_dim_rank=0,
+            dim_size_to_split=8,
+        )
+        assert start == 2
+        assert end == 4
+
+        # GPU (0,1): experts 4,5
+        start, end = moe_converter.calculate_strided_shard_indices(
+            strided_shard_dim_degree=2,
+            strided_shard_dim_rank=0,
+            shard_dim_degree=2,
+            shard_dim_rank=1,
+            dim_size_to_split=8,
+        )
+        assert start == 4
+        assert end == 6
+
+        # GPU (1,1): experts 6,7
+        start, end = moe_converter.calculate_strided_shard_indices(
+            strided_shard_dim_degree=2,
+            strided_shard_dim_rank=1,
+            shard_dim_degree=2,
+            shard_dim_rank=1,
+            dim_size_to_split=8,
+        )
+        assert start == 6
+        assert end == 8
+
+    def test_calculate_strided_shard_shard_indices_uneven_split_error(
+        self, moe_converter
+    ):
+        """Test that uneven split raises ValueError."""
+        # 8 experts cannot be evenly split by strided_degree=3 and shard_degree=2
+        # because 8 / (3 * 2) = 8/6 is not an integer
+        with pytest.raises(ValueError, match="Cannot evenly split"):
+            moe_converter.calculate_strided_shard_indices(
+                strided_shard_dim_degree=3,
+                strided_shard_dim_rank=0,
+                shard_dim_degree=2,
+                shard_dim_rank=0,
+                dim_size_to_split=8,
+            )
+
+    def test_calculate_strided_shard_shard_indices_single_shard(self, moe_converter):
+        """Test with shard_degree=1 (no additional sharding)."""
+        # 4 experts split only by StridedShard(4)
+        # GPU 0: experts 0
+        # GPU 1: experts 1
+        # GPU 2: experts 2
+        # GPU 3: experts 3
+        for rank in range(4):
+            start, end = moe_converter.calculate_strided_shard_indices(
+                strided_shard_dim_degree=4,
+                strided_shard_dim_rank=rank,
+                shard_dim_degree=1,
+                shard_dim_rank=0,
+                dim_size_to_split=4,
+            )
+            assert start == rank
+            assert end == rank + 1
+
+    def test_calculate_strided_shard_shard_indices_edge_case_64_experts(
+        self, moe_converter
+    ):
+        """Test with 64 experts (common MoE configuration)."""
+        # 64 experts split as [StridedShard(4), Shard(4)] across 16 GPUs
+        # Block size = 64 / (4 * 4) = 4 experts per GPU
+
+        # GPU (0,0): experts 0-3
+        start, end = moe_converter.calculate_strided_shard_indices(
+            strided_shard_dim_degree=4,
+            strided_shard_dim_rank=0,
+            shard_dim_degree=4,
+            shard_dim_rank=0,
+            dim_size_to_split=64,
+        )
+        assert start == 0
+        assert end == 4
+
+        # GPU (3,3): experts 60-63
+        start, end = moe_converter.calculate_strided_shard_indices(
+            strided_shard_dim_degree=4,
+            strided_shard_dim_rank=3,
+            shard_dim_degree=4,
+            shard_dim_rank=3,
+            dim_size_to_split=64,
+        )
+        assert start == 60
+        assert end == 64
+
+
+# =============================================================================
+# Tests for Qwen2StateDictAdapter Dense Model
+# =============================================================================
+
+
+class TestQwen2StateDictAdapterDense:
+    """Tests for Qwen2StateDictAdapter with dense models."""
+
+    @pytest.fixture
+    def adapter(self):
+        from areal.experimental.models.archon.qwen2.model.state_dict_adapter import (
+            Qwen2StateDictAdapter,
+        )
+
+        class MockQwen2Config:
+            model_type = "qwen2"
+            tie_word_embeddings = False
+
+        return Qwen2StateDictAdapter(MockQwen2Config())
+
+    def test_to_hf_no_full_tensor_call(self, adapter):
+        """Test that to_hf() passes tensors through without modification."""
+        # Create simple state dict
+        archon_state = {
+            "tok_embeddings.weight": torch.randn(1000, 64),
+            "layers.0.attention.wq.weight": torch.randn(64, 64),
+            "norm.weight": torch.randn(64),
+            "output.weight": torch.randn(1000, 64),
+        }
+
+        hf_state = adapter.to_hf(archon_state)
+
+        # Verify all keys are converted and values are identical (same tensor object)
+        assert "model.embed_tokens.weight" in hf_state
+        assert torch.equal(
+            hf_state["model.embed_tokens.weight"], archon_state["tok_embeddings.weight"]
+        )
+
+    def test_convert_single_to_hf_no_full_tensor_call(self, adapter):
+        """Test that convert_single_to_hf() returns tensor as-is."""
+        name = "layers.0.attention.wq.weight"
+        tensor = torch.randn(64, 64)
+
+        result = adapter.convert_single_to_hf(name, tensor)
+
+        assert len(result) == 1
+        hf_name, hf_tensor = result[0]
+        assert hf_name == "model.layers.0.self_attn.q_proj.weight"
+        # Should be the same tensor object (no copy or full_tensor)
+        assert hf_tensor is tensor
+
+    def test_roundtrip_preserves_values(self, adapter):
+        """Test that roundtrip preserves all weight values."""
+        archon_state = {
+            "tok_embeddings.weight": torch.randn(1000, 64),
+            "layers.0.attention.wq.weight": torch.randn(64, 64),
+            "layers.0.attention.wk.weight": torch.randn(16, 64),
+            "layers.0.attention.wv.weight": torch.randn(16, 64),
+            "layers.0.attention.wo.weight": torch.randn(64, 64),
+            "layers.0.feed_forward.w1.weight": torch.randn(128, 64),
+            "layers.0.feed_forward.w3.weight": torch.randn(128, 64),
+            "layers.0.feed_forward.w2.weight": torch.randn(64, 128),
+            "layers.0.attention_norm.weight": torch.randn(64),
+            "layers.0.ffn_norm.weight": torch.randn(64),
+            "norm.weight": torch.randn(64),
+            "output.weight": torch.randn(1000, 64),
+        }
+
+        # Archon -> HF -> Archon
+        hf_state = adapter.to_hf(archon_state)
+        roundtrip_state = adapter.from_hf(hf_state)
+
+        # Verify all values preserved
+        for key in archon_state:
+            assert key in roundtrip_state, f"Missing key: {key}"
+            assert torch.allclose(archon_state[key], roundtrip_state[key]), (
+                f"Value mismatch for {key}"
+            )
+
+    def test_qwen2_adapter_inherits_base_methods(self, adapter):
+        """Test that Qwen2StateDictAdapter inherits from BaseStateDictAdapter."""
+        from areal.experimental.models.archon.base import BaseStateDictAdapter
+
+        assert isinstance(adapter, BaseStateDictAdapter)
+        assert hasattr(adapter, "get_hf_storage_reader")
+        assert hasattr(adapter, "fqn_to_index_mapping")
+
+    def test_qwen2_adapter_with_weight_tying(self):
+        """Test Qwen2StateDictAdapter handles weight tying correctly."""
+        from areal.experimental.models.archon.qwen2.model.state_dict_adapter import (
+            Qwen2StateDictAdapter,
+        )
+
+        class MockQwen2ConfigTied:
+            model_type = "qwen2"
+            tie_word_embeddings = True
+
+        adapter = Qwen2StateDictAdapter(MockQwen2ConfigTied())
+
+        archon_state = {
+            "tok_embeddings.weight": torch.randn(1000, 64),
+            "output.weight": torch.randn(1000, 64),  # Should be skipped
+        }
+
+        hf_state = adapter.to_hf(archon_state)
+
+        # output.weight should be skipped when weight tying is enabled
+        assert "lm_head.weight" not in hf_state
+        assert "model.embed_tokens.weight" in hf_state

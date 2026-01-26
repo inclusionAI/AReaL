@@ -323,8 +323,6 @@ class TestEndToEndPermutation:
 
         assert merged.shape == tokens.shape
 
-    # NOTE: Upgrading PyTorch will resolve this in the future.
-    @pytest.mark.slow
     def test_gradient_flow(self):
         """Test that gradients flow correctly through permutation."""
         num_tokens = 8

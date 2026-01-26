@@ -122,7 +122,7 @@ class TokenChoiceTopKRouter(nn.Module):
 
         # Create mask: False for selected groups (keep), True for others (mask)
         group_mask = torch.ones_like(group_scores, dtype=torch.bool)
-        group_mask.scatter_(1, group_idx, False)
+        group_mask = group_mask.scatter(1, group_idx, False)
 
         # Mask out experts from non-selected groups
         scores_for_choice = scores_grouped.masked_fill(

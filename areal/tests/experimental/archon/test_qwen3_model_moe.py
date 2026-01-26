@@ -277,8 +277,6 @@ class TestTransformerBlockMoE:
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
     )
-    # NOTE: Upgrading PyTorch will resolve this in the future.
-    @pytest.mark.slow
     def test_moe_block_gradient_flow(self, moe_args):
         """Test gradient flow through MoE TransformerBlock."""
         block = TransformerBlock(layer_id=0, model_args=moe_args).cuda()
@@ -478,8 +476,6 @@ class TestQwen3ModelMoE:
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
     )
-    # NOTE: Upgrading PyTorch will resolve this in the future.
-    @pytest.mark.slow
     def test_moe_model_gradient_flow(self, moe_model_args):
         """Test gradient flow through MoE model."""
         model = Qwen3Model(moe_model_args).cuda()
@@ -516,8 +512,6 @@ class TestQwen3ModelMoE:
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="CUDA required for MoE router histc"
     )
-    # NOTE: Upgrading PyTorch will resolve this in the future.
-    @pytest.mark.slow
     def test_mixed_model_gradient_flow(self, mixed_model_args):
         """Test gradient flow through mixed MoE/dense model."""
         model = Qwen3Model(mixed_model_args).cuda()
