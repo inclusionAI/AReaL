@@ -158,7 +158,6 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.get-version.outputs.release_tag }}
-            ${{ env.IMAGE_NAME }}:${{ steps.get-version.outputs.version }}
             ${{ env.IMAGE_NAME }}:latest
 
       - name: Image details
@@ -167,7 +166,6 @@ jobs:
           echo "Image: ${{ env.IMAGE_NAME }}"
           echo "Tags:"
           echo "  - ${{ steps.get-version.outputs.release_tag }}"
-          echo "  - ${{ steps.get-version.outputs.version }}"
           echo "  - latest"
           echo "Release: ${{ github.event.release.name || github.event.inputs.tag }}"
           echo "Commit: ${{ github.sha }}"
