@@ -98,7 +98,7 @@ Core logic can be found in `examples/tir/tir_workflow.py`
 ### 1. Setup
 
 - Follow `docs/tutorial/installation.md` for basic environment installation
-- Install qwen_agent: `pip install qwen_agent`
+- `qwen_agent` is included in the main AReaL dependencies
 
 ### 2. Data Preparation
 

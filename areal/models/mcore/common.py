@@ -1,5 +1,3 @@
-from typing import TypeVar
-
 import torch
 import torch.nn.functional as F
 from megatron.core.transformer import TransformerConfig
@@ -8,9 +6,6 @@ from transformers import PretrainedConfig
 from areal.utils import logging
 
 logger = logging.getLogger("MCoreCommon")
-
-
-T = TypeVar("T", bound=TransformerConfig)
 
 
 # Modified from verl:
@@ -73,7 +68,9 @@ def hf_to_mcore_base_args(
 
 # Modified from verl:
 # https://github.com/volcengine/verl/blob/ea885f32f04d86c3a81de18083db7eef0d781421/verl/models/mcore/config_converter.py
-def check_and_construct_configs(original_config: dict, cls: type[T]) -> T:
+def check_and_construct_configs[T: TransformerConfig](
+    original_config: dict, cls: type[T]
+) -> T:
     """
     Check and disable incompatible configurations for older Megatron version.
 

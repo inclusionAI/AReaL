@@ -5,7 +5,7 @@ from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import uvloop
 import yaml
@@ -27,8 +27,6 @@ if TYPE_CHECKING:
 uvloop.install()
 
 logger = logging.getLogger("CLIArgs")
-
-ConfigT = TypeVar("ConfigT")
 
 
 @dataclass
@@ -1957,7 +1955,9 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def load_expr_config(argv: list[str], config_cls: type[ConfigT]) -> tuple[ConfigT, str]:
+def load_expr_config[ConfigT](
+    argv: list[str], config_cls: type[ConfigT]
+) -> tuple[ConfigT, str]:
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)

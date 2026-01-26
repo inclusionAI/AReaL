@@ -50,56 +50,108 @@ docker run -it --name areal-node1 \
    /bin/bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
-pip install -e . --no-deps
+uv pip install -e . --no-deps
 ```
 
 ### Option 2: Custom Environment Installation
 
-1. Install [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install)
-   or [Anaconda](https://www.anaconda.com/docs/getting-started/anaconda/install).
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
-1. Create a conda virtual environment:
-
-```bash
-conda create -n areal python=3.12
-conda activate areal
-```
-
-3. Install pip dependencies using uv:
+1. Clone the repo:
 
 ```bash
 git clone https://github.com/inclusionAI/AReaL
 cd AReaL
-pip install uv
-uv pip install -e ".[all]"
 ```
 
-**Note**: Directly install with `uv` and `pip` will install `flash-attn==2.8.3` since it
-does not require compilation with torch version 2.8.0. However, `flash-attn==2.8.3` is
-not compatible with Megatron training backend. If you want to use Megatron training
-backend, please compile and install `flash-attn==2.8.1` in your custom environment, or
-use docker installation instead.
+3. (Optional) Specify a custom index URL.
 
-4. Validate your AReaL installation:
+Add this section to your `pyproject.toml`:
 
-We provide a script to validate AReaL installation. Simply run:
+```
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"  # Change to your preferred mirror site
+default = true
+```
+
+If your network connection is stable, you can skip this step.
+
+4. Install dependencies using uv sync:
 
 ```bash
-python3 areal/tools/validate_installation.py
+# Use `--extra cuda` on Linux with CUDA for full functionality
+uv sync --extra cuda
+# Or without CUDA support
+# uv sync
+# Or with additional packages for development and testing
+# uv sync --group dev
 ```
 
-After installation validation passed, you are good to go!
+This installs all CUDA-dependent packages including SGLang, vLLM, Megatron, Flash
+Attention, etc. These packages require Linux x86_64 with CUDA 12.x and compatible NVIDIA
+drivers.
+
+The same command also works on macOS and Linux without CUDA support. CUDA packages are
+automatically skipped via platform markers. However, training and inference features
+requiring CUDA will not be available. This configuration is suitable only for
+development, testing, and non-GPU workflows.
+
+You can also install individual extras instead of the full `cuda` bundle:
+
+- `sglang`: SGLang inference engine
+- `vllm`: vLLM inference engine
+- `megatron`: Megatron training backend
+- `tms`: Torch Memory Saver
+- `flash-attn`: Flash Attention v2
+- `cuda`: All of the above (convenience extra)
+
+**Note**: You can install these extras individually:
+
+```bash
+# If you do not need SGLang and Megatron
+uv sync --extra vllm --extra flash-attn
+# If you encounter connection issues when installing flash-attn
+uv sync --extra vllm --extra sglang --extra megatron --extra tms
+```
+
+### Additional CUDA Packages (Optional, Manual Installation)
+
+The Docker image includes additional compiled packages that are NOT in `pyproject.toml`.
+These packages require CUDA and must be compiled from source. If you are using a custom
+environment (not Docker) and need optimizations from these packages (e.g., FP8 training,
+fused Adam kernel), install them manually after running `uv sync --extra cuda`:
+
+| Package           | Purpose                                  | Installation Command                                                                                                                                              |
+| ----------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| grouped_gemm      | MoE model support in Megatron            | `uv pip install --no-build-isolation git+https://github.com/fanshiqing/grouped_gemm@v1.1.4`                                                                       |
+| NVIDIA apex       | Fused Adam, etc. in Megatron             | `NVCC_APPEND_FLAGS="--threads 4" APEX_PARALLEL_BUILD=8 APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install --no-build-isolation git+https://github.com/NVIDIA/apex.git` |
+| TransformerEngine | FP8 training, optimized GEMM in Megatron | `uv pip install --no-build-isolation git+https://github.com/NVIDIA/TransformerEngine.git@stable`                                                                  |
+| flash-attn-3      | Flash Attention v3 (Hopper)              | Built from source, see [Dockerfile](https://github.com/inclusionAI/AReaL/blob/main/Dockerfile)                                                                    |
+
+**Important**: These packages require `--no-build-isolation` because they need access to
+the already-installed PyTorch for CUDA compilation. Install PyTorch first via
+`uv sync --extra cuda` before attempting to install these packages.
+
+5. Validate your AReaL installation:
+
+We provide a script to validate your AReaL installation. Simply run:
+
+```bash
+uv run python3 areal/tools/validate_installation.py
+```
+
+After the validation passes, you are ready to go!
 
 (install-skypilot)=
 
 ## (Optional) Install SkyPilot
 
-SkyPilot helps you run AReaL easily on 17+ different cloud or your own Kubernetes
-infrastructure. For more details about Skypilot, check
-[SkyPilot Documentation](https://docs.skypilot.co/en/latest/overview.html). Below shows
-the minimal steps to setup skypilot on GCP or Kubernetes.
+SkyPilot helps you run AReaL easily on 17+ different clouds or your own Kubernetes
+infrastructure. For more details about SkyPilot, check the
+[SkyPilot Documentation](https://docs.skypilot.co/en/latest/overview.html). Below are
+the minimal steps to set up SkyPilot on GCP or Kubernetes.
 
-### Install SkyPilot by pip
+### Install SkyPilot with pip
 
 ```bash
 # In your conda environment
@@ -107,7 +159,7 @@ the minimal steps to setup skypilot on GCP or Kubernetes.
 pip install -U "skypilot[gcp,kubernetes]"
 ```
 
-### GCP setup
+### GCP Setup
 
 ```bash
 # Install Google Cloud SDK
@@ -116,18 +168,18 @@ conda install -y -c conda-forge google-cloud-sdk
 # Initialize gcloud and select your account/project
 gcloud init
 
-# (Optional) choose a project explicitly
+# (Optional) Choose a project explicitly
 gcloud config set project <PROJECT_ID>
 
 # Create Application Default Credentials
 gcloud auth application-default login
 ```
 
-### Kubernetes setup
+### Kubernetes Setup
 
-Check
-[here](https://docs.skypilot.co/en/latest/reference/kubernetes/kubernetes-setup.html)
-for a comprehensive guide on how to set up a kubernetes cluster for SkyPilot.
+See the
+[SkyPilot Kubernetes setup guide](https://docs.skypilot.co/en/latest/reference/kubernetes/kubernetes-setup.html)
+for a comprehensive guide on how to set up a Kubernetes cluster for SkyPilot.
 
 ### Verify
 
@@ -136,10 +188,10 @@ sky check
 ```
 
 If `GCP: enabled` or `Kubernetes: enabled` are shown, you're ready to use SkyPilot with
-AReaL. Check
-[here](https://github.com/inclusionAI/AReaL/blob/main/examples/skypilot/README.md) for a
-detailed example to run AReaL with SkyPilot. For more options and details for SkyPilot,
-see the official
+AReaL. See the
+[SkyPilot example](https://github.com/inclusionAI/AReaL/blob/main/examples/skypilot/README.md)
+for a detailed guide on running AReaL with SkyPilot. For more options and details, see
+the official
 [SkyPilot installation guide](https://docs.skypilot.co/en/latest/getting-started/installation.html).
 
 ## (Optional) Launch Ray Cluster for Distributed Training
@@ -150,7 +202,7 @@ On the first node, start the Ray Head:
 ray start --head
 ```
 
-On all other nodes, start the Ray Worker:
+On all other nodes, start Ray Workers:
 
 ```bash
 # Replace with the actual IP address of the first node
@@ -160,8 +212,8 @@ ray start --address $RAY_HEAD_IP
 
 You should see the Ray resource status displayed when running `ray status`.
 
-Properly set the `n_nodes` argument in AReaL's training command, then AReaL's training
-script will automatically detect the resources and allocate workers to the cluster.
+Set the `n_nodes` argument appropriately in AReaL's training command, and AReaL will
+automatically detect the resources and allocate workers to the cluster.
 
 ## Next Steps
 

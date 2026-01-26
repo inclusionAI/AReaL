@@ -99,8 +99,8 @@ cd AReaL
 # Checkout to ascend branch
 git checkout ascend
 
-# Install AReaL
-uv pip install -e .[all_npu] --system
+# Install AReaL with NPU extras
+uv pip install -r pyproject.toml --extra all_npu
 ```
 
 ## (Optional) Launch Ray Cluster for Distributed Training

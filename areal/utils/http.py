@@ -73,11 +73,7 @@ async def arequest_with_retry(
                 if session is None:
                     await _session.close()
                 return res
-        except (
-            aiohttp.ClientError,
-            aiohttp.ClientResponseError,
-            asyncio.TimeoutError,
-        ) as e:
+        except (TimeoutError, aiohttp.ClientError, aiohttp.ClientResponseError) as e:
             if isinstance(e, asyncio.TimeoutError):
                 logger.warning(
                     "HTTP request to %s%s timed out after %.2fs (attempt %d/%d)",

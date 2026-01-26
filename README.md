@@ -194,11 +194,16 @@ Please check our **[Contributing Guide](CONTRIBUTING.md)** for detailed informat
 git clone https://github.com/YOUR-USERNAME/AReaL
 cd AReaL
 
-# Install in development mode
-pip install -e ".[dev,docs]"
+# Install uv and sync dependencies
+pip install uv
+# Use `--extra cuda` on Linux with CUDA for full functionality
+uv sync --extra cuda
+# Or without CUDA support
+# uv sync
+# Or with additional packages for development and testing
+# uv sync --group dev
 
 # Set up pre-commit hooks for automatic formatting
-pip install pre-commit
 pre-commit install
 
 # Make changes

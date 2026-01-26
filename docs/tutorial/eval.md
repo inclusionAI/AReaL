@@ -6,6 +6,17 @@ The evaluation code is located in the `evaluation` folder of the repository. Fol
 the previous tutorial, trained checkpoints will be saved under
 `${fileroot}/checkpoints/${USER}/${experiment_name}/${trial_name}/`.
 
+### Install Evaluation Dependencies
+
+The evaluation package has its own dependencies that are separate from the main AReaL
+package. Before running evaluation, install the evaluation dependencies:
+
+```bash
+cd evaluation
+pip install -r requirements.txt
+pip install -e ./latex2sympy
+```
+
 ### Run Evaluation
 
 Specify an `output_path` to save the test results. If not specified, the results will be

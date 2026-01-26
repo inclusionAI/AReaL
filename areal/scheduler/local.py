@@ -1007,7 +1007,7 @@ class LocalScheduler(Scheduler):
             raise RPCConnectionError(
                 worker_id, worker_info.worker.ip, port, str(e)
             ) from e
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise SchedulerError(worker_id, f"set_env timed out: {e}") from e
 
     async def create_engine(
@@ -1133,7 +1133,7 @@ class LocalScheduler(Scheduler):
                 worker_id, worker_info.worker.ip, port, str(e)
             ) from e
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise EngineCreationError(worker_id, f"Request timed out: {e}") from e
 
         except (EngineCreationError, EngineImportError, RPCConnectionError):
@@ -1416,7 +1416,7 @@ class LocalScheduler(Scheduler):
                         stderr,
                     ) from e
                 last_error = f"Connection error: {e}"
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 last_error = f"Timeout: {e}"
             except EngineCallError:
                 raise
