@@ -1479,7 +1479,7 @@ class TestEngineCreation:
         mock_session = AsyncMock()
         mock_session.__aenter__.return_value = mock_session
         mock_session.__aexit__.return_value = None
-        mock_session.post = Mock(side_effect=asyncio.TimeoutError("Request timeout"))
+        mock_session.post = Mock(side_effect=TimeoutError("Request timeout"))
 
         with patch(
             "areal.scheduler.local.aiohttp.ClientSession", return_value=mock_session

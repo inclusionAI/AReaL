@@ -1230,7 +1230,7 @@ class SlurmScheduler(Scheduler):
             raise RPCConnectionError(
                 worker_id, worker_info.worker.ip, port, str(e)
             ) from e
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise SchedulerError(worker_id, f"set_env timed out: {e}") from e
 
     async def create_engine(
@@ -1340,7 +1340,7 @@ class SlurmScheduler(Scheduler):
                 worker_id, worker_info.worker.ip, port, str(e)
             ) from e
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise EngineCreationError(
                 worker_id, f"Engine creation timed out: {e}"
             ) from e
@@ -1597,7 +1597,7 @@ class SlurmScheduler(Scheduler):
                                 attempt=attempt,
                             )
 
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 last_error = f"Request timeout: {e}"
                 logger.warning(f"Request timeout on attempt {attempt}/{max_retries}")
             except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError) as e:

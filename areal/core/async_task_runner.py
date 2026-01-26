@@ -14,12 +14,9 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, cast
 
 import uvloop
-
-# Type variable for generic result types
-T = TypeVar("T")
 
 # Polling configuration
 DEFAULT_POLL_WAIT_TIME = 0.05  # 50ms
@@ -31,7 +28,7 @@ class TaskQueueFullError(RuntimeError):
 
 
 @dataclass
-class TimedResult(Generic[T]):
+class TimedResult[T]:
     """Wrapper for task results with creation timestamp.
 
     Attributes
@@ -50,7 +47,7 @@ class TimedResult(Generic[T]):
 
 
 @dataclass
-class _TaskInput(Generic[T]):
+class _TaskInput[T]:
     """Internal wrapper for task input with async function and arguments."""
 
     async_fn: Callable[..., Awaitable[T]]
@@ -60,7 +57,7 @@ class _TaskInput(Generic[T]):
 
 
 @dataclass
-class _Task(Generic[T]):
+class _Task[T]:
     """Internal wrapper for running task with metadata."""
 
     create_time: int  # nanoseconds from time.monotonic_ns()
@@ -68,7 +65,7 @@ class _Task(Generic[T]):
     task_input: _TaskInput[T]
 
 
-class AsyncTaskRunner(Generic[T]):
+class AsyncTaskRunner[T]:
     """Generic asynchronous task runner with queue management and pause/resume control.
 
     This class provides a reusable async task executor that runs a background thread

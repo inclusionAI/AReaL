@@ -7,10 +7,11 @@ This directory contains the documentation for AReaL built with
 
 ### Prerequisites
 
-Install the required dependencies:
+Install the required dependencies. If you've already installed deps from pyproject.toml
+in the repository root, these are included automatically:
 
 ```bash
-pip install jupyter-book
+uv sync --group dev
 ```
 
 ### Steps

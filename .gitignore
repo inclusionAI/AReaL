@@ -3,6 +3,9 @@
 .data/
 .idea/
 
+# claude
+.claude/
+.agent/
 
 # Ruff
 .ruff_cache/

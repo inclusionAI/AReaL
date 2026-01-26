@@ -96,7 +96,7 @@ output: 6
 ### 1. 环境准备
 
 - 参考`docs/tutorial/installation.md`进行基本环境安装
-- 安装qwen_agent: `pip install qwen_agent`
+- `qwen_agent` 已包含在 AReaL 主依赖中
 
 ### 2. 数据准备
 
