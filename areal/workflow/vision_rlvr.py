@@ -8,8 +8,10 @@ from transformers import AutoProcessor, PreTrainedTokenizerFast
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.engine_api import InferenceEngine
 from areal.api.io_struct import ModelRequest, ModelResponse
+from areal.api.reward_api import AsyncRewardWrapper
 from areal.core import workflow_context
 from areal.utils import logging, stats_tracker
+from areal.utils.dynamic_import import import_from_string
 from areal.utils.image import image2base64
 from areal.utils.perf_tracer import (
     atrace_session_phase,
@@ -103,12 +105,9 @@ class VisionRLVRWorkflow(RLVRWorkflow):
     ) -> dict[str, torch.Tensor]:
         # NOTE: load reward function dynamically if given as string
         if isinstance(self.reward_fn, str):
-            from areal.utils.dynamic_import import import_from_string
-            from areal.api.reward_api import AsyncRewardWrapper
-            
             self.reward_fn = import_from_string(self.reward_fn)
             self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
-        
+
         processor_callable = cast(Callable[..., dict[str, Any]], self.processor)
         processed_input = processor_callable(
             images=data["images"],
