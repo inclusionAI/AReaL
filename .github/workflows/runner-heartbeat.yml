@@ -1,39 +1,24 @@
-name: Build and Test Docker Image
+name: Runner Heartbeat
 
 on:
-  pull_request:
-    branches: [main]
-    types: [labeled]
+  schedule:
+    - cron: '0 0 */7 * *'  # Every 7 days at midnight UTC
   workflow_dispatch:
 
 concurrency:
-  group: build-docker-image-${{ github.ref }}
+  group: runner-heartbeat
   cancel-in-progress: true
 
 permissions:
   contents: read
-  packages: write
-  pull-requests: write
 
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  VALIDATOR_LABELS: gcp-docker-validator
-  RUNNER_VERSION: '2.317.0'
-  IMAGE_NAME: ghcr.io/inclusionai/areal-runtime
-  IMAGE_TAG: dev
 
 jobs:
   start-builder:
-    if: |
-      (github.event_name == 'pull_request' &&
-       github.head_ref == 'build-docker-image' &&
-       contains(github.event.pull_request.labels.*.name, 'new-image')) ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.ref_name == 'build-docker-image')
     name: Start areal-docker-builder instance
     runs-on: ubuntu-latest
-    outputs:
-      was_running: ${{ steps.start-instance.outputs.was_running }}
     env:
       INSTANCE_NAME: areal-docker-builder
       INSTANCE_ZONE: us-central1-f
@@ -47,11 +32,9 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Start builder instance if stopped
-        id: start-instance
         run: |
           set -euo pipefail
 
-          # Check instance status
           status=$(gcloud compute instances describe "$INSTANCE_NAME" \
             --project "$GCP_PROJECT_ID" \
             --zone "$INSTANCE_ZONE" \
@@ -64,14 +47,12 @@ jobs:
 
           if [ "$status" = "RUNNING" ]; then
             echo "Instance $INSTANCE_NAME is already running."
-            echo "was_running=true" >> $GITHUB_OUTPUT
           elif [ "$status" = "TERMINATED" ] || [ "$status" = "SUSPENDED" ]; then
             echo "Instance $INSTANCE_NAME is $status. Starting it..."
             gcloud compute instances start "$INSTANCE_NAME" \
               --project "$GCP_PROJECT_ID" \
               --zone "$INSTANCE_ZONE"
             echo "Instance started successfully."
-            echo "was_running=false" >> $GITHUB_OUTPUT
           else
             echo "Instance $INSTANCE_NAME has unexpected status: $status" >&2
             exit 1
@@ -121,54 +102,23 @@ jobs:
 
             throw new Error(`Timed out waiting for builder runner ${instanceName} to come online.`);
 
-  build-and-push-image:
-    if: |
-      (github.event_name == 'pull_request' &&
-       github.head_ref == 'build-docker-image' &&
-       contains(github.event.pull_request.labels.*.name, 'new-image')) ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.ref_name == 'build-docker-image')
-    needs:
-      - start-builder
-    name: Build and push Docker image
+  heartbeat:
+    name: Runner heartbeat
+    needs: start-builder
     runs-on: [self-hosted, areal-docker-builder]
-    timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: inclusionai
-          password: ${{ secrets.GHCR_TOKEN }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-
-      - name: Image details
+      - name: Heartbeat
         run: |
-          echo "✅ Docker image built and pushed successfully!"
-          echo "Image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-          echo "Commit: ${{ github.sha }}"
-          echo "Branch: ${{ github.head_ref || github.ref_name }}"
+          echo "Runner heartbeat at $(date -u)"
+          echo "Runner: $(hostname)"
+          echo "Uptime: $(uptime)"
 
   stop-builder:
     name: Stop areal-docker-builder instance
     needs:
-      - build-and-push-image
+      - heartbeat
       - start-builder
-    if: always() && needs.start-builder.outputs.was_running != 'true'
+    if: always()
     runs-on: ubuntu-latest
     env:
       INSTANCE_NAME: areal-docker-builder
@@ -184,7 +134,6 @@ jobs:
 
       - name: Stop builder instance
         run: |
-          # Check if instance is running
           status=$(gcloud compute instances describe "$INSTANCE_NAME" \
             --project "$GCP_PROJECT_ID" \
             --zone "$INSTANCE_ZONE" \

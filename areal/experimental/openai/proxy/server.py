@@ -100,7 +100,7 @@ class SessionData:
             try:
                 await asyncio.wait_for(self._completed_event.wait(), timeout)
                 return True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return False
         await self._completed_event.wait()
         return True

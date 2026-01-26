@@ -20,6 +20,7 @@ repos:
       - id: check-added-large-files
         name: Check for large files
         args: ['--maxkb=1000']
+        exclude: uv.lock
       - id: check-json
         name: Check JSON files
 
@@ -43,11 +44,11 @@ repos:
         name: Run Linter Check (Ruff)
         types_or: [ python, pyi, jupyter ]
         args: [ --fix ]
-        files: ^(areal|examples|docs|recipe)/
+        exclude: ^(evaluation|functioncall)/
       - id: ruff-format # Run the formatter.
         name: Run Formatter (Ruff)
         types_or: [ python, pyi, jupyter ]
-        files: ^(areal|examples|docs|recipe)/
+        exclude: ^(evaluation|functioncall)/
 
   # Clean notebook outputs and metadata
   - repo: https://github.com/kynan/nbstripout

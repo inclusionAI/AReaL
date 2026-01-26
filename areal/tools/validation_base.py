@@ -236,60 +236,40 @@ class BaseInstallationValidator:
         except Exception as e:
             return False, f"Version check error: {e}"
 
-    def test_import(self, pkg_name: str, dep_info: dict, required: bool = True) -> bool:
-        """Test importing a package and check its version."""
-        # Get the import name (may differ from package name)
-        import_name = self.PACKAGE_IMPORT_MAP.get(pkg_name, pkg_name.replace("-", "_"))
+    def _test_import_direct(self, import_name: str) -> tuple[bool, str | None]:
+        """Test importing a package directly in the current process.
 
+        Args:
+            import_name: The module name to import
+
+        Returns:
+            Tuple of (success: bool, error_message: str | None)
+        """
         try:
-            # Import the package
-            module = importlib.import_module(import_name)
-
-            # Check version
-            version_ok, version_msg = self.check_version(
-                pkg_name, dep_info.get("spec", "")
-            )
-
-            if not version_ok:
-                self.results[pkg_name] = {
-                    "status": "VERSION_MISMATCH",
-                    "error": version_msg,
-                }
-                if required:
-                    self.critical_failures.append(f"{pkg_name}: {version_msg}")
-                    print(f"✗ {pkg_name} (VERSION MISMATCH): {version_msg}")
-                else:
-                    self.warnings.append(f"{pkg_name}: {version_msg}")
-                    print(f"⚠ {pkg_name} (VERSION MISMATCH): {version_msg}")
-                return False
-
-            # Test CUDA sub-modules if applicable
-            if pkg_name in self.CUDA_SUBMODULES:
-                self.test_cuda_submodules(pkg_name, module)
-
-            self.results[pkg_name] = {"status": "SUCCESS", "error": None}
-            print(f"✓ {pkg_name} - {version_msg}")
-            return True
-
+            importlib.import_module(import_name)
+            return True, None
         except ImportError as e:
-            self.results[pkg_name] = {"status": "IMPORT_FAILED", "error": str(e)}
-            if required:
-                self.critical_failures.append(f"{pkg_name}: Import failed - {str(e)}")
-                print(f"✗ {pkg_name} (IMPORT FAILED): {str(e)}")
-            else:
-                self.warnings.append(f"{pkg_name}: Import failed - {str(e)}")
-                print(f"⚠ {pkg_name} (IMPORT FAILED): {str(e)}")
-            return False
-
+            return False, str(e)
         except Exception as e:
-            self.results[pkg_name] = {"status": "ERROR", "error": str(e)}
-            if required:
-                self.critical_failures.append(f"{pkg_name}: {str(e)}")
-                print(f"✗ {pkg_name} (ERROR): {str(e)}")
-            else:
-                self.warnings.append(f"{pkg_name}: {str(e)}")
-                print(f"⚠ {pkg_name} (ERROR): {str(e)}")
-            return False
+            return False, f"{type(e).__name__}: {e}"
+
+    def _run_import_tests(
+        self, packages: list[tuple[str, str]]
+    ) -> dict[str, tuple[bool, str | None]]:
+        """Run import tests sequentially in the current process.
+
+        Args:
+            packages: List of (pkg_name, import_name) tuples
+
+        Returns:
+            Dict mapping pkg_name to (success, error_message) tuples
+        """
+        results = {}
+
+        for pkg_name, import_name in packages:
+            results[pkg_name] = self._test_import_direct(import_name)
+
+        return results
 
     def test_cuda_submodules(self, pkg_name: str, module):
         """Test CUDA sub-modules for packages with CUDA dependencies."""
@@ -322,7 +302,34 @@ class BaseInstallationValidator:
         print(self.get_validation_title())
         print("=" * 70)
 
-        # Validate pyproject.toml dependencies
+        # Collect all packages to test
+        all_packages = []  # List of (pkg_name, import_name, dep_info, required)
+
+        if self.dependencies:
+            for pkg_name, dep_info in self.dependencies.items():
+                import_name = self.PACKAGE_IMPORT_MAP.get(
+                    pkg_name, pkg_name.replace("-", "_")
+                )
+                normalized_name = self.normalize_package_name(pkg_name)
+                is_critical = normalized_name in self.CRITICAL_PACKAGES
+                all_packages.append((pkg_name, import_name, dep_info, is_critical))
+
+        if self.additional_packages:
+            for pkg_name, dep_info in self.additional_packages.items():
+                import_name = self.PACKAGE_IMPORT_MAP.get(
+                    pkg_name, pkg_name.replace("-", "_")
+                )
+                required = dep_info.get("required", True)
+                all_packages.append((pkg_name, import_name, dep_info, required))
+
+        # Run all import tests directly in the current process
+        print("\nRunning import tests...")
+        packages_to_test = [
+            (pkg_name, import_name) for pkg_name, import_name, _, _ in all_packages
+        ]
+        import_results = self._run_import_tests(packages_to_test)
+
+        # Process and display results
         if self.dependencies:
             print("\n=== Critical Dependencies ===")
             critical_count = 0
@@ -332,7 +339,9 @@ class BaseInstallationValidator:
 
                 if is_critical:
                     critical_count += 1
-                    self.test_import(pkg_name, dep_info, required=True)
+                    self._process_import_result(
+                        pkg_name, dep_info, import_results.get(pkg_name), required=True
+                    )
 
             print(
                 f"\n=== Other Dependencies ({len(self.dependencies) - critical_count}) ==="
@@ -342,14 +351,74 @@ class BaseInstallationValidator:
                 is_critical = normalized_name in self.CRITICAL_PACKAGES
 
                 if not is_critical:
-                    self.test_import(pkg_name, dep_info, required=False)
+                    self._process_import_result(
+                        pkg_name, dep_info, import_results.get(pkg_name), required=False
+                    )
 
         # Validate additional packages
         if self.additional_packages:
             print(f"\n=== Additional Packages ({len(self.additional_packages)}) ===")
             for pkg_name, dep_info in sorted(self.additional_packages.items()):
                 required = dep_info.get("required", True)
-                self.test_import(pkg_name, dep_info, required=required)
+                self._process_import_result(
+                    pkg_name, dep_info, import_results.get(pkg_name), required=required
+                )
+
+    def _process_import_result(
+        self,
+        pkg_name: str,
+        dep_info: dict,
+        import_result: tuple[bool, str | None] | None,
+        required: bool = True,
+    ) -> bool:
+        """Process the result of a parallel import test."""
+        import_name = self.PACKAGE_IMPORT_MAP.get(pkg_name, pkg_name.replace("-", "_"))
+
+        # Handle missing result (shouldn't happen, but be safe)
+        if import_result is None:
+            import_result = (False, "Import test not run")
+
+        import_ok, import_error = import_result
+
+        if not import_ok:
+            self.results[pkg_name] = {"status": "IMPORT_FAILED", "error": import_error}
+            if required:
+                self.critical_failures.append(
+                    f"{pkg_name}: Import failed - {import_error}"
+                )
+                print(f"✗ {pkg_name} (IMPORT FAILED): {import_error}")
+            else:
+                self.warnings.append(f"{pkg_name}: Import failed - {import_error}")
+                print(f"⚠ {pkg_name} (IMPORT FAILED): {import_error}")
+            return False
+
+        # Check version
+        version_ok, version_msg = self.check_version(pkg_name, dep_info.get("spec", ""))
+
+        if not version_ok:
+            self.results[pkg_name] = {
+                "status": "VERSION_MISMATCH",
+                "error": version_msg,
+            }
+            if required:
+                self.critical_failures.append(f"{pkg_name}: {version_msg}")
+                print(f"✗ {pkg_name} (VERSION MISMATCH): {version_msg}")
+            else:
+                self.warnings.append(f"{pkg_name}: {version_msg}")
+                print(f"⚠ {pkg_name} (VERSION MISMATCH): {version_msg}")
+            return False
+
+        # Test CUDA sub-modules if applicable (still use in-process for these)
+        if pkg_name in self.CUDA_SUBMODULES:
+            try:
+                module = importlib.import_module(import_name)
+                self.test_cuda_submodules(pkg_name, module)
+            except Exception:
+                pass  # CUDA submodule errors are already handled as warnings
+
+        self.results[pkg_name] = {"status": "SUCCESS", "error": None}
+        print(f"✓ {pkg_name} - {version_msg}")
+        return True
 
     def test_cuda_functionality(self):
         """Run basic CUDA functionality tests. Can be overridden by subclasses."""

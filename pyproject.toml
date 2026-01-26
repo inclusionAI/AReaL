@@ -7,7 +7,7 @@ name = "areal"
 description = "AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning"
 readme = "README.md"
 license = {text = "Apache-2.0"}
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.13"
 dynamic = ["version"]
 authors = [
     {name = "AReaL Team"},
@@ -32,8 +32,6 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: System :: Distributed Computing",
@@ -41,7 +39,7 @@ classifiers = [
 
 dependencies = [
     # Core ML/AI libraries
-    "torch==2.8.0",
+    "torch>=2.9.1,<2.10",
     "torchaudio",
     "torchvision",
     "torchdata",
@@ -51,8 +49,10 @@ dependencies = [
     "peft",
     "qwen_agent",
     "openai-agents",
-    "litellm",
     "anthropic",
+    "litellm",
+    "litellm-proxy-extras",
+    "openhands",
 
     # Visualization
     "pandas",
@@ -76,12 +76,11 @@ dependencies = [
     "tabulate",
     "pybase64",
     "msgspec",
-    "latex2sympy2",
     "math-verify==0.8.0",
     "dotenv",
     "json5",
     "psutil",
-    "nvidia-ml-py",
+    "nvidia-ml-py; sys_platform == 'linux'",
     "ninja",
     "numba",
     "blosc",
@@ -91,8 +90,6 @@ dependencies = [
     "aiohttp>=3.11.10",
     "httpx>=0.28.1",
     "pyzmq",
-    "paramiko",
-    "func_timeout",
     "regex",
     "python_dateutil",
     "word2number",
@@ -101,7 +98,6 @@ dependencies = [
     "prettytable",
     "h5py",
     "mathruler==0.1.0",
-    "pylatexenc==2.10",
 
     # Monitoring and logging
     "wandb",
@@ -131,57 +127,41 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-fa = [
-    "flash-attn==2.8.3",
-]
-
+# CUDA-dependent extras - these packages only have Linux x86_64 wheels
+# Platform markers ensure they're skipped on unsupported platforms
 sglang = [
-    "sglang==0.5.5.post1",
+    "sglang[tracing]==0.5.7; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 vllm = [
-    "vllm==0.11.0",
+    "vllm==0.14.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 tms = [
-    "torch_memory_saver==0.0.9",
+    "torch_memory_saver==0.0.9; sys_platform == 'linux'",
+]
+
+flash-attn = [
+    "flash-attn==2.8.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 megatron = [
-    "megatron-core==0.13.1",
-    "mbridge==0.13.0",
+    "megatron-core==0.13.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "mbridge==0.13.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
-dev = [
-    "pytest",
-    "pytest-asyncio",
-    "ipython",
-    "autoflake==2.3.1",
-    "ruff==0.14.9",
-    "clang-format==19.1.7",
-    "sh",
-    "mdformat==0.7.17",
-    "mdformat-gfm",
-    "mdformat-tables",
-    "mdformat-frontmatter",
-    "plotly",
-    "pre-commit",
-]
-
-docs = [
-    "sphinx",
-    "sphinx-nefertiti",
-    "jupyter-book<2",
-]
-
-all = [
-    "areal[fa]",
+# Convenience extra for all CUDA packages (requires Linux x86_64 with CUDA)
+cuda = [
     "areal[vllm]",
     "areal[sglang]",
     "areal[tms]",
     "areal[megatron]",
-    "areal[dev]",
-    "areal[docs]",
+    "areal[flash-attn]",
+]
+
+# 'all' extra - kept for compatibility, CUDA packages skipped on non-Linux via markers
+all = [
+    "areal[cuda]",
 ]
 
 [project.urls]
@@ -189,6 +169,9 @@ all = [
 "Repository" = "https://github.com/inclusionAI/AReaL"
 "Documentation" = "https://inclusionai.github.io/AReaL/intro.html"
 "Bug Tracker" = "https://github.com/inclusionAI/AReaL/issues"
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch>=2.9.1,<2.10"]
 
 [tool.setuptools.dynamic]
 version = {attr = "areal.__version__"}
@@ -199,16 +182,41 @@ include = ["areal*"]
 exclude = ["tests*", "docs*", "examples*", "evaluation*"]
 
 [tool.uv]
-exclude-dependencies = ["flash-attn"]
-override-dependencies=[
-    "outlines-core==0.1.26",
+# Restrict lock file resolution to supported environments
+# This prevents uv from failing when CUDA-only packages don't have wheels for macOS
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
-[tool.uv.sources]
-latex2sympy2 = { path = "./evaluation/latex2sympy" }
+override-dependencies=[
+    "outlines-core==0.1.26",
+    "grpcio>=1.76.0",
+    "grpcio-reflection>=1.76.0",
+    "xgrammar == 0.1.29; platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 's390x' or platform_machine == 'ppc64le'",
+    "llguidance >= 1.3.0, < 1.4.0; platform_machine == 'x86_64' or platform_machine == 'arm64' or platform_machine == 'aarch64' or platform_machine == 's390x' or platform_machine == 'ppc64le'",
+]
 
-[tool.uv.extra-build-dependencies]
-flash-attn = ["torch==2.8.0"]
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ipython",
+    "ruff==0.14.9",
+    "clang-format==19.1.7",
+    "sh",
+    "mdformat==0.7.17",
+    "mdformat-gfm",
+    "mdformat-tables",
+    "mdformat-frontmatter",
+    "plotly",
+    "pre-commit",
+    "sphinx",
+    "sphinx-nefertiti",
+    "jupyter-book<2",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -228,7 +236,7 @@ markers = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -255,14 +263,3 @@ section-order = [
     "local-folder",
 ]
 from-first = false
-
-# The following tools are remained as legacy.
-# We will use `ruff` instead in future development
-[tool.black]
-line-length = 88
-
-[tool.autoflake]
-in-place = true
-recursive = true
-remove-all-unused-imports = true
-remove-unused-variables = true

@@ -643,7 +643,7 @@ class RolloutController:
                     logger.info(f"Finish but reject rollout. {self._rollout_stats()}")
                 return None
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if task_id is not None:
                     with self._futures_lock:
                         self._pending_futures.pop(task_id, None)

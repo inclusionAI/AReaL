@@ -443,7 +443,7 @@ def run_comparison(args: argparse.Namespace) -> None:
 
     # Generate seq_lens if not provided
     if seq_lens is None:
-        from areal.tools.profile.utils import generate_random_seq_lens
+        from areal.tools.profiling_utils.utils import generate_random_seq_lens
 
         seq_lens = generate_random_seq_lens(args.batch_size, args.total_len)
 

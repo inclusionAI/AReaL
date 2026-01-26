@@ -27,14 +27,6 @@ helping with code reviews. This guide will help you get started.
    [installation guide](https://inclusionai.github.io/AReaL/tutorial/installation.html)
    for detailed setup instructions.
 
-   ```bash
-   # If you are using a local pip environment:
-   uv pip install -e ".[all]"
-   # Or use the Docker image illustrated in the installation guide
-   # In both environments, run the following command:
-   pip install -e . --no-deps
-   ```
-
 1. **Set Up Code Formatting:**
 
    ```bash
@@ -87,8 +79,7 @@ helping with code reviews. This guide will help you get started.
    PR:
 
    ```bash
-   # Build docs locally:
-   pip install jupyter-book
+   # Build docs locally (jupyter-book is included in dev dependencies):
    jb build docs
    ```
 

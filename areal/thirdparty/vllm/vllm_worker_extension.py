@@ -3,7 +3,7 @@ import traceback
 import torch
 import torch.distributed as dist
 from vllm.logger import init_logger
-from vllm.lora.models import LoRAModel
+from vllm.lora.lora_model import LoRAModel
 from vllm.lora.peft_helper import PEFTHelper
 from vllm.lora.request import LoRARequest
 from vllm.model_executor.model_loader import get_model_loader

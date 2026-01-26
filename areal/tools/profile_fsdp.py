@@ -207,7 +207,7 @@ def create_padded_input(
         dict with input_ids, attention_mask, and seq_lens.
     """
     if seq_lens is None:
-        from areal.tools.profile.utils import generate_random_seq_lens
+        from areal.tools.profiling_utils.utils import generate_random_seq_lens
 
         seq_lens = generate_random_seq_lens(batch_size, total_len)
 
