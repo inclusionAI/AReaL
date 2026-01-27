@@ -40,6 +40,7 @@ from areal.utils.concurrent import run_async_task
 from areal.utils.http import get_default_connector
 from areal.utils.launcher import (
     get_env_vars,
+    get_thread_env_vars,
 )
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.proc import kill_process_tree, run_with_streaming_logs
@@ -623,6 +624,12 @@ class LocalScheduler(Scheduler):
                 env[current_platform.device_control_env_var] = ",".join(
                     map(str, gpu_devices)
                 )
+
+                thread_env = get_thread_env_vars(
+                    cpus_per_task=scheduling.cpu,
+                    existing_env_vars=scheduling.env_vars,
+                )
+                env.update(thread_env)
 
                 if scheduling.env_vars:
                     env.update(scheduling.env_vars)
