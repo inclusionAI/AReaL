@@ -24,8 +24,38 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from areal.api.cli_args import GenerationHyperparameters
-from areal.api.io_struct import HttpGenerationResult, ModelRequest
+from areal.api.cli_args import GenerationHyperparameters, InferenceEngineConfig
+from areal.api.io_struct import HttpGenerationResult, HttpRequest, ModelRequest
+from areal.core.remote_inf_engine import RemoteInfEngine
+from areal.utils import logging
+
+
+@dataclass
+class MockBackend:
+    """Mock backend that returns predefined responses."""
+
+    responses: list[dict] = field(default_factory=list)
+    call_count: int = 0
+
+    def build_generation_request(self, req: ModelRequest, with_lora: bool) -> HttpRequest:
+        """Build a mock HTTP request."""
+        return HttpRequest(endpoint="/generate", payload={}, method="POST")
+
+    def parse_generation_response(self, response: dict) -> HttpGenerationResult:
+        """Return predefined responses in sequence."""
+        resp_data = self.responses[self.call_count]
+        self.call_count += 1
+        return HttpGenerationResult(
+            output_tokens=resp_data["output_tokens"],
+            output_logprobs=resp_data.get("output_logprobs", [0.0] * len(resp_data["output_tokens"])),
+            # Use None to skip accumulate_rollout_expert_id processing
+            rollout_expert_ids=resp_data.get("rollout_expert_ids", None),
+            stop_reason=resp_data["stop_reason"],
+            input_logprobs=resp_data.get("input_logprobs", []),
+        )
+
+    def get_health_check_request(self) -> HttpRequest:
+        return HttpRequest(endpoint="/health", payload={}, method="GET")
 
 
 @dataclass
@@ -36,46 +66,41 @@ class MockWorkflowExecutor:
         return False
 
 
-@dataclass
-class MockBackend:
-    """Mock backend that returns predefined responses."""
+class TestAbortLoopConditionWithRealEngine:
+    """Tests for the abort loop condition fix using real RemoteInfEngine."""
 
-    responses: list[HttpGenerationResult] = field(default_factory=list)
-    call_count: int = 0
+    @pytest.fixture
+    def mock_backend_responses(self):
+        """Factory fixture to create mock backend with predefined responses."""
+        def _create(responses: list[dict]) -> MockBackend:
+            return MockBackend(responses=responses)
+        return _create
 
-    def build_generation_request(self, req: ModelRequest, with_lora: bool) -> Any:
-        """Build a mock HTTP request."""
-        return MagicMock(endpoint="/generate", payload={}, method="POST")
-
-    def parse_generation_response(self, response: dict) -> HttpGenerationResult:
-        """Return predefined responses in sequence."""
-        result = self.responses[self.call_count]
-        self.call_count += 1
-        return result
-
-
-class TestAbortLoopCondition:
-    """Tests for the abort loop condition fix."""
-
-    def _create_generation_result(
-        self,
-        output_tokens: list[int],
-        stop_reason: str,
-        output_logprobs: list[float] | None = None,
-    ) -> HttpGenerationResult:
-        """Helper to create HttpGenerationResult."""
-        if output_logprobs is None:
-            output_logprobs = [0.0] * len(output_tokens)
-        return HttpGenerationResult(
-            output_tokens=output_tokens,
-            output_logprobs=output_logprobs,
-            rollout_expert_ids=[],
-            stop_reason=stop_reason,
-            input_logprobs=[],
+    @pytest.fixture
+    def engine_config(self):
+        """Create a minimal engine config for testing."""
+        return InferenceEngineConfig(
+            experiment_name="test_abort_loop",
+            trial_name="test",
+            request_timeout=30,
+            request_retries=1,
         )
 
+    def _create_engine(self, config: InferenceEngineConfig, backend: MockBackend) -> RemoteInfEngine:
+        """Create a RemoteInfEngine with mock backend."""
+        engine = RemoteInfEngine(config=config, backend=backend)
+        # Set up minimal state needed for agenerate
+        engine.addresses = ["localhost:8000"]
+        engine._version = 0
+        engine.lora_initialized = False
+        # Initialize logger (normally done in initialize())
+        engine.logger = logging.getLogger("[Test Remote Inference Engine]")
+        # Mock the workflow_executor
+        engine._workflow_executor = MockWorkflowExecutor()
+        return engine
+
     @pytest.mark.asyncio
-    async def test_abort_should_continue_loop_with_fix(self):
+    async def test_abort_should_continue_loop_with_fix(self, engine_config, mock_backend_responses):
         """Test that abort continues the loop when using original_max_new_tokens.
 
         This test simulates the FIXED behavior:
@@ -86,23 +111,16 @@ class TestAbortLoopCondition:
 
         Total tokens: 150, which is less than original max (200).
         """
-        # Setup responses: first returns abort, second returns stop
         responses = [
-            self._create_generation_result(
-                output_tokens=list(range(100)),  # 100 tokens
-                stop_reason="abort",
-            ),
-            self._create_generation_result(
-                output_tokens=list(range(50)),  # 50 more tokens
-                stop_reason="stop",
-            ),
+            {"output_tokens": list(range(100)), "stop_reason": "abort"},
+            {"output_tokens": list(range(50)), "stop_reason": "stop"},
         ]
+        backend = mock_backend_responses(responses)
+        engine = self._create_engine(engine_config, backend)
 
-        backend = MockBackend(responses=responses)
-
-        # Simulate the FIXED loop logic
         gconfig = GenerationHyperparameters(
             max_new_tokens=200,
+            max_tokens=10000,
             n_samples=1,
         )
         req = ModelRequest(
@@ -110,122 +128,27 @@ class TestAbortLoopCondition:
             gconfig=gconfig,
         )
 
-        accumulated_output_tokens = []
-        stop_reason = None
-        original_max_new_tokens = gconfig.max_new_tokens  # FIXED: save original
+        # Mock arequest_with_retry to return raw response dict
+        async def mock_arequest(*args, **kwargs):
+            return {}  # Backend.parse_generation_response handles the actual data
 
-        loop_iterations = 0
-        max_iterations = 10  # Safety limit
+        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+            response = await engine.agenerate(req)
 
-        while (
-            stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < original_max_new_tokens  # FIXED
-            and loop_iterations < max_iterations
-        ):
-            loop_iterations += 1
-
-            # Simulate backend call
-            gen_result = backend.parse_generation_response({})
-            stop_reason = gen_result.stop_reason
-
-            # Accumulate tokens
-            accumulated_output_tokens.extend(gen_result.output_tokens)
-
-            # Update request (this is what happens in the real code)
-            req.input_ids += gen_result.output_tokens
-            req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
-
-        # Verify FIXED behavior
-        assert loop_iterations == 2, (
-            f"With fix, loop should iterate 2 times (abort then stop), "
-            f"got {loop_iterations}"
+        # Verify the fix works: both responses were processed
+        assert backend.call_count == 2, (
+            f"With fix, backend should be called 2 times (abort then stop), "
+            f"got {backend.call_count}"
         )
-        assert len(accumulated_output_tokens) == 150, (
-            f"Should have 150 tokens total (100 + 50), got {len(accumulated_output_tokens)}"
+        assert len(response.output_tokens) == 150, (
+            f"Should have 150 tokens total (100 + 50), got {len(response.output_tokens)}"
         )
-        assert stop_reason == "stop", f"Final stop_reason should be 'stop', got {stop_reason}"
-        assert backend.call_count == 2, f"Backend should be called 2 times, got {backend.call_count}"
-
-    @pytest.mark.asyncio
-    async def test_abort_prematurely_exits_without_fix(self):
-        """Test that abort prematurely exits loop when using modified gconfig.max_new_tokens.
-
-        This test simulates the BUGGY behavior (before fix):
-        1. First generation returns 100 tokens with stop_reason='abort'
-        2. gconfig.max_new_tokens is decremented: 200 - 100 = 100
-        3. Loop condition: 100 < 100 = False -> loop exits!
-        4. Log shows: "Finish generation loop with stop_reason=abort"
-
-        This is the bug that was fixed.
-        """
-        # Setup responses: first returns abort, second would return stop
-        # but with the bug, we never reach the second call
-        responses = [
-            self._create_generation_result(
-                output_tokens=list(range(100)),  # 100 tokens
-                stop_reason="abort",
-            ),
-            self._create_generation_result(
-                output_tokens=list(range(50)),  # This should not be reached with bug
-                stop_reason="stop",
-            ),
-        ]
-
-        backend = MockBackend(responses=responses)
-
-        # Simulate the BUGGY loop logic
-        gconfig = GenerationHyperparameters(
-            max_new_tokens=200,
-            n_samples=1,
-        )
-        req = ModelRequest(
-            input_ids=[1, 2, 3],
-            gconfig=gconfig,
-        )
-
-        accumulated_output_tokens = []
-        stop_reason = None
-        # BUG: NOT saving original_max_new_tokens
-
-        loop_iterations = 0
-        max_iterations = 10  # Safety limit
-
-        while (
-            stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < gconfig.max_new_tokens  # BUG: uses modified value
-            and loop_iterations < max_iterations
-        ):
-            loop_iterations += 1
-
-            # Simulate backend call
-            gen_result = backend.parse_generation_response({})
-            stop_reason = gen_result.stop_reason
-
-            # Accumulate tokens
-            accumulated_output_tokens.extend(gen_result.output_tokens)
-
-            # Update request (this modifies gconfig.max_new_tokens!)
-            req.input_ids += gen_result.output_tokens
-            req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
-
-        # Verify BUGGY behavior - loop exits prematurely
-        assert loop_iterations == 1, (
-            f"With bug, loop should exit after 1 iteration due to condition failure, "
-            f"got {loop_iterations}"
-        )
-        assert len(accumulated_output_tokens) == 100, (
-            f"With bug, should only have 100 tokens (first batch only), "
-            f"got {len(accumulated_output_tokens)}"
-        )
-        assert stop_reason == "abort", (
-            f"With bug, stop_reason should remain 'abort', got {stop_reason}"
-        )
-        assert backend.call_count == 1, (
-            f"With bug, backend should only be called once, got {backend.call_count}"
+        assert response.stop_reason == "stop", (
+            f"Final stop_reason should be 'stop', got {response.stop_reason}"
         )
 
     @pytest.mark.asyncio
-    async def test_abort_multiple_times_continues_with_fix(self):
+    async def test_abort_multiple_times_continues_with_fix(self, engine_config, mock_backend_responses):
         """Test that multiple abort responses continue the loop with fix.
 
         Scenario:
@@ -236,170 +159,249 @@ class TestAbortLoopCondition:
         Total: 180 tokens < 300 max_new_tokens
         """
         responses = [
-            self._create_generation_result(list(range(50)), "abort"),
-            self._create_generation_result(list(range(60)), "abort"),
-            self._create_generation_result(list(range(70)), "stop"),
+            {"output_tokens": list(range(50)), "stop_reason": "abort"},
+            {"output_tokens": list(range(60)), "stop_reason": "abort"},
+            {"output_tokens": list(range(70)), "stop_reason": "stop"},
         ]
+        backend = mock_backend_responses(responses)
+        engine = self._create_engine(engine_config, backend)
 
-        backend = MockBackend(responses=responses)
-
-        gconfig = GenerationHyperparameters(max_new_tokens=300, n_samples=1)
+        gconfig = GenerationHyperparameters(
+            max_new_tokens=300,
+            max_tokens=10000,
+            n_samples=1,
+        )
         req = ModelRequest(input_ids=[1, 2, 3], gconfig=gconfig)
 
-        accumulated_output_tokens = []
-        stop_reason = None
-        original_max_new_tokens = gconfig.max_new_tokens  # FIXED
+        async def mock_arequest(*args, **kwargs):
+            return {}
 
-        loop_iterations = 0
-        max_iterations = 10
+        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+            response = await engine.agenerate(req)
 
-        while (
-            stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < original_max_new_tokens
-            and loop_iterations < max_iterations
-        ):
-            loop_iterations += 1
-            gen_result = backend.parse_generation_response({})
-            stop_reason = gen_result.stop_reason
-            accumulated_output_tokens.extend(gen_result.output_tokens)
-            req.input_ids += gen_result.output_tokens
-            req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
-
-        assert loop_iterations == 3, f"Should have 3 iterations, got {loop_iterations}"
-        assert len(accumulated_output_tokens) == 180, f"Should have 180 tokens, got {len(accumulated_output_tokens)}"
-        assert stop_reason == "stop"
+        assert backend.call_count == 3, f"Should have 3 backend calls, got {backend.call_count}"
+        assert len(response.output_tokens) == 180, f"Should have 180 tokens, got {len(response.output_tokens)}"
+        assert response.stop_reason == "stop"
 
     @pytest.mark.asyncio
-    async def test_abort_reaches_length_limit_with_fix(self):
+    async def test_abort_reaches_length_limit_with_fix(self, engine_config, mock_backend_responses):
         """Test that abort loop exits when reaching length limit.
 
         Scenario with fix:
-        1. First call: 100 tokens, abort
-        2. Second call: 100 tokens, abort
-        3. Third call: 100 tokens, abort (but total=300 >= max=250, so this shouldn't happen)
+        - max_new_tokens = 250
+        - Each call returns 80 tokens with abort (staying within remaining limit)
+        - After 3 calls: 240 tokens, remaining = 10
+        - 4th call: returns 80 tokens with abort, but 240 < 250, so we enter loop
+        - After 4th call: 320 tokens >= 250, exit loop
 
-        Actually, after 200 tokens (2 calls), we check: 200 < 250 = True, continue
-        Third call: 200 + 100 = 300, then check: 300 < 250 = False, exit
-
-        Wait, the check happens BEFORE the call in the while condition.
-        Let me reconsider...
-
-        Loop iteration 1: enter (0 < 250), get 100 tokens, abort
-        Loop iteration 2: enter (100 < 250), get 100 tokens, abort
-        Loop iteration 3: enter (200 < 250), get 100 tokens, abort
-        Loop iteration 4: check (300 < 250) = False, exit
-
-        So we make 3 calls but then exit due to length.
+        Note: The implementation asserts req.gconfig.max_new_tokens >= 0 after each
+        generation, so each generation must not exceed the remaining max_new_tokens.
+        In practice, the server respects max_new_tokens, but we need to be careful
+        in tests.
         """
         responses = [
-            self._create_generation_result(list(range(100)), "abort"),
-            self._create_generation_result(list(range(100)), "abort"),
-            self._create_generation_result(list(range(100)), "abort"),
-            # This 4th response won't be reached
-            self._create_generation_result(list(range(100)), "stop"),
+            {"output_tokens": list(range(80)), "stop_reason": "abort"},
+            {"output_tokens": list(range(80)), "stop_reason": "abort"},
+            {"output_tokens": list(range(80)), "stop_reason": "abort"},
+            {"output_tokens": list(range(10)), "stop_reason": "abort"},  # This will hit remaining limit
+            # This 5th response won't be reached
+            {"output_tokens": list(range(10)), "stop_reason": "stop"},
         ]
+        backend = mock_backend_responses(responses)
+        engine = self._create_engine(engine_config, backend)
 
-        backend = MockBackend(responses=responses)
-
-        gconfig = GenerationHyperparameters(max_new_tokens=250, n_samples=1)
+        gconfig = GenerationHyperparameters(
+            max_new_tokens=250,
+            max_tokens=10000,
+            n_samples=1,
+        )
         req = ModelRequest(input_ids=[1, 2, 3], gconfig=gconfig)
 
-        accumulated_output_tokens = []
-        stop_reason = None
-        original_max_new_tokens = gconfig.max_new_tokens
+        async def mock_arequest(*args, **kwargs):
+            return {}
 
-        loop_iterations = 0
-        max_iterations = 10
+        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+            response = await engine.agenerate(req)
 
-        while (
-            stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < original_max_new_tokens
-            and loop_iterations < max_iterations
-        ):
-            loop_iterations += 1
-            gen_result = backend.parse_generation_response({})
-            stop_reason = gen_result.stop_reason
-            accumulated_output_tokens.extend(gen_result.output_tokens)
-            req.input_ids += gen_result.output_tokens
-            req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
-
-        assert loop_iterations == 3, f"Should have 3 iterations, got {loop_iterations}"
-        assert len(accumulated_output_tokens) == 300, f"Should have 300 tokens, got {len(accumulated_output_tokens)}"
-        assert stop_reason == "abort", "Final stop_reason should be 'abort' (exited due to length limit)"
+        # 80 + 80 + 80 + 10 = 250 tokens
+        assert backend.call_count == 4, f"Should have 4 backend calls, got {backend.call_count}"
+        assert len(response.output_tokens) == 250, f"Should have 250 tokens, got {len(response.output_tokens)}"
+        # When exiting due to length limit with abort, stop_reason is converted to "length"
+        assert response.stop_reason == "length", (
+            f"Final stop_reason should be 'length' (converted from abort), got {response.stop_reason}"
+        )
 
     @pytest.mark.asyncio
-    async def test_tool_calls_exits_immediately(self):
+    async def test_tool_calls_exits_immediately(self, engine_config, mock_backend_responses):
         """Test that tool_calls stop_reason exits the loop immediately."""
         responses = [
-            self._create_generation_result(list(range(50)), "tool_calls"),
+            {"output_tokens": list(range(50)), "stop_reason": "tool_calls"},
             # This won't be reached
-            self._create_generation_result(list(range(50)), "stop"),
+            {"output_tokens": list(range(50)), "stop_reason": "stop"},
         ]
+        backend = mock_backend_responses(responses)
+        engine = self._create_engine(engine_config, backend)
 
-        backend = MockBackend(responses=responses)
-
-        gconfig = GenerationHyperparameters(max_new_tokens=200, n_samples=1)
+        gconfig = GenerationHyperparameters(
+            max_new_tokens=200,
+            max_tokens=10000,
+            n_samples=1,
+        )
         req = ModelRequest(input_ids=[1, 2, 3], gconfig=gconfig)
 
-        accumulated_output_tokens = []
-        stop_reason = None
-        original_max_new_tokens = gconfig.max_new_tokens
+        async def mock_arequest(*args, **kwargs):
+            return {}
 
-        loop_iterations = 0
-        max_iterations = 10
+        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+            response = await engine.agenerate(req)
 
-        while (
-            stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < original_max_new_tokens
-            and loop_iterations < max_iterations
-        ):
-            loop_iterations += 1
-            gen_result = backend.parse_generation_response({})
-            stop_reason = gen_result.stop_reason
-            accumulated_output_tokens.extend(gen_result.output_tokens)
-            req.input_ids += gen_result.output_tokens
-            req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
-
-        assert loop_iterations == 1
-        assert stop_reason == "tool_calls"
-        assert len(accumulated_output_tokens) == 50
+        assert backend.call_count == 1
+        assert response.stop_reason == "tool_calls"
+        assert len(response.output_tokens) == 50
 
     @pytest.mark.asyncio
-    async def test_length_exits_immediately(self):
+    async def test_length_exits_immediately(self, engine_config, mock_backend_responses):
         """Test that length stop_reason exits the loop immediately."""
         responses = [
-            self._create_generation_result(list(range(50)), "length"),
+            {"output_tokens": list(range(50)), "stop_reason": "length"},
             # This won't be reached
-            self._create_generation_result(list(range(50)), "stop"),
+            {"output_tokens": list(range(50)), "stop_reason": "stop"},
         ]
+        backend = mock_backend_responses(responses)
+        engine = self._create_engine(engine_config, backend)
 
-        backend = MockBackend(responses=responses)
-
-        gconfig = GenerationHyperparameters(max_new_tokens=200, n_samples=1)
+        gconfig = GenerationHyperparameters(
+            max_new_tokens=200,
+            max_tokens=10000,
+            n_samples=1,
+        )
         req = ModelRequest(input_ids=[1, 2, 3], gconfig=gconfig)
+
+        async def mock_arequest(*args, **kwargs):
+            return {}
+
+        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+            response = await engine.agenerate(req)
+
+        assert backend.call_count == 1
+        assert response.stop_reason == "length"
+        assert len(response.output_tokens) == 50
+
+    @pytest.mark.asyncio
+    async def test_stop_exits_immediately(self, engine_config, mock_backend_responses):
+        """Test that stop stop_reason exits the loop immediately."""
+        responses = [
+            {"output_tokens": list(range(30)), "stop_reason": "stop"},
+            # This won't be reached
+            {"output_tokens": list(range(50)), "stop_reason": "stop"},
+        ]
+        backend = mock_backend_responses(responses)
+        engine = self._create_engine(engine_config, backend)
+
+        gconfig = GenerationHyperparameters(
+            max_new_tokens=200,
+            max_tokens=10000,
+            n_samples=1,
+        )
+        req = ModelRequest(input_ids=[1, 2, 3], gconfig=gconfig)
+
+        async def mock_arequest(*args, **kwargs):
+            return {}
+
+        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+            response = await engine.agenerate(req)
+
+        assert backend.call_count == 1
+        assert response.stop_reason == "stop"
+        assert len(response.output_tokens) == 30
+
+
+class TestBugReproduction:
+    """Tests that reproduce the original bug behavior for documentation.
+
+    These tests simulate what WOULD happen with the buggy code to demonstrate
+    the issue that was fixed. They don't use the actual RemoteInfEngine since
+    the bug is already fixed, but they document the expected buggy behavior.
+    """
+
+    def test_abort_prematurely_exits_without_fix_simulation(self):
+        """Simulate the BUGGY behavior (before fix) for documentation.
+
+        This test simulates what would happen WITHOUT the fix:
+        1. First generation returns 100 tokens with stop_reason='abort'
+        2. gconfig.max_new_tokens is decremented: 200 - 100 = 100
+        3. Loop condition: 100 < 100 = False -> loop exits!
+        4. Log shows: "Finish generation loop with stop_reason=abort"
+
+        This documents the bug that was fixed.
+        """
+        # Simulate the BUGGY loop logic
+        gconfig = GenerationHyperparameters(
+            max_new_tokens=200,
+            n_samples=1,
+        )
 
         accumulated_output_tokens = []
         stop_reason = None
-        original_max_new_tokens = gconfig.max_new_tokens
+        # BUG: NOT saving original_max_new_tokens
 
-        loop_iterations = 0
-        max_iterations = 10
+        # Simulate first iteration
+        gen_result_tokens = list(range(100))
+        stop_reason = "abort"
+        accumulated_output_tokens.extend(gen_result_tokens)
+        gconfig.max_new_tokens -= len(gen_result_tokens)  # Now 100
 
-        while (
+        # Check if loop would continue (BUGGY condition)
+        buggy_condition = (
             stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < original_max_new_tokens
-            and loop_iterations < max_iterations
-        ):
-            loop_iterations += 1
-            gen_result = backend.parse_generation_response({})
-            stop_reason = gen_result.stop_reason
-            accumulated_output_tokens.extend(gen_result.output_tokens)
-            req.input_ids += gen_result.output_tokens
-            req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
+            and len(accumulated_output_tokens) < gconfig.max_new_tokens  # 100 < 100 = False!
+        )
 
-        assert loop_iterations == 1
-        assert stop_reason == "length"
-        assert len(accumulated_output_tokens) == 50
+        # Verify BUGGY behavior - loop would exit prematurely
+        assert buggy_condition is False, (
+            "With bug, the loop condition should be False (100 < 100 = False)"
+        )
+        assert stop_reason == "abort", (
+            "With bug, stop_reason remains 'abort' - this is the bug symptom"
+        )
+        assert len(accumulated_output_tokens) == 100, (
+            "With bug, only first batch of tokens is accumulated"
+        )
+
+    def test_abort_continues_with_fix_simulation(self):
+        """Simulate the FIXED behavior for documentation.
+
+        This test simulates what happens WITH the fix:
+        1. Save original_max_new_tokens = 200
+        2. First generation returns 100 tokens with stop_reason='abort'
+        3. gconfig.max_new_tokens is decremented: 200 - 100 = 100
+        4. Loop condition: 100 < 200 (original) = True -> continue!
+        """
+        gconfig = GenerationHyperparameters(
+            max_new_tokens=200,
+            n_samples=1,
+        )
+
+        accumulated_output_tokens = []
+        stop_reason = None
+        original_max_new_tokens = gconfig.max_new_tokens  # FIX: save original
+
+        # Simulate first iteration
+        gen_result_tokens = list(range(100))
+        stop_reason = "abort"
+        accumulated_output_tokens.extend(gen_result_tokens)
+        gconfig.max_new_tokens -= len(gen_result_tokens)  # Now 100
+
+        # Check if loop would continue (FIXED condition)
+        fixed_condition = (
+            stop_reason not in ["stop", "tool_calls", "length"]
+            and len(accumulated_output_tokens) < original_max_new_tokens  # 100 < 200 = True!
+        )
+
+        # Verify FIXED behavior - loop continues
+        assert fixed_condition is True, (
+            "With fix, the loop condition should be True (100 < 200 = True)"
+        )
 
 
 class TestGconfigModification:
@@ -416,18 +418,6 @@ class TestGconfigModification:
 
         assert gconfig.max_new_tokens == 100, "gconfig.max_new_tokens should be decremented"
         assert original_value == 200, "Original value should be unchanged if saved separately"
-
-    def test_model_request_gconfig_is_reference(self):
-        """Verify that ModelRequest.gconfig is a reference that gets modified."""
-        gconfig = GenerationHyperparameters(max_new_tokens=200, n_samples=1)
-        req = ModelRequest(input_ids=[1, 2, 3], gconfig=gconfig)
-
-        # Modify through the request
-        req.gconfig.max_new_tokens -= 100
-
-        # Note: After calling req.copy(), the gconfig is a NEW object
-        # but in the original code, we use req.gconfig directly which shares the reference
-        assert req.gconfig.max_new_tokens == 100
 
     def test_model_request_copy_creates_new_gconfig(self):
         """Verify that ModelRequest.copy() creates a new gconfig instance."""
