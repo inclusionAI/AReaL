@@ -9,12 +9,10 @@ BUG (before fix):
 - Example: original_max=16384, after 12000 tokens -> gconfig.max_new_tokens=4384
 - Condition: 12000 < 4384 = False -> loop exits prematurely with abort
 
-FIX (commit 445dca7):
+FIX:
 - Save original max_new_tokens before the loop
 - Use `original_max_new_tokens` in the condition instead of `gconfig.max_new_tokens`
 - This ensures the loop continues until we actually reach the generation limit
-
-Reference: commit 445dca7216e66c24d7a5b47a272761ea81749f8d
 """
 
 from dataclasses import dataclass, field
