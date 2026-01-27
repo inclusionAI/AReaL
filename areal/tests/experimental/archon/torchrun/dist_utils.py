@@ -96,7 +96,8 @@ def create_golden_model(
     """Create non-parallelized model for comparison."""
     torch.manual_seed(seed)
     model = Qwen3Model(model_args)
-    model.init_weights(device)
+    model.init_weights()
+    model.init_buffers(buffer_device=device)
     model = model.to(device)
     return model
 

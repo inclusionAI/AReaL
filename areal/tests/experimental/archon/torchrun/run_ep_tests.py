@@ -131,7 +131,8 @@ def create_ep_model(
     """Create and parallelize model with given parallel dims."""
     torch.manual_seed(seed)
     model = Qwen3Model(model_args)
-    model.init_weights(device)
+    model.init_weights()
+    model.init_buffers(buffer_device=device)
     model = model.to(device)
 
     parallelize_qwen3(
@@ -318,7 +319,8 @@ def test_weight_sync(
 
     torch.manual_seed(42)
     model = Qwen3Model(model_args)
-    model.init_weights(device)
+    model.init_weights()
+    model.init_buffers(buffer_device=device)
     model = model.to(device)
     original_state = {k: v.clone() for k, v in model.state_dict().items()}
 
@@ -375,7 +377,8 @@ def test_weight_sync(
 
     torch.manual_seed(42)
     model_new = Qwen3Model(model_args)
-    model_new.init_weights(device)
+    model_new.init_weights()
+    model_new.init_buffers(buffer_device=device)
     model_new = model_new.to(device)
 
     loadable_state = {}
@@ -453,7 +456,8 @@ def test_state_dict_update(output: str | None = None) -> bool:
 
     torch.manual_seed(99)
     model_new = Qwen3Model(model_args)
-    model_new.init_weights(device)
+    model_new.init_weights()
+    model_new.init_buffers(buffer_device=device)
     model_new = model_new.to(device)
 
     loadable_state = {}

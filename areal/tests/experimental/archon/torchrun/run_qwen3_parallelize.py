@@ -103,7 +103,8 @@ def create_and_parallelize_model(
     """Create model, initialize weights, and apply parallelization."""
     torch.manual_seed(seed)
     model = Qwen3Model(model_args)
-    model.init_weights(device)
+    model.init_weights()
+    model.init_buffers(buffer_device=device)
     model = model.to(device)
 
     parallelize_qwen3(

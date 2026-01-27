@@ -200,7 +200,8 @@ class TestTransformerBlockMoE:
     def test_dense_block_forward(self, dense_args):
         """Test forward pass for dense TransformerBlock."""
         block = TransformerBlock(layer_id=0, model_args=dense_args)
-        block.init_weights(torch.device("cpu"))
+        block.init_weights()
+        block.init_buffers(buffer_device=torch.device("cpu"))
 
         bs, seq_len = 2, 8
         x = torch.randn(bs, seq_len, dense_args.dim)
@@ -237,7 +238,8 @@ class TestTransformerBlockMoE:
     def test_moe_block_forward(self, moe_args):
         """Test forward pass for MoE TransformerBlock."""
         block = TransformerBlock(layer_id=0, model_args=moe_args).cuda()
-        block.init_weights(torch.device("cuda"))
+        block.init_weights()
+        block.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 2, 8
         x = torch.randn(bs, seq_len, moe_args.dim, device="cuda")
@@ -280,7 +282,8 @@ class TestTransformerBlockMoE:
     def test_moe_block_gradient_flow(self, moe_args):
         """Test gradient flow through MoE TransformerBlock."""
         block = TransformerBlock(layer_id=0, model_args=moe_args).cuda()
-        block.init_weights(torch.device("cuda"))
+        block.init_weights()
+        block.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 2, 8
         x = torch.randn(bs, seq_len, moe_args.dim, device="cuda", requires_grad=True)
@@ -381,6 +384,7 @@ class TestQwen3ModelMoE:
         """Test forward pass for dense model."""
         model = Qwen3Model(dense_model_args)
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cpu"))
 
         bs, seq_len = 2, 16
         tokens = torch.randint(0, dense_model_args.vocab_size, (bs, seq_len))
@@ -403,6 +407,7 @@ class TestQwen3ModelMoE:
         """Test forward pass for full MoE model."""
         model = Qwen3Model(moe_model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 2, 16
         tokens = torch.randint(
@@ -427,6 +432,7 @@ class TestQwen3ModelMoE:
         """Test forward pass for mixed MoE/dense model."""
         model = Qwen3Model(mixed_model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 2, 16
         tokens = torch.randint(
@@ -480,6 +486,7 @@ class TestQwen3ModelMoE:
         """Test gradient flow through MoE model."""
         model = Qwen3Model(moe_model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 2, 16
         tokens = torch.randint(
@@ -516,6 +523,7 @@ class TestQwen3ModelMoE:
         """Test gradient flow through mixed MoE/dense model."""
         model = Qwen3Model(mixed_model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 2, 16
         tokens = torch.randint(
@@ -550,6 +558,7 @@ class TestQwen3ModelMoE:
         """Test MoE model with explicit positions."""
         model = Qwen3Model(moe_model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 2, 16
         tokens = torch.randint(
@@ -591,6 +600,7 @@ class TestQwen3ModelMoE:
         )
         model = Qwen3Model(model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 2, 16
         tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len), device="cuda")
@@ -640,6 +650,7 @@ class TestQwen3MoEConfigurations:
 
         model = Qwen3Model(model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 1, 16
         tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len), device="cuda")
@@ -683,6 +694,7 @@ class TestQwen3MoEConfigurations:
 
         model = Qwen3Model(model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 2, 8
         tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len), device="cuda")
@@ -726,6 +738,7 @@ class TestQwen3MoEConfigurations:
 
         model = Qwen3Model(model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
         model.eval()
 
         bs = 1
@@ -766,6 +779,7 @@ class TestQwen3MoEConfigurations:
 
         model = Qwen3Model(model_args).cuda()
         model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cuda"))
 
         bs, seq_len = 1, 32
         tokens = torch.randint(0, model_args.vocab_size, (bs, seq_len), device="cuda")

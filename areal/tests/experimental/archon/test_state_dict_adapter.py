@@ -449,7 +449,8 @@ class TestMoEWeightLoadingRoundtrip:
 
         # Create and initialize model
         model1 = Qwen3Model(moe_model_args)
-        model1.init_weights(device)
+        model1.init_weights()
+        model1.init_buffers(buffer_device=device)
         model1.to(device)
 
         # Create adapter
@@ -464,6 +465,7 @@ class TestMoEWeightLoadingRoundtrip:
         # that doesn't exist in HF models (it's initialized to zeros)
         roundtrip_archon_state = adapter.from_hf(hf_state)
         model2 = Qwen3Model(moe_model_args)
+        model2.init_buffers(buffer_device=device)
         model2.load_state_dict(roundtrip_archon_state, strict=False)
         model2.to(device)
 
@@ -493,7 +495,8 @@ class TestMoEWeightLoadingRoundtrip:
         from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
 
         model = Qwen3Model(moe_model_args)
-        model.init_weights(torch.device("cpu"))
+        model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cpu"))
 
         archon_state = model.state_dict()
         adapter = Qwen3StateDictAdapter(moe_adapter_config)
@@ -519,7 +522,8 @@ class TestMoEWeightLoadingRoundtrip:
         from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
 
         model = Qwen3Model(moe_model_args)
-        model.init_weights(torch.device("cpu"))
+        model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cpu"))
 
         archon_state = model.state_dict()
         adapter = Qwen3StateDictAdapter(moe_adapter_config)
@@ -553,7 +557,8 @@ class TestMoEWeightLoadingRoundtrip:
         # - layer 2: dense (FFN)
         # - layer 3: MoE
         model = Qwen3Model(moe_model_args)
-        model.init_weights(torch.device("cpu"))
+        model.init_weights()
+        model.init_buffers(buffer_device=torch.device("cpu"))
 
         # Verify layer structure
         assert model.layers["0"].moe is None

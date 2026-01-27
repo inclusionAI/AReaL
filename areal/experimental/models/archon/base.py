@@ -117,13 +117,6 @@ class BaseStateDictAdapter(ABC):
 class BaseArchonModel(nn.Module, ABC):
     """Base class for Archon models."""
 
-    model_args: BaseModelArgs
-    layers: nn.ModuleDict
-    tok_embeddings: nn.Embedding | None
-    norm: nn.Module | None
-    output: nn.Linear | None
-    score: nn.Linear | None
-
     @abstractmethod
     def forward(
         self,
@@ -134,7 +127,14 @@ class BaseArchonModel(nn.Module, ABC):
     ) -> torch.Tensor: ...
 
     @abstractmethod
-    def init_weights(self, buffer_device: torch.device | None = None) -> None: ...
+    def init_weights(self) -> None:
+        """Initialize model parameters."""
+        ...
+
+    @abstractmethod
+    def init_buffers(self, buffer_device: torch.device | str) -> None:
+        """Initialize model buffers (e.g., rope_cache)."""
+        ...
 
 
 __all__ = [
