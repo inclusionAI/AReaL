@@ -250,10 +250,11 @@ Configuration for Supervised Fine-Tuning (SFT) experiments.
 
 Configuration for Fully Sharded Data Parallel (FSDP) training backend.
 
-| Parameter        | Type                                                 | Default | Description                                        |
-| ---------------- | ---------------------------------------------------- | ------- | -------------------------------------------------- |
-| `wrap_policy`    | [`FSDPWrapPolicy`](section-fsdp-wrap-policy) \| None | `None`  | FSDP wrap policy, specifying model layers to wrap. |
-| `offload_params` | boolean                                              | `False` | Whether to offload FSDP parameters to CPU.         |
+| Parameter               | Type                                                 | Default | Description                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------- | ---------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wrap_policy`           | [`FSDPWrapPolicy`](section-fsdp-wrap-policy) \| None | `None`  | FSDP wrap policy, specifying model layers to wrap.                                                                                                                                                                                                                                                                                                              |
+| `offload_params`        | boolean                                              | `False` | Whether to offload FSDP parameters to CPU.                                                                                                                                                                                                                                                                                                                      |
+| `memory_efficient_load` | boolean                                              | `False` | Enable memory-efficient model loading. When enabled, model weights are initialized on CPU and only rank 0 loads pretrained weights, which are then broadcast to all ranks after FSDP sharding. This reduces peak GPU memory during initialization for large models. Note: For VLMs, rank 0 broadcast is not used; each rank loads weights independently on CPU. |
 
 (section-fsdp-wrap-policy)=
 
