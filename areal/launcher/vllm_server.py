@@ -20,7 +20,7 @@ from areal.api.cli_args import (
 from areal.api.io_struct import AllocationMode
 from areal.platforms import current_platform
 from areal.utils import logging, name_resolve, names
-from areal.utils.launcher import TRITON_CACHE_PATH
+from areal.utils.launcher import TRITON_CACHE_PATH, get_scheduling_spec
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.proc import kill_process_tree
 
@@ -28,7 +28,7 @@ logger = logging.getLogger("VLLMWrapper")
 
 
 def launch_server_cmd(
-    command: list[str], custom_env: dict | None = None
+    command: list[str], custom_env: dict[str, str] | None = None
 ) -> subprocess.Popen:
     """
     Launch inference server in a new process and return its process handle.
@@ -44,8 +44,10 @@ def launch_server_cmd(
     vllm_cache_path = _env.get("VLLM_CACHE_ROOT")
     if vllm_cache_path:
         _env["VLLM_CACHE_ROOT"] = os.path.join(vllm_cache_path, str(uuid.uuid4()))
+
     if custom_env is not None:
         _env.update(custom_env)
+
     return subprocess.Popen(
         command,
         env=_env,
@@ -86,6 +88,7 @@ class vLLMServerWrapper:
         vllm_config: vLLMConfig,
         allocation_mode: AllocationMode,
         n_gpus_per_node: int,
+        cpu_per_gpu: int | None = None,
     ):
         self.experiment_name = experiment_name
         self.trial_name = trial_name
@@ -93,6 +96,7 @@ class vLLMServerWrapper:
         self.allocation_mode = allocation_mode
         self.server_processes = []
         self.n_gpus_per_node = n_gpus_per_node
+        self.cpu_per_gpu = cpu_per_gpu
         self._shutdown_requested = False
         self._is_shutting_down = False
 
@@ -176,7 +180,7 @@ class vLLMServerWrapper:
             custom_env = {
                 device_control_env_var: ",".join(
                     visible[j * gpus_per_server : (j + 1) * gpus_per_server]
-                )
+                ),
             }
             config = deepcopy(self.config)
             config.seed = base_random_seed + server_local_idx
@@ -226,9 +230,13 @@ class vLLMServerWrapper:
             raise
 
     def launch_one_server(
-        self, cmd: str, host_ip: str, server_port: int, custom_env: dict | None = None
+        self,
+        cmd: str,
+        host_ip: str,
+        server_port: int,
+        custom_env: dict[str, str] | None = None,
     ):
-        server_process = launch_server_cmd(cmd, custom_env)
+        server_process = launch_server_cmd(cmd, custom_env=custom_env)
         wait_for_server(f"http://{host_ip}:{server_port}")
         name = names.gen_servers(self.experiment_name, self.trial_name)
         name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
@@ -249,12 +257,16 @@ def launch_vllm_server(argv):
     allocation_mode = AllocationMode.from_str(allocation_mode)
     assert allocation_mode.gen_backend == "vllm"
 
+    # Get CPU per GPU from rollout scheduling spec
+    rollout_spec = get_scheduling_spec(config.rollout)
+
     vllm_server = vLLMServerWrapper(
         config.experiment_name,
         config.trial_name,
         config.vllm,
         allocation_mode,
         n_gpus_per_node=config.cluster.n_gpus_per_node,
+        cpu_per_gpu=rollout_spec.cpu,
     )
     vllm_server.run()
 

@@ -37,6 +37,7 @@ from areal.utils.http import get_default_connector
 from areal.utils.launcher import (
     JobState,
     get_env_vars,
+    get_thread_env_vars,
 )
 from areal.utils.offload import get_tms_env_vars
 from areal.utils.proc import build_streaming_log_cmd
@@ -405,6 +406,11 @@ class SlurmScheduler(Scheduler):
             if self.enable_tms_offload:
                 sch.env_vars.update(get_tms_env_vars())
             sch.env_vars.update(get_env_vars(self.cluster_name))
+            thread_env = get_thread_env_vars(
+                cpus_per_task=sch.cpu,
+                existing_env_vars=sch.env_vars,
+            )
+            sch.env_vars.update(thread_env)
 
         if len(schedulings) == 1:
             # Expand single spec to all workers

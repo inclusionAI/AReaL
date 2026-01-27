@@ -31,7 +31,7 @@ from areal.scheduler.exceptions import (
 )
 from areal.scheduler.rpc.ray_rpc_server import RayRPCServer
 from areal.utils import logging
-from areal.utils.launcher import get_env_vars
+from areal.utils.launcher import get_env_vars, get_thread_env_vars
 from areal.utils.ray import get_placement_group_master_ip_and_port
 
 logger = logging.getLogger("RayScheduler")
@@ -235,10 +235,16 @@ class RayScheduler(Scheduler):
         additional_envs_str = None
         if spec.env_vars:
             additional_envs_str = ",".join(f"{k}={v}" for k, v in spec.env_vars.items())
-        return get_env_vars(
+        env = get_env_vars(
             self.exp_config.cluster.cluster_name if self.exp_config else "",
             additional_envs_str,
         )
+        thread_env = get_thread_env_vars(
+            cpus_per_task=spec.cpu,
+            existing_env_vars=spec.env_vars,
+        )
+        env.update(thread_env)
+        return env
 
     def _create_ray_workers(
         self, role: str, schedulings: list[SchedulingSpec]

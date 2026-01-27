@@ -936,7 +936,7 @@ Configuration class: SchedulingSpec
 
 | Parameter              | Type                   | Default                                      | Description                                                                                                                    |
 | ---------------------- | ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `cpu`                  | integer                | `4`                                          | Number of CPU cores required per GPU                                                                                           |
+| `cpu`                  | integer                | `8`                                          | Number of CPU cores required per GPU                                                                                           |
 | `gpu`                  | integer                | `0`                                          | Number of GPU units required. Used only when allocating pods.                                                                  |
 | `mem`                  | integer                | `32`                                         | Amount of memory (GB) required per GPU                                                                                         |
 | `port_count`           | integer                | `2`                                          | Number of ports to expose                                                                                                      |

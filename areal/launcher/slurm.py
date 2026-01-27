@@ -11,7 +11,6 @@ from areal.api.alloc_mode import AllocationMode, AllocationType
 from areal.api.cli_args import (
     ClusterSpecConfig,
     RecoverConfig,
-    SchedulingSpec,
     SGLangConfig,
     parse_cli_args,
     to_structured_cfg,
@@ -25,6 +24,8 @@ from areal.utils.launcher import (
     JobException,
     JobInfo,
     JobState,
+    get_scheduling_spec,
+    get_thread_env_vars,
     validate_config_for_distributed_launcher,
     wait_llm_server_addrs,
 )
@@ -414,10 +415,7 @@ def slurm_main(config, run_id: int = 0):
     )
 
     # Get scheduling specs from actor config
-    try:
-        actor_spec = to_structured_cfg(config.actor.scheduling_spec[0], SchedulingSpec)
-    except AttributeError:
-        actor_spec = SchedulingSpec()
+    actor_spec = get_scheduling_spec(config.actor)
 
     launcher = SlurmLauncher(
         experiment_name=config.experiment_name,
@@ -459,12 +457,7 @@ def slurm_main(config, run_id: int = 0):
             random_seed = config.vllm.seed
 
         # Get rollout scheduling spec
-        try:
-            rollout_spec = to_structured_cfg(
-                config.rollout.scheduling_spec[0], SchedulingSpec
-            )
-        except AttributeError:
-            rollout_spec = SchedulingSpec()
+        rollout_spec = get_scheduling_spec(config.rollout)
 
         backend_spec = {
             "sglang": {
@@ -497,7 +490,12 @@ def slurm_main(config, run_id: int = 0):
             n_servers_per_node = max(n_backend_servers // n_backend_nodes, 1)
 
             cross_nodes = allocation_mode.gen_instance_size > n_gpus_per_node
-            base_env_vars = {**BASE_ENVIRONS, **rollout_spec.env_vars}
+            rollout_cpus_per_task = rollout_spec.cpu * n_gpus_per_node
+            thread_env = get_thread_env_vars(
+                cpus_per_task=rollout_cpus_per_task,
+                existing_env_vars=rollout_spec.env_vars,
+            )
+            base_env_vars = {**BASE_ENVIRONS, **thread_env, **rollout_spec.env_vars}
             if spec["set_device_env"]:
                 base_env_vars[current_platform.device_control_env_var] = ",".join(
                     list(map(str, range(n_gpus_per_node)))
@@ -622,6 +620,14 @@ def slurm_main(config, run_id: int = 0):
             _env_vars["NCCL_CUMEM_ENABLE"] = "0"
             _env_vars["NCCL_NVLS_ENABLE"] = "0"
 
+        trainer_cpus_per_task = actor_spec.cpu * config.cluster.n_gpus_per_node
+        # Use per-GPU CPU count for thread env vars since torchrun spawns
+        # n_gpus_per_node processes, each inheriting these env vars.
+        # This matches Local and Ray launcher behavior.
+        thread_env = get_thread_env_vars(
+            cpus_per_task=actor_spec.cpu,
+            existing_env_vars=actor_spec.env_vars,
+        )
         launcher.submit_array(
             job_name="trainer",
             cmd=_build_trainer_cmds(
@@ -632,13 +638,14 @@ def slurm_main(config, run_id: int = 0):
             count=trainer_n_nodes,
             nodes=trainer_n_nodes,
             n_gpus_per_node=gpus_per_node,
-            cpus_per_task=actor_spec.cpu * config.cluster.n_gpus_per_node,
+            cpus_per_task=trainer_cpus_per_task,
             mem_per_task=actor_spec.mem * 1024 * config.cluster.n_gpus_per_node,
             container_image=actor_spec.image,
             srun_additional_args=actor_spec.srun_additional_args,
             container_mounts=actor_spec.mount,
             env_vars={
                 **BASE_ENVIRONS,
+                **thread_env,
                 **actor_spec.env_vars,
                 **_env_vars,
                 **tms_env_vars,

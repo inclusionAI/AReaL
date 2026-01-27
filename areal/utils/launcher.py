@@ -41,6 +41,85 @@ BASE_ENVIRONS = {
     "PYTHONPATH": PYTHONPATH,
 }
 
+# Thread control environment variables for OpenMP/MKL/etc.
+THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+
+# Default thread count when cpus_per_task cannot be determined
+THREAD_NUM_DEFAULT_WHEN_UNKNOWN = 8
+
+
+def get_thread_env_vars(
+    cpus_per_task: int | None = None,
+    existing_env_vars: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Get thread control environment variables.
+
+    Priority (from highest to lowest):
+    1. existing_env_vars settings (user-configured via SchedulingSpec.env_vars)
+    2. os.environ settings (user pre-set in script/shell)
+    3. cpus_per_task dynamically computed value
+    4. THREAD_NUM_DEFAULT_WHEN_UNKNOWN fallback value
+
+    Args:
+        cpus_per_task: Number of CPU cores allocated per task.
+        existing_env_vars: Existing environment variable dict (e.g., SchedulingSpec.env_vars)
+
+    Returns:
+        Thread environment variable dict
+    """
+    if existing_env_vars is None:
+        existing_env_vars = {}
+
+    # Determine thread count
+    if cpus_per_task is not None and cpus_per_task > 0:
+        num_threads = cpus_per_task
+    else:
+        num_threads = THREAD_NUM_DEFAULT_WHEN_UNKNOWN
+
+    thread_env = {}
+    for var in THREAD_ENV_VARS:
+        # Priority: existing_env_vars > os.environ > computed value
+        if var in existing_env_vars:
+            thread_env[var] = existing_env_vars[var]
+        elif var in os.environ:
+            thread_env[var] = os.environ[var]
+        else:
+            thread_env[var] = str(num_threads)
+
+    # Log auto-set variables
+    newly_set = [
+        v for v in THREAD_ENV_VARS if v not in existing_env_vars and v not in os.environ
+    ]
+    if newly_set:
+        logger.info(
+            f"Auto-setting thread env vars to {num_threads}: {', '.join(newly_set)}"
+        )
+
+    return thread_env
+
+
+def get_scheduling_spec(config_part):
+    """Safely retrieve SchedulingSpec from config.
+
+    Args:
+        config_part: Config object (e.g., config.actor or config.rollout)
+
+    Returns:
+        SchedulingSpec instance (default if not configured)
+    """
+    from areal.api.cli_args import SchedulingSpec, to_structured_cfg
+
+    try:
+        return to_structured_cfg(config_part.scheduling_spec[0], SchedulingSpec)
+    except AttributeError:
+        return SchedulingSpec()
+
 
 def get_env_vars(
     cluster_name: str, additional_env_vars: str | None = None

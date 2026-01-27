@@ -665,7 +665,7 @@ class SchedulingStrategy:
 @dataclass
 class SchedulingSpec:
     cpu: int = field(
-        default=4, metadata={"help": "Number of CPU cores required per GPU"}
+        default=8, metadata={"help": "Number of CPU cores required per GPU"}
     )
     gpu: int = field(
         default=0,
