@@ -739,9 +739,10 @@ class RemoteInfEngine(InferenceEngine):
 
         # Deal with rollout interruption
         stop_reason = None
+        ori_max_new_tokens = gconfig.max_new_tokens
         while (
             stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < gconfig.max_new_tokens
+            and len(accumulated_output_tokens) < ori_max_new_tokens
         ):
             # Request is interrupted, wait for some time to avoid interfering
             # with update weights requests

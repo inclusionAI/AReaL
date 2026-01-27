@@ -48,10 +48,7 @@ class MockBackend:
         return HttpGenerationResult(
             output_tokens=resp_data["output_tokens"],
             output_logprobs=resp_data.get("output_logprobs", [0.0] * len(resp_data["output_tokens"])),
-            # Use None to skip accumulate_rollout_expert_id processing
-            rollout_expert_ids=resp_data.get("rollout_expert_ids", None),
             stop_reason=resp_data["stop_reason"],
-            input_logprobs=resp_data.get("input_logprobs", []),
         )
 
     def get_health_check_request(self) -> HttpRequest:
