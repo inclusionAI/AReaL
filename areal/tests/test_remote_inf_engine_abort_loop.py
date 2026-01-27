@@ -17,10 +17,8 @@ FIX (commit 445dca7):
 Reference: commit 445dca7216e66c24d7a5b47a272761ea81749f8d
 """
 
-import asyncio
 from dataclasses import dataclass, field
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -37,7 +35,9 @@ class MockBackend:
     responses: list[dict] = field(default_factory=list)
     call_count: int = 0
 
-    def build_generation_request(self, req: ModelRequest, with_lora: bool) -> HttpRequest:
+    def build_generation_request(
+        self, req: ModelRequest, with_lora: bool
+    ) -> HttpRequest:
         """Build a mock HTTP request."""
         return HttpRequest(endpoint="/generate", payload={}, method="POST")
 
@@ -47,7 +47,9 @@ class MockBackend:
         self.call_count += 1
         return HttpGenerationResult(
             output_tokens=resp_data["output_tokens"],
-            output_logprobs=resp_data.get("output_logprobs", [0.0] * len(resp_data["output_tokens"])),
+            output_logprobs=resp_data.get(
+                "output_logprobs", [0.0] * len(resp_data["output_tokens"])
+            ),
             stop_reason=resp_data["stop_reason"],
         )
 
@@ -69,8 +71,10 @@ class TestAbortLoopConditionWithRealEngine:
     @pytest.fixture
     def mock_backend_responses(self):
         """Factory fixture to create mock backend with predefined responses."""
+
         def _create(responses: list[dict]) -> MockBackend:
             return MockBackend(responses=responses)
+
         return _create
 
     @pytest.fixture
@@ -83,7 +87,9 @@ class TestAbortLoopConditionWithRealEngine:
             request_retries=1,
         )
 
-    def _create_engine(self, config: InferenceEngineConfig, backend: MockBackend) -> RemoteInfEngine:
+    def _create_engine(
+        self, config: InferenceEngineConfig, backend: MockBackend
+    ) -> RemoteInfEngine:
         """Create a RemoteInfEngine with mock backend."""
         engine = RemoteInfEngine(config=config, backend=backend)
         # Set up minimal state needed for agenerate
@@ -97,7 +103,9 @@ class TestAbortLoopConditionWithRealEngine:
         return engine
 
     @pytest.mark.asyncio
-    async def test_abort_should_continue_loop_with_fix(self, engine_config, mock_backend_responses):
+    async def test_abort_should_continue_loop_with_fix(
+        self, engine_config, mock_backend_responses
+    ):
         """Test that abort continues the loop when using original_max_new_tokens.
 
         This test simulates the FIXED behavior:
@@ -129,7 +137,10 @@ class TestAbortLoopConditionWithRealEngine:
         async def mock_arequest(*args, **kwargs):
             return {}  # Backend.parse_generation_response handles the actual data
 
-        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+        with patch(
+            "areal.core.remote_inf_engine.arequest_with_retry",
+            side_effect=mock_arequest,
+        ):
             response = await engine.agenerate(req)
 
         # Verify the fix works: both responses were processed
@@ -145,7 +156,9 @@ class TestAbortLoopConditionWithRealEngine:
         )
 
     @pytest.mark.asyncio
-    async def test_abort_multiple_times_continues_with_fix(self, engine_config, mock_backend_responses):
+    async def test_abort_multiple_times_continues_with_fix(
+        self, engine_config, mock_backend_responses
+    ):
         """Test that multiple abort responses continue the loop with fix.
 
         Scenario:
@@ -173,15 +186,24 @@ class TestAbortLoopConditionWithRealEngine:
         async def mock_arequest(*args, **kwargs):
             return {}
 
-        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+        with patch(
+            "areal.core.remote_inf_engine.arequest_with_retry",
+            side_effect=mock_arequest,
+        ):
             response = await engine.agenerate(req)
 
-        assert backend.call_count == 3, f"Should have 3 backend calls, got {backend.call_count}"
-        assert len(response.output_tokens) == 180, f"Should have 180 tokens, got {len(response.output_tokens)}"
+        assert backend.call_count == 3, (
+            f"Should have 3 backend calls, got {backend.call_count}"
+        )
+        assert len(response.output_tokens) == 180, (
+            f"Should have 180 tokens, got {len(response.output_tokens)}"
+        )
         assert response.stop_reason == "stop"
 
     @pytest.mark.asyncio
-    async def test_abort_reaches_length_limit_with_fix(self, engine_config, mock_backend_responses):
+    async def test_abort_reaches_length_limit_with_fix(
+        self, engine_config, mock_backend_responses
+    ):
         """Test that abort loop exits when reaching length limit.
 
         Scenario with fix:
@@ -200,7 +222,10 @@ class TestAbortLoopConditionWithRealEngine:
             {"output_tokens": list(range(80)), "stop_reason": "abort"},
             {"output_tokens": list(range(80)), "stop_reason": "abort"},
             {"output_tokens": list(range(80)), "stop_reason": "abort"},
-            {"output_tokens": list(range(10)), "stop_reason": "abort"},  # This will hit remaining limit
+            {
+                "output_tokens": list(range(10)),
+                "stop_reason": "abort",
+            },  # This will hit remaining limit
             # This 5th response won't be reached
             {"output_tokens": list(range(10)), "stop_reason": "stop"},
         ]
@@ -217,19 +242,28 @@ class TestAbortLoopConditionWithRealEngine:
         async def mock_arequest(*args, **kwargs):
             return {}
 
-        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+        with patch(
+            "areal.core.remote_inf_engine.arequest_with_retry",
+            side_effect=mock_arequest,
+        ):
             response = await engine.agenerate(req)
 
         # 80 + 80 + 80 + 10 = 250 tokens
-        assert backend.call_count == 4, f"Should have 4 backend calls, got {backend.call_count}"
-        assert len(response.output_tokens) == 250, f"Should have 250 tokens, got {len(response.output_tokens)}"
+        assert backend.call_count == 4, (
+            f"Should have 4 backend calls, got {backend.call_count}"
+        )
+        assert len(response.output_tokens) == 250, (
+            f"Should have 250 tokens, got {len(response.output_tokens)}"
+        )
         # When exiting due to length limit with abort, stop_reason is converted to "length"
         assert response.stop_reason == "length", (
             f"Final stop_reason should be 'length' (converted from abort), got {response.stop_reason}"
         )
 
     @pytest.mark.asyncio
-    async def test_tool_calls_exits_immediately(self, engine_config, mock_backend_responses):
+    async def test_tool_calls_exits_immediately(
+        self, engine_config, mock_backend_responses
+    ):
         """Test that tool_calls stop_reason exits the loop immediately."""
         responses = [
             {"output_tokens": list(range(50)), "stop_reason": "tool_calls"},
@@ -249,7 +283,10 @@ class TestAbortLoopConditionWithRealEngine:
         async def mock_arequest(*args, **kwargs):
             return {}
 
-        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+        with patch(
+            "areal.core.remote_inf_engine.arequest_with_retry",
+            side_effect=mock_arequest,
+        ):
             response = await engine.agenerate(req)
 
         assert backend.call_count == 1
@@ -257,7 +294,9 @@ class TestAbortLoopConditionWithRealEngine:
         assert len(response.output_tokens) == 50
 
     @pytest.mark.asyncio
-    async def test_length_exits_immediately(self, engine_config, mock_backend_responses):
+    async def test_length_exits_immediately(
+        self, engine_config, mock_backend_responses
+    ):
         """Test that length stop_reason exits the loop immediately."""
         responses = [
             {"output_tokens": list(range(50)), "stop_reason": "length"},
@@ -277,7 +316,10 @@ class TestAbortLoopConditionWithRealEngine:
         async def mock_arequest(*args, **kwargs):
             return {}
 
-        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+        with patch(
+            "areal.core.remote_inf_engine.arequest_with_retry",
+            side_effect=mock_arequest,
+        ):
             response = await engine.agenerate(req)
 
         assert backend.call_count == 1
@@ -305,7 +347,10 @@ class TestAbortLoopConditionWithRealEngine:
         async def mock_arequest(*args, **kwargs):
             return {}
 
-        with patch("areal.core.remote_inf_engine.arequest_with_retry", side_effect=mock_arequest):
+        with patch(
+            "areal.core.remote_inf_engine.arequest_with_retry",
+            side_effect=mock_arequest,
+        ):
             response = await engine.agenerate(req)
 
         assert backend.call_count == 1
@@ -351,7 +396,8 @@ class TestBugReproduction:
         # Check if loop would continue (BUGGY condition)
         buggy_condition = (
             stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < gconfig.max_new_tokens  # 100 < 100 = False!
+            and len(accumulated_output_tokens)
+            < gconfig.max_new_tokens  # 100 < 100 = False!
         )
 
         # Verify BUGGY behavior - loop would exit prematurely
@@ -392,7 +438,8 @@ class TestBugReproduction:
         # Check if loop would continue (FIXED condition)
         fixed_condition = (
             stop_reason not in ["stop", "tool_calls", "length"]
-            and len(accumulated_output_tokens) < original_max_new_tokens  # 100 < 200 = True!
+            and len(accumulated_output_tokens)
+            < original_max_new_tokens  # 100 < 200 = True!
         )
 
         # Verify FIXED behavior - loop continues
@@ -413,8 +460,12 @@ class TestGconfigModification:
         tokens_generated = 100
         gconfig.max_new_tokens -= tokens_generated
 
-        assert gconfig.max_new_tokens == 100, "gconfig.max_new_tokens should be decremented"
-        assert original_value == 200, "Original value should be unchanged if saved separately"
+        assert gconfig.max_new_tokens == 100, (
+            "gconfig.max_new_tokens should be decremented"
+        )
+        assert original_value == 200, (
+            "Original value should be unchanged if saved separately"
+        )
 
     def test_model_request_copy_creates_new_gconfig(self):
         """Verify that ModelRequest.copy() creates a new gconfig instance."""
@@ -428,7 +479,9 @@ class TestGconfigModification:
 
         # Original should be unchanged
         assert req.gconfig.max_new_tokens == 200, "Original gconfig should be unchanged"
-        assert req_copy.gconfig.max_new_tokens == 100, "Copy's gconfig should be modified"
+        assert req_copy.gconfig.max_new_tokens == 100, (
+            "Copy's gconfig should be modified"
+        )
 
 
 if __name__ == "__main__":
