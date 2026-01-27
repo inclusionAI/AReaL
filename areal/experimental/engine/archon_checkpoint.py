@@ -121,6 +121,31 @@ def load_model_from_hf(engine: ArchonEngine, path: str) -> None:
     # Convert back to Archon format
     archon_state_dict = engine.state_dict_adapter.from_hf(hf_state_dict)
 
+    # Compute key differences for diagnostics
+    model_keys = set(state_dict.keys())
+    loaded_keys = set(archon_state_dict.keys())
+
+    missing_keys = model_keys - loaded_keys
+    unexpected_keys = loaded_keys - model_keys
+
+    # Filter known expected missing keys
+    expected_missing = set()
+    for key in list(missing_keys):
+        # rotary_emb is computed at runtime, not stored in checkpoint
+        if "rotary_emb" in key:
+            expected_missing.add(key)
+    missing_keys -= expected_missing
+
+    if dist.get_rank() == 0:
+        if missing_keys:
+            engine.logger.warning(
+                f"Unexpected missing keys in checkpoint: {missing_keys}"
+            )
+        if unexpected_keys:
+            engine.logger.warning(
+                f"Unexpected extra keys in checkpoint: {unexpected_keys}"
+            )
+
     # Load into FSDP model (same as DCPState.load_state_dict)
     set_model_state_dict(
         engine.model,
@@ -142,6 +167,8 @@ def save_to_dcp(engine: ArchonEngine, path: str, with_optim: bool) -> None:
     state_dict = {"dcp": dcp_state}
     dcp.save(state_dict, checkpoint_id=path)
 
+    dist.barrier(group=engine.cpu_group)
+
 
 def load_from_dcp(engine: ArchonEngine, path: str, with_optim: bool) -> None:
     """Load model (and optionally optimizer) from DCP format."""
@@ -151,6 +178,8 @@ def load_from_dcp(engine: ArchonEngine, path: str, with_optim: bool) -> None:
     dcp_state = DCPState(engine.model, engine.optimizer if with_optim else None)
     state_dict = {"dcp": dcp_state}
     dcp.load(state_dict=state_dict, checkpoint_id=path)
+
+    dist.barrier(group=engine.cpu_group)
 
 
 def save_optimizer_state(engine: ArchonEngine, path: str) -> None:

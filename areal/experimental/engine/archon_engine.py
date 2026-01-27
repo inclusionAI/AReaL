@@ -85,7 +85,6 @@ from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import torch_memory_saver
 from areal.utils.perf_tracer import trace_perf
-from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
 
 @dataclass
@@ -264,6 +263,8 @@ class ArchonEngine(TrainEngine):
         self.logger.info(
             f"Applied parallelism in {time.perf_counter() - tik:.2f} seconds"
         )
+
+        self._materialize_and_load_weights()
 
         self._create_optimizer(ft_spec)
 
@@ -817,11 +818,19 @@ class ArchonEngine(TrainEngine):
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
         tik = time.perf_counter()
-        with torch.device(current_platform.device_type):
-            model = self._create_llm_model()
 
-        self.logger.info(f"Model creation time: {time.perf_counter() - tik:.2f}s")
+        # Meta device mode: create structure only, no memory allocation
+        # Parameters exist only as metadata until materialized after FSDP
+        with torch.device("meta"):
+            model = self._create_model_structure()
+        model = model.to(getattr(torch, self.config.dtype))
         self.model = model
+
+        self.logger.info(
+            f"Model structure created on meta device in "
+            f"{time.perf_counter() - tik:.2f}s"
+        )
+        self.get_device_stats().log("after create model structure")
 
     def _build_ac_config(self) -> ActivationCheckpointConfig | None:
         # First check if gradient checkpointing is enabled
@@ -851,56 +860,43 @@ class ArchonEngine(TrainEngine):
 
         return ac_config
 
-    def _create_llm_model(self) -> nn.Module:
+    def _create_model_structure(self) -> nn.Module:
+        """Create model structure on meta device without loading weights."""
         model_args = self.spec.model_args_class.from_hf_config(
             self.model_config,
             is_critic=self.config.is_critic,
             attn_type=self.config.archon.attn_type,
         )
         model = self.spec.model_class(model_args)
-
-        if not self.config.init_from_scratch:
-            self._load_hf_weights_to_archon_model(model)
-        else:
-            model.init_weights()
-
-        dtype = getattr(torch, self.config.dtype)
-        model = model.to(dtype)
-
         return model
 
-    def _load_hf_weights_to_archon_model(self, model: nn.Module):
-        self.logger.info(f"Loading weights from {self.config.path}")
+    def _materialize_and_load_weights(self):
+        """Materialize meta tensors and load weights after FSDP parallelization."""
+        if self.config.archon.offload_params:
+            init_device = "cpu"
+            buffer_device = current_platform.device_type
+        else:
+            init_device = current_platform.device_type
+            buffer_device = init_device
 
-        hf_state_dict = get_state_dict_from_repo_id_or_path(self.config.path)
+        tik = time.perf_counter()
 
-        adapter = self.spec.state_dict_adapter_class(self.model_config)
+        self.model.to_empty(device=init_device)
 
-        archon_state_dict = adapter.from_hf(hf_state_dict)
+        if not self.config.init_from_scratch:
+            load_model_from_hf(self, self.config.path)
+        else:
+            with torch.no_grad():
+                self.model.init_weights()
 
-        missing_keys, unexpected_keys = model.load_state_dict(
-            archon_state_dict, strict=False
+        self.model.init_buffers(buffer_device=buffer_device)
+
+        dist.barrier(group=self.cpu_group)
+
+        self.logger.info(
+            f"Materialized and loaded weights in {time.perf_counter() - tik:.2f}s"
         )
-
-        if missing_keys:
-            expected_missing = {"rope_cache"}
-            if not self.config.is_critic:
-                expected_missing.add("score.weight")
-            else:
-                expected_missing.add("output.weight")
-
-            actual_missing = [k for k in missing_keys if k not in expected_missing]
-            if actual_missing:
-                self.logger.warning(
-                    f"Missing keys when loading weights: {actual_missing}"
-                )
-
-        if unexpected_keys:
-            self.logger.warning(
-                f"Unexpected keys when loading weights: {unexpected_keys}"
-            )
-
-        self.logger.info("Successfully loaded weights into Archon model")
+        self.get_device_stats().log("after materialize and load weights")
 
     def _create_optimizer(self, ft_spec: FinetuneSpec):
         if self.optimizer_config is None:

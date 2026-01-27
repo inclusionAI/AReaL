@@ -104,21 +104,8 @@ class MoE(nn.Module):
         # Buffers for auxiliary-loss-free load balancing
         # expert_bias is used to adjust routing probabilities
         # tokens_per_expert tracks usage for bias updates
-        if self.load_balance_coeff is not None:
-            assert self.load_balance_coeff > 0.0
-            self.register_buffer(
-                "expert_bias",
-                torch.zeros(moe_args.num_experts, dtype=torch.float32),
-                persistent=True,
-            )
-        else:
-            self.expert_bias = None
-
-        self.register_buffer(
-            "tokens_per_expert",
-            torch.zeros(moe_args.num_experts, dtype=torch.float32),
-            persistent=False,
-        )
+        self.expert_bias: torch.Tensor | None
+        self.tokens_per_expert: torch.Tensor
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through MoE layer.
@@ -214,12 +201,11 @@ class MoE(nn.Module):
 
         return out.view(bs, slen, dim)
 
-    def init_weights(self, init_std: float, buffer_device: torch.device):
-        """Initialize weights.
+    def init_weights(self, init_std: float):
+        """Initialize MoE parameters.
 
         Args:
             init_std: Standard deviation for output projections.
-            buffer_device: Device for buffers.
         """
         self.experts.init_weights(init_std)
         self.router.init_weights(init_std)
@@ -227,11 +213,27 @@ class MoE(nn.Module):
         if self.shared_experts is not None:
             self.shared_experts.init_weights(init_std)
 
-        # Reset buffers
+    def init_buffers(self, buffer_device: torch.device | str):
+        """Initialize MoE buffers (tokens_per_expert, expert_bias).
+
+        Args:
+            buffer_device: Device for buffers.
+        """
         with torch.device(buffer_device):
-            self.tokens_per_expert = torch.zeros(self.num_experts, dtype=torch.float32)
+            self.register_buffer(
+                "tokens_per_expert",
+                torch.zeros(self.num_experts, dtype=torch.float32),
+                persistent=False,
+            )
             if self.load_balance_coeff is not None:
-                self.expert_bias = torch.zeros(self.num_experts, dtype=torch.float32)
+                assert self.load_balance_coeff > 0.0
+                self.register_buffer(
+                    "expert_bias",
+                    torch.zeros(self.num_experts, dtype=torch.float32),
+                    persistent=True,
+                )
+            else:
+                self.expert_bias = None
 
 
 __all__ = ["MoE", "FeedForward"]

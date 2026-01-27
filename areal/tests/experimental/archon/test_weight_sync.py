@@ -96,7 +96,8 @@ def small_dense_model(small_dense_model_args):
     from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
 
     model = Qwen3Model(small_dense_model_args)
-    model.init_weights(torch.device("cpu"))
+    model.init_weights()
+    model.init_buffers(buffer_device=torch.device("cpu"))
     return model
 
 
@@ -106,7 +107,8 @@ def small_moe_model(small_moe_model_args):
     from areal.experimental.models.archon.qwen3.model.model import Qwen3Model
 
     model = Qwen3Model(small_moe_model_args)
-    model.init_weights(torch.device("cpu"))
+    model.init_weights()
+    model.init_buffers(buffer_device=torch.device("cpu"))
     return model
 
 

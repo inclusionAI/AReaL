@@ -11,6 +11,7 @@ from areal.experimental.models.archon.attention import (
     SDPAWrapper,
     VarlenAttentionWrapper,
 )
+from areal.experimental.models.archon.base import BaseArchonModel
 from areal.experimental.models.archon.moe import MoE
 from areal.experimental.models.archon.qwen3.model.args import Qwen3ModelArgs
 from areal.experimental.models.archon.qwen3.model.rope import (
@@ -336,17 +337,27 @@ class TransformerBlock(nn.Module):
             x = x + self.feed_forward(self.ffn_norm(x))
         return x
 
-    def init_weights(self, buffer_device: torch.device):
+    def init_weights(self):
+        """Initialize layer parameters."""
         for norm in (self.attention_norm, self.ffn_norm):
             norm.reset_parameters()
         self.attention.init_weights(self.weight_init_std)
         if self.moe_enabled:
-            self.moe.init_weights(self.weight_init_std, buffer_device)
+            self.moe.init_weights(self.weight_init_std)
         else:
             self.feed_forward.init_weights(self.weight_init_std)
 
+    def init_buffers(self, buffer_device: torch.device | str):
+        """Initialize layer buffers (MoE buffers if enabled).
 
-class Qwen3Model(nn.Module):
+        Args:
+            buffer_device: Device for buffers.
+        """
+        if self.moe_enabled:
+            self.moe.init_buffers(buffer_device)
+
+
+class Qwen3Model(BaseArchonModel):
     """Qwen3 transformer model."""
 
     def __init__(self, model_args: Qwen3ModelArgs):
@@ -384,17 +395,14 @@ class Qwen3Model(nn.Module):
             self.model_args.rope_theta,
         )
 
-    def init_weights(self, buffer_device: torch.device | None = None):
-        buffer_device = buffer_device or self.rope_cache.device
-        with torch.device(buffer_device):
-            self.rope_cache = self._precompute_rope_cache()
-
+    def init_weights(self):
+        """Initialize model parameters."""
         if self.tok_embeddings is not None:
             nn.init.normal_(self.tok_embeddings.weight)
 
         for layer in self.layers.values():
             if layer is not None:
-                layer.init_weights(buffer_device)
+                layer.init_weights()
 
         if self.norm is not None:
             self.norm.reset_parameters()
@@ -419,6 +427,19 @@ class Qwen3Model(nn.Module):
                 a=-cutoff_factor * final_out_std,
                 b=cutoff_factor * final_out_std,
             )
+
+    def init_buffers(self, buffer_device: torch.device | str):
+        """Initialize model buffers (rope_cache and MoE buffers).
+
+        Args:
+            buffer_device: Device for buffers.
+        """
+        with torch.device(buffer_device):
+            self.rope_cache = self._precompute_rope_cache()
+        # Initialize MoE buffers in each layer
+        for layer in self.layers.values():
+            if layer is not None:
+                layer.init_buffers(buffer_device)
 
     def forward(
         self,
