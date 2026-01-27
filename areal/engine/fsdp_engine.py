@@ -282,9 +282,17 @@ class FSDPEngine(TrainEngine):
         )
         tik = time.perf_counter()
         # Prepare weights synchronization for load_device="cpu" or LoRA
-        # For load_device="cpu": rank 0 has weights on CPU, others have meta placeholders
+        # For load_device="cpu": rank 0 loads pretrained weights, others wait
         # For LoRA: need to sync randomly initialized LoRA weights
-        if self.config.load_device == "cpu" or self.config.use_lora:
+        full_state = None
+        if self.config.load_device == "cpu" and not self.config.init_from_scratch:
+            # Load pretrained weights from HuggingFace on rank 0
+            if dist.get_rank() == 0:
+                full_state = get_state_dict_from_repo_id_or_path(self.config.path)
+            else:
+                full_state = {}
+        elif self.config.use_lora:
+            # For LoRA, sync the randomly initialized LoRA weights
             if dist.get_rank() == 0:
                 full_state = self.model.state_dict()
             else:
@@ -303,9 +311,9 @@ class FSDPEngine(TrainEngine):
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
         )
         # Broadcast weights from rank 0 to all ranks
-        # For load_device="cpu": broadcasts pretrained/random weights from CPU
+        # For load_device="cpu": broadcasts pretrained weights from CPU
         # For LoRA: synchronizes randomly initialized LoRA weights
-        if self.config.load_device == "cpu" or self.config.use_lora:
+        if full_state is not None:
             tik = time.perf_counter()
             fsdp2_load_full_state_dict(
                 self.model,
