@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-model_path="${MODEL_PATH}"
-data_json="${DATA_JSON}"
-output_dir="${OUTPUT_DIR}"
-prompt_template=qwen3
-box_remap=scale
-
+model_path="/storage/openpsi/models/Qwen3-VL-8B-Thinking/"
 echo "model: $model_path"
 
 mkdir -p ./log

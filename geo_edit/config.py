@@ -109,7 +109,6 @@ def build_openai_agent_configs(
     *,
     max_output_tokens: Optional[int] = None,
     temperature: float = 1.0,
-    system_prompt: Optional[str] = None,
     tool_mode: Optional[str] = None,
     reasoning_level: Optional[str] = None,
 ) -> OpenAIAgentConfigs:
@@ -140,7 +139,6 @@ def build_openai_agent_configs(
         "tool_choice": tool_mode,
         "temperature": temperature,
         "max_output_tokens": max_output_tokens,
-        "instructions": system_prompt,
         "reasoning": {"effort":reasoning_level}
     }
     
@@ -149,7 +147,6 @@ def build_openai_agent_configs(
         "tool_choice": "none",
         "temperature": temperature,
         "max_output_tokens": max_output_tokens,
-        "instructions": system_prompt,
         "reasoning": {"effort":reasoning_level},
     }
 
@@ -195,7 +192,6 @@ def build_vllm_agent_configs(
         "tool_choice": tool_mode,
         "temperature": temperature,
         "max_tokens": max_output_tokens,
-        "instructions": system_prompt,
     }
 
     force_final_generate_config = {

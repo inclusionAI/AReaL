@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from logging import log
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -206,7 +207,12 @@ class VLLMVisionQATask(VisionQATask):
         )
 
         if not tool_calls and not output_text:
+            logger.error(content)
             raise ValueError("vLLM response contained no tool call or final answer.")
+        
+        if tool_calls and output_text:
+            logger.warning("vLLM response contained tool call and final answer.")
+            return None
 
         assistant_message: Dict[str, Any] = {"role": "assistant"}
         assistant_message["content"] = content
@@ -231,6 +237,8 @@ class VLLMVisionQATask(VisionQATask):
                 "extra_info": extra_info,
             }
         )
+
+        
 
         return list(tool_calls)
 
