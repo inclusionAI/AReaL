@@ -113,18 +113,27 @@ class VisionQATask(AbstractVLMTask):
         if not tool_calls:
             logger.warning("No function calls found in the action.")
             return True, None, None, None
-        first_call = tool_calls[0]
-        expected_name = first_call.name
-        expected_index = first_call.args["image_index"]
-        for call in tool_calls[1:]:
-            if call.name != expected_name:
-                logger.warning("Inconsistent function call names: expected %s, got %s", expected_name, call.name)
+
+        first = tool_calls[0]
+        expected_index = first.args["image_index"]
+        has_crop = (first.name == "image_crop") or any(c.name == "image_crop" for c in tool_calls[1:])
+
+        for c in tool_calls[1:]:
+            if c.args["image_index"] != expected_index:
+                logger.warning(
+                    "Inconsistent image_index values: expected %s, got %s",
+                    expected_index, c.args["image_index"]
+                )
+                return False, "Function call image_index values are inconsistent in the same action.", None, None
+            if has_crop and c.name != "image_crop":
+                logger.warning(
+                    "Inconsistent function call names: expected %s, got %s",
+                    "image_crop", c.name
+                )
                 return False, "Function call names are inconsistent in the same action.", None, None
-            call_index = call.args["image_index"]
-            if call_index != expected_index:
-                logger.warning("Inconsistent image_index values: expected %s, got %s", expected_index, call_index)
-                return (False, "Function call image_index values are inconsistent in the same action.", None, None)
-        return True, None, expected_name, expected_index
+
+        return True, None, ("image_crop" if has_crop else None), expected_index
+
 
     def update_observation_from_action(self, tool_calls: List[ToolCall]) -> None:
         if not tool_calls:

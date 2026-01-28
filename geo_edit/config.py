@@ -60,27 +60,30 @@ def build_google_agent_configs(
         tools=None
     else:
         raise ValueError(f"Invalid tool_mode: {tool_mode}")
-        
+    
     thinking_config = None
     if thinking_level is not None:
         thinking_config = types.ThinkingConfig(
             thinkingLevel=thinking_level,
             include_thoughts=True if include_thoughts is None else include_thoughts,
         )
-        
-    generate_config = types.GenerateContentConfig(
-        tools=[tools],
+    
+    generate_kwargs = dict(
         thinking_config=thinking_config,
-        tool_config=tool_config,
         temperature=temperature,
         system_instruction=system_prompt,
         max_output_tokens=max_output_tokens,
         candidate_count=candidate_count,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
+    if tools is not None:
+        generate_kwargs["tools"] = [tools]
+        generate_kwargs["tool_config"] = tool_config
+        
+    generate_config = types.GenerateContentConfig(**generate_kwargs)
 
-    force_final_generate_config = types.GenerateContentConfig(
-        tools=[tools],
+        
+    force_final_kwargs = dict(
         thinking_config=thinking_config,
         tool_config=types.ToolConfig(
             function_calling_config=types.FunctionCallingConfig(mode="NONE")
@@ -90,6 +93,10 @@ def build_google_agent_configs(
         max_output_tokens=max_output_tokens,
         candidate_count=candidate_count,
     )
+    if tools is not None:
+        force_final_kwargs["tools"] = [tools]
+
+    force_final_generate_config = types.GenerateContentConfig(**force_final_kwargs)
 
     return GoogleAgentConfigs(
         tools=tools,

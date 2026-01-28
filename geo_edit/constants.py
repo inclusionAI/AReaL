@@ -90,7 +90,7 @@ EVAL_QUERY_PROMPT = (
     'The format should be "Score: 0 or 1"'
 )
 
-MAX_TOOL_CALLS = 8
+MAX_TOOL_CALLS = 4
 
 SUDOKU_TOOL_CALL_INPUT_TEMPLATE = '''
 You are a professional Sudoku puzzle solver. Please solve the following Sudoku variant.

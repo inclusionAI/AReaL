@@ -91,7 +91,6 @@ def _init_worker(
         generate_config=agent_configs.generate_config,
         n_retry=3,
     )
-
     _WORKER_AGENT_CONFIGS = agent_configs
     agent_cls = VLLMBasedAgent if model_type == "vLLM" else APIBasedAgent
     _WORKER_AGENT = agent_cls(config)
@@ -152,7 +151,8 @@ def _run_one_task(task_payload: dict):
             task.update_observation_from_action(function_call_part_list)
             
         if task.state and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS:
-                force_prompt = "Max tool calls reached. Please continue with a tool call."
+                logger.info(f"[{task_id}] reached max tool calls {_WORKER_MAX_TOOL_CALLS}, forcing final answer.")
+                force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
                 task.append_prompt(force_prompt)
                 original_generate_config = _WORKER_AGENT.config.generate_config
                 _WORKER_AGENT.config.generate_config = _WORKER_AGENT_CONFIGS.force_final_generate_config
