@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from PIL import Image
 
-from .vision_qa_task import ToolCall, VisionQATask
-from ...utils.logger import setup_logger
+from geo_edit.environment.task.vision_qa_task import ToolCall, VisionQATask
+from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

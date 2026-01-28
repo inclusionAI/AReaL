@@ -1,5 +1,5 @@
-from .image_edition_nanob import image_edition_function, image_edit_function_declaration
-from .image_edition_tool import (
+from geo_edit.environment.action.image_edition_nanob import image_edition_function, image_edit_function_declaration
+from geo_edit.environment.action.image_edition_tool import (
     image_label_function_declaration,
     draw_line_function_declaration,
     image_crop_function_declaration,

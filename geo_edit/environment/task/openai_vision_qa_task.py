@@ -6,9 +6,9 @@ from typing import Any, Dict, List, Optional
 
 from PIL import Image
 
-from .vision_qa_task import ToolCall, VisionQATask
-from ...utils.vision_task_utils import image_to_data_url
-from ...utils.logger import setup_logger
+from geo_edit.environment.task.vision_qa_task import ToolCall, VisionQATask
+from geo_edit.utils.vision_task_utils import image_to_data_url
+from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

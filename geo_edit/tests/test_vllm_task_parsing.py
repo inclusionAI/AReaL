@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from ..environment.action.image_edition_tool import draw_line_function
-from ..environment.task.vllm_vision_qa_task import VLLMVisionQATask
+from geo_edit.environment.action.image_edition_tool import draw_line_function
+from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
 
 
 def _make_response(content: str, tokens_used: int = 5):

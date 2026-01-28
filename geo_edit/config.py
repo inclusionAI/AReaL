@@ -2,12 +2,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 from google.genai import types
-from .constants import (
+from geo_edit.constants import (
     MAX_TOOL_CALLS,
     MATHVISION_INPUT_TEMPLATE,
     NOTOOL_INPUT_TEMPLATE,
 )
-from .environment.action import TOOL_FUNCTIONS_DECLARE, TOOL_FUNCTIONS
+from geo_edit.environment.action import TOOL_FUNCTIONS_DECLARE, TOOL_FUNCTIONS
 
 @dataclass(frozen=True, slots=True)
 class GoogleAgentConfigs:

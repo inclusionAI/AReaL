@@ -5,7 +5,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Union
-from ..constants import EVAL_QUERY_PROMPT, EVAL_SYSTEM_PROMPT
+from geo_edit.constants import EVAL_QUERY_PROMPT, EVAL_SYSTEM_PROMPT
 from openai import OpenAI
 
 ANSWER_TEMPLATE = "<answer>{}</answer>"
