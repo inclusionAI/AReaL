@@ -211,8 +211,12 @@ class VLLMVisionQATask(VisionQATask):
             raise ValueError("vLLM response contained no tool call or final answer.")
         
         if tool_calls and output_text:
-            logger.warning("vLLM response contained tool call and final answer.")
-            return None
+            logger.warning(
+                "vLLM response contained tool call and final answer; "
+                "keeping the answer and ignoring tool calls."
+            )
+            tool_calls = []
+            tool_call_records = []
 
         assistant_message: Dict[str, Any] = {"role": "assistant"}
         assistant_message["content"] = content

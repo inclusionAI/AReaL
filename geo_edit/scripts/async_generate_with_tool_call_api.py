@@ -52,7 +52,9 @@ def _init_worker(
     max_output_tokens = None
     if model_type in {"Google", "OpenAI"} and not api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
-    system_prompt = get_system_prompt(model_type) if use_tools != "direct" else None
+    system_prompt = (
+        get_system_prompt(model_type, use_tools) if use_tools != "direct" else None
+    )
 
     if model_type == "Google":
         agent_configs = build_google_agent_configs(

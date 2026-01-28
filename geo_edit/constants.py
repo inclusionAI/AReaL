@@ -48,6 +48,14 @@ conclusion, you must wrap your final answer in
 <answer> and </answer> tags.
 '''
 
+VLLM_FORCE_TOOL_CALL_PROMPT = '''
+Force tool-call mode:
+- You MUST output exactly one <action>...</action> in your response.
+- Do NOT output <answer> or plain text in the same response as a tool call.
+- If you already know the final answer, you must still call a tool first.
+- Only after tool results are returned should you output <answer>...</answer> with no <action>.
+'''
+
 MATHVISION_INPUT_TEMPLATE = '''
 Please solve the problem with provided tools. After you confirm the final answer, put your answer in one '<answer>\\boxed{{}}</answer>'. If it is a multiple choice question, only one letter is allowed in the '<answer>\\boxed{{}}</answer>'.\n{question}\n{options}
 '''
@@ -134,9 +142,13 @@ For example, the format should look like
 </ANSWER>
 '''
 
-def get_system_prompt(model_type: str) -> str:
+def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
     """Select system prompt based on model type."""
-    if model_type.strip().lower() == "vllm":
+    model_type_normalized = model_type.strip().lower()
+    tool_mode_normalized = tool_mode.strip().lower() if tool_mode else None
+    if model_type_normalized == "vllm":
+        if tool_mode_normalized == "force":
+            return f"{VLLM_SYSTEM_PROMPT}\n\n{VLLM_FORCE_TOOL_CALL_PROMPT}"
         return VLLM_SYSTEM_PROMPT
     return API_CALL_SYSTEM_PROMPT
 

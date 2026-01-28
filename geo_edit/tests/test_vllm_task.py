@@ -1,5 +1,5 @@
 from __future__ import annotations
-#TODO: 使vllm force tool call有效化
+
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,7 +65,7 @@ def test_vllm_task() -> None:
     if args.system_prompt is not None:
         system_prompt = args.system_prompt
     elif use_tools:
-        system_prompt = get_system_prompt("vLLM")
+        system_prompt = get_system_prompt("vLLM", args.tool_mode)
     else:
         system_prompt = (
             "You are a helpful assistant. Think step by step in <think> tags and "
