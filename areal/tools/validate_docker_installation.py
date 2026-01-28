@@ -11,7 +11,6 @@ Also validates DeepSeek-V3 related packages:
 - DeepGEMM: FP8 GEMM library (requires SM90+ GPU)
 - DeepEP: Expert Parallelism communication (requires SM80+ GPU)
 - flash-linear-attention (fla): Linear attention with Triton kernels
-- NVSHMEM: Required for DeepEP internode features
 """
 
 import sys
@@ -41,7 +40,6 @@ class DockerInstallationValidator(BaseInstallationValidator):
         "deep_gemm": ["deep_gemm"],
         "deep_ep": ["deep_ep"],
         "fla": ["fla.ops", "fla.layers", "fla.modules"],
-        "nvidia-nvshmem-cu12": ["nvidia.nvshmem"],
     }
 
     # Add Docker-specific packages to critical list
@@ -89,9 +87,6 @@ class DockerInstallationValidator(BaseInstallationValidator):
         self.add_additional_package(
             "fla", required=True
         )  # Pure Triton, works everywhere
-        self.add_additional_package(
-            "nvidia-nvshmem-cu12", required=False
-        )  # DeepEP internode
 
     def test_cuda_functionality(self):
         """Run CUDA functionality tests including Docker-specific packages."""
@@ -209,16 +204,6 @@ class DockerInstallationValidator(BaseInstallationValidator):
             print("⚠ DeepEP not available (requires SM80+ GPU and NVSHMEM)")
         except Exception as e:
             print(f"⚠ DeepEP import failed: {e}")
-
-        # Test NVSHMEM (dependency for DeepEP internode features)
-        try:
-            import nvidia.nvshmem  # noqa: F401
-
-            print("✓ NVSHMEM imported successfully")
-        except ImportError:
-            print("⚠ NVSHMEM not available (optional, for DeepEP internode features)")
-        except Exception as e:
-            print(f"⚠ NVSHMEM import failed: {e}")
 
         # Test flash-linear-attention (fla) with actual layer instantiation
         try:
