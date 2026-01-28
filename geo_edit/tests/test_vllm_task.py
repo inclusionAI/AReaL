@@ -14,7 +14,18 @@ from geo_edit.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-DEFAULT_PROMPT = "Describe the image and put the answer in <answer>...</answer>."
+DEFAULT_PROMPT = """
+A circle $K$ is inscribed in a quarter circle with radius 6 as shown in the figure. What is the radius of circle $K$?<image1>
+
+option[
+    A."$\\frac{6-\\sqrt{2}}{2}$",
+    B."$\\frac{3 \\sqrt{2}}{2}$",
+    C."2.5",
+    D."3",
+    E."$6(\\sqrt{2}-1)$"
+]
+"""
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,30 +40,23 @@ class Args:
     max_tokens: int
     max_steps: int
 
-
-def _ensure_answer_tag(prompt: str) -> str:
-    if "<answer>" in prompt.lower():
-        return prompt
-    return f"{prompt.rstrip()}\nAnswer inside <answer>...</answer>."
-
-
-def test_vllm_task(tmp_path: Path) -> None:
+def test_vllm_task() -> None:
     args = Args(
         api_base="http://127.0.0.1:8000",
-        model_name=os.environ["VLLM_MODEL_NAME"],
-        image_path=Path(__file__).resolve().parents[1] / "images" / "input_image.png",
+        model_name="/storage/openpsi/models/Qwen3-VL-8B-Thinking/",
+        image_path=Path("./geo_edit/images/input_image.png"),
         prompt=DEFAULT_PROMPT,
         system_prompt=None,
-        tool_mode="direct",
+        tool_mode="force",
         temperature=0.2,
-        max_tokens=512,
+        max_tokens=16384,
         max_steps=MAX_TOOL_CALLS,
     )
 
     api_base = args.api_base
     model_name = args.model_name
 
-    save_dir = tmp_path / "vllm_task_test"
+    save_dir = Path("./vllm_task_test")
     save_dir.mkdir(parents=True, exist_ok=True)
 
     use_tools = args.tool_mode != "direct"
@@ -68,7 +72,7 @@ def test_vllm_task(tmp_path: Path) -> None:
             "provide the final answer in <answer>...</answer>."
         )
 
-    prompt = _ensure_answer_tag(args.prompt)
+    prompt = args.prompt
 
     agent_configs = build_vllm_agent_configs(
         max_output_tokens=args.max_tokens,
