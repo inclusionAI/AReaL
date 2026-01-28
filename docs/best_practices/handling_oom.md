@@ -135,6 +135,33 @@ When encountering an OOM error, you can switch to a more memory-efficient optimi
 setting `actor.optimizer.type: <name>` in your YAML configuration file (e.g.,
 `actor.optimizer.type: sgd`).
 
+### 4. Use Memory-Efficient Model Loading
+
+If you're hitting OOM during model initialization (before training even starts), try
+enabling memory-efficient loading:
+
+```yaml
+actor:
+  fsdp:
+    memory_efficient_load: true
+```
+
+This is especially useful for very large models where loading the full model weights
+directly onto each GPU would exceed memory. When `memory_efficient_load: true` is set:
+
+1. All ranks create model structure on CPU (without loading weights for LLM)
+1. FSDP parallelization is applied
+1. Rank 0 loads pretrained weights and broadcasts to all ranks
+1. Weights are transferred to GPU
+
+This approach trades some initialization time for significantly lower peak GPU memory
+during model loading.
+
+**Note for Vision-Language Models (VLMs):** VLMs do not use the rank 0 broadcast
+optimization. When `memory_efficient_load: true` is set for VLMs, weights are loaded on
+CPU instead of GPU, but each rank loads weights independently. This still reduces GPU
+memory usage during initialization but does not reduce CPU memory or disk/network I/O.
+
 ## Resolving Weight Update OOM Errors
 
 Weight updates can eat up a lot of memory, especially when using NCCL synchronization

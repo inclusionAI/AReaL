@@ -374,6 +374,16 @@ class FSDPEngineConfig:
         default=False,
         metadata={"help": "Whether to offload FSDP parameters to CPU."},
     )
+    memory_efficient_load: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable memory-efficient model loading. When enabled, model weights "
+            "are initialized on CPU and only rank 0 loads pretrained weights, which are "
+            "then broadcast to all ranks after FSDP sharding. This reduces peak GPU memory "
+            "during initialization for large models. Note: For VLMs, rank 0 broadcast is "
+            "not used; each rank loads weights independently on CPU."
+        },
+    )
 
 
 @dataclass
@@ -840,11 +850,17 @@ class TrainEngineConfig:
     )
 
     def __post_init__(self):
-        """Validate scheduling_spec length."""
+        """Validate scheduling_spec length and config combinations."""
         if len(self.scheduling_spec) not in (1, 2):
             raise ValueError(
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
+            )
+        if self.fsdp.memory_efficient_load and self.init_from_scratch:
+            raise ValueError(
+                "memory_efficient_load cannot be used with init_from_scratch=True. "
+                "memory_efficient_load is for loading pretrained weights on CPU, "
+                "but init_from_scratch creates a model without loading any weights."
             )
 
 

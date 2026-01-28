@@ -281,12 +281,40 @@ class FSDPEngine(TrainEngine):
             CPUOffloadPolicy() if self.config.fsdp.offload_params else None
         )
         tik = time.perf_counter()
-        # Prepare lora weights synchronization
-        if self.config.use_lora:
+
+        full_state = None
+        need_broadcast = False
+
+        is_llm_cpu_load = (
+            self.config.fsdp.memory_efficient_load
+            and not self.config.init_from_scratch
+            and not self.is_vision_model
+        )
+
+        if is_llm_cpu_load or self.config.use_lora:
+            need_broadcast = True
             if dist.get_rank() == 0:
+                if is_llm_cpu_load:
+                    pretrained_state = get_state_dict_from_repo_id_or_path(
+                        self.config.path
+                    )
+                    missing, unexpected = self.model.load_state_dict(
+                        pretrained_state, strict=False
+                    )
+                    if missing:
+                        self.logger.warning(
+                            f"Missing keys when loading pretrained weights: {missing}"
+                        )
+                    if unexpected:
+                        self.logger.warning(
+                            f"Unexpected keys when loading pretrained weights: {unexpected}"
+                        )
+                    del pretrained_state
+                    gc.collect()
                 full_state = self.model.state_dict()
             else:
                 full_state = {}
+
         # NOTE: This applies FSDP2 with N-D parallelism (DP+SP+TP)
         parallelize_model(
             self.model,
@@ -297,14 +325,19 @@ class FSDPEngine(TrainEngine):
             cpu_offload=self.cpu_offload,
             wrap_policy=self.config.fsdp.wrap_policy,
         )
-        # Synchronize initialized lora weights
-        if self.config.use_lora:
+
+        if need_broadcast:
+            broadcast_tik = time.perf_counter()
             fsdp2_load_full_state_dict(
                 self.model,
                 full_state,
                 self.cpu_offload,
                 tie_word_embeddings=self.model_config.tie_word_embeddings,
             )
+            self.logger.info(
+                f"Broadcasting model weights took {time.perf_counter() - broadcast_tik:.2f} seconds"
+            )
+
         self.logger.info(
             f"Applying FSDP2 with N-D parallelism for {time.perf_counter() - tik:.2f} seconds"
         )
@@ -703,9 +736,7 @@ class FSDPEngine(TrainEngine):
         }
         model_kwargs.update(common_kwargs)
 
-        if self.config.init_from_scratch:
-            # initialize model from config
-            # NOTE: VLM cannot directly load state dict using this random initialized model
+        if self.config.init_from_scratch or self.config.fsdp.memory_efficient_load:
             model = model_class.from_config(
                 self.model_config,
                 **model_kwargs,
@@ -724,6 +755,13 @@ class FSDPEngine(TrainEngine):
 
         dtype = getattr(torch, self.config.dtype)
 
+        if self.config.fsdp.memory_efficient_load:
+            loading_device = "cpu"
+        else:
+            loading_device = current_platform.device_type
+
+        self.get_device_stats().log("before model creation/loading")
+
         if self.is_vision_model:
             if dtype == torch.float16:
                 raise ValueError(
@@ -738,8 +776,8 @@ class FSDPEngine(TrainEngine):
             )
 
             tik = time.perf_counter()
-            device = current_platform.device_type
-            with torch.device(device):
+            # VLM: Use from_pretrained() on loading_device.
+            with torch.device(loading_device):
                 model = AutoModelForImageTextToText.from_pretrained(
                     pretrained_model_name_or_path=self.config.path,
                     trust_remote_code=True,
@@ -752,17 +790,20 @@ class FSDPEngine(TrainEngine):
             self.tokenizer = load_hf_tokenizer(self.config.path)
             self.processor = None
             tik = time.perf_counter()
-            with torch.device(current_platform.device_type):
+            # LLM: Decide between from_config() or from_pretrained() based on memory_efficient_load
+            with torch.device(loading_device):
                 model = self._create_llm_actor_or_critic()
                 if self.config.disable_dropout:
                     disable_dropout_in_model(model)
+
+        self.get_device_stats().log("after model creation/loading")
 
         if self.config.gradient_checkpointing:
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": False}
             )
         self.logger.info(
-            f"Model creation and loading time: {time.perf_counter() - tik}"
+            f"Model creation and loading time: {time.perf_counter() - tik:.2f}s"
         )
         self.model = model
 
