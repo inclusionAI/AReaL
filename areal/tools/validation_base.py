@@ -197,6 +197,8 @@ class BaseInstallationValidator:
             pkg_name.replace("-", "_"),
             pkg_name.replace("_", "-"),
         ]
+        if pkg_name.lower() == "fla":
+            variants.append("flash-linear-attention")
 
         for variant in variants:
             try:

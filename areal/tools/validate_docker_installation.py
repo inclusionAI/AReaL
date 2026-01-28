@@ -53,8 +53,6 @@ class DockerInstallationValidator(BaseInstallationValidator):
         "sglang",
         "megatron-core",
         "mbridge",
-        # DeepSeek-V3 related packages (fla is critical as it works on all GPUs)
-        "fla",
     }
 
     def __init__(self, pyproject_path: Path | None = None):
