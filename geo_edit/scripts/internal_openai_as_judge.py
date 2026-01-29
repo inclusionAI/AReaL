@@ -1,104 +1,20 @@
 import argparse
-import ast
 import json
 import os
 import re
-import requests
-from binascii import a2b_hex, b2a_hex
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Union
-
-from Crypto.Cipher import AES
-
 from geo_edit.constants import EVAL_QUERY_PROMPT, EVAL_SYSTEM_PROMPT
+from openai import OpenAI
 
 ANSWER_TEMPLATE = "<answer>{}</answer>"
-
-
-def aes_encrypt(data, key):
-    """aes加密函数，如果data不是16的倍数【加密文本data必须为16的倍数！】，那就补足为16的倍数"""
-    iv = "1234567890123456"
-    cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
-    block_size = AES.block_size
-
-    if len(data) % block_size != 0:
-        add = block_size - (len(data) % block_size)
-    else:
-        add = 0
-    data = data.encode('utf-8') + b'\0' * add
-    encrypted = cipher.encrypt(data)
-    result = b2a_hex(encrypted)
-    return result.decode('utf-8')
-
-
-def aes_decode(data, key):
-    """aes解密"""
-    iv = '1234567890123456'
-    cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
-    result2 = a2b_hex(data)
-    decrypted = cipher.decrypt(result2)
-    return decrypted.rstrip(b'\0')
-
-
-def call_chatgpt(prompt, model='gpt-4o', system_prompt=None, api_key="", aes_key=""):
-    """
-    根据传入的prompt，调用对应的模型
-    :param prompt: prompt
-    :param model: 模型版本 gpt-3.5-turbo、gpt-4、gpt-4o
-    :param system_prompt: 系统提示词
-    :param api_key: API密钥
-    :param aes_key: AES加密密钥
-    """
-    url = 'https://zdfmng.alipay.com/commonQuery/queryData'
-
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": "{}".format(prompt)})
-
-    param = {
-        "serviceName": "chatgpt_prompts_completions_query_dataview",
-        "visitDomain": "BU_force",
-        "visitBiz": "BU_force_gpt4",
-        "visitBizLine": "BU_force_gpt4_chenglu",
-        "cacheInterval": -1,
-        "queryConditions": {
-            'model': model,
-            'api_key': api_key,
-            "temperature": 1.0,
-            "top_k": 50,
-            "top_p": 0.92,
-            'messages': messages
-        }
-    }
-    try:
-        data = json.dumps(param)
-        encrypt_data = aes_encrypt(data, aes_key)
-        post_data = {"encryptedParam": encrypt_data}
-        headers = {'Content-Type': 'application/json'}
-        response = requests.post(url, data=json.dumps(post_data), headers=headers)
-
-        x = response.json()["data"]["values"]["data"]
-        ast_str = ast.literal_eval("'" + x + "'")
-        js = ast_str.replace('&quot;', '"')
-        js = js.replace("&#39;", "'")
-        js = js.replace("&lt", "<")
-        js = js.replace("&gt", ">")
-        data = json.loads(js)
-        content = data["choices"][0]["message"]["content"]
-        return content
-    except Exception as e:
-        content = None
-    return content
 
 
 @dataclass
 class EvalConfig:
     model: str = "gpt-4o"
     extract_answer_tags: Optional[str] = "split"
-    api_key: str = ""
-    aes_key: str = ""
 
 
 def parse_score(text: str) -> str:
@@ -153,13 +69,15 @@ def get_final_prediction(predict_str_list: List[str], extract_mode: Optional[str
 
 class InternalOpenAIJudge:
     """
-    使用内部 API 做 0/1 判分。
+    使用内部 Matrix LLM API (OpenAI 兼容格式) 做 0/1 判分。
+    API endpoint: https://matrixllm.alipay.com/v1/chat/completions
     """
-
-    def __init__(self, model: str = "gpt-4o", api_key: str = "", aes_key: str = ""):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o", base_url: str = "https://matrixllm.alipay.com/v1"):
+        self.client = OpenAI(
+            api_key=api_key or os.environ.get("MATRIX_API_KEY"),
+            base_url=base_url
+        )
         self.model = model
-        self.api_key = api_key
-        self.aes_key = aes_key
 
     def judge_correctness(self, question: str, ground_truth: str, prediction: str) -> str:
         prompt = EVAL_QUERY_PROMPT.format(
@@ -167,26 +85,31 @@ class InternalOpenAIJudge:
             ground_truth=ground_truth,
             prediction=prediction,
         )
-        resp = call_chatgpt(prompt, model=self.model, system_prompt=EVAL_SYSTEM_PROMPT,
-                           api_key=self.api_key, aes_key=self.aes_key)
-        return parse_score(resp or "")
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": EVAL_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        output_text = resp.choices[0].message.content if resp.choices else ""
+        return parse_score(output_text or "")
 
 
 def evaluate_final_answer(
     question: str,
     predict_str_list: List[str],
     ground_truth: str,
-    cfg: EvalConfig,
+    cfg: Optional[EvalConfig] = None,
 ) -> Union[float, dict]:
     """
     只评价最终答案正确性：
       - 返回 1.0 / 0.0
       - 若没解析到 Score，则返回 dict 方便你上层过滤
     """
-
     final_pred = get_final_prediction(predict_str_list, cfg.extract_answer_tags)
 
-    judge = InternalOpenAIJudge(model=cfg.model, api_key=cfg.api_key, aes_key=cfg.aes_key)
+    judge = InternalOpenAIJudge(model=cfg.model)
     score_str = judge.judge_correctness(question, ground_truth, final_pred)
     print(f"Question: {question}, Ground Truth: {ground_truth}, Prediction: {final_pred}, Score: {score_str}")
     if score_str == "":
@@ -236,7 +159,8 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Batch evaluate results with internal OpenAI judge.")
+    parser = argparse.ArgumentParser(description="Batch evaluate results with Internal Matrix LLM judge.")
+    parser.add_argument("--api_key", type=str, required=True, help="Matrix LLM API key.")
     parser.add_argument(
         "--result_path",
         type=str,
@@ -253,7 +177,13 @@ def main() -> None:
         "--model",
         type=str,
         default="gpt-4o",
-        help="Model to use for evaluation (default: gpt-4o).",
+        help="Model name to use for evaluation (default: gpt-4o).",
+    )
+    parser.add_argument(
+        "--base_url",
+        type=str,
+        default="https://matrixllm.alipay.com/v1",
+        help="Base URL for the API endpoint (default: https://matrixllm.alipay.com/v1).",
     )
     parser.add_argument(
         "--additional_prompt",
@@ -261,20 +191,9 @@ def main() -> None:
         default="",
         help="Additional prompt to append to the evaluation prompt.",
     )
-    parser.add_argument(
-        "--api_key",
-        type=str,
-        default="",
-        help="API key for the internal OpenAI service.",
-    )
-    parser.add_argument(
-        "--aes_key",
-        type=str,
-        required=True,
-        help="AES encryption key for the internal OpenAI service.",
-    )
     args = parser.parse_args()
 
+    os.environ["MATRIX_API_KEY"] = args.api_key
     os.makedirs(args.output_path, exist_ok=True)
 
     additional_prompt = args.additional_prompt.strip()
@@ -282,7 +201,7 @@ def main() -> None:
         global EVAL_QUERY_PROMPT
         EVAL_QUERY_PROMPT += "\n" + additional_prompt + "\n"
 
-    cfg = EvalConfig(model=args.model, api_key=args.api_key, aes_key=args.aes_key)
+    cfg = EvalConfig(model=args.model)
     eval_output_path = os.path.join(args.output_path, "eval_result.jsonl")
     summary_path = os.path.join(args.output_path, "summary.txt")
 
