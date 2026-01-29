@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-model_path="/storage/openpsi/models/Qwen3-VL-8B-Thinking/"
+model_path="/storage/openpsi/models/Qwen3-VL-235B-A22B-Thinking/"
 echo "model: $model_path"
 
 mkdir -p ./log
@@ -9,10 +9,12 @@ nohup python -m vllm.entrypoints.openai.api_server \
   --host 0.0.0.0 \
   --trust-remote-code \
   --port 8000 \
-  --data-parallel-size 8 \
-  --tensor-parallel-size 1 \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 8 \
   --dtype auto \
   --gpu-memory-utilization 0.9 \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
   > ./log/vllm_api.log 2>&1 &
 
 

@@ -43,11 +43,11 @@ class Args:
 def test_vllm_task() -> None:
     args = Args(
         api_base="http://127.0.0.1:8000",
-        model_name="/storage/openpsi/models/Qwen3-VL-8B-Thinking/",
-        image_path=Path("./geo_edit/images/input_image.png"),
+        model_name="/storage/openpsi/models/Qwen3-VL-235B-A22B-Thinking/",
+        image_path=Path("./geo_edit/images/173.jpg"),
         prompt=DEFAULT_PROMPT,
         system_prompt=None,
-        tool_mode="force",
+        tool_mode="auto",
         temperature=0.2,
         max_tokens=16384,
         max_steps=MAX_TOOL_CALLS,
