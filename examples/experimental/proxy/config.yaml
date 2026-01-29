@@ -17,9 +17,9 @@ tokenizer_path: ${actor.path}
 #     - areal.workflow.anthropic.math_tool_agent.MathToolAgent (claude_agent_sdk with MCP tools)
 workflow:
   path: areal.workflow.anthropic.math_agent.MathAgent
-  eval_path: null  # If null, uses the same as path
-  use_mcp_tools: false  # For Anthropic MathToolAgent
-  max_turns: 10  # For multi-turn agents
+  eval_path: ${workflow.path}
+  use_mcp_tools: false
+  max_turns: 10
 
 cluster:
   n_nodes: 1

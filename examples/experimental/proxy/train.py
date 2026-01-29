@@ -6,45 +6,13 @@ Supports both Anthropic and OpenAI agent workflows:
 """
 
 import sys
-from dataclasses import dataclass, field
 
-from areal.api.cli_args import PPOConfig, load_expr_config
+from areal.api.cli_args import load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
 
-
-@dataclass
-class WorkflowConfig:
-    """Configuration for workflow selection and parameters."""
-
-    path: str = field(
-        default="areal.workflow.anthropic.math_agent.MathAgent",
-        metadata={"help": "Dotted path to the workflow class."},
-    )
-    eval_path: str | None = field(
-        default=None,
-        metadata={
-            "help": "Dotted path to the eval workflow class. If None, uses the same as path."
-        },
-    )
-    # MathToolAgent specific (Anthropic claude_agent_sdk)
-    use_mcp_tools: bool = field(
-        default=False,
-        metadata={"help": "Whether to use MCP tools (for Anthropic MathToolAgent)."},
-    )
-    # Multi-turn agent specific
-    max_turns: int = field(
-        default=10,
-        metadata={"help": "Maximum turns for multi-turn agents."},
-    )
-
-
-@dataclass
-class ProxyAgentConfig(PPOConfig):
-    """Configuration for proxy-based agent training."""
-
-    workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
+from examples.experimental.proxy.proxy_configs import ProxyAgentConfig
 
 
 def main(args):
