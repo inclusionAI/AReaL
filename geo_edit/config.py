@@ -5,7 +5,7 @@ from google.genai import types
 from geo_edit.constants import (
     MAX_TOOL_CALLS,
     MATHVISION_INPUT_TEMPLATE,
-    NOTOOL_INPUT_TEMPLATE,
+    MATHVISION_NOTOOL_INPUT_TEMPLATE,
 )
 from geo_edit.environment.action import TOOL_FUNCTIONS_DECLARE, TOOL_FUNCTIONS
 
@@ -213,7 +213,7 @@ __all__ = [
     "API_KEY",
     "MAX_TOOL_CALLS",
     "MATHVISION_INPUT_TEMPLATE",
-    "NOTOOL_INPUT_TEMPLATE",
+    "MATHVISION_NOTOOL_INPUT_TEMPLATE",
     "SYSTEM_PROMPT",
     "AgentConfigs",
     "OpenAIAgentConfigs",

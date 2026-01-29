@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-model_path="/storage/openpsi/models/Qwen3-VL-235B-A22B-Thinking/"
+model_path="/storage/openpsi/models/Qwen3-VL-32B-Thinking/"
 echo "model: $model_path"
-echo "max_model_len: $max_model_len"
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=600
 mkdir -p /tmp/log/
 nohup python -m vllm.entrypoints.openai.api_server \
@@ -10,8 +9,8 @@ nohup python -m vllm.entrypoints.openai.api_server \
   --host 0.0.0.0 \
   --trust-remote-code \
   --port 8000 \
-  --data-parallel-size 1 \
-  --tensor-parallel-size 8 \
+  --data-parallel-size 4 \
+  --tensor-parallel-size 2 \
   --max-model-len 65536 \
   --dtype auto \
   --gpu-memory-utilization 0.8 \

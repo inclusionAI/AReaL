@@ -5,7 +5,7 @@ import logging
 import shutil
 import time
 import multiprocessing as mp
-
+from io import BytesIO
 from tqdm import tqdm
 from PIL import Image
 from datasets import load_dataset
@@ -279,10 +279,14 @@ def main():
                     if isinstance(image, Image.Image):
                         image_path = os.path.join(task_save_dir, "input_image.png")
                         image.save(image_path)
+                    elif isinstance(image, dict) and "bytes" in image and isinstance(image["bytes"], (bytes, bytearray)):
+                        image= Image.open(BytesIO(image["bytes"]))
+                        image_path = os.path.join(task_save_dir, "input_image.png")
+                        image.save(image_path)
                     else:
-                        image_path = image
-                    if image is None:
-                        text_only = True
+                        raise ValueError(f"Invalid image type: {type(image)}")
+                else:
+                    text_only = True
 
                 payload = {
                     "id": task_id,
