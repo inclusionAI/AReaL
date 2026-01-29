@@ -3,6 +3,9 @@
 ## Quick Start
 
 ```bash
+# Set PYTHONPATH to AReaL root directory
+export PYTHONPATH=/path/to/AReaL:$PYTHONPATH
+
 python3 examples/experimental/proxy/train.py \
     --config examples/experimental/proxy/config.yaml \
     scheduler.type=local \

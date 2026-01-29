@@ -1,13 +1,15 @@
 import sys
 
-from areal.api.cli_args import PPOConfig, load_expr_config
+from examples.experimental.proxy.configs import AgentConfig
+
+from areal.api.cli_args import load_expr_config
 from areal.dataset import get_custom_dataset
 from areal.experimental.trainer.rl import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
 
 
 def main(args):
-    config, _ = load_expr_config(args, PPOConfig)
+    config, _ = load_expr_config(args, AgentConfig)
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
     train_dataset = get_custom_dataset(
@@ -39,8 +41,8 @@ def main(args):
         valid_dataset=valid_dataset,
     ) as trainer:
         trainer.train(
-            workflow="areal.workflow.anthropic.math_agent.MathAgent",
-            eval_workflow="areal.workflow.anthropic.math_agent.MathAgent",
+            workflow=config.workflow,
+            eval_workflow=config.eval_workflow,
             workflow_kwargs=workflow_kwargs,
             eval_workflow_kwargs=eval_workflow_kwargs,
         )

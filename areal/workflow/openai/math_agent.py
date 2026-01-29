@@ -24,7 +24,6 @@ def math_reward_fn(completions: str, answer: str) -> float:
 class MathAgent(AgentWorkflow):
     def __init__(self, **kwargs):
         self.kwargs = kwargs.copy()
-        self.kwargs.pop("max_tokens", None).copy()
         self.kwargs.pop("max_tokens", None)
 
     async def run(self, data: dict, **extra_kwargs):
