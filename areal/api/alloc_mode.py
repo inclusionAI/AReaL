@@ -297,13 +297,6 @@ class ModelAllocation:
                     f"Got strategy: {self.parallel}"
                 )
 
-        if self.backend == "archon":
-            if self.parallel.pipeline_parallel_size > 1:
-                raise AllocationValidationError(
-                    f"Archon backend does not support pipeline parallelism. "
-                    f"Got pp={self.parallel.pipeline_parallel_size}"
-                )
-
     @property
     def world_size(self):
         if self.scheduling_strategy.type == SchedulingStrategyType.colocation.value:

@@ -1,11 +1,18 @@
+import functools
 from typing import Protocol
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 
 from areal.utils import logging
 
-logger = logging.getLogger("ArchonCompile")
+
+@functools.cache
+def _get_logger() -> logging.Logger:
+    """Get rank-aware logger for this module."""
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    return logging.getLogger(f"[Archon Compile Rank {rank}]")
 
 
 class Compilable(Protocol):
@@ -33,4 +40,6 @@ def apply_compile(model: Compilable) -> None:
             fullgraph=True,
         )
 
-    logger.info(f"Compiled {len(model.layers)} TransformerBlocks with torch.compile")
+    _get_logger().info(
+        f"Compiled {len(model.layers)} TransformerBlocks with torch.compile"
+    )

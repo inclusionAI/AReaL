@@ -1,4 +1,3 @@
-import dataclasses
 import gc
 import math
 import os
@@ -14,6 +13,8 @@ import torch
 import torch.distributed as dist
 from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.pipelining import PipelineStage
+from torch.distributed.pipelining.schedules import Schedule1F1B
 from torch.distributed.tensor import DTensor
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import (
@@ -25,7 +26,7 @@ from transformers import (
 )
 
 from areal.api.alloc_mode import ParallelStrategy
-from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
+from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
 from areal.api.engine_api import InferenceEngine, TrainEngine
 from areal.api.io_struct import (
     DeviceRuntimeInfo,
@@ -72,6 +73,7 @@ from areal.utils.data import (
     MicroBatchItem,
     MicroBatchList,
     amend_position_ids,
+    broadcast_tensor,
     pack_tensor_dict,
     pad_mb_list,
     split_padded_tensor_dict_into_mb_list,
@@ -145,6 +147,12 @@ class ArchonEngine(TrainEngine):
         self._world_mesh: DeviceMesh
         self.state_dict_adapter: BaseStateDictAdapter | None = None
 
+        # PP (Pipeline Parallelism) related attributes
+        self.pp_stages: list[PipelineStage] = []
+        self.model_parts: list[nn.Module] = []
+        self.pp_has_first_stage: bool = True
+        self.pp_has_last_stage: bool = True
+
         self.enable_tree_training = config.enable_tree_training
 
         self.world_size: int
@@ -179,6 +187,7 @@ class ArchonEngine(TrainEngine):
         tp_size = parallel_strategy.tensor_parallel_size
         dp_size = parallel_strategy.data_parallel_size
         cp_size = parallel_strategy.context_parallel_size
+        pp_size = parallel_strategy.pipeline_parallel_size
         ep_size = parallel_strategy.expert_parallel_size
         etp_size = parallel_strategy.expert_tensor_parallel_size
 
@@ -186,6 +195,7 @@ class ArchonEngine(TrainEngine):
             dp_shard=dp_size,
             tp=tp_size,
             cp=cp_size,
+            pp=pp_size,
             ep=ep_size,
             etp=etp_size,
             world_size=self.world_size,
@@ -205,13 +215,20 @@ class ArchonEngine(TrainEngine):
         # Compute dp_head: the rank that holds the batch for this cp_tp group
         self._dp_head = dist.get_process_group_ranks(self._cp_tp_group)[0]
 
+        # Compute pp_last_stage_rank: global rank of the last PP stage
+        if self.parallel_dims.pp_enabled:
+            pp_group = self.parallel_dims.get_group("pp")
+            self._pp_last_stage_rank = dist.get_process_group_ranks(pp_group)[-1]
+        else:
+            self._pp_last_stage_rank = None
+
         self.weight_update_group_name = "update_weight_group"
 
         self.logger.info(
             f"Initialized Archon engine with parallel dims: "
-            f"dp_shard={self.parallel_dims.dp_shard}, tp={self.parallel_dims.tp}, "
-            f"cp={self.parallel_dims.cp} (Ulysses SP), ep={self.parallel_dims.ep}, "
-            f"etp={etp_size}"
+            f"pp={self.parallel_dims.pp}, dp_shard={self.parallel_dims.dp_shard}, "
+            f"tp={self.parallel_dims.tp}, cp={self.parallel_dims.cp} (Ulysses SP), "
+            f"ep={self.parallel_dims.ep}, etp={etp_size}"
         )
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
@@ -240,21 +257,67 @@ class ArchonEngine(TrainEngine):
             )
             self.config.pad_to_maximum = True
 
+        # Force pad_to_maximum when PP is enabled to avoid shape mismatch
+        if self.parallel_dims.pp_enabled and not self.config.pad_to_maximum:
+            self.logger.info(
+                "Pipeline Parallelism is enabled: forcing pad_to_maximum=True to avoid "
+                "shape mismatch across microbatches. Original pad_to_maximum=False."
+            )
+            self.config.pad_to_maximum = True
+
         if self.enable_tree_training:
             self.logger.warning("Tree training is not supported for Archon engine yet.")
 
         tik = time.perf_counter()
-        self.spec.parallelize_fn(
-            model=self.model,
-            parallel_dims=self.parallel_dims,
-            param_dtype=param_dtype,
-            reduce_dtype=torch.float32,
-            loss_parallel=True,
-            cpu_offload=self.config.archon.offload_params,
-            reshard_after_forward_policy="default",
-            ac_config=ac_config,
-            enable_compile=enable_compile,
-        )
+
+        # TODO: Refactor to reduce scattered PP if-else branches across the codebase.
+        if self.parallel_dims.pp_enabled:
+            if self.spec.pipelining_fn is None:
+                raise RuntimeError(
+                    f"Pipeline Parallel is enabled but {self.spec.name} "
+                    f"does not support pipelining"
+                )
+
+            (
+                self.pp_stages,
+                self.model_parts,
+                self.pp_has_first_stage,
+                self.pp_has_last_stage,
+            ) = self.spec.pipelining_fn(
+                model=self.model,
+                parallel_dims=self.parallel_dims,
+                device=self.device,
+                parallelize_fn=self.spec.parallelize_fn,
+                param_dtype=param_dtype,
+                reduce_dtype=torch.float32,
+                loss_parallel=True,
+                cpu_offload=self.config.archon.offload_params,
+                reshard_after_forward_policy="default",
+                ac_config=ac_config,
+                enable_compile=enable_compile,
+            )
+
+            # Delete original model to free memory
+            del self.model
+            self.model = None
+
+            self.logger.info(
+                f"PP enabled: has_first={self.pp_has_first_stage}, "
+                f"has_last={self.pp_has_last_stage}"
+            )
+        else:
+            self.spec.parallelize_fn(
+                model=self.model,
+                parallel_dims=self.parallel_dims,
+                param_dtype=param_dtype,
+                reduce_dtype=torch.float32,
+                loss_parallel=True,
+                cpu_offload=self.config.archon.offload_params,
+                reshard_after_forward_policy="default",
+                ac_config=ac_config,
+                enable_compile=enable_compile,
+            )
+            self.model_parts = [self.model]
 
         # Synchronize all ranks after parallelization (especially after torch.compile)
         current_platform.synchronize()
@@ -308,8 +371,10 @@ class ArchonEngine(TrainEngine):
         """Clean up resources."""
         if hasattr(self, "optimizer"):
             del self.optimizer
-        if hasattr(self, "model"):
+        if hasattr(self, "model") and self.model is not None:
             del self.model
+        if hasattr(self, "model_parts"):
+            self.model_parts.clear()
         gc.collect()
         current_platform.empty_cache()
         gc.collect()
@@ -319,8 +384,8 @@ class ArchonEngine(TrainEngine):
         self._initialized = False
 
     def train(self, mode: bool = True):
-        assert self.model is not None
-        self.model.train(mode=mode)
+        for m in self.model_parts:
+            m.train(mode=mode)
         return self
 
     def set_version(self, version: int):
@@ -340,10 +405,15 @@ class ArchonEngine(TrainEngine):
         assert self.lr_scheduler is not None
 
         grad_norm = fsdp2_clip_grad_norm(
-            list(self.model.parameters()),
+            self._get_all_parameters(),
             max_norm=self.optimizer_config.gradient_clipping,
             fsdp_group=self.data_parallel_group,
-            tp_group=self.parallel_dims.get_group("tp"),
+            tp_group=self.parallel_dims.get_group("tp")
+            if self.parallel_dims.tp_enabled
+            else None,
+            pp_group=self.parallel_dims.get_group("pp")
+            if self.parallel_dims.pp_enabled
+            else None,
             offload_params=self.config.archon.offload_params,
         )
 
@@ -372,8 +442,123 @@ class ArchonEngine(TrainEngine):
             [torch.Tensor, dict[str, Any]], torch.Tensor | None
         ],
         forward_only: bool = False,
-    ) -> None:
+    ) -> list[torch.Tensor] | None:
         """Forward and optionally backward through micro-batches."""
+        if self.parallel_dims.pp_enabled:
+            return self._forward_backward_pipelined(
+                mb_list, process_output_fn, forward_only
+            )
+        else:
+            return self._forward_backward_sequential(
+                mb_list, process_output_fn, forward_only
+            )
+
+    def _forward_backward_pipelined(
+        self,
+        mb_list: MicroBatchList,
+        process_output_fn: Callable[
+            [torch.Tensor, dict[str, Any]], torch.Tensor | None
+        ],
+        forward_only: bool = False,
+    ) -> list[torch.Tensor] | None:
+        """Pipelined forward/backward using Schedule1F1B."""
+        n_microbatches = len(mb_list)
+
+        batched_args, batched_kwargs, batched_target, contexts = (
+            self._prepare_pp_batched_inputs(mb_list)
+        )
+
+        args = batched_args if self.pp_has_first_stage else ()
+
+        if forward_only:
+            return self._forward_backward_pipelined_eval(
+                n_microbatches, args, batched_kwargs, contexts, process_output_fn
+            )
+        return self._forward_backward_pipelined_train(
+            n_microbatches,
+            args,
+            batched_kwargs,
+            batched_target,
+            contexts,
+            process_output_fn,
+        )
+
+    def _forward_backward_pipelined_eval(
+        self,
+        n_microbatches: int,
+        args: tuple,
+        batched_kwargs: dict[str, Any],
+        contexts: list,
+        process_output_fn: Callable[
+            [torch.Tensor, dict[str, Any]], torch.Tensor | None
+        ],
+    ) -> list[torch.Tensor] | None:
+        """Pipelined forward pass without backward (eval mode)."""
+        schedule = Schedule1F1B(
+            self.pp_stages[0],
+            n_microbatches=n_microbatches,
+            loss_fn=None,
+            scale_grads=False,
+        )
+
+        schedule.eval(*args, **batched_kwargs)
+
+        if not self.pp_has_last_stage:
+            return None
+
+        results: list[torch.Tensor] = []
+        for output, ctx in zip(self.pp_stages[0].output_chunks, contexts, strict=True):
+            # Squeeze batch dim: PP outputs (1, seq_len, vocab) -> (seq_len, vocab)
+            if output.ndim == 3:
+                output = output.squeeze(0)
+            ctx_dict = ctx.__dict__.copy()
+            result = process_output_fn(output, ctx_dict)
+            if result is not None:
+                results.append(result.detach())
+        return results
+
+    def _forward_backward_pipelined_train(
+        self,
+        n_microbatches: int,
+        args: tuple,
+        batched_kwargs: dict[str, Any],
+        batched_target: torch.Tensor | None,
+        contexts: list,
+        process_output_fn: Callable[
+            [torch.Tensor, dict[str, Any]], torch.Tensor | None
+        ],
+    ) -> list[torch.Tensor]:
+        """Pipelined forward and backward pass (training mode)."""
+        if self.pp_has_last_stage:
+            pp_loss_fn = self._create_pp_loss_fn(contexts, process_output_fn)
+        else:
+            # Non-last stage: dummy loss that keeps all elements in computation graph
+            # so autograd can compute complete pred.grad for upstream stage
+            def pp_loss_fn(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+                return pred.sum() * 0.0
+
+        schedule = Schedule1F1B(
+            self.pp_stages[0],
+            n_microbatches=n_microbatches,
+            loss_fn=pp_loss_fn,
+            scale_grads=False,
+        )
+
+        schedule.step(*args, target=batched_target, **batched_kwargs)
+
+        # Training does not return any meaningful results
+        return []
+
+    def _forward_backward_sequential(
+        self,
+        mb_list: MicroBatchList,
+        process_output_fn: Callable[
+            [torch.Tensor, dict[str, Any]], torch.Tensor | None
+        ],
+        forward_only: bool,
+    ) -> list[torch.Tensor]:
+        """Sequential forward/backward through each microbatch."""
+        results: list[torch.Tensor] = []
         for mb_item in mb_list:
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
@@ -385,11 +570,95 @@ class ArchonEngine(TrainEngine):
             )
             logits = logits.squeeze(0)
 
-            ctx_dict = dataclasses.asdict(ctx)
-            loss = process_output_fn(logits, ctx_dict)
+            ctx_dict = ctx.__dict__.copy()
+            result = process_output_fn(logits, ctx_dict)
 
-            if not forward_only and loss is not None:
-                loss.backward()
+            if result is not None:
+                if forward_only:
+                    results.append(result.detach())
+                else:
+                    result.backward()
+
+        # When forward_only is False, this actually returns meaningless empty content
+        return results
+
+    def _prepare_pp_batched_inputs(
+        self,
+        mb_list: MicroBatchList,
+    ) -> tuple[tuple, dict, torch.Tensor | None, list[ArchonTrainContext]]:
+        """Concatenate microbatch inputs for PP schedule step()/eval() API."""
+        input_ids_list: list[torch.Tensor] = []
+        positions_list: list[torch.Tensor] = []
+        cu_seqlens_list: list[torch.Tensor] = []
+        max_seqlen_list: list[int] = []
+        target_list: list[torch.Tensor] = []
+        contexts: list[ArchonTrainContext] = []
+
+        def ensure_2d(t: torch.Tensor) -> torch.Tensor:
+            return t.unsqueeze(0) if t.ndim == 1 else t
+
+        for mb_item in mb_list:
+            inputs, ctx = self._prepare_mb_inputs(mb_item)
+            contexts.append(ctx)
+
+            input_ids_list.append(ensure_2d(inputs["input_ids"]))
+            positions_list.append(ensure_2d(inputs["position_ids"]))
+            cu_seqlens_list.append(ensure_2d(inputs["cu_seqlens"]))
+            max_seqlen_list.append(int(inputs["max_seqlen"]))
+
+            if self.pp_has_last_stage:
+                target_list.append(ensure_2d(ctx.labels))
+
+        # Pad cu_seqlens to same length using last value to create zero-length sequences
+        max_cu_len = max(cs.shape[1] for cs in cu_seqlens_list)
+        padded_cu_seqlens = [
+            torch.cat([cs, cs[:, -1:].expand(-1, max_cu_len - cs.shape[1])], dim=1)
+            if cs.shape[1] < max_cu_len
+            else cs
+            for cs in cu_seqlens_list
+        ]
+
+        batched_args = (
+            (torch.cat(input_ids_list, dim=0),) if self.pp_has_first_stage else ()
+        )
+        batched_kwargs = {
+            "positions": torch.cat(positions_list, dim=0),
+            "cu_seqlens": torch.cat(padded_cu_seqlens, dim=0),
+            "max_seqlen": torch.tensor(max_seqlen_list),
+        }
+        batched_target = (
+            torch.cat(target_list, dim=0) if self.pp_has_last_stage else None
+        )
+
+        return batched_args, batched_kwargs, batched_target, contexts
+
+    def _create_pp_loss_fn(
+        self,
+        contexts: list[ArchonTrainContext],
+        process_output_fn: Callable[
+            [torch.Tensor, dict[str, Any]], torch.Tensor | None
+        ],
+    ) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+        """Create PP-compatible loss_fn from process_output_fn."""
+        # Iterator consumed once per microbatch; returned loss_fn is single-use only
+        ctx_iter = iter(contexts)
+
+        def pp_loss_fn(pred: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+            ctx = next(ctx_iter)
+
+            # Squeeze batch dim: PP outputs (1, seq_len, vocab) -> (seq_len, vocab)
+            if pred.ndim == 3:
+                pred = pred.squeeze(0)
+
+            ctx_dict = ctx.__dict__.copy()
+            loss = process_output_fn(pred, ctx_dict)
+
+            if loss is None:
+                return pred.sum() * 0.0
+
+            return loss
+
+        return pp_loss_fn
 
     def train_batch(
         self,
@@ -440,25 +709,29 @@ class ArchonEngine(TrainEngine):
             mb_list, loss_weight_fn, self.data_parallel_group
         )
 
-        losses: list[torch.Tensor] = []
-
         def process_output(
             logits: torch.Tensor, ctx_dict: dict[str, Any]
         ) -> torch.Tensor:
             ctx = ArchonTrainContext(**ctx_dict)
-            loss = self._compute_logprobs_and_loss(
+            return self._compute_logprobs_and_loss(
                 logits,
                 ctx,
                 loss_fn,
                 loss_weight_fn,
                 total_loss_weight,
             )
-            losses.append(loss.detach())
-            return loss
 
-        self.forward_backward_batch(mb_list, process_output, forward_only=True)
+        losses = self.forward_backward_batch(mb_list, process_output, forward_only=True)
 
-        return aggregate_eval_losses(losses, self.data_parallel_group)
+        return aggregate_eval_losses(
+            losses if self.pp_has_last_stage else None,
+            self.data_parallel_group,
+            self.pp_has_last_stage,
+            self.parallel_dims.get_group("pp")
+            if self.parallel_dims.pp_enabled
+            else None,
+            self._pp_last_stage_rank,
+        )
 
     @torch.no_grad()
     def forward_batch(
@@ -477,17 +750,32 @@ class ArchonEngine(TrainEngine):
 
         mb_list = self._prepare_mb_list(input_).to(self.device)
 
-        outputs: list[torch.Tensor] = []
-
-        def process_output(logits: torch.Tensor, ctx_dict: dict[str, Any]) -> None:
+        def process_output(
+            logits: torch.Tensor, ctx_dict: dict[str, Any]
+        ) -> torch.Tensor:
             ctx = ArchonTrainContext(**ctx_dict)
-            result = self._compute_forward_result(logits, ctx)
-            outputs.append(result)
-            return None
+            return self._compute_forward_result(logits, ctx)
 
-        self.forward_backward_batch(mb_list, process_output, forward_only=True)
+        outputs = self.forward_backward_batch(
+            mb_list, process_output, forward_only=True
+        )
 
-        return reorder_and_pad_outputs(outputs, output_seqlens, mb_list, aggregate_fn)
+        if self.pp_has_last_stage:
+            assert outputs is not None
+            res = reorder_and_pad_outputs(
+                outputs, output_seqlens, mb_list, aggregate_fn
+            )
+        else:
+            res = None
+        if self.parallel_dims.pp_enabled:
+            assert self._pp_last_stage_rank is not None
+            res = broadcast_tensor(
+                res,
+                src_rank=self._pp_last_stage_rank,
+                group=self.parallel_dims.get_group("pp"),
+            )
+        assert res is not None
+        return res
 
     def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
         """Connect to an inference engine for rollout."""
@@ -550,6 +838,12 @@ class ArchonEngine(TrainEngine):
         """Update weights to inference engine."""
         self._check_rollout_engine_connected()
         if meta.type == "xccl":
+            # TODO: support PP weight sync via XCCL
+            if self.parallel_dims.pp_enabled:
+                raise NotImplementedError(
+                    "PP weight synchronization via XCCL not yet supported. "
+                    "Use disk-based weight sync (meta.type='disk') instead."
+                )
             assert self.weight_update_group_initialized
             tms_context = (
                 torch_memory_saver.disable()
@@ -609,7 +903,16 @@ class ArchonEngine(TrainEngine):
         self.is_offload = False
 
     def export_stats(self) -> dict[str, float]:
-        return stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        data = stats_tracker.export_all(reduce_group=self.data_parallel_group)
+        if self.parallel_dims.pp_enabled:
+            data_list = [data]
+            dist.broadcast_object_list(
+                data_list,
+                src=self._pp_last_stage_rank,
+                group=self.parallel_dims.get_group("pp"),
+            )
+            data.update(data_list[0])
+        return data
 
     def get_device_stats(self) -> DeviceRuntimeInfo:
         return DeviceRuntimeInfo.get_current()
@@ -648,8 +951,12 @@ class ArchonEngine(TrainEngine):
             self.model_config, hf_assets_path=self.config.path
         )
 
+    def _get_all_parameters(self) -> list[nn.Parameter]:
+        return [p for m in self.model_parts for p in m.parameters()]
+
     def _get_model_name_parameters(self) -> Iterator[tuple[str, nn.Parameter]]:
-        return self.model.named_parameters()
+        for m in self.model_parts:
+            yield from m.named_parameters()
 
     def _get_full_tensor(self, param: nn.Parameter) -> torch.Tensor:
         """Get full tensor from a parameter, handling DTensor and CPU offload."""
@@ -881,15 +1188,18 @@ class ArchonEngine(TrainEngine):
 
         tik = time.perf_counter()
 
-        self.model.to_empty(device=init_device)
+        for model in self.model_parts:
+            model.to_empty(device=init_device)
 
         if not self.config.init_from_scratch:
             load_model_from_hf(self, self.config.path)
         else:
             with torch.no_grad():
-                self.model.init_weights()
+                for model in self.model_parts:
+                    model.init_weights()
 
-        self.model.init_buffers(buffer_device=buffer_device)
+        for model in self.model_parts:
+            model.init_buffers(buffer_device=buffer_device)
 
         dist.barrier(group=self.cpu_group)
 
@@ -902,7 +1212,7 @@ class ArchonEngine(TrainEngine):
         if self.optimizer_config is None:
             return
 
-        assert self.model is not None
+        all_params = self._get_all_parameters()
 
         tik = time.perf_counter()
 
@@ -914,7 +1224,7 @@ class ArchonEngine(TrainEngine):
 
         if self.optimizer_config.type == "adam":
             self.optimizer = torch.optim.AdamW(
-                self.model.parameters(),
+                all_params,
                 lr=lr,
                 weight_decay=weight_decay,
                 betas=(beta1, beta2),
@@ -923,7 +1233,7 @@ class ArchonEngine(TrainEngine):
             )
         elif self.optimizer_config.type == "sgd":
             self.optimizer = torch.optim.SGD(
-                self.model.parameters(),
+                all_params,
                 lr=lr,
                 weight_decay=weight_decay,
             )
@@ -967,7 +1277,25 @@ class ArchonEngine(TrainEngine):
         input_ = input_.copy()
         input_ = amend_position_ids(input_)
 
-        mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
+        # Pipeline parallelism requires n_microbatches >= pp_stages
+        if self.parallel_dims.pp_enabled:
+            pp_size = self.parallel_dims.pp
+            n_seqs = input_["attention_mask"].shape[0]
+            if n_seqs < pp_size:
+                raise RuntimeError(
+                    f"Pipeline parallelism requires at least {pp_size} sequences, "
+                    f"but got {n_seqs}. Increase batch size or reduce PP degree."
+                )
+            min_n_mbs = pp_size
+            mb_spec = MicroBatchSpec.new(
+                self.config.mb_spec,
+                n_mbs=max(min_n_mbs, self.config.mb_spec.n_mbs or 1),
+                n_mbs_divisor=pp_size,
+            )
+        else:
+            mb_spec = self.config.mb_spec
+
+        mb_list = split_padded_tensor_dict_into_mb_list(input_, mb_spec)
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
 
         # LCM ensures page-aligned memory and exact CP slicing without extra padding.
@@ -1069,7 +1397,9 @@ class ArchonEngine(TrainEngine):
             logits,
             labels,
             temperature=self.config.temperature,
-            tp_group=self.parallel_dims.get_group("tp"),
+            tp_group=self.parallel_dims.get_group("tp")
+            if self.parallel_dims.tp_enabled
+            else None,
         )
         return logprobs, entropy
 
@@ -1102,7 +1432,9 @@ class ArchonEngine(TrainEngine):
             logits,
             labels,
             temperature=self.config.temperature,
-            tp_group=self.parallel_dims.get_group("tp"),
+            tp_group=self.parallel_dims.get_group("tp")
+            if self.parallel_dims.tp_enabled
+            else None,
         )
         return logprobs
 

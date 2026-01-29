@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -45,7 +46,12 @@ if TYPE_CHECKING:
         ActivationCheckpointConfig,
     )
 
-logger = logging.getLogger("ArchonQwen3Parallelize")
+
+@functools.cache
+def _get_logger() -> logging.Logger:
+    """Get rank-aware logger for this module."""
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    return logging.getLogger(f"[Archon Qwen3Parallelize Rank {rank}]")
 
 
 def _get_op_sac_save_list() -> set[torch._ops.OpOverload]:
@@ -214,13 +220,16 @@ def apply_non_moe_tp(
     """
     validate_tp_constraints(model.model_args, tp_mesh.size())
 
-    root_plan = {
-        "tok_embeddings": RowwiseParallel(
+    root_plan = {}
+
+    if model.tok_embeddings is not None:
+        root_plan["tok_embeddings"] = RowwiseParallel(
             input_layouts=Replicate(),
             output_layouts=Shard(1),
-        ),
-        "norm": SequenceParallel(),
-    }
+        )
+
+    if model.norm is not None:
+        root_plan["norm"] = SequenceParallel()
 
     if model.output is not None:
         # use_local_output=True for vocab_parallel loss
@@ -236,7 +245,8 @@ def apply_non_moe_tp(
             desired_input_layouts=(Replicate(),),
         )
 
-    parallelize_module(model, tp_mesh, root_plan)
+    if root_plan:
+        parallelize_module(model, tp_mesh, root_plan)
 
     for transformer_block in model.layers.values():
         layer_plan = {
@@ -284,7 +294,7 @@ def apply_non_moe_tp(
             parallelize_plan=layer_plan,
         )
 
-    logger.info("Applied Tensor Parallelism (non-MoE) to the model")
+    _get_logger().info("Applied Tensor Parallelism (non-MoE) to the model")
 
 
 def apply_fsdp(
@@ -416,9 +426,9 @@ def apply_fsdp(
     if ep_degree > 1:
         _setup_fsdp_prefetch(model)
 
-    logger.info("Applied FSDP to the model")
+    _get_logger().info("Applied FSDP to the model")
     if cpu_offload:
-        logger.info("Applied CPU Offloading to the model")
+        _get_logger().info("Applied CPU Offloading to the model")
 
 
 def _setup_fsdp_prefetch(model: nn.Module) -> None:
@@ -484,7 +494,7 @@ def _setup_fsdp_prefetch(model: nn.Module) -> None:
             # First block -> tok_embeddings
             block.set_modules_to_backward_prefetch([model.tok_embeddings])
 
-    logger.info("Set up explicit FSDP prefetching for EP")
+    _get_logger().info("Set up explicit FSDP prefetching for EP")
 
 
 def apply_cp(
@@ -513,7 +523,7 @@ def apply_cp(
     for transformer_block in model.layers.values():
         transformer_block.attention.set_cp_group(cp_group)
 
-    logger.info(
+    _get_logger().info(
         f"Applied Context Parallelism (Ulysses SP) to the model, cp_size={cp_size}"
     )
 
@@ -614,7 +624,7 @@ def _apply_compile(model: Compilable, ep_enabled: bool = False) -> None:
 
             grouped_experts._run_experts_grouped_mm = _run_experts_grouped_mm_dynamic
 
-    logger.info(
+    _get_logger().info(
         f"Compiled {len(model.layers)} TransformerBlocks with torch.compile (MoE-aware)"
     )
 
@@ -733,7 +743,7 @@ def apply_moe_ep_tp(
         else:
             applied.append(f"EP (ep_size={ep_mesh.size()})")
     if applied:
-        logger.info(f"Applied {', '.join(applied)} to MoE layers")
+        _get_logger().info(f"Applied {', '.join(applied)} to MoE layers")
 
 
 __all__ = [

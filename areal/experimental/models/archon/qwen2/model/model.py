@@ -328,8 +328,16 @@ class Qwen2Model(BaseArchonModel):
         tokens: torch.Tensor,
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        max_seqlen: int,
+        max_seqlen: int | torch.Tensor,
     ) -> torch.Tensor:
+        # When pipeline parallelism enabled, cu_seqlens is [1, B+1]
+        if cu_seqlens.ndim == 2:
+            cu_seqlens = cu_seqlens.squeeze(0)
+
+        # When pipeline parallelism enabled, max_seqlen is [1]
+        if isinstance(max_seqlen, torch.Tensor):
+            max_seqlen = int(max_seqlen.item())
+
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
         for layer in self.layers.values():

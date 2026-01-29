@@ -68,9 +68,7 @@ class TestMultiFileSafetensorsIndex:
         """Test loading multi-file safetensors index from real MoE checkpoint."""
         from transformers import AutoConfig
 
-        from areal.experimental.models.archon.qwen3.model.state_dict_adapter import (
-            Qwen3StateDictAdapter,
-        )
+        from areal.experimental.models.archon.qwen3 import Qwen3StateDictAdapter
 
         # Load config
         config = AutoConfig.from_pretrained(moe_model_path, trust_remote_code=True)
@@ -109,9 +107,7 @@ class TestMultiFileSafetensorsIndex:
         from torch.distributed.checkpoint import HuggingFaceStorageReader
         from transformers import AutoConfig
 
-        from areal.experimental.models.archon.qwen3.model.state_dict_adapter import (
-            Qwen3StateDictAdapter,
-        )
+        from areal.experimental.models.archon.qwen3 import Qwen3StateDictAdapter
 
         config = AutoConfig.from_pretrained(moe_model_path, trust_remote_code=True)
         adapter = Qwen3StateDictAdapter(config, hf_assets_path=moe_model_path)
@@ -126,9 +122,7 @@ class TestMultiFileSafetensorsIndex:
         """Test that MoE config is correctly parsed for expert count."""
         from transformers import AutoConfig
 
-        from areal.experimental.models.archon.qwen3.model.state_dict_adapter import (
-            Qwen3StateDictAdapter,
-        )
+        from areal.experimental.models.archon.qwen3 import Qwen3StateDictAdapter
 
         config = AutoConfig.from_pretrained(moe_model_path, trust_remote_code=True)
         adapter = Qwen3StateDictAdapter(config, hf_assets_path=moe_model_path)
@@ -316,9 +310,7 @@ class TestWeightComparisonAfterConversion:
         from safetensors.torch import load_file
         from transformers import AutoConfig
 
-        from areal.experimental.models.archon.qwen3.model.state_dict_adapter import (
-            Qwen3StateDictAdapter,
-        )
+        from areal.experimental.models.archon.qwen3 import Qwen3StateDictAdapter
 
         config = AutoConfig.from_pretrained(dense_model_path, trust_remote_code=True)
         adapter = Qwen3StateDictAdapter(config, hf_assets_path=dense_model_path)

@@ -204,7 +204,7 @@ class ParallelHelper:
         return self._ps.dp_size * self._ps.cp_size
 
     @property
-    def non_data_parallel_size(self) -> int:
+    def context_and_model_parallel_size(self) -> int:
         return self._ps.cp_size * self._ps.tp_size
 
     @property

@@ -10,9 +10,13 @@ Run with:
     torchrun --nproc_per_node=4 areal/tests/experimental/archon/torchrun/run_parallel_dims.py \
         --test_type=etp_mesh --output=/tmp/result.out
 
+    torchrun --nproc_per_node=4 areal/tests/experimental/archon/torchrun/run_parallel_dims.py \
+        --test_type=pp_mesh --output=/tmp/result.out
+
 Supported test types:
     - ep_mesh: Test EP mesh is 1D when etp=1 (2 GPU)
     - etp_mesh: Test ep_tp mesh is 2D when etp=tp (4 GPU)
+    - pp_mesh: Test PP mesh dimension is included (4 GPU)
 """
 
 import argparse
@@ -231,9 +235,115 @@ def test_etp_mesh_is_2d(output: str | None = None) -> bool:
     return success
 
 
+def test_pp_mesh(output: str | None = None) -> bool:
+    """Test that PP mesh dimension is correctly included.
+
+    Configuration: pp=2, dp_shard=1, tp=2, cp=1 (4 GPU)
+    - Mesh dims should be: [pp, dp_shard, cp, tp]
+    - pp mesh should exist and be 1D with size=2
+    """
+    print_rank0("\n=== PP Mesh Test ===")
+
+    world_size = dist.get_world_size()
+    assert world_size == 4, f"This test requires 4 GPUs, got {world_size}"
+
+    dims = ArchonParallelDims(
+        pp=2,
+        dp_shard=1,
+        tp=2,
+        cp=1,
+        world_size=world_size,
+        device_type="cuda",
+    )
+
+    success = True
+
+    # Verify pp_enabled flag
+    if not dims.pp_enabled:
+        print_rank0("  FAILED: pp_enabled should be True")
+        success = False
+    else:
+        print_rank0("  pp_enabled: True (correct)")
+
+    # Verify context_and_model_parallel_size
+    expected_non_dp_size = dims.cp * dims.tp * dims.pp  # 1 * 2 * 2 = 4
+    if dims.context_and_model_parallel_size != expected_non_dp_size:
+        print_rank0(
+            f"  FAILED: context_and_model_parallel_size should be {expected_non_dp_size}, "
+            f"got {dims.context_and_model_parallel_size}"
+        )
+        success = False
+    else:
+        print_rank0(
+            f"  context_and_model_parallel_size: {dims.context_and_model_parallel_size} (correct)"
+        )
+
+    # Build mesh and verify
+    world_mesh = dims.world_mesh
+    pp_mesh = dims.get_mesh("pp")
+    dp_shard_mesh = dims.get_mesh("dp_shard")
+    tp_mesh = dims.get_mesh("tp")
+
+    # Verify world mesh has correct dimensions
+    expected_dim_names = ("pp", "dp_shard", "cp", "tp")
+    if world_mesh.mesh_dim_names != expected_dim_names:
+        print_rank0(
+            f"  FAILED: world mesh dim names should be {expected_dim_names}, "
+            f"got {world_mesh.mesh_dim_names}"
+        )
+        success = False
+    else:
+        print_rank0(f"  world mesh dim names: {world_mesh.mesh_dim_names} (correct)")
+
+    # pp mesh should exist and be 1D with size=2
+    if pp_mesh is None:
+        print_rank0("  FAILED: pp mesh should exist")
+        success = False
+    else:
+        if pp_mesh.ndim != 1:
+            print_rank0(f"  FAILED: pp mesh should be 1D, got ndim={pp_mesh.ndim}")
+            success = False
+        elif pp_mesh.size() != 2:
+            print_rank0(f"  FAILED: pp mesh size should be 2, got {pp_mesh.size()}")
+            success = False
+        else:
+            print_rank0(
+                f"  pp mesh: ndim={pp_mesh.ndim}, size={pp_mesh.size()} (correct)"
+            )
+
+    # dp_shard mesh should exist
+    if dp_shard_mesh is None:
+        print_rank0("  FAILED: dp_shard mesh should exist")
+        success = False
+    else:
+        print_rank0(
+            f"  dp_shard mesh: ndim={dp_shard_mesh.ndim}, size={dp_shard_mesh.size()}"
+        )
+
+    # tp mesh should exist
+    if tp_mesh is None:
+        print_rank0("  FAILED: tp mesh should exist")
+        success = False
+    else:
+        print_rank0(f"  tp mesh: ndim={tp_mesh.ndim}, size={tp_mesh.size()}")
+
+    if success:
+        print_rank0("  pp_mesh_test: PASSED")
+    else:
+        print_rank0("  pp_mesh_test: FAILED")
+
+    dist.barrier()
+
+    if dist.get_rank() == 0 and output:
+        write_result(output, success)
+
+    return success
+
+
 TEST_REGISTRY = {
     "ep_mesh": test_ep_mesh_when_etp_disabled,
     "etp_mesh": test_etp_mesh_is_2d,
+    "pp_mesh": test_pp_mesh,
 }
 
 
