@@ -1,16 +1,4 @@
-"""Anthropic Agent training script using claude_agent_sdk.
-
-This script uses claude_agent_sdk agents that communicate with Claude Code,
-which can be configured to use a proxy by setting ANTHROPIC_BASE_URL.
-
-Following the same pattern as examples/openai_agents/train_agents.py.
-
-Usage:
-    python examples/anthropic_agents/train_agents.py --config examples/anthropic_agents/config.yaml
-"""
-
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 from areal.api.cli_args import GRPOConfig, load_expr_config
@@ -21,13 +9,6 @@ from areal.utils.hf_utils import load_hf_tokenizer
 _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
-
-
-@dataclass
-class AnthropicAgentRLConfig(GRPOConfig):
-    """Configuration for Anthropic agent RL training."""
-
-    pass
 
 
 def main(args):
@@ -53,6 +34,8 @@ def main(args):
         temperature=config.gconfig.temperature,
         top_p=config.gconfig.top_p,
     )
+    eval_workflow_kwargs = workflow_kwargs.copy()
+    eval_workflow_kwargs["temperature"] = 0.6
 
     with PPOTrainer(
         config,
@@ -60,10 +43,10 @@ def main(args):
         valid_dataset=valid_dataset,
     ) as trainer:
         trainer.train(
-            workflow="examples.anthropic_agents.math_agent.MathAgent",
+            workflow="examples.anthropic_agents.math_agent.MathToolAgent",
             workflow_kwargs=workflow_kwargs,
-            eval_workflow="examples.anthropic_agents.math_agent.MathAgent",
-            eval_workflow_kwargs=workflow_kwargs,
+            eval_workflow="examples.anthropic_agents.math_agent.MathToolAgent",
+            eval_workflow_kwargs=eval_workflow_kwargs,
         )
 
 

@@ -534,13 +534,31 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
         # If streaming is requested, return an async generator
         if is_streaming:
+            # Update cache BEFORE returning the generator to ensure the interaction
+            # is recorded even if the generator is never iterated. This is critical
+            # because LiteLLM's streaming adapter generates initial chunks (e.g.,
+            # message_start, content_block_start) before iterating the original
+            # generator, so if the client disconnects early, the cache update
+            # code inside the generator would never execute.
+            if cache is not None:
+                chat_completion, output_message = self._build_chat_completion(
+                    completion_id=completion_id,
+                    current_time=current_time,
+                    output_text=output_text,
+                    tool_calls=tool_calls,
+                    response=response,
+                )
+                cache[completion_id].completion = chat_completion
+                cache[completion_id].model_response = response
+                cache[completion_id].output_message_list = [
+                    output_message.model_dump(exclude_none=True)
+                ]
             return self._create_stream(
                 completion_id=completion_id,
                 current_time=current_time,
                 output_text=output_text,
                 tool_calls=tool_calls,
                 response=response,
-                cache=cache,
             )
 
         # Create proper ChatCompletion object with all required fields
@@ -567,29 +585,16 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         output_text: str,
         tool_calls: list | None,
         response: ModelResponse,
-        cache: InteractionCache | None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         """Generate streaming ChatCompletionChunk objects.
 
         Since Inference engine doesn't support true streaming, we simulate it by
         yielding the complete response as chunks.
-        """
-        # Update cache BEFORE yielding chunks to ensure the interaction is recorded
-        # even if streaming is interrupted by client disconnect
-        if cache is not None:
-            chat_completion, output_message = self._build_chat_completion(
-                completion_id=completion_id,
-                current_time=current_time,
-                output_text=output_text,
-                tool_calls=tool_calls,
-                response=response,
-            )
-            cache[completion_id].completion = chat_completion
-            cache[completion_id].model_response = response
-            cache[completion_id].output_message_list = [
-                output_message.model_dump(exclude_none=True)
-            ]
 
+        Note: Cache is updated by the caller (AsyncCompletionsWithReward.create)
+        before this generator is created, to ensure the interaction is recorded
+        even if the generator is never iterated.
+        """
         try:
             # First chunk: role
             yield ChatCompletionChunk(
