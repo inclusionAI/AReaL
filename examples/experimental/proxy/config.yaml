@@ -6,6 +6,21 @@ enable_offload: false
 total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
+# Workflow configuration
+# Supported workflows:
+#   OpenAI:
+#     - areal.workflow.openai.math_agent.MathAgent (simple, no tools)
+#     - areal.workflow.openai.math_agent.MultiTurnMathAgent (multi-turn)
+#     - areal.workflow.openai.math_agent.MathToolAgent (openai-agents SDK with function tools)
+#   Anthropic:
+#     - areal.workflow.anthropic.math_agent.MathAgent
+#     - areal.workflow.anthropic.math_tool_agent.MathToolAgent (claude_agent_sdk with MCP tools)
+workflow:
+  path: areal.workflow.anthropic.math_agent.MathAgent
+  eval_path: null  # If null, uses the same as path
+  use_mcp_tools: false  # For Anthropic MathToolAgent
+  max_turns: 10  # For multi-turn agents
+
 cluster:
   n_nodes: 1
   n_gpus_per_node: 8
