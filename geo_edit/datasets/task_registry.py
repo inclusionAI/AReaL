@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from geo_edit.constants import SUDOKU_TEXT_INPUT_TEMPLATE, SUDOKU_TOOL_CALL_INPUT_TEMPLATE, CARTOMAPQA_INPUT_TEMPLATE, CARTOMAPQA_SRN_INPUT_TEMPLATE
+from geo_edit.constants import SUDOKU_TEXT_INPUT_TEMPLATE, SUDOKU_TOOL_CALL_INPUT_TEMPLATE, CARTOMAPQA_INPUT_TEMPLATE, CARTOMAPQA_SRN_INPUT_TEMPLATE, MATHVISION_INPUT_TEMPLATE, MATHVISION_NOTOOL_INPUT_TEMPLATE
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
 
@@ -24,7 +24,7 @@ class DatasetSpec:
             if callable(source):
                 values[template_key] = source(item)
             else:
-                values[template_key] = item[source]
+                values[template_key] = item[source] if source in item else ""
         template = self.prompt_template
         if not use_tools and self.notool_prompt_template:
             template = self.notool_prompt_template
@@ -68,6 +68,18 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         prompt_template=CARTOMAPQA_INPUT_TEMPLATE+ CARTOMAPQA_SRN_INPUT_TEMPLATE,
         notool_prompt_template=CARTOMAPQA_INPUT_TEMPLATE+ CARTOMAPQA_SRN_INPUT_TEMPLATE,
         template_fields={},
+    ),
+    "mathvisionqa": DatasetSpec(
+        name="mathvisionqa",
+        id_key="id",
+        answer_key="answer",
+        image_key="decoded_image",
+        prompt_template=MATHVISION_INPUT_TEMPLATE,
+        notool_prompt_template=MATHVISION_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+            "options": "options",
+        },
     ),
 }
 

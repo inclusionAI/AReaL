@@ -81,7 +81,7 @@ MATHVISION_INPUT_TEMPLATE = '''
 Please solve the problem with provided tools. After you confirm the final answer, put your answer in one '<answer>\\boxed{{}}</answer>'. If it is a multiple choice question, only one letter is allowed in the '<answer>\\boxed{{}}</answer>'.\n{question}\n{options}
 '''
 
-NOTOOL_INPUT_TEMPLATE = '''
+MATHVISION_NOTOOL_INPUT_TEMPLATE = '''
 Please solve the problem step by step. After you confirm the final answer, put your answer in one '<answer>\\boxed{{}}</answer>'. If it is a multiple choice question, only one letter is allowed in the '<answer>\\boxed{{}}</answer>'.\n{question}\n{options}
 '''
 
