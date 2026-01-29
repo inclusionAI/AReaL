@@ -170,23 +170,24 @@ def build_vllm_agent_configs(
         tools.append(
             {
                 "type": "function",
-                "name": tool["name"],
-                "description": tool["description"],
-                "parameters": tool["parameters"],
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"],
+                },
             }
         )
-        
-    if tool_mode =="direct":
-        tool_mode=None
-        tools=None
-    elif tool_mode =="force":
-        tool_mode="force"
-    elif tool_mode =="auto":
-        tool_mode="auto"
+
+    if tool_mode == "direct":
+        tool_mode = None
+        tools = None
+    elif tool_mode == "force":
+        tool_mode = "required"
+    elif tool_mode == "auto":
+        tool_mode = "auto"
     else:
         raise ValueError(f"Invalid tool_mode: {tool_mode}")
-    
-    
+
     generate_config = {
         "tools": tools,
         "tool_choice": tool_mode,

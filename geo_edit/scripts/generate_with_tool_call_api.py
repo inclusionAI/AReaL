@@ -9,12 +9,14 @@ from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
 from geo_edit.environment.task.openai_vision_qa_task import OpenAIVisionQATask
 from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
 from geo_edit.config import (
-    build_agent_configs,
+    build_google_agent_configs,
     build_openai_agent_configs,
     build_vllm_agent_configs,
 )
 from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
+from geo_edit.scripts.script_utils import save_global_meta_info
+
 from datasets import load_dataset
 import logging
 from tqdm import tqdm
@@ -57,9 +59,9 @@ def main():
     if not args.use_tools and dataset_spec.notool_prompt_template is None:
         logger.warning("Dataset %s has no no-tool template; using tool template.", dataset_spec.name)
     system_prompt = get_system_prompt(args.model_type) if args.use_tools else ""
-    tool_mode = "AUTO" if args.use_tools else "NONE"
+    tool_mode = "auto" if args.use_tools else "direct"
     if args.model_type == "Google":
-        agent_configs = build_agent_configs(
+        agent_configs = build_google_agent_configs(
             max_output_tokens=max_output_tokens,
             thinking_level="low",
             include_thoughts=True,
@@ -67,13 +69,11 @@ def main():
             system_prompt=system_prompt,
             candidate_count=1,
             tool_mode=tool_mode,
-            disable_automatic_function_calling=True,
         )
     elif args.model_type == "OpenAI":
         agent_configs = build_openai_agent_configs(
             max_output_tokens=max_output_tokens,
             temperature=1.0,
-            system_prompt=system_prompt,
             tool_mode=tool_mode,
             reasoning_level="medium",
         )
@@ -175,33 +175,8 @@ def main():
             meta_info_list.append(meta_info)
         else:
             continue
-    
-    total_tool_calls = 0
-    total_tokens = 0
-    tool_usage_counts = {}
-    reach_max_tool_call_count = 0
-    direct_answer_count = 0
-    for info in meta_info_list:
-        total_tool_calls += info["function_call_total_count"]
-        total_tokens += info["tokens_used_total"]
-        if info["total_steps"] >= MAX_TOOL_CALLS :
-            reach_max_tool_call_count += 1
-        if info["function_call_total_count"] == 0:
-            direct_answer_count += 1
-        for tool_name, count in info["function_call_each_count"].items():
-            tool_usage_counts[tool_name] = tool_usage_counts.get(tool_name, 0) + count
 
-    global_meta_info = {
-        "total_examples": len(meta_info_list),
-        "total_tool_calls": total_tool_calls,
-        "total_tokens": total_tokens,
-        "tool_usage_counts": tool_usage_counts,
-        "reach_max_tool_call_count": reach_max_tool_call_count,
-        "direct_answer_count": direct_answer_count,
-    }
-    global_meta_info_jsonl_path = os.path.join(output_path, "global_meta_info.jsonl")
-    with open(global_meta_info_jsonl_path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(global_meta_info) + "\n")
-            
+    save_global_meta_info(output_path, meta_info_list)
+
 if __name__ == "__main__":
     main()

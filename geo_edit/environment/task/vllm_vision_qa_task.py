@@ -1,20 +1,13 @@
 from __future__ import annotations
 
 import json
-from logging import log
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from PIL import Image
 
 from geo_edit.environment.task.vision_qa_task import ToolCall, VisionQATask
-from geo_edit.environment.action.image_edition_tool import (
-    bounding_box_function_declaration,
-    draw_line_function_declaration,
-    image_crop_function_declaration,
-    image_label_function_declaration,
-)
 from geo_edit.utils.vision_task_utils import image_to_data_url
 from geo_edit.utils.logger import setup_logger
 
@@ -22,10 +15,9 @@ logger = setup_logger(__name__)
 
 
 class VLLMVisionQATask(VisionQATask):
-    """Vision QA task for vLLM OpenAI-compatible chat completions."""
+    """Vision QA task for vLLM OpenAI-compatible chat completions with native tool calls."""
 
     _THINK_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
-    _ACTION_PATTERN = re.compile(r"<action>(.*?)</action>", re.DOTALL | re.IGNORECASE)
     _ANSWER_PATTERN = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
 
     def __init__(
@@ -48,22 +40,14 @@ class VLLMVisionQATask(VisionQATask):
             tool_functions=tool_functions,
             **kwargs,
         )
-        base_prompt = system_prompt 
-        tool_info = self._build_tool_prompt()
-        if tool_info:
-            self.system_prompt = f"{base_prompt}\n\n{tool_info}"
-        else:
-            self.system_prompt = base_prompt
-            
+        self.system_prompt = system_prompt
         self.image_url_map: Dict[str, str] = {}
         self.messages: List[Dict[str, Any]] = []
         if self.system_prompt:
-            self.messages.append(
-                {"role": "system", "content": self.system_prompt}
-            )
+            self.messages.append({"role": "system", "content": self.system_prompt})
         self._append_initial_observation()
         self.contents = self.messages
-        
+
     def _append_initial_observation(self) -> None:
         content = [{"type": "text", "text": self.task_prompt}]
         if self.image_list:
@@ -78,47 +62,6 @@ class VLLMVisionQATask(VisionQATask):
                 ]
             )
         self.messages.append({"role": "user", "content": content})
-
-    def _build_tool_prompt(self) -> str:
-        if not self.tool_functions:
-            return None
-        declaration_pool = [
-            image_crop_function_declaration,
-            image_label_function_declaration,
-            draw_line_function_declaration,
-            bounding_box_function_declaration,
-        ]
-        declarations: Dict[str, Dict[str, Any]] = {}
-        for tool in declaration_pool:
-            name = tool.get("name")
-            if name:
-                declarations[name] = tool
-
-        lines = ["Tool definitions:"]
-        for tool_name in sorted(self.tool_functions.keys()):
-            tool = declarations.get(tool_name, {"name": tool_name})
-            description = " ".join(tool.get("description", "").split())
-            if not description:
-                description = "No description provided."
-            lines.append(f"- {tool_name}: {description}")
-            parameters = tool.get("parameters")
-            if parameters:
-                lines.append(
-                    f"  parameters: {json.dumps(parameters, ensure_ascii=True)}"
-                )
-        lines.append(
-            "Tool results are returned as <tool_result>{\"name\": \"ToolName\", "
-            "\"output\": {...}} or <tool_result>{\"name\": \"ToolName\", "
-            "\"error\": \"...\"}</tool_result>."
-        )
-        lines.append(
-            "Call tools with JSON: <action>{\"name\":\"ToolName\",\"arguments\":{...}}</action>."
-        )
-        lines.append(
-            "If a tool returns an image, the output includes image_ref for a new "
-            "Observation and the image appears as the next user message."
-        )
-        return "\n".join(lines)
 
     def _stringify_observation_item(self, item: Any) -> Any:
         if not isinstance(item, dict):
@@ -136,12 +79,12 @@ class VLLMVisionQATask(VisionQATask):
                     image_url = part["image_url"]
                     if isinstance(image_url, dict):
                         image_url = image_url["url"]
-                    image_path = self.image_url_map[image_url]
+                    image_path = self.image_url_map.get(image_url, "")
 
                     output["content"].append(
                         {
                             "type": "image_url",
-                            "image_path": image_path ,
+                            "image_path": image_path,
                         }
                     )
                 else:
@@ -151,65 +94,57 @@ class VLLMVisionQATask(VisionQATask):
         output["content"] = content
         return output
 
-    def _parse_action_body(self, action_body: str) -> Tuple[str, Dict[str, Any]]:
-        payload = json.loads(action_body)
-        tool_name = payload["name"]
-        arguments = payload["arguments"]
-        return tool_name, arguments
-
-    def _parse_tool_calls_from_text(
-        self, text: str, step: int
-    ) -> Tuple[List[ToolCall], List[Dict[str, Any]]]:
-        tool_calls: List[ToolCall] = []
-        tool_call_records: List[Dict[str, Any]] = []
-        if not text:
-            logger.warning("Empty text when parsing tool calls.")
-            return tool_calls, tool_call_records
-        matches = list(self._ACTION_PATTERN.finditer(text))
-        for index, match in enumerate(matches, start=1):
-            action_body = match.group(1).strip()
-            try:
-                tool_name, arguments = self._parse_action_body(action_body)
-            except ValueError as e:
-                logger.warning(f"Skipping invalid tool call: {e}")
-                continue
-            call_id = f"call_{step}_{index}"
-            tool_calls.append(
-                ToolCall(name=tool_name, args=arguments, call_id=call_id)
-            )
-            tool_call_records.append(
-                {"id": call_id, "name": tool_name, "args": arguments}
-            )
-        return tool_calls, tool_call_records
-
     def parse_action(self, step: int, action: Any, extra_info: Dict[str, Any]):
         contents_for_save = [
             self._stringify_observation_item(item) for item in self.messages
         ]
 
         if not action.choices:
-            raise ValueError("vLLM response contained no tool call or final answer.")
+            raise ValueError("vLLM response contained no choices.")
 
-        content = action.choices[0].message.content
+        message = action.choices[0].message
+        content = message.content or ""
+        native_tool_calls = message.tool_calls
 
+        # Extract thinking from content
         thinking_parts = [
             match.group(1).strip()
             for match in self._THINK_PATTERN.finditer(content)
         ]
         thinking_process = "\n".join(part for part in thinking_parts if part)
+
+        # Extract answer from content
         answer_parts = [
             match.group(1).strip()
             for match in self._ANSWER_PATTERN.finditer(content)
         ]
         output_text = "\n".join(part for part in answer_parts if part)
-        tool_calls, tool_call_records = self._parse_tool_calls_from_text(
-            content, step
-        )
+
+        # Parse native tool_calls
+        tool_calls: List[ToolCall] = []
+        tool_call_records: List[Dict[str, Any]] = []
+        if native_tool_calls:
+            for tc in native_tool_calls:
+                args = tc.function.arguments
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Failed to parse tool call arguments as JSON: %s", args
+                        )
+                        raise ValueError(f"Invalid JSON in tool call arguments: {args}")
+                tool_calls.append(
+                    ToolCall(name=tc.function.name, args=args, call_id=tc.id)
+                )
+                tool_call_records.append(
+                    {"id": tc.id, "name": tc.function.name, "args": args}
+                )
 
         if not tool_calls and not output_text:
-            logger.error(content)
+            logger.error("vLLM response content: %s", content)
             raise ValueError("vLLM response contained no tool call or final answer.")
-        
+
         if tool_calls and output_text:
             logger.warning(
                 "vLLM response contained tool call and final answer; "
@@ -218,8 +153,20 @@ class VLLMVisionQATask(VisionQATask):
             tool_calls = []
             tool_call_records = []
 
-        assistant_message: Dict[str, Any] = {"role": "assistant"}
-        assistant_message["content"] = content
+        # Build assistant message for conversation
+        assistant_message: Dict[str, Any] = {"role": "assistant", "content": content}
+        if native_tool_calls:
+            assistant_message["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in native_tool_calls
+            ]
         self.messages.append(assistant_message)
 
         function_call_list = (
@@ -242,19 +189,17 @@ class VLLMVisionQATask(VisionQATask):
             }
         )
 
-        
-
         return list(tool_calls)
 
-    def _append_tool_result(self, payload: Dict[str, Any]) -> None:
-        text = f"<tool_result>{json.dumps(payload, ensure_ascii=True)}</tool_result>"
+    def _append_tool_result(self, call_id: str, payload: Dict[str, Any]) -> None:
+        text = json.dumps(payload, ensure_ascii=True)
         self.messages.append(
-            {"role": "user", "content": [{"type": "text", "text": text}]}
+            {"role": "tool", "tool_call_id": call_id, "content": text}
         )
 
     def _append_tool_error(self, tool_call: ToolCall, error_msg: str) -> None:
-        payload = {"name": tool_call.name, "error": error_msg}
-        self._append_tool_result(payload)
+        payload = {"error": error_msg}
+        self._append_tool_result(tool_call.call_id, payload)
 
     def _append_tool_image_for_calls(
         self,
@@ -265,12 +210,9 @@ class VLLMVisionQATask(VisionQATask):
         image_bytes: bytes,
         image_index: int,
     ) -> None:
-        tool_name = tool_calls[-1].name if tool_calls else "tool"
-        payload = {
-            "name": tool_name,
-            "output": {"image_ref": {f"Observation {image_index}": image_name}},
-        }
-        self._append_tool_result(payload)
+        payload = {"image_ref": {f"Observation {image_index}": image_name}}
+        for call in tool_calls:
+            self._append_tool_result(call.call_id, payload)
 
         image_url = image_to_data_url(image)
         self.image_url_map[image_url] = image_path

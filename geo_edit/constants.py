@@ -35,9 +35,6 @@ to the following protocol for every interaction:
 you must analyze the user's request and determine
 the necessary steps. Output your internal monologue
 and logic inside <think> and </think> tags.
-6. Action: After your reasoning, decide on the tool to
-call and the input parameters. Output this action as valid JSON:
-<action>{"name":"ToolName","arguments":{"parameter1":"value1","parameter2":"value2"}}</action>
 6. Reasoning After Action: Once you receive the
 output from a tool, you must analyze the results to
 determine if further actions are needed or if the task
@@ -50,10 +47,10 @@ conclusion, you must wrap your final answer in
 
 VLLM_FORCE_TOOL_CALL_PROMPT = '''
 Force tool-call mode:
-- You MUST output exactly one <action>...</action> in your response.
-- Do NOT output <answer> or plain text in the same response as a tool call.
+- You MUST call a tool in your response.
+- Do NOT output <answer> in the same response as a tool call.
 - If you already know the final answer, you must still call a tool first.
-- Only after tool results are returned should you output <answer>...</answer> with no <action>.
+- Only after tool results are returned should you output <answer>...</answer>.
 '''
 
 MATHVISION_INPUT_TEMPLATE = '''

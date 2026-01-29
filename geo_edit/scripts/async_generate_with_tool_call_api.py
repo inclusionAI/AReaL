@@ -21,6 +21,7 @@ from geo_edit.config import (
     build_openai_agent_configs,
     build_vllm_agent_configs,
 )
+from geo_edit.scripts.script_utils import save_global_meta_info
 from geo_edit.constants import MAX_TOOL_CALLS, get_system_prompt
 from geo_edit.datasets.task_registry import DATASET_SPECS, get_dataset_spec
 from geo_edit.utils.logger import setup_logger
@@ -314,35 +315,7 @@ def main():
 
         pbar.close()
 
-    # 3) aggregate global stats
-    total_tool_calls = 0
-    total_tokens = 0
-    tool_usage_counts = {}
-    reach_max_tool_call_count = 0
-    direct_answer_count = 0
-
-    for info in meta_info_list:
-        total_tool_calls += info["function_call_total_count"]
-        total_tokens += info["tokens_used_total"]
-        if info["total_steps"] >= MAX_TOOL_CALLS:
-            reach_max_tool_call_count += 1
-        if info["function_call_total_count"] == 0:
-            direct_answer_count += 1
-        for tool_name, count in info["function_call_each_count"].items():
-            tool_usage_counts[tool_name] = tool_usage_counts.get(tool_name, 0) + count
-
-    global_meta_info = {
-        "total_examples": len(meta_info_list),
-        "total_tool_calls": total_tool_calls,
-        "total_tokens": total_tokens,
-        "tool_usage_counts": tool_usage_counts,
-        "reach_max_tool_call_count": reach_max_tool_call_count,
-        "direct_answer_count": direct_answer_count,
-    }
-
-    global_meta_info_jsonl_path = os.path.join(output_path, "global_meta_info.jsonl")
-    with open(global_meta_info_jsonl_path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(global_meta_info) + "\n")
+    save_global_meta_info(output_path, meta_info_list)
 
 
 if __name__ == "__main__":

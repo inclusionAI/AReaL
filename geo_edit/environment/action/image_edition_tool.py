@@ -1,4 +1,9 @@
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+
+# Get the font path relative to this file
+_FONT_PATH = Path(__file__).parent.parent.parent / "assets" / "fonts" / "arial.ttf"
+
 image_crop_function_declaration = {
     "name":"image_crop",
     "description":'''
@@ -119,7 +124,7 @@ def image_label_function(image_list, image_index: int, text: str| list, position
     coords = position.strip("()").split(",")
     x, y = int(int(coords[0]) * width / 1000), int(int(coords[1]) * height / 1000)
     # Using a default font
-    font = ImageFont.truetype("arial.ttf", 30)
+    font = ImageFont.truetype(str(_FONT_PATH), 30)
     draw.text((x, y), text, fill="red", font=font)
     
     return image_to_label

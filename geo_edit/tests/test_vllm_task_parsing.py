@@ -6,8 +6,23 @@ from geo_edit.environment.action.image_edition_tool import draw_line_function
 from geo_edit.environment.task.vllm_vision_qa_task import VLLMVisionQATask
 
 
-def _make_response(content: str, tokens_used: int = 5):
-    message = SimpleNamespace(content=content, tool_calls=None, role="assistant")
+def _make_tool_call(call_id: str, name: str, arguments: dict):
+    return SimpleNamespace(
+        id=call_id,
+        type="function",
+        function=SimpleNamespace(
+            name=name,
+            arguments=json.dumps(arguments),
+        ),
+    )
+
+
+def _make_response(content: str, tool_calls=None, tokens_used: int = 5):
+    message = SimpleNamespace(
+        content=content,
+        tool_calls=tool_calls,
+        role="assistant",
+    )
     choice = SimpleNamespace(message=message)
     return SimpleNamespace(
         choices=[choice],
@@ -27,13 +42,12 @@ def test_vllm_task_parses_tool_calls(tmp_path):
         system_prompt="sys",
     )
 
-    action_payload = {
-        "name": "draw_line",
-        "arguments": {"image_index": 0, "coordinates": "\\boxed{10,20,30,40}"},
-    }
+    arguments = {"image_index": 0, "coordinates": "\\boxed{10,20,30,40}"}
+    native_tool_calls = [
+        _make_tool_call("call_abc123", "draw_line", arguments)
+    ]
     content = "<think>Need to draw a line.</think>"
-    content += f"<action>{json.dumps(action_payload, ensure_ascii=True)}</action>"
-    response = _make_response(content)
+    response = _make_response(content, tool_calls=native_tool_calls)
     tool_calls = task.parse_action(
         step=1,
         action=response,
@@ -42,13 +56,13 @@ def test_vllm_task_parses_tool_calls(tmp_path):
 
     assert len(tool_calls) == 1
     assert tool_calls[0].name == "draw_line"
-    assert tool_calls[0].args == action_payload["arguments"]
-    assert tool_calls[0].call_id == "call_1_1"
+    assert tool_calls[0].args == arguments
+    assert tool_calls[0].call_id == "call_abc123"
     assert task.messages[-1]["role"] == "assistant"
     assert task.conversation_history[0]["function_call"][0][0] == "draw_line"
     assert task.conversation_history[0]["thinking_process"] == "Need to draw a line."
     assert task.conversation_history[0]["output_text"] == ""
-    assert task.conversation_history[0]["action"]["tool_calls"][0]["args"] == action_payload["arguments"]
+    assert task.conversation_history[0]["action"]["tool_calls"][0]["args"] == arguments
 
     observation = task.conversation_history[0]["observation"]
     user_message = next(item for item in observation if item.get("role") == "user")
@@ -62,11 +76,7 @@ def test_vllm_task_parses_tool_calls(tmp_path):
     tool_result_messages = [
         message
         for message in task.messages
-        if message.get("role") == "user"
-        and isinstance(message.get("content"), list)
-        and message["content"]
-        and message["content"][0].get("type") == "text"
-        and message["content"][0]["text"].startswith("<tool_result>")
+        if message.get("role") == "tool"
     ]
     assert tool_result_messages
 
