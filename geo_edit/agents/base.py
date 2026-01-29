@@ -151,8 +151,10 @@ class BaseAgent(ABC):
 
     def reset(self):
         """Reset agent state"""
+        self.conversation_history = []
         self.step_count = 0
         self.total_tokens_used = 0
+        self.cost = []
         self.client = None
         self._model_loaded = False
         logger.info("Agent state reset")

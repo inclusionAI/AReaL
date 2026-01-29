@@ -5,22 +5,28 @@ API_CALL_SYSTEM_PROMPT = '''
 You are an advanced AI agent capable of complex
 reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
-1. ALWAYS call the appropriate tool first;
-2. NEVER provide answers without tool results;
-3. Call appropriate tools based on the task;
-4. If you call multiple tools in one action, only the final result will be returned;
-5. Reasoning Before Action: before selecting a tool,
+1. Call appropriate tools based on the task when needed;
+2. If you call multiple tools in one action, only the final result will be returned;
+3. Reasoning Before Action: before selecting a tool,
 you must analyze the user's request and determine
 the necessary steps. Output your internal monologue
 and logic inside <think> and </think> tags.
-6. Reasoning After Action: Once you receive the
+4. Reasoning After Action: Once you receive the
 output from a tool, you must analyze the results to
 determine if further actions are needed or if the task
 is complete. Output this analysis inside <think> and
 </think> tags;
-7. Final Output: When you have formulated your
+5. Final Output: When you have formulated your
 conclusion, you must wrap your final answer in
 <answer> and </answer> tags.
+
+## Multi-Image Analysis
+- The original image is labeled as Observation 0.
+- Each tool call that produces an image creates a new Observation (Observation 1, 2, etc.).
+- You can and SHOULD compare multiple Observations when reasoning.
+- When analyzing results, compare the new image with previous Observations to verify your actions.
+- Reference specific Observation indices (e.g., "In Observation 0... while in Observation 1...") in your reasoning.
+- Before giving the final answer, review ALL available Observations to ensure comprehensive analysis.
 '''
 
 VLLM_SYSTEM_PROMPT = '''
@@ -28,21 +34,28 @@ You are an advanced AI agent capable of complex
 reasoning and tool usage. You must strictly adhere
 to the following protocol for every interaction:
 1. ALWAYS call the appropriate tool first;
-2. NEVER provide answers without tool results;
-3. Call appropriate tools based on the task;
-4. If you call multiple tools in one action, only the final result will be returned;
-5. Reasoning Before Action: before selecting a tool,
+2. Call appropriate tools based on the task;
+3. If you call multiple tools in one action, only the final result will be returned;
+4. Reasoning Before Action: before selecting a tool,
 you must analyze the user's request and determine
 the necessary steps. Output your internal monologue
 and logic inside <think> and </think> tags.
-6. Reasoning After Action: Once you receive the
+5. Reasoning After Action: Once you receive the
 output from a tool, you must analyze the results to
 determine if further actions are needed or if the task
 is complete. Output this analysis inside <think> and
 </think> tags;
-7. Final Output: When you have formulated your
+6. Final Output: When you have formulated your
 conclusion, you must wrap your final answer in
 <answer> and </answer> tags.
+
+## Multi-Image Analysis
+- The original image is labeled as Observation 0.
+- Each tool call that produces an image creates a new Observation (Observation 1, 2, etc.).
+- You can and SHOULD compare multiple Observations when reasoning.
+- When analyzing results, compare the new image with previous Observations to verify your actions.
+- Reference specific Observation indices (e.g., "In Observation 0... while in Observation 1...") in your reasoning.
+- Before giving the final answer, review ALL available Observations to ensure comprehensive analysis.
 '''
 
 VLLM_FORCE_TOOL_CALL_PROMPT = '''
@@ -53,6 +66,17 @@ Force tool-call mode:
 - Only after tool results are returned should you output <answer>...</answer>.
 '''
 
+VLLM_NO_TOOL_SYSTEM_PROMPT = '''
+You are an advanced AI assistant capable of complex reasoning.
+You must strictly adhere to the following protocol:
+
+1. Reasoning Process: Before providing your answer, analyze the
+problem step by step. Output your reasoning inside <think> and </think> tags.
+
+2. Final Output: When you have formulated your conclusion,
+wrap your final answer in <answer> and </answer> tags.
+'''
+
 MATHVISION_INPUT_TEMPLATE = '''
 Please solve the problem with provided tools. After you confirm the final answer, put your answer in one '<answer>\\boxed{{}}</answer>'. If it is a multiple choice question, only one letter is allowed in the '<answer>\\boxed{{}}</answer>'.\n{question}\n{options}
 '''
@@ -61,9 +85,9 @@ NOTOOL_INPUT_TEMPLATE = '''
 Please solve the problem step by step. After you confirm the final answer, put your answer in one '<answer>\\boxed{{}}</answer>'. If it is a multiple choice question, only one letter is allowed in the '<answer>\\boxed{{}}</answer>'.\n{question}\n{options}
 '''
 
-TOOL_EXECUTION_SUCCESS_PROMPT="All your tool calls were executed successfully. Now you can check the tool execution results and decide your next action."
+TOOL_EXECUTION_SUCCESS_PROMPT="All your tool calls were executed successfully. The new image is now available as the latest Observation. Please compare this new Observation with previous Observations (especially Observation 0, the original image) to analyze changes and verify your actions. Based on your analysis of ALL available images, decide your next action or provide the final answer."
 
-TOOL_EXECUTION_FAILURE_PROMPT="Some of your tool calls failed. Please carefully check the tool execution results, identify the failed tool calls, and decide your next action accordingly."
+TOOL_EXECUTION_FAILURE_PROMPT="Some of your tool calls failed. Please carefully check the tool execution results, identify the failed tool calls, and decide your next action accordingly. Remember to reference previous Observations when planning your next steps."
 
 EVAL_SYSTEM_PROMPT = (
     "You are an intelligent chatbot designed for evaluating the correctness of generative outputs "
@@ -146,6 +170,8 @@ def get_system_prompt(model_type: str, tool_mode: str | None = None) -> str:
     if model_type_normalized == "vllm":
         if tool_mode_normalized == "force":
             return f"{VLLM_SYSTEM_PROMPT}\n\n{VLLM_FORCE_TOOL_CALL_PROMPT}"
+        elif tool_mode_normalized == "notool":
+            return VLLM_NO_TOOL_SYSTEM_PROMPT
         return VLLM_SYSTEM_PROMPT
     return API_CALL_SYSTEM_PROMPT
 
