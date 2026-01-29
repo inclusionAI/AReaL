@@ -203,5 +203,5 @@ Each <action> must be one of the following:\n\
 - "turn right"\n\
 Use the exact road names as shown on the map.\n\
 For example: If the route involves a u-turn at the start, followed by driving on "Main Street", a left turn onto "2nd Avenue", and a right turn onto "Elm Street" to reach the destination, the response should be:\
-Answer: [blue, make a U-turn and continue straight, Main Street, turn left, 2nd Avenue, turn right, Elm Street, red]\n\
+<answer>Answer: [blue, make a U-turn and continue straight, Main Street, turn left, 2nd Avenue, turn right, Elm Street, red]</answer>\n\
 Strictly follow this format. Do not include any explanation, justification, or additional text—only return the final answer list with the format as shown above."""
