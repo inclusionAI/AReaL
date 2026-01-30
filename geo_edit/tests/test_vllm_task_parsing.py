@@ -58,7 +58,7 @@ def test_vllm_task_parses_tool_calls(tmp_path):
     assert tool_calls[0].name == "draw_line"
     assert tool_calls[0].args == arguments
     assert tool_calls[0].call_id == "call_abc123"
-    assert task.messages[-1]["role"] == "assistant"
+    assert task.contents[-1]["role"] == "assistant"
     assert task.conversation_history[0]["function_call"][0][0] == "draw_line"
     assert task.conversation_history[0]["thinking_process"] == "Need to draw a line."
     assert task.conversation_history[0]["output_text"] == ""
@@ -75,7 +75,7 @@ def test_vllm_task_parses_tool_calls(tmp_path):
     assert len(task.image_list) == 2
     tool_result_messages = [
         message
-        for message in task.messages
+        for message in task.contents
         if message.get("role") == "tool"
     ]
     assert tool_result_messages

@@ -42,6 +42,7 @@ class VisionQATask(AbstractVLMTask):
         self.task_image_path = task_image_path
         self.tool_functions = tool_functions or {}
         self.state = True
+        self.single_message_mode= kwargs.get("single_message_mode", False) # single message mode: only maintain one message, convert each action and new observation into original message.
         self.options = kwargs["options"] if "options" in kwargs else None
 
         self.image_path_map: Dict[int, str] = {}

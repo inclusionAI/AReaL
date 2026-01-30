@@ -55,6 +55,8 @@ conclusion, you must wrap your final answer in
 - Before giving the final answer, review ALL available Observations to ensure comprehensive analysis.
 '''
 
+
+
 VLLM_FORCE_TOOL_CALL_PROMPT = '''
 Force tool-call mode:
 - You MUST call a tool in your response.

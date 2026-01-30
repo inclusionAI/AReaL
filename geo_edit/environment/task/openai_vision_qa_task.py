@@ -97,10 +97,17 @@ class OpenAIVisionQATask(VisionQATask):
     def parse_action(self, step: int, action: Any, extra_info: Dict[str, Any]):
         """update task contents from action"""
         output_text = ""
+        thinking_process = ""
         tool_calls: List[ToolCall] = []
 
         for item in action.output:
-            if item.type == "message":
+            if item.type == "reasoning":
+                # Extract thinking/reasoning content from OpenAI response
+                if hasattr(item, "summary") and item.summary:
+                    for summary_item in item.summary:
+                        if hasattr(summary_item, "text") and summary_item.text:
+                            thinking_process += summary_item.text
+            elif item.type == "message":
                 for part in item.content:
                     if part.type == "output_text":
                         output_text += part.text
@@ -127,7 +134,7 @@ class OpenAIVisionQATask(VisionQATask):
             "tool_calls": [{"id": c.call_id, "name": c.name, "args": c.args} for c in tool_calls],
         }
         self._record_conversation_history(
-            step, contents_for_save, action_record, "", output_text, tool_calls, extra_info
+            step, contents_for_save, action_record, thinking_process, output_text, tool_calls, extra_info
         )
         self.contents["previous_response_id"] = action.id
         return list(tool_calls)

@@ -28,11 +28,10 @@ class VLLMVisionQATask(VisionQATask):
                          task_image_path=task_image_path, save_dir=save_dir,
                          tool_functions=tool_functions, **kwargs)
         self.system_prompt = system_prompt
-        self.messages: List[Dict[str, Any]] = []
+        self.contents: List[Dict[str, Any]] = []
         if self.system_prompt:
-            self.messages.append({"role": "system", "content": self.system_prompt})
+            self.contents.append({"role": "system", "content": self.system_prompt})
         self._append_initial_observation()
-        self.contents = self.messages
 
     def _append_initial_observation(self) -> None:
         content = [{"type": "text", "text": self.task_prompt}]
@@ -47,7 +46,7 @@ class VLLMVisionQATask(VisionQATask):
                     {"type": "image_url", "image_url": {"url": image_url}},
                 ]
             )
-        self.messages.append({"role": "user", "content": content})
+        self.contents.append({"role": "user", "content": content})
 
     def _stringify_observation_item(self, item: Any) -> Any:
         if not isinstance(item, dict):
@@ -81,7 +80,7 @@ class VLLMVisionQATask(VisionQATask):
         return output
 
     def parse_action(self, step: int, action: Any, extra_info: Dict[str, Any]):
-        contents_for_save = [self._stringify_observation_item(item) for item in self.messages]
+        contents_for_save = [self._stringify_observation_item(item) for item in self.contents]
 
         if not action.choices:
             raise ValueError("vLLM response contained no choices.")
@@ -131,7 +130,7 @@ class VLLMVisionQATask(VisionQATask):
                  "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
                 for tc in native_tool_calls
             ]
-        self.messages.append(assistant_message)
+        self.contents.append(assistant_message)
 
         action_record = {"text": output_text, "tool_calls": tool_call_records}
         self._record_conversation_history(
@@ -141,7 +140,7 @@ class VLLMVisionQATask(VisionQATask):
 
     def _append_tool_result(self, call_id: str, payload: Dict[str, Any]) -> None:
         text = json.dumps(payload, ensure_ascii=True)
-        self.messages.append(
+        self.contents.append(
             {"role": "tool", "tool_call_id": call_id, "content": text}
         )
 
@@ -168,9 +167,9 @@ class VLLMVisionQATask(VisionQATask):
             {"type": "text", "text": f"Observation {image_index}:"},
             {"type": "image_url", "image_url": {"url": image_url}},
         ]
-        self.messages.append({"role": "user", "content": content})
+        self.contents.append({"role": "user", "content": content})
 
     def append_prompt(self, prompt: str) -> None:
-        self.messages.append(
+        self.contents.append(
             {"role": "user", "content": [{"type": "text", "text": prompt}]}
         )
