@@ -151,6 +151,13 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
     return {
         "id": record_id,
         "question": question,
+        "image_path":record["image_path"],
+        "total_step":record["total_step"],
+        "function_call_each_count":record["function_call_each_count"],
+        "function_call_total_count":record["function_call_total_count"],
+        "function_call_per_step":record["function_call_per_step"],
+        "tokens_used_total":record["tokens_used_total"],
+        "tokens_used_per_step":record["tokens_used_per_step"],
         "output_text": output_text,
         "ground_truth": ground_truth,
         "prediction": get_final_prediction(predict_str_list, cfg.extract_answer_tags),
