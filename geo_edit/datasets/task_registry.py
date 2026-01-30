@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from geo_edit.constants import SUDOKU_TEXT_INPUT_TEMPLATE, SUDOKU_TOOL_CALL_INPUT_TEMPLATE, CARTOMAPQA_INPUT_TEMPLATE, CARTOMAPQA_SRN_INPUT_TEMPLATE, MATHVISION_INPUT_TEMPLATE, MATHVISION_NOTOOL_INPUT_TEMPLATE
+from geo_edit.datasets.input_template import SUDOKU_TEXT_INPUT_TEMPLATE, SUDOKU_TOOL_CALL_INPUT_TEMPLATE, CARTOMAPQA_INPUT_TEMPLATE, CARTOMAPQA_SRN_INPUT_TEMPLATE, MATHVISION_INPUT_TEMPLATE, MATHVISION_NOTOOL_INPUT_TEMPLATE
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
 
