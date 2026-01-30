@@ -4,7 +4,8 @@
 .idea/
 
 # claude
-.claude/
+.claude/settings.local.json
+.claude/sessions/
 .agent/
 
 # Ruff
