@@ -8,6 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     net-tools \
+    unzip \
     kmod \
     ccache \
     cmake \
@@ -52,18 +53,6 @@ ENV MAX_JOBS=32
 
 # Set VIRTUAL_ENV so uv pip install targets the venv created below
 ENV VIRTUAL_ENV=/AReaL/.venv
-
-# Install Node.js via nvm and Claude Code
-ENV NVM_DIR=/root/.nvm
-ENV NODE_VERSION=22
-RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash \
-    && . "$NVM_DIR/nvm.sh" \
-    && nvm install $NODE_VERSION \
-    && nvm use $NODE_VERSION \
-    && nvm alias default $NODE_VERSION \
-    && npm install -g npm@latest \
-    && curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="$NVM_DIR/versions/node/v$NODE_VERSION/bin:/root/.local/bin:$PATH"
 
 ##############################################################
 # STAGE 1: Install base torch FIRST
@@ -111,6 +100,52 @@ RUN git clone https://github.com/Dao-AILab/flash-attention -b v2.8.3 /flash-atte
     && cp /flash-attention/hopper/flash_attn_interface.py $VIRTUAL_ENV/lib/python3.12/site-packages/flash_attn_3/ \
     && touch $VIRTUAL_ENV/lib/python3.12/site-packages/flash_attn_3/__init__.py \
     && rm -rf /flash-attention
+
+# FlashMLA (Multi-head Latent Attention for DeepSeek-V3)
+RUN git clone https://github.com/deepseek-ai/FlashMLA.git /flash-mla \
+    && cd /flash-mla \
+    && git submodule update --init --recursive \
+    && uv pip install -v . --no-build-isolation \
+    && rm -rf /flash-mla
+
+# DeepGEMM (FP8 GEMM library for DeepSeek-V3)
+RUN git clone https://github.com/deepseek-ai/DeepGEMM /DeepGEMM \
+    && cd /DeepGEMM \
+    && git submodule update --init --recursive \
+    && uv pip install . --no-build-isolation \
+    && rm -rf /DeepGEMM
+
+# DeepEP (Expert Parallelism communication library for MoE)
+# Note: TORCH_CUDA_ARCH_LIST="9.0" enables SM90 features and aggressive PTX instructions
+# The NVSHMEM path is auto-detected from nvidia.nvshmem module installed above
+RUN git clone https://github.com/deepseek-ai/DeepEP /DeepEP \
+    && cd /DeepEP \
+    && TORCH_CUDA_ARCH_LIST="9.0 9.0a" uv pip install -v . --no-build-isolation \
+    && rm -rf /DeepEP
+
+# flash-linear-attention (pure Triton kernels, no CUDA extensions)
+RUN git clone https://github.com/fla-org/flash-linear-attention /flash-linear-attention \
+    && cd /flash-linear-attention \
+    && uv pip install -v . \
+    && rm -rf /flash-linear-attention
+
+##############################################################
+# STAGE 2.5: Install Node.js and npm-based tools
+##############################################################
+
+# Install Node.js via fnm and Claude Code
+ENV FNM_DIR=/root/.fnm
+ENV NODE_VERSION=24.13.0
+ENV PATH="$FNM_DIR/aliases/default/bin:/root/.local/bin:$PATH"
+RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_DIR" --skip-shell \
+    && eval "$($FNM_DIR/fnm env --shell bash)" \
+    && $FNM_DIR/fnm install $NODE_VERSION \
+    && $FNM_DIR/fnm default $NODE_VERSION \
+    && npm install -g npm@latest \
+    && curl -fsSL https://claude.ai/install.sh | bash \
+    && curl -fsSL https://opencode.ai/install | bash \
+    && npm install -g @openai/codex \
+    && npm install -g @google/gemini-cli
 
 ##############################################################
 # STAGE 3: Install project dependencies from pyproject.toml

@@ -132,6 +132,33 @@ fused Adam kernel), install them manually after running `uv sync --extra cuda`:
 the already-installed PyTorch for CUDA compilation. Install PyTorch first via
 `uv sync --extra cuda` before attempting to install these packages.
 
+### DeepSeek-V3 Optimization Packages (Optional)
+
+For running DeepSeek-V3 style MoE models with optimal performance, the Docker image also
+includes the following packages. These packages have complex build requirements and GPU
+architecture constraints. **Refer to the
+[Dockerfile](https://github.com/inclusionAI/AReaL/blob/main/Dockerfile) for the exact
+installation commands and environment variables.**
+
+| Package                | Purpose                                     | GPU Requirement |
+| ---------------------- | ------------------------------------------- | --------------- |
+| FlashMLA               | Multi-head Latent Attention kernels         | SM90+ (Hopper)  |
+| DeepGEMM               | FP8 GEMM library for MoE                    | SM90+ (Hopper)  |
+| DeepEP                 | Expert Parallelism communication library    | SM80+ (Ampere)  |
+| flash-linear-attention | Linear attention with Triton kernels        | Any GPU         |
+| NVSHMEM                | Required for DeepEP internode communication | Any GPU         |
+
+**Notes**:
+
+- FlashMLA and DeepGEMM require Hopper (H100/H800) or newer GPUs.
+- DeepEP requires NVSHMEM for internode and low-latency features. The Docker image
+  installs `nvidia-nvshmem-cu12` via pip, which DeepEP auto-detects.
+- flash-linear-attention uses pure Triton kernels and works on any GPU.
+- These packages are cloned from GitHub and compiled during Docker build. For manual
+  installation, ensure git submodules are initialized
+  (`git submodule update --init --recursive`) for FlashMLA and DeepGEMM as they depend
+  on CUTLASS.
+
 5. Validate your AReaL installation:
 
 We provide a script to validate your AReaL installation. Simply run:
