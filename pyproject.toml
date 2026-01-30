@@ -53,6 +53,8 @@ dependencies = [
     "litellm",
     "litellm-proxy-extras",
     "openhands",
+    "langchain",
+    "langchain-openai",
 
     # Visualization
     "pandas",
