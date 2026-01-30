@@ -1,7 +1,29 @@
 # Training VLMs with GRPO on NPU:
 
-In this instruction, we will introduce how to train VLMs with GRPO on NPU.
+In this instruction, we will introduce how to train VLMs with GRPO on Ascend NPU.
 
+## Examples
+
+This directory contains examples for training vision-language models on NPU with GRPO:
+
+1. **Qwen2.5-VL-3B** - `qwen2_5_vl_3b_geometry3k_grpo.*` - GRPO training on Geometry3K with Qwen2.5-VL-2B model dataset
+2. **Qwen3-VL-2B** - `qwen3_vl_2b_geometry3k_grpo.*` - GRPO training on Geometry3K dataset with Qwen3-VL-2B model
+
+## Running the Examples
+
+### Qwen2.5-VL-3B
+```bash
+bash examples/vlm_npu/qwen2_5_vl_3b_geometry3k_grpo.sh
+```
+
+### Qwen3-VL-2B
+```bash
+bash examples/vlm_npu/qwen3_vl_2b_geometry3k_grpo.sh
+```
+
+Both examples use the same Geometry3K dataset and GRPO training configuration, but with different model architectures. The Qwen3-VL-2B model is smaller and may be more suitable for environments with limited resources.
+
+## Testing Qwen2.5-VL-3B
 ### Hardware
 
 The following hardware configuration has been extensively tested:
@@ -20,12 +42,6 @@ The following hardware configuration has been extensively tested:
   configuration. Took around 19hr to finish full training.
 - Trained model is tested with more than one benchmark using VLMEvalKit.
 
-### System configuration:
-
-- Vllm==0.11.0 ; vllm-ascend==0.11.0rc0 ;
-- Torch==0.7.1+cpu ; torch_npu==2.7.1.dev20250724
-- Areal==0.4.1
-- CANN==8.1RC1 ; 910c npus (65 gigs X 16)
 
 ### Results:
 
