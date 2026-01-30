@@ -54,6 +54,8 @@ dependencies = [
     "claude-agent-sdk",
     "litellm[proxy]>=1.81.3",
     "openhands",
+    "langchain",
+    "langchain-openai",
 
     # Visualization
     "pandas",
