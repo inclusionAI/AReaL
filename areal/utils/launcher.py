@@ -120,9 +120,7 @@ def get_scheduling_spec(config_part):
         return SchedulingSpec()
 
 
-def get_env_vars(
-    cluster_name: str, additional_env_vars: str | None = None
-) -> dict[str, str]:
+def get_env_vars(additional_env_vars: str | None = None) -> dict[str, str]:
     """Returns the environment variables for the cluster.
 
     This function dynamically captures the current Python path (sys.path) to ensure
@@ -150,8 +148,7 @@ def get_env_vars(
     if PYTHONPATH:
         all_paths.extend(p for p in PYTHONPATH.split(os.pathsep) if p)
 
-    # Deduplicate while preserving order. This is more efficient than repeated list lookups.
-    # NOTE: This relies on dicts preserving insertion order (guaranteed in Python 3.7+).
+    # Remove duplicates while preserving order
     pythonpath_parts = list(dict.fromkeys(all_paths))
 
     dynamic_pythonpath = os.pathsep.join(pythonpath_parts)

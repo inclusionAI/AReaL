@@ -618,7 +618,6 @@ class LocalScheduler(Scheduler):
                     ) from e
 
                 env = get_env_vars(
-                    "",
                     ",".join([f"{k}={v}" for k, v in scheduling.env_vars.items()]),
                 )
                 env[current_platform.device_control_env_var] = ",".join(
