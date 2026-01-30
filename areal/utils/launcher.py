@@ -138,20 +138,21 @@ def get_env_vars(
 
     # Dynamically build PYTHONPATH from current sys.path to ensure workers
     # can import custom modules in controller mode
-    pythonpath_parts = []
-    # Include current working directory
-    cwd = os.getcwd()
-    if cwd not in pythonpath_parts:
-        pythonpath_parts.append(cwd)
-    # Include all paths from sys.path (excluding empty strings and site-packages internals)
-    for p in sys.path:
-        if p and p not in pythonpath_parts and not p.endswith(".zip"):
-            pythonpath_parts.append(p)
-    # Include original PYTHONPATH for completeness
+    all_paths = []
+    # The order of paths is important for module resolution.
+    # 1. Current working directory.
+    all_paths.append(os.getcwd())
+
+    # 2. All paths from sys.path (excluding empty strings and zip files).
+    all_paths.extend(p for p in sys.path if p and not p.endswith(".zip"))
+
+    # 3. Original PYTHONPATH for completeness.
     if PYTHONPATH:
-        for p in PYTHONPATH.split(os.pathsep):
-            if p and p not in pythonpath_parts:
-                pythonpath_parts.append(p)
+        all_paths.extend(p for p in PYTHONPATH.split(os.pathsep) if p)
+
+    # Deduplicate while preserving order. This is more efficient than repeated list lookups.
+    # NOTE: This relies on dicts preserving insertion order (guaranteed in Python 3.7+).
+    pythonpath_parts = list(dict.fromkeys(all_paths))
 
     dynamic_pythonpath = os.pathsep.join(pythonpath_parts)
 
