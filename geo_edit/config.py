@@ -39,7 +39,6 @@ def build_google_agent_configs(
     include_thoughts: Optional[bool] = True,
     temperature: float = 1.0,
     system_prompt: Optional[str|None] = None,
-    candidate_count: int = 1,
     tool_mode:  Optional[str]  = None,
 ) -> GoogleAgentConfigs:
     
@@ -73,7 +72,7 @@ def build_google_agent_configs(
         temperature=temperature,
         system_instruction=system_prompt,
         max_output_tokens=max_output_tokens,
-        candidate_count=candidate_count,
+        candidate_count=1,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
     if tools is not None:
@@ -91,7 +90,7 @@ def build_google_agent_configs(
         temperature=temperature,
         system_instruction=system_prompt,
         max_output_tokens=max_output_tokens,
-        candidate_count=candidate_count,
+        candidate_count=1,
     )
     if tools is not None:
         force_final_kwargs["tools"] = [tools]

@@ -20,28 +20,14 @@ class VLLMVisionQATask(VisionQATask):
     _THINK_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
     _ANSWER_PATTERN = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
 
-    def __init__(
-        self,
-        task_id: str,
-        task_prompt: str,
-        task_answer: str,
-        task_image_path: str | None,
-        save_dir: Path | str,
-        tool_functions: Optional[Dict[str, Any]] = None,
-        system_prompt: Optional[str] = None,
-        **kwargs,
-    ):
-        super().__init__(
-            task_id=task_id,
-            task_prompt=task_prompt,
-            task_answer=task_answer,
-            task_image_path=task_image_path,
-            save_dir=save_dir,
-            tool_functions=tool_functions,
-            **kwargs,
-        )
+    def __init__(self, task_id: str, task_prompt: str, task_answer: str,
+                 task_image_path: str | None, save_dir: Path | str,
+                 tool_functions: Optional[Dict[str, Any]] = None,
+                 system_prompt: Optional[str] = None, **kwargs):
+        super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer,
+                         task_image_path=task_image_path, save_dir=save_dir,
+                         tool_functions=tool_functions, **kwargs)
         self.system_prompt = system_prompt
-        self.image_url_map: Dict[str, str] = {}
         self.messages: List[Dict[str, Any]] = []
         if self.system_prompt:
             self.messages.append({"role": "system", "content": self.system_prompt})
@@ -95,9 +81,7 @@ class VLLMVisionQATask(VisionQATask):
         return output
 
     def parse_action(self, step: int, action: Any, extra_info: Dict[str, Any]):
-        contents_for_save = [
-            self._stringify_observation_item(item) for item in self.messages
-        ]
+        contents_for_save = [self._stringify_observation_item(item) for item in self.messages]
 
         if not action.choices:
             raise ValueError("vLLM response contained no choices.")
@@ -107,17 +91,11 @@ class VLLMVisionQATask(VisionQATask):
         native_tool_calls = message.tool_calls
 
         # Extract thinking from content
-        thinking_parts = [
-            match.group(1).strip()
-            for match in self._THINK_PATTERN.finditer(content)
-        ]
+        thinking_parts = [m.group(1).strip() for m in self._THINK_PATTERN.finditer(content)]
         thinking_process = "\n".join(part for part in thinking_parts if part)
 
         # Extract answer from content
-        answer_parts = [
-            match.group(1).strip()
-            for match in self._ANSWER_PATTERN.finditer(content)
-        ]
+        answer_parts = [m.group(1).strip() for m in self._ANSWER_PATTERN.finditer(content)]
         output_text = "\n".join(part for part in answer_parts if part)
 
         # Parse native tool_calls
@@ -130,26 +108,18 @@ class VLLMVisionQATask(VisionQATask):
                     try:
                         args = json.loads(args)
                     except json.JSONDecodeError:
-                        logger.warning(
-                            "Failed to parse tool call arguments as JSON: %s", args
-                        )
+                        logger.warning("Failed to parse tool call arguments as JSON: %s", args)
                         raise ValueError(f"Invalid JSON in tool call arguments: {args}")
-                tool_calls.append(
-                    ToolCall(name=tc.function.name, args=args, call_id=tc.id)
-                )
-                tool_call_records.append(
-                    {"id": tc.id, "name": tc.function.name, "args": args}
-                )
+                tool_calls.append(ToolCall(name=tc.function.name, args=args, call_id=tc.id))
+                tool_call_records.append({"id": tc.id, "name": tc.function.name, "args": args})
 
         if not tool_calls and not output_text:
             logger.error("vLLM response content: %s", content)
             raise ValueError("vLLM response contained no tool call or final answer.")
 
         if tool_calls and output_text:
-            logger.warning(
-                "vLLM response contained tool call and final answer; "
-                "keeping the answer and ignoring tool calls."
-            )
+            logger.warning("vLLM response contained tool call and final answer; "
+                           "keeping the answer and ignoring tool calls.")
             tool_calls = []
             tool_call_records = []
 
@@ -157,38 +127,16 @@ class VLLMVisionQATask(VisionQATask):
         assistant_message: Dict[str, Any] = {"role": "assistant", "content": content}
         if native_tool_calls:
             assistant_message["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
                 for tc in native_tool_calls
             ]
         self.messages.append(assistant_message)
 
-        function_call_list = (
-            [(call.name, call.args) for call in tool_calls]
-            if tool_calls
-            else None
+        action_record = {"text": output_text, "tool_calls": tool_call_records}
+        self._record_conversation_history(
+            step, contents_for_save, action_record, thinking_process, output_text, tool_calls, extra_info
         )
-        self.conversation_history.append(
-            {
-                "step": step,
-                "observation": contents_for_save,
-                "action": {
-                    "text": output_text,
-                    "tool_calls": tool_call_records,
-                },
-                "thinking_process": thinking_process,
-                "output_text": output_text,
-                "function_call": function_call_list,
-                "extra_info": extra_info,
-            }
-        )
-
         return list(tool_calls)
 
     def _append_tool_result(self, call_id: str, payload: Dict[str, Any]) -> None:

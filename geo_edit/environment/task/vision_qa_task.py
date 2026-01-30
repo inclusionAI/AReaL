@@ -45,12 +45,14 @@ class VisionQATask(AbstractVLMTask):
         self.options = kwargs["options"] if "options" in kwargs else None
 
         self.image_path_map: Dict[int, str] = {}
+        self.image_url_map: Dict[str, str] = {}  # For OpenAI/VLLM: maps data URL to file path
         self.image_list: List[Image.Image] = []
         if self.task_image_path:
             image = Image.open(self.task_image_path).convert("RGB")
             self.image_list.append(image)
             self.image_path_map[id(image)] = self.task_image_path
 
+        self.text_only = kwargs.get("text_only", False) or not self.image_list
         self.conversation_history: List[Dict[str, Any]] = []
 
         self.save_dir = save_dir
@@ -92,6 +94,27 @@ class VisionQATask(AbstractVLMTask):
 
     def append_prompt(self, prompt: str) -> None:
         raise NotImplementedError
+
+    def _record_conversation_history(
+        self,
+        step: int,
+        contents_for_save: List[Any],
+        action_record: Any,
+        thinking_process: str,
+        output_text: str,
+        tool_calls: List[ToolCall],
+        extra_info: Dict[str, Any],
+    ) -> None:
+        """Record a step in conversation history."""
+        self.conversation_history.append({
+            "step": step,
+            "observation": contents_for_save,
+            "action": action_record,
+            "thinking_process": thinking_process,
+            "output_text": output_text,
+            "function_call": [(c.name, c.args) for c in tool_calls] if tool_calls else None,
+            "extra_info": extra_info,
+        })
 
     def _save_image(
         self, image: Image.Image
@@ -277,6 +300,7 @@ class VisionQATask(AbstractVLMTask):
             tokens_used_per_step.append(tokens_used)
 
         meta_info = {
+            "id": self.task_id,
             "question": self.task_prompt,
             "options": self.options,
             "answer": self.task_answer,

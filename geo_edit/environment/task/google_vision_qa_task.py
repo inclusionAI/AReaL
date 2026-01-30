@@ -13,28 +13,13 @@ logger = setup_logger(__name__)
 class GoogleVisionQATask(VisionQATask):
     """vision qa task for Google GenAI"""
 
-    def __init__(
-        self,
-        task_id: str,
-        task_prompt: str,
-        task_answer: str,
-        task_image_path: str | None,
-        save_dir: Path | str,
-        tool_functions: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ):
-        super().__init__(
-            task_id=task_id,
-            task_prompt=task_prompt,
-            task_answer=task_answer,
-            task_image_path=task_image_path,
-            save_dir=save_dir,
-            tool_functions=tool_functions,
-            **kwargs,
-        )
-        # text only option
-        text_only = kwargs.get("text_only", False) or not self.image_list
-        if text_only:
+    def __init__(self, task_id: str, task_prompt: str, task_answer: str,
+                 task_image_path: str | None, save_dir: Path | str,
+                 tool_functions: Optional[Dict[str, Any]] = None, **kwargs):
+        super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer,
+                         task_image_path=task_image_path, save_dir=save_dir,
+                         tool_functions=tool_functions, **kwargs)
+        if self.text_only:
             logger.info("Initializing GoogleVisionQATask in text only mode.")
             self.contents = [self.task_prompt]
         else:
@@ -92,35 +77,14 @@ class GoogleVisionQATask(VisionQATask):
             if part.thought:
                 thinking_process += part.text
             elif part.function_call:
-                tool_calls.append(
-                    ToolCall(
-                        name=part.function_call.name,
-                        args=part.function_call.args,
-                    )
-                )
+                tool_calls.append(ToolCall(name=part.function_call.name, args=part.function_call.args))
             elif part.text:
                 output_text += part.text
-            else:
-                continue
-        contents_for_save = [
-            self._stringify_observation_item(item) for item in self.contents
-        ]
-        self.conversation_history.append(
-            {
-                "step": step,
-                "observation": contents_for_save,
-                "action": self._stringify_observation_item(action),
-                "thinking_process": thinking_process,
-                "output_text": output_text,
-                "function_call": (
-                    [(call.name, call.args) for call in tool_calls]
-                    if tool_calls
-                    else None
-                ),
-                "extra_info": extra_info,
-            }
+        contents_for_save = [self._stringify_observation_item(item) for item in self.contents]
+        self._record_conversation_history(
+            step, contents_for_save, self._stringify_observation_item(action),
+            thinking_process, output_text, tool_calls, extra_info
         )
-
         return tool_calls
 
     def _append_tool_error(self, tool_call: ToolCall, error_msg: str) -> None:

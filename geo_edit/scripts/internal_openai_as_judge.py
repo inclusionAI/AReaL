@@ -2,9 +2,10 @@ import argparse
 import json
 import os
 import re
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Union
+from typing import Dict, Iterable, List, Optional, Union
 from geo_edit.constants import EVAL_QUERY_PROMPT, EVAL_SYSTEM_PROMPT
 from openai import OpenAI
 
@@ -18,19 +19,17 @@ class EvalConfig:
 
 
 def parse_score(text: str) -> str:
-    """
-    从模型输出里抽取 Score: 0/1，返回 "0" 或 "1"；找不到返回空串。
-    """
+    """Extract Score: 0/1 from model output, return "0" or "1"; empty string if not found."""
     m = re.search(r"\bscore\s*:\s*([01])\b", text, re.IGNORECASE)
     return m.group(1) if m else ""
 
 
 def extract_answer(text: str, mode: str) -> Optional[str]:
     """
-    从模型输出中抽取ANSWER_TEMPLATE，抽不到返回 None。
+    Extract answer from ANSWER_TEMPLATE, return None if not found.
     mode:
-      - "split": 宽松 split
-      - "strict": 任意位置匹配 ANSWER_TEMPLATE
+      - "split": loose split
+      - "strict": exact position match
     """
     parts = ANSWER_TEMPLATE.split("{}")
     if mode == "split":
@@ -54,10 +53,7 @@ def extract_answer(text: str, mode: str) -> Optional[str]:
 
 
 def get_final_prediction(predict_str_list: List[str], extract_mode: Optional[str]) -> str:
-    """
-    只取最后一轮作为最终输出；若 extract_mode 非空，则尝试抽取 <answer>...</answer>。
-    抽取失败时，退回使用最后一轮原文（strip 后）。
-    """
+    """Get final prediction from the last round of output."""
     if not predict_str_list:
         return ""
     last = predict_str_list[-1].strip()
@@ -68,10 +64,7 @@ def get_final_prediction(predict_str_list: List[str], extract_mode: Optional[str
 
 
 class InternalOpenAIJudge:
-    """
-    使用内部 Matrix LLM API (OpenAI 兼容格式) 做 0/1 判分。
-    API endpoint: https://matrixllm.alipay.com/v1/chat/completions
-    """
+    """Judge using Internal Matrix LLM API (OpenAI compatible format)."""
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o", base_url: str = "https://matrixllm.alipay.com/v1"):
         self.client = OpenAI(
             api_key=api_key or os.environ.get("MATRIX_API_KEY"),
@@ -94,6 +87,33 @@ class InternalOpenAIJudge:
         )
         output_text = resp.choices[0].message.content if resp.choices else ""
         return parse_score(output_text or "")
+
+
+def compute_tool_combination_statistics(eval_results: List[Dict]) -> str:
+    """
+    Compute accuracy statistics grouped by tool combination.
+    Returns formatted summary text.
+    """
+    stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "correct": 0})
+
+    for item in eval_results:
+        result = item.get("result")
+        if isinstance(result, dict) and result.get("is_filter"):
+            continue
+        func_counts = item.get("function_call_each_count", {})
+        used = sorted([t for t, c in func_counts.items() if c > 0])
+        category = "+".join(used) if used else "no_tool"
+        stats[category]["total"] += 1
+        if result == 1.0:
+            stats[category]["correct"] += 1
+
+    lines = ["\n" + "=" * 60, "Tool Combination Statistics", "=" * 60]
+    for cat in sorted(stats.keys(), key=lambda x: (x != "no_tool", x)):
+        s = stats[cat]
+        acc = s["correct"] / s["total"] if s["total"] > 0 else 0.0
+        lines.append(f"  {cat}: total={s['total']}, correct={s['correct']}, accuracy={acc:.4f}")
+    lines.append("=" * 60)
+    return "\n".join(lines)
 
 
 def evaluate_final_answer(
@@ -215,6 +235,7 @@ def main() -> None:
     total = 0
     correct = 0
     filtered = 0
+    eval_results = []
 
     max_workers = 32
     futures = []
@@ -230,6 +251,7 @@ def main() -> None:
 
         for future in as_completed(futures):
             eval_item = future.result()
+            eval_results.append(eval_item)
             result = eval_item["result"]
             is_filter = isinstance(result, dict) and result.get("is_filter")
             if is_filter:
@@ -240,12 +262,16 @@ def main() -> None:
                     correct += 1
             out_f.write(json.dumps(eval_item, ensure_ascii=False) + "\n")
 
+    # Compute tool combination statistics
+    tool_stats_text = compute_tool_combination_statistics(eval_results)
+
     accuracy = (correct / total) if total else 0.0
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write(f"evaluated={total}\n")
         f.write(f"correct={correct}\n")
         f.write(f"filtered={filtered}\n")
         f.write(f"accuracy={accuracy:.6f}\n")
+        f.write(tool_stats_text)
 
 
 if __name__ == "__main__":

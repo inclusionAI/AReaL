@@ -21,6 +21,7 @@ def aggregate_meta_info(meta_info_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     tool_usage_counts: Dict[str, int] = {}
     reach_max_tool_call_count = 0
     direct_answer_count = 0
+    unique_tasks: set = set()
 
     for info in meta_info_list:
         total_tool_calls += info["function_call_total_count"]
@@ -32,8 +33,11 @@ def aggregate_meta_info(meta_info_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         for tool_name, count in info["function_call_each_count"].items():
             tool_usage_counts[tool_name] = tool_usage_counts.get(tool_name, 0) + count
 
+        unique_tasks.add(info["id"])
+
     return {
-        "total_examples": len(meta_info_list),
+        "total_tasks": len(unique_tasks),
+        "total_trajectories": len(meta_info_list),
         "total_tool_calls": total_tool_calls,
         "total_tokens": total_tokens,
         "tool_usage_counts": tool_usage_counts,

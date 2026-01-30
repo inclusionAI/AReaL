@@ -189,6 +189,7 @@ def main():
     parser.add_argument("--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server.")
     parser.add_argument("--max_concurrent_requests", type=int, default=8, help="Number of worker processes (agent pool).")
     parser.add_argument("--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset.")
+    parser.add_argument("--n_trajectories", type=int, default=1, help="Number of trajectories to generate per task.")
     args = parser.parse_args()
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
@@ -210,24 +211,32 @@ def main():
     if tool_mode == "direct" and dataset_spec.notool_prompt_template is None:
         logger.warning("Dataset %s has no no-tool template; using tool template.", dataset_spec.name)
 
-    # 1 main process scan: collect done meta_info + pending items
+    # 1 main process scan: collect done meta_info + pending (task, traj_id) pairs
+    n_trajectories = args.n_trajectories
     meta_info_list = []
-    pending_items = []
+    pending_items = []  # list of (item, traj_id)
 
     for item in dataset:
         task_id = str(item[dataset_spec.id_key])
-        task_save_dir = os.path.join(output_path, task_id)
-        meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
+        task_base_dir = os.path.join(output_path, task_id)
 
-        if os.path.exists(task_save_dir) and os.path.exists(meta_path):
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta_info = json.loads(f.readline().strip())
-            meta_info_list.append(meta_info)
-        else:
-            pending_items.append(item)
+        for traj_id in range(n_trajectories):
+            if n_trajectories == 1:
+                # Backward compatible: single trajectory uses task_base_dir directly
+                traj_save_dir = task_base_dir
+            else:
+                traj_save_dir = os.path.join(task_base_dir, f"traj_{traj_id}")
+            meta_path = os.path.join(traj_save_dir, "meta_info.jsonl")
+
+            if os.path.exists(meta_path):
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta_info = json.loads(f.readline().strip())
+                meta_info_list.append(meta_info)
+            else:
+                pending_items.append((item, traj_id))
 
     logger.info(f"Already done: {len(meta_info_list)}")
-    logger.info(f"Pending: {len(pending_items)}")
+    logger.info(f"Pending: {len(pending_items)} (tasks x trajectories)")
 
     # 2multiprocessing pool, create folder+save image ONLY when submitting task
     ctx = mp.get_context("spawn")
@@ -256,12 +265,16 @@ def main():
         while submit_idx < len(pending_items) or inflight:
             # submit up to n_workers tasks; mkdir+save image just before submit
             while submit_idx < len(pending_items) and len(inflight) < n_workers:
-                item = pending_items[submit_idx]
+                item, traj_id = pending_items[submit_idx]
                 submit_idx += 1
 
                 task_id = str(item[dataset_spec.id_key])
-                task_save_dir = os.path.join(output_path, task_id)
-                meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
+                task_base_dir = os.path.join(output_path, task_id)
+                if n_trajectories == 1:
+                    traj_save_dir = task_base_dir
+                else:
+                    traj_save_dir = os.path.join(task_base_dir, f"traj_{traj_id}")
+                meta_path = os.path.join(traj_save_dir, "meta_info.jsonl")
 
                 # if completed by other runs, load and skip
                 if os.path.exists(meta_path):
@@ -270,27 +283,30 @@ def main():
                     meta_info_list.append(meta_info)
                     continue
 
-                os.makedirs(task_save_dir, exist_ok=True)
+                os.makedirs(task_base_dir, exist_ok=True)
+                os.makedirs(traj_save_dir, exist_ok=True)
 
+                # Save input image to task_base_dir (shared across trajectories)
                 image_path = None
                 text_only = dataset_spec.image_key is None
                 if dataset_spec.image_key:
-                    image = item.get(dataset_spec.image_key)
-                    if isinstance(image, Image.Image):
-                        image_path = os.path.join(task_save_dir, "input_image.png")
-                        image.save(image_path)
-                    elif isinstance(image, dict) and "bytes" in image and isinstance(image["bytes"], (bytes, bytearray)):
-                        image= Image.open(BytesIO(image["bytes"]))
-                        image_path = os.path.join(task_save_dir, "input_image.png")
-                        image.save(image_path)
-                    else:
-                        raise ValueError(f"Invalid image type: {type(image)}")
+                    image_path = os.path.join(task_base_dir, "input_image.png")
+                    if not os.path.exists(image_path):
+                        image = item.get(dataset_spec.image_key)
+                        if isinstance(image, Image.Image):
+                            image.save(image_path)
+                        elif isinstance(image, dict) and "bytes" in image and isinstance(image["bytes"], (bytes, bytearray)):
+                            image = Image.open(BytesIO(image["bytes"]))
+                            image.save(image_path)
+                        else:
+                            raise ValueError(f"Invalid image type: {type(image)}")
                 else:
                     text_only = True
 
                 payload = {
                     "id": task_id,
-                    "task_save_dir": task_save_dir,
+                    "traj_id": traj_id,
+                    "task_save_dir": traj_save_dir,
                     "prompt": dataset_spec.build_prompt(item, tool_mode != "direct"),
                     "answer": item[dataset_spec.answer_key],
                     "image_path": image_path,
@@ -298,7 +314,7 @@ def main():
                 }
 
                 ar = pool.apply_async(_run_one_task, (payload,))
-                inflight.append((task_id, ar))
+                inflight.append((f"{task_id}_traj{traj_id}", ar))
 
             # harvest finished tasks
             any_done = False

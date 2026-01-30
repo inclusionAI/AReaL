@@ -16,51 +16,32 @@ logger = setup_logger(__name__)
 class OpenAIVisionQATask(VisionQATask):
     """vision qa task for OpenAI Responses API"""
 
-    def __init__(
-        self,
-        task_id: str,
-        task_prompt: str,
-        task_answer: str,
-        task_image_path: str | None,
-        save_dir: Path | str,
-        tool_functions: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ):
-        super().__init__(
-            task_id=task_id,
-            task_prompt=task_prompt,
-            task_answer=task_answer,
-            task_image_path=task_image_path,
-            save_dir=save_dir,
-            tool_functions=tool_functions,
-            **kwargs,
-        )
+    def __init__(self, task_id: str, task_prompt: str, task_answer: str,
+                 task_image_path: str | None, save_dir: Path | str,
+                 tool_functions: Optional[Dict[str, Any]] = None, **kwargs):
+        super().__init__(task_id=task_id, task_prompt=task_prompt, task_answer=task_answer,
+                         task_image_path=task_image_path, save_dir=save_dir,
+                         tool_functions=tool_functions, **kwargs)
 
-        self.image_url_map: Dict[str, str] = {}
         input_items: List[Dict[str, Any]] = []
-        text_only = kwargs.get("text_only", False) or not self.image_list
-        if text_only or not self.image_list:
+        if self.text_only:
             logger.info("Initializing OpenAIVisionQATask in text only mode.")
-            input_items.append(
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": self.task_prompt}],
-                }
-            )
+            input_items.append({
+                "role": "user",
+                "content": [{"type": "input_text", "text": self.task_prompt}],
+            })
         else:
             image = self.image_list[0]
             image_url = image_to_data_url(image)
             self.image_url_map[image_url] = self.task_image_path
-            input_items.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": self.task_prompt},
-                        {"type": "input_text", "text": "Observation 0:"},
-                        {"type": "input_image", "image_url": image_url},
-                    ],
-                }
-            )
+            input_items.append({
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": self.task_prompt},
+                    {"type": "input_text", "text": "Observation 0:"},
+                    {"type": "input_image", "image_url": image_url},
+                ],
+            })
         self.contents = {"input": input_items, "previous_response_id": None}
 
     def _append_tool_message(
@@ -134,47 +115,20 @@ class OpenAIVisionQATask(VisionQATask):
                             arguments = {}
                 elif isinstance(raw_arguments, dict):
                     arguments = raw_arguments
-                    raw_arguments = json.dumps(raw_arguments)
-                    
-                tool_calls.append(
-                    ToolCall(
-                        name=item.name,
-                        args=arguments,
-                        call_id=item.call_id,
-                    )
-                )
+                tool_calls.append(ToolCall(name=item.name, args=arguments, call_id=item.call_id))
 
         if output_text == "" and action.output_text is not None:
             output_text = action.output_text
-            logger.info(
-                "Output text found in action.output_text field instead of parts."
-            )
-        contents_for_save = [
-            self._stringify_observation_item(item)
-            for item in self.contents["input"]
-        ]
-        function_call_list = (
-            [(call.name, call.args) for call in tool_calls] if tool_calls else None
-        )
+            logger.info("Output text found in action.output_text field instead of parts.")
+
+        contents_for_save = [self._stringify_observation_item(item) for item in self.contents["input"]]
         action_record = {
             "text": output_text,
-            "tool_calls": [
-                {"id": call.call_id, "name": call.name, "args": call.args}
-                for call in tool_calls
-            ],
+            "tool_calls": [{"id": c.call_id, "name": c.name, "args": c.args} for c in tool_calls],
         }
-        self.conversation_history.append(
-            {
-                "step": step,
-                "observation": contents_for_save,
-                "action": action_record,
-                "thinking_process": "",
-                "output_text": output_text,
-                "function_call": function_call_list,
-                "extra_info": extra_info,
-            }
+        self._record_conversation_history(
+            step, contents_for_save, action_record, "", output_text, tool_calls, extra_info
         )
-
         self.contents["previous_response_id"] = action.id
         return list(tool_calls)
 
