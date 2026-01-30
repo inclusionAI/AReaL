@@ -965,9 +965,13 @@ class FSDPEngine(TrainEngine):
         name_params_iterator = self.model.named_parameters()
         if self.is_vision_model and is_qwen_vl_model(self.model_config.model_type):
             for name, value in name_params_iterator:
-                new_name = name.replace("model.", "", 1).replace(
-                    "language_model", "model"
-                )
+                new_name = name.replace("model.", "", 1)
+                if new_name.startswith("language_model."):
+                    new_name = new_name.replace(
+                        "language_model.", "language_model.model.", 1
+                    )
+                elif new_name.startswith("lm_head."):
+                    new_name = f"language_model.{new_name}"
                 yield new_name, value
         elif self.is_vision_model and is_gemma3_model(self.model_config.model_type):
             for name, value in name_params_iterator:
