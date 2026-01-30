@@ -38,7 +38,6 @@ BASE_ENVIRONS = {
     "TRITON_CACHE_DIR": TRITON_CACHE_PATH,
     "VLLM_CACHE_ROOT": VLLM_CACHE_ROOT,
     "CUDA_DEVICE_MAX_CONNECTIONS": "1",
-    "PYTHONPATH": PYTHONPATH,
 }
 
 # Thread control environment variables for OpenMP/MKL/etc.
@@ -124,14 +123,39 @@ def get_scheduling_spec(config_part):
 def get_env_vars(
     cluster_name: str, additional_env_vars: str | None = None
 ) -> dict[str, str]:
-    """Returns the environment variables for the cluster."""
+    """Returns the environment variables for the cluster.
+
+    This function dynamically captures the current Python path (sys.path) to ensure
+    that spawned worker processes can import modules from the same locations as the
+    parent process. This is essential for deserializing custom config classes defined
+    outside the areal package (e.g., in examples/).
+    """
     _additional_env_vars = (
         dict(item.split("=") for item in additional_env_vars.split(","))
         if additional_env_vars
         else dict()
     )
 
-    return {**BASE_ENVIRONS, **_additional_env_vars}
+    # Dynamically build PYTHONPATH from current sys.path to ensure workers
+    # can import custom modules in controller mode
+    pythonpath_parts = []
+    # Include current working directory
+    cwd = os.getcwd()
+    if cwd not in pythonpath_parts:
+        pythonpath_parts.append(cwd)
+    # Include all paths from sys.path (excluding empty strings and site-packages internals)
+    for p in sys.path:
+        if p and p not in pythonpath_parts and not p.endswith(".zip"):
+            pythonpath_parts.append(p)
+    # Include original PYTHONPATH for completeness
+    if PYTHONPATH:
+        for p in PYTHONPATH.split(os.pathsep):
+            if p and p not in pythonpath_parts:
+                pythonpath_parts.append(p)
+
+    dynamic_pythonpath = os.pathsep.join(pythonpath_parts)
+
+    return {**BASE_ENVIRONS, "PYTHONPATH": dynamic_pythonpath, **_additional_env_vars}
 
 
 class JobState(enum.Enum):
