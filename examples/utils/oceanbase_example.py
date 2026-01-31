@@ -17,7 +17,6 @@ OceanBase 是一个兼容 MySQL 的开源分布式数据库，适合存储大规
 
 import os
 from datetime import datetime
-from typing import Optional
 
 import pymysql
 from pymysql.cursors import DictCursor
@@ -63,7 +62,7 @@ class OceanBaseMetricsLogger:
         self.user = user
         self.password = password
         self.database = database
-        self.connection: Optional[pymysql.Connection] = None
+        self.connection: pymysql.Connection | None = None
 
     def connect(self) -> None:
         """建立数据库连接"""
@@ -129,8 +128,8 @@ class OceanBaseMetricsLogger:
         self,
         experiment_name: str,
         step: int,
-        loss: Optional[float] = None,
-        reward: Optional[float] = None,
+        loss: float | None = None,
+        reward: float | None = None,
     ) -> None:
         """插入单条训练指标
 
